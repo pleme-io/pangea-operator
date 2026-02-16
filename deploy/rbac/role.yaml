@@ -1,0 +1,106 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pangea-operator
+  labels:
+    app.kubernetes.io/name: pangea
+    app.kubernetes.io/component: operator
+rules:
+  # InfrastructureTemplate resources
+  - apiGroups:
+      - pangea.pleme.io
+    resources:
+      - infrastructuretemplates
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - pangea.pleme.io
+    resources:
+      - infrastructuretemplates/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - pangea.pleme.io
+    resources:
+      - infrastructuretemplates/finalizers
+    verbs:
+      - update
+
+  # PangeaNamespace resources
+  - apiGroups:
+      - pangea.pleme.io
+    resources:
+      - pangeanamespaces
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - pangea.pleme.io
+    resources:
+      - pangeanamespaces/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - pangea.pleme.io
+    resources:
+      - pangeanamespaces/finalizers
+    verbs:
+      - update
+
+  # ConfigMaps for template sources
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+    verbs:
+      - get
+      - list
+      - watch
+
+  # Secrets for credentials
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - get
+      - list
+      - watch
+
+  # Events for status reporting
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+
+  # Leader election
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete

@@ -1,0 +1,106 @@
+"""
+Pangea GraphQL Schema - Used by cynic for type-safe client generation.
+"""
+
+enum Phase {
+  PENDING
+  COMPILING
+  INITIALIZING
+  PLANNING
+  APPLYING
+  READY
+  DRIFTED
+  FAILED
+  DESTROYING
+}
+
+type ResourceCounts {
+  total: Int!
+  added: Int!
+  changed: Int!
+  destroyed: Int!
+}
+
+type Condition {
+  conditionType: String!
+  status: String!
+  lastTransitionTime: DateTime!
+  reason: String!
+  message: String!
+}
+
+type TemplateSource {
+  sourceType: String!
+  reference: String!
+}
+
+type InfrastructureTemplate {
+  namespace: String
+  name: String
+  phase: Phase!
+  pangeaNamespace: String!
+  source: TemplateSource!
+  autoApprove: Boolean!
+  suspended: Boolean!
+  lastAppliedAt: DateTime
+  lastPlannedAt: DateTime
+  resourceCounts: ResourceCounts!
+  conditions: [Condition!]!
+  planSummary: String
+  lastError: String
+  failureCount: Int!
+}
+
+type PangeaNamespace {
+  name: String
+  backendType: String!
+  databaseHost: String
+  databaseName: String
+  isReady: Boolean!
+  schemaName: String
+  templateCount: Int!
+}
+
+type PlanResult {
+  hasChanges: Boolean!
+  summary: String!
+  added: Int!
+  changed: Int!
+  destroyed: Int!
+}
+
+type LogEntry {
+  timestamp: DateTime!
+  level: String!
+  message: String!
+  namespace: String!
+  name: String!
+}
+
+input TemplateInput {
+  namespace: String!
+  name: String!
+}
+
+type Query {
+  template(namespace: String!, name: String!): InfrastructureTemplate
+  templates(namespace: String, phase: Phase): [InfrastructureTemplate!]!
+  namespace(name: String!): PangeaNamespace
+  namespaces: [PangeaNamespace!]!
+  plan(namespace: String!, name: String!): PlanResult
+}
+
+type Mutation {
+  apply(input: TemplateInput!): InfrastructureTemplate!
+  approve(input: TemplateInput!): InfrastructureTemplate!
+  destroy(input: TemplateInput!): InfrastructureTemplate!
+  unlock(input: TemplateInput!): Boolean!
+  suspend(input: TemplateInput!, suspended: Boolean!): InfrastructureTemplate!
+}
+
+type Subscription {
+  logs(namespace: String!, name: String!): LogEntry!
+  templateStatus(namespace: String!): InfrastructureTemplate!
+}
+
+scalar DateTime

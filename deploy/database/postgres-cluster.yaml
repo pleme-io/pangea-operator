@@ -1,0 +1,98 @@
+---
+# CloudNativePG Cluster for Pangea State Storage
+# PostgreSQL backend for OpenTofu state management
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: pangea-postgres
+  namespace: pangea-system
+  labels:
+    app.kubernetes.io/name: pangea
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: pangea
+  annotations:
+    # Prevent FluxCD from deleting the Cluster CR during prune operations
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  # Disable Istio sidecar injection for database pods
+  inheritedMetadata:
+    annotations:
+      sidecar.istio.io/inject: "false"
+      kustomize.toolkit.fluxcd.io/prune: disabled
+    labels:
+      app.kubernetes.io/name: pangea
+      app.kubernetes.io/component: database
+
+  # Single instance (adjust for production HA)
+  instances: 1
+
+  # PostgreSQL version
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.4
+
+  # Enable superuser access for admin operations
+  enableSuperuserAccess: true
+
+  # Primary update strategy
+  primaryUpdateStrategy: unsupervised
+
+  # Storage configuration
+  storage:
+    size: 10Gi
+    storageClass: local-path-retain
+    resizeInUseVolumes: false
+
+  # PostgreSQL configuration optimized for state storage
+  postgresql:
+    parameters:
+      # Logging
+      log_statement: "ddl"
+      log_checkpoints: "on"
+      log_lock_waits: "on"
+      log_min_duration_statement: "1000"
+
+      # Performance tuning for small state DB
+      shared_buffers: "128MB"
+      effective_cache_size: "256MB"
+      work_mem: "8MB"
+
+    # HBA rules for cluster access
+    pg_hba:
+      - host all all 10.0.0.0/8 scram-sha-256
+      - host all all 172.16.0.0/12 scram-sha-256
+      - host all all 192.168.0.0/16 scram-sha-256
+
+  # Bootstrap configuration
+  bootstrap:
+    initdb:
+      database: pangea_state
+      owner: pangea
+      secret:
+        name: pangea-postgres-credentials
+      postInitApplicationSQL:
+        # Extensions for state management
+        - CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+        - CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+        # Create initial schema for default namespace
+        - CREATE SCHEMA IF NOT EXISTS pangea_default;
+        - COMMENT ON SCHEMA pangea_default IS 'Default Pangea namespace schema';
+
+        # Grant permissions
+        - GRANT ALL PRIVILEGES ON SCHEMA public TO pangea;
+        - GRANT ALL PRIVILEGES ON SCHEMA pangea_default TO pangea;
+
+        # Allow creating new schemas (for PangeaNamespace resources)
+        - GRANT CREATE ON DATABASE pangea_state TO pangea;
+
+  # Resource limits (small footprint for state storage)
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+  # Monitoring
+  monitoring:
+    enablePodMonitor: true

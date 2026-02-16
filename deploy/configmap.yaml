@@ -1,0 +1,67 @@
+---
+# Pangea Operator Configuration
+# This ConfigMap provides the default configuration for the operator.
+# Customize per-environment using Kustomize overlays.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pangea-config
+  labels:
+    app.kubernetes.io/name: pangea
+    app.kubernetes.io/component: config
+    app.kubernetes.io/part-of: pangea
+data:
+  config.yaml: |
+    # Pangea Operator Configuration
+    apiVersion: pangea.pleme.io/v1alpha1
+
+    # Operator settings
+    operator:
+      # Health server address
+      healthAddr: "0.0.0.0:8080"
+
+      # GraphQL API address
+      graphqlAddr: "0.0.0.0:8081"
+
+      # Metrics port
+      metricsPort: 9090
+
+      # Default drift check interval
+      defaultRefreshInterval: "5m"
+
+      # Default max retries for failed operations
+      defaultMaxRetries: 3
+
+      # Requeue interval in seconds when idle
+      requeueIntervalSeconds: 60
+
+      # Log level (trace, debug, info, warn, error)
+      logLevel: info
+
+      # Log format (json, pretty)
+      logFormat: json
+
+    # Compiler sidecar settings
+    compiler:
+      # Compiler sidecar endpoint
+      endpoint: "http://localhost:8082"
+
+      # Compile timeout in seconds
+      timeoutSeconds: 120
+
+    # OpenTofu execution settings
+    tofu:
+      # OpenTofu binary path
+      binaryPath: "/usr/local/bin/tofu"
+
+      # Working directory for terraform operations
+      workDir: "/tmp/pangea"
+
+      # Default parallelism for terraform operations
+      parallelism: 10
+
+      # Plan timeout in seconds
+      planTimeoutSeconds: 300
+
+      # Apply timeout in seconds
+      applyTimeoutSeconds: 600

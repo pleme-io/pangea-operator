@@ -1,0 +1,96 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pangea-web
+  labels:
+    app.kubernetes.io/name: pangea
+    app.kubernetes.io/component: web
+    app.kubernetes.io/part-of: pangea
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pangea
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pangea
+        app.kubernetes.io/component: web
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        fsGroup: 101
+      containers:
+        - name: web
+          image: ghcr.io/pleme-io/nexus/pangea-web:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+          env:
+            - name: GRAPHQL_ENDPOINT
+              value: "http://pangea-operator.pangea-system.svc.cluster.local:8081/graphql"
+            - name: HANABI_CONFIG
+              value: "/app/config/hanabi.yaml"
+          resources:
+            limits:
+              cpu: 200m
+              memory: 128Mi
+            requests:
+              cpu: 50m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: hanabi-tmp
+              mountPath: /tmp
+            - name: hanabi-var-log
+              mountPath: /var/log
+            - name: hanabi-run
+              mountPath: /run
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 2
+          startupProbe:
+            httpGet:
+              path: /health/startup
+              port: health
+            initialDelaySeconds: 0
+            periodSeconds: 5
+            failureThreshold: 30
+      volumes:
+        - name: hanabi-tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 32Mi
+        - name: hanabi-var-log
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+        - name: hanabi-run
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Mi
+      terminationGracePeriodSeconds: 10

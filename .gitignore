@@ -1,0 +1,15 @@
+# Build artifacts
+/target/
+/result
+
+# Cargo lock (regenerated)
+# Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Nix
+.direnv/

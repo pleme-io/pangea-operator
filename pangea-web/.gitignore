@@ -1,0 +1,16 @@
+# Build artifacts
+/target/
+/dist/
+/result
+
+# Cargo lock (regenerated from Cargo.toml)
+# Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Nix
+.direnv/

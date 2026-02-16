@@ -1,0 +1,286 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: pangeanamespaces.pangea.pleme.io
+spec:
+  group: pangea.pleme.io
+  names:
+    categories: []
+    kind: PangeaNamespace
+    plural: pangeanamespaces
+    shortNames:
+    - pns
+    singular: pangeanamespace
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.backend.type
+      name: Backend
+      type: string
+    - jsonPath: .status.templateCount
+      name: Templates
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for PangeaNamespaceSpec via `CustomResource`
+        properties:
+          spec:
+            description: PangeaNamespace is a cluster-scoped resource that configures a Pangea namespace with backend and default settings.
+            properties:
+              backend:
+                description: State backend configuration.
+                properties:
+                  pg:
+                    description: PostgreSQL backend configuration.
+                    nullable: true
+                    properties:
+                      database:
+                        description: Database name.
+                        type: string
+                      host:
+                        description: PostgreSQL host.
+                        type: string
+                      pool:
+                        description: Connection pool settings.
+                        nullable: true
+                        properties:
+                          acquireTimeoutSecs:
+                            default: 30
+                            description: Connection acquire timeout in seconds.
+                            format: uint64
+                            minimum: 0.0
+                            type: integer
+                          idleTimeoutSecs:
+                            default: 600
+                            description: Idle connection timeout in seconds.
+                            format: uint64
+                            minimum: 0.0
+                            type: integer
+                          maxConnections:
+                            default: 10
+                            description: Maximum number of connections.
+                            format: uint32
+                            minimum: 0.0
+                            type: integer
+                          minConnections:
+                            default: 2
+                            description: Minimum number of connections.
+                            format: uint32
+                            minimum: 0.0
+                            type: integer
+                        type: object
+                      port:
+                        default: 5432
+                        description: PostgreSQL port.
+                        format: uint16
+                        minimum: 0.0
+                        type: integer
+                      schemaPrefix:
+                        default: pangea_
+                        description: 'Schema name prefix (default: "pangea_").'
+                        type: string
+                      secretRef:
+                        description: Reference to a Secret containing credentials.
+                        properties:
+                          caCertKey:
+                            description: Key containing the CA certificate (optional).
+                            nullable: true
+                            type: string
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret.
+                            nullable: true
+                            type: string
+                          passwordKey:
+                            default: password
+                            description: 'Key containing the password (default: "password").'
+                            type: string
+                          usernameKey:
+                            default: username
+                            description: 'Key containing the username (default: "username").'
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      sslMode:
+                        default: verify-full
+                        description: SSL mode for connections.
+                        type: string
+                    required:
+                    - database
+                    - host
+                    - secretRef
+                    type: object
+                  s3:
+                    description: S3 backend configuration (legacy, for migration).
+                    nullable: true
+                    properties:
+                      bucket:
+                        description: S3 bucket name.
+                        type: string
+                      dynamodbTable:
+                        description: DynamoDB table for state locking.
+                        nullable: true
+                        type: string
+                      keyPrefix:
+                        description: Key prefix for state files.
+                        nullable: true
+                        type: string
+                      region:
+                        description: AWS region.
+                        type: string
+                      secretRef:
+                        description: Reference to a Secret containing AWS credentials.
+                        nullable: true
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret.
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - bucket
+                    - region
+                    type: object
+                  type:
+                    description: Type of backend (pg, s3, local).
+                    enum:
+                    - pg
+                    - s3
+                    - local
+                    type: string
+                required:
+                - type
+                type: object
+              defaultComplianceProfiles:
+                description: Default compliance profiles for templates in this namespace.
+                items:
+                  type: string
+                type: array
+              defaultProviders:
+                description: Default provider configuration for templates in this namespace.
+                nullable: true
+                properties:
+                  awsRegion:
+                    description: Default AWS region.
+                    nullable: true
+                    type: string
+                  awsSecretRef:
+                    description: Default AWS credentials secret.
+                    nullable: true
+                    properties:
+                      name:
+                        description: Name of the Secret.
+                        type: string
+                      namespace:
+                        description: Namespace of the Secret.
+                        nullable: true
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  cloudflareSecretRef:
+                    description: Default Cloudflare credentials secret.
+                    nullable: true
+                    properties:
+                      name:
+                        description: Name of the Secret.
+                        type: string
+                      namespace:
+                        description: Namespace of the Secret.
+                        nullable: true
+                        type: string
+                    required:
+                    - name
+                    type: object
+                type: object
+              defaultTags:
+                additionalProperties:
+                  type: string
+                description: Default tags to apply to all resources in this namespace.
+                type: object
+              description:
+                description: Description of this Pangea namespace.
+                nullable: true
+                type: string
+            required:
+            - backend
+            type: object
+          status:
+            description: Status of a PangeaNamespace.
+            nullable: true
+            properties:
+              backendReady:
+                default: false
+                description: Whether the backend is ready.
+                type: boolean
+              error:
+                description: Error message if backend is not ready.
+                nullable: true
+                type: string
+              lastVerifiedAt:
+                description: Last time the backend was verified.
+                format: date-time
+                nullable: true
+                type: string
+              resourceStats:
+                description: Resource statistics.
+                nullable: true
+                properties:
+                  driftedTemplates:
+                    description: Total templates with drift detected.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  failedTemplates:
+                    description: Total templates in Failed state.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  readyTemplates:
+                    description: Total templates in Ready state.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  totalResources:
+                    description: Total managed resources across all templates.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                required:
+                - driftedTemplates
+                - failedTemplates
+                - readyTemplates
+                - totalResources
+                type: object
+              schemaName:
+                description: PostgreSQL schema name for this namespace.
+                nullable: true
+                type: string
+              templateCount:
+                default: 0
+                description: Number of templates using this namespace.
+                format: uint32
+                minimum: 0.0
+                type: integer
+            type: object
+        required:
+        - spec
+        title: PangeaNamespace
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

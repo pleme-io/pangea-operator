@@ -1,0 +1,18 @@
+apiVersion: v2
+name: pangea-operator
+description: Rust-based Kubernetes operator for Pangea infrastructure management
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/pleme-io/nexus
+sources:
+  - https://github.com/pleme-io/nexus/tree/main/pkgs/operators/pangea-operator
+maintainers:
+  - name: Pleme Engineering
+    email: engineering@pleme.io
+keywords:
+  - infrastructure
+  - terraform
+  - opentofu
+  - pangea
+  - kubernetes-operator

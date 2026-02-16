@@ -1,0 +1,35 @@
+---
+# Default PangeaNamespace using PostgreSQL backend
+# This configures the "default" Pangea namespace for state storage
+apiVersion: pangea.pleme.io/v1alpha1
+kind: PangeaNamespace
+metadata:
+  name: default
+  labels:
+    app.kubernetes.io/name: pangea
+    app.kubernetes.io/component: namespace
+    app.kubernetes.io/part-of: pangea
+spec:
+  description: "Default Pangea namespace for infrastructure templates"
+  backend:
+    type: pg
+    pg:
+      host: pangea-postgres-rw.pangea-system.svc
+      port: 5432
+      database: pangea_state
+      schemaPrefix: pangea_
+      sslMode: disable
+      secretRef:
+        name: pangea-postgres-connection
+        namespace: pangea-system
+        usernameKey: username
+        passwordKey: password
+      pool:
+        minConnections: 2
+        maxConnections: 10
+        idleTimeoutSecs: 600
+        acquireTimeoutSecs: 30
+  defaultTags:
+    Environment: staging
+    ManagedBy: Pangea
+    Platform: PLO

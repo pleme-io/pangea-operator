@@ -1,0 +1,19 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pangea-web
+  labels:
+    app.kubernetes.io/name: pangea
+    app.kubernetes.io/component: web
+    app.kubernetes.io/part-of: pangea
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: pangea
+    app.kubernetes.io/component: web

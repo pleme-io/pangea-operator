@@ -1,0 +1,18 @@
+# Trunk configuration for pangea-web development
+
+[build]
+target = "index.html"
+dist = "dist"
+
+[watch]
+ignore = ["dist", "target"]
+
+[serve]
+address = "127.0.0.1"
+port = 8080
+open = false
+
+[[hooks]]
+stage = "pre_build"
+command = "sh"
+command_arguments = ["-c", "cp styles.css dist/ 2>/dev/null || true"]

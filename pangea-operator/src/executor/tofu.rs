@@ -1,0 +1,273 @@
+//! OpenTofu command execution.
+
+use crate::error::{Error, Result};
+use std::collections::HashMap;
+use std::path::Path;
+use std::process::Stdio;
+use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
+use tracing::{debug, error, info, warn};
+
+/// OpenTofu command executor.
+pub struct TofuExecutor {
+    /// Path to the tofu binary.
+    binary: std::path::PathBuf,
+
+    /// Command timeout.
+    timeout: Duration,
+
+    /// Whether to enable verbose output.
+    verbose: bool,
+}
+
+/// OpenTofu command types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TofuCommand {
+    Init,
+    Plan,
+    Apply,
+    Destroy,
+    Show,
+    Output,
+    Refresh,
+}
+
+impl TofuCommand {
+    fn as_str(&self) -> &'static str {
+        match self {
+            TofuCommand::Init => "init",
+            TofuCommand::Plan => "plan",
+            TofuCommand::Apply => "apply",
+            TofuCommand::Destroy => "destroy",
+            TofuCommand::Show => "show",
+            TofuCommand::Output => "output",
+            TofuCommand::Refresh => "refresh",
+        }
+    }
+}
+
+/// Result of a tofu command execution.
+#[derive(Debug, Clone)]
+pub struct TofuResult {
+    /// Exit code.
+    pub exit_code: i32,
+
+    /// Standard output.
+    pub stdout: String,
+
+    /// Standard error.
+    pub stderr: String,
+
+    /// Whether the command succeeded.
+    pub success: bool,
+
+    /// Execution duration.
+    pub duration: Duration,
+}
+
+impl TofuResult {
+    /// Check if the plan has changes.
+    pub fn has_changes(&self) -> bool {
+        // OpenTofu returns exit code 2 when there are changes
+        self.exit_code == 2 || self.stdout.contains("Plan:")
+    }
+}
+
+impl TofuExecutor {
+    /// Create a new executor.
+    pub fn new(binary: std::path::PathBuf, timeout: Duration, verbose: bool) -> Self {
+        Self {
+            binary,
+            timeout,
+            verbose,
+        }
+    }
+
+    /// Run `tofu init`.
+    pub async fn init(&self, work_dir: &Path, extra_args: &[&str]) -> Result<TofuResult> {
+        let mut args = vec!["-input=false", "-no-color"];
+        args.extend(extra_args);
+        self.execute(TofuCommand::Init, work_dir, &args, &HashMap::new()).await
+    }
+
+    /// Run `tofu plan`.
+    pub async fn plan(
+        &self,
+        work_dir: &Path,
+        plan_file: Option<&Path>,
+        extra_args: &[&str],
+    ) -> Result<TofuResult> {
+        let mut args = vec!["-input=false", "-no-color", "-detailed-exitcode"];
+
+        if let Some(pf) = plan_file {
+            args.push("-out");
+            args.push(pf.to_str().unwrap());
+        }
+
+        args.extend(extra_args);
+        self.execute(TofuCommand::Plan, work_dir, &args, &HashMap::new()).await
+    }
+
+    /// Run `tofu apply`.
+    pub async fn apply(
+        &self,
+        work_dir: &Path,
+        plan_file: Option<&Path>,
+        auto_approve: bool,
+    ) -> Result<TofuResult> {
+        let mut args = vec!["-input=false", "-no-color"];
+
+        if auto_approve {
+            args.push("-auto-approve");
+        }
+
+        if let Some(pf) = plan_file {
+            args.push(pf.to_str().unwrap());
+        }
+
+        self.execute(TofuCommand::Apply, work_dir, &args, &HashMap::new()).await
+    }
+
+    /// Run `tofu destroy`.
+    pub async fn destroy(&self, work_dir: &Path, auto_approve: bool) -> Result<TofuResult> {
+        let mut args = vec!["-input=false", "-no-color"];
+
+        if auto_approve {
+            args.push("-auto-approve");
+        }
+
+        self.execute(TofuCommand::Destroy, work_dir, &args, &HashMap::new()).await
+    }
+
+    /// Run `tofu show` to parse plan output.
+    pub async fn show_plan(&self, work_dir: &Path, plan_file: &Path) -> Result<TofuResult> {
+        let args = vec!["-json", plan_file.to_str().unwrap()];
+        self.execute(TofuCommand::Show, work_dir, &args, &HashMap::new()).await
+    }
+
+    /// Run `tofu output` to get outputs.
+    pub async fn output(&self, work_dir: &Path) -> Result<TofuResult> {
+        let args = vec!["-json"];
+        self.execute(TofuCommand::Output, work_dir, &args, &HashMap::new()).await
+    }
+
+    /// Run `tofu refresh`.
+    pub async fn refresh(&self, work_dir: &Path) -> Result<TofuResult> {
+        let args = vec!["-input=false", "-no-color"];
+        self.execute(TofuCommand::Refresh, work_dir, &args, &HashMap::new()).await
+    }
+
+    /// Execute a tofu command.
+    async fn execute(
+        &self,
+        command: TofuCommand,
+        work_dir: &Path,
+        args: &[&str],
+        env: &HashMap<String, String>,
+    ) -> Result<TofuResult> {
+        let start = std::time::Instant::now();
+        let cmd_str = command.as_str();
+
+        info!(
+            command = cmd_str,
+            work_dir = ?work_dir,
+            args = ?args,
+            "Executing tofu command"
+        );
+
+        let mut cmd = Command::new(&self.binary);
+        cmd.arg(cmd_str)
+            .args(args)
+            .current_dir(work_dir)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .env("TF_IN_AUTOMATION", "1")
+            .env("TF_INPUT", "0");
+
+        // Add custom environment variables
+        for (key, value) in env {
+            cmd.env(key, value);
+        }
+
+        let mut child = cmd.spawn().map_err(|e| {
+            Error::TofuExecution(format!("Failed to spawn tofu: {}", e))
+        })?;
+
+        let stdout_handle = child.stdout.take().unwrap();
+        let stderr_handle = child.stderr.take().unwrap();
+
+        // Read output streams
+        let stdout_task = tokio::spawn(async move {
+            let mut lines = Vec::new();
+            let mut reader = BufReader::new(stdout_handle).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                lines.push(line);
+            }
+            lines.join("\n")
+        });
+
+        let stderr_task = tokio::spawn(async move {
+            let mut lines = Vec::new();
+            let mut reader = BufReader::new(stderr_handle).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                lines.push(line);
+            }
+            lines.join("\n")
+        });
+
+        // Wait with timeout
+        let wait_result = tokio::time::timeout(self.timeout, child.wait()).await;
+
+        let status = match wait_result {
+            Ok(Ok(status)) => status,
+            Ok(Err(e)) => {
+                return Err(Error::TofuExecution(format!("Failed to wait for tofu: {}", e)));
+            }
+            Err(_) => {
+                // Timeout - kill the process
+                error!(command = cmd_str, "Tofu command timed out");
+                let _ = child.kill().await;
+                return Err(Error::Timeout(self.timeout.as_secs()));
+            }
+        };
+
+        let stdout = stdout_task.await.unwrap_or_default();
+        let stderr = stderr_task.await.unwrap_or_default();
+
+        let exit_code = status.code().unwrap_or(-1);
+        let success = status.success() || (command == TofuCommand::Plan && exit_code == 2);
+        let duration = start.elapsed();
+
+        if self.verbose {
+            debug!(stdout = %stdout, "Tofu stdout");
+            if !stderr.is_empty() {
+                debug!(stderr = %stderr, "Tofu stderr");
+            }
+        }
+
+        if success {
+            info!(
+                command = cmd_str,
+                exit_code,
+                duration_secs = duration.as_secs_f64(),
+                "Tofu command completed"
+            );
+        } else {
+            warn!(
+                command = cmd_str,
+                exit_code,
+                stderr = %stderr,
+                "Tofu command failed"
+            );
+        }
+
+        Ok(TofuResult {
+            exit_code,
+            stdout,
+            stderr,
+            success,
+            duration,
+        })
+    }
+}

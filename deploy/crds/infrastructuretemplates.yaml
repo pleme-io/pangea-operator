@@ -1,0 +1,395 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: infrastructuretemplates.pangea.pleme.io
+spec:
+  group: pangea.pleme.io
+  names:
+    categories: []
+    kind: InfrastructureTemplate
+    plural: infrastructuretemplates
+    shortNames:
+    - infra
+    - it
+    singular: infrastructuretemplate
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.pangeaNamespace
+      name: Namespace
+      type: string
+    - jsonPath: .status.resources.total
+      name: Resources
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for InfrastructureTemplateSpec via `CustomResource`
+        properties:
+          spec:
+            description: InfrastructureTemplate represents a Pangea infrastructure template to be compiled, planned, and applied by the operator.
+            properties:
+              autoApprove:
+                default: false
+                description: Whether to automatically apply changes without manual approval.
+                type: boolean
+              complianceProfiles:
+                description: InSpec compliance profiles to run after apply.
+                items:
+                  type: string
+                type: array
+              pangeaNamespace:
+                description: Pangea namespace for state isolation. This determines the PostgreSQL schema used for state storage.
+                type: string
+              providerCredentials:
+                description: Provider credentials configuration.
+                nullable: true
+                properties:
+                  aws:
+                    description: AWS credentials configuration.
+                    nullable: true
+                    properties:
+                      region:
+                        description: Region to use for AWS operations.
+                        nullable: true
+                        type: string
+                      roleArn:
+                        description: Optional role ARN to assume.
+                        nullable: true
+                        type: string
+                      secretRef:
+                        description: Secret containing AWS credentials.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
+                  cloudflare:
+                    description: Cloudflare credentials configuration.
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing Cloudflare API token.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
+                type: object
+              refreshInterval:
+                default: 5m
+                description: Interval for drift detection checks. Defaults to "5m" (5 minutes).
+                type: string
+              retryPolicy:
+                description: Retry policy for failed operations.
+                nullable: true
+                properties:
+                  backoffSeconds:
+                    default: 30
+                    description: Base delay between retries in seconds.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  maxRetries:
+                    default: 3
+                    description: Maximum number of retry attempts.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                type: object
+              source:
+                description: Source of the infrastructure template.
+                properties:
+                  configMapRef:
+                    description: Reference to a ConfigMap containing the template.
+                    nullable: true
+                    properties:
+                      key:
+                        description: Key within the ConfigMap containing the template.
+                        type: string
+                      name:
+                        description: Name of the ConfigMap.
+                        type: string
+                      namespace:
+                        description: Namespace of the ConfigMap (defaults to same namespace as the InfrastructureTemplate).
+                        nullable: true
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                  gitRepository:
+                    description: Reference to a Git repository containing the template.
+                    nullable: true
+                    properties:
+                      path:
+                        description: Path to the template file within the repository.
+                        type: string
+                      ref:
+                        default: main
+                        description: Git reference (branch, tag, or commit SHA).
+                        type: string
+                      secretRef:
+                        description: Reference to a Secret containing Git credentials.
+                        nullable: true
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      url:
+                        description: Git repository URL.
+                        type: string
+                    required:
+                    - path
+                    - url
+                    type: object
+                  inline:
+                    description: Inline Ruby DSL template content.
+                    nullable: true
+                    type: string
+                type: object
+              suspend:
+                default: false
+                description: Suspend reconciliation for this template.
+                type: boolean
+              templateName:
+                description: Optional specific template name to deploy if the source file contains multiple templates.
+                nullable: true
+                type: string
+              variables:
+                additionalProperties: true
+                description: Variables to pass to the template during compilation.
+                nullable: true
+                type: object
+            required:
+            - pangeaNamespace
+            - source
+            type: object
+          status:
+            description: Status of an InfrastructureTemplate.
+            nullable: true
+            properties:
+              compliance:
+                description: Compliance check results.
+                nullable: true
+                properties:
+                  failedControls:
+                    description: Number of failed controls.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  lastCheckAt:
+                    description: Last compliance check timestamp.
+                    format: date-time
+                    type: string
+                  passedControls:
+                    description: Number of passed controls.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  profiles:
+                    description: Per-profile results.
+                    items:
+                      description: Result for a single compliance profile.
+                      properties:
+                        failedControlIds:
+                          description: IDs of failed controls.
+                          items:
+                            type: string
+                          type: array
+                        profile:
+                          description: Profile name.
+                          type: string
+                        score:
+                          description: Profile score (0-100).
+                          format: double
+                          type: number
+                        status:
+                          description: Profile status (compliant, non-compliant).
+                          type: string
+                      required:
+                      - profile
+                      - score
+                      - status
+                      type: object
+                    type: array
+                  score:
+                    description: Compliance score (0-100).
+                    format: double
+                    type: number
+                  skippedControls:
+                    description: Number of skipped controls.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  status:
+                    description: Overall compliance status.
+                    type: string
+                required:
+                - failedControls
+                - lastCheckAt
+                - passedControls
+                - score
+                - skippedControls
+                - status
+                type: object
+              conditions:
+                description: Conditions representing the current state.
+                items:
+                  description: Kubernetes-style condition.
+                  properties:
+                    lastTransitionTime:
+                      description: Last time the condition transitioned.
+                      format: date-time
+                      type: string
+                    message:
+                      description: Human-readable message.
+                      type: string
+                    reason:
+                      description: Machine-readable reason for the condition.
+                      type: string
+                    status:
+                      description: Status of the condition (True, False, Unknown).
+                      type: string
+                    type:
+                      description: Type of condition.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              failureCount:
+                default: 0
+                description: Number of consecutive failures.
+                format: uint32
+                minimum: 0.0
+                type: integer
+              lastAppliedAt:
+                description: Timestamp of the last successful apply.
+                format: date-time
+                nullable: true
+                type: string
+              lastAppliedRevision:
+                description: Last successfully applied revision (content hash or git commit).
+                nullable: true
+                type: string
+              lastDriftCheckAt:
+                description: Timestamp of the last drift check.
+                format: date-time
+                nullable: true
+                type: string
+              lastError:
+                description: Last error message if in Failed state.
+                nullable: true
+                type: string
+              lastPlannedAt:
+                description: Timestamp of the last successful plan.
+                format: date-time
+                nullable: true
+                type: string
+              observedGeneration:
+                default: 0
+                description: Last observed generation of the spec.
+                format: int64
+                type: integer
+              outputs:
+                additionalProperties: true
+                description: Outputs from the last successful apply.
+                nullable: true
+                type: object
+              phase:
+                description: Current phase of the template lifecycle.
+                enum:
+                - Pending
+                - Compiling
+                - Initializing
+                - Planning
+                - Applying
+                - Ready
+                - Drifted
+                - Failed
+                - Destroying
+                nullable: true
+                type: string
+              planSummary:
+                description: Human-readable summary of the last plan.
+                nullable: true
+                type: string
+              resources:
+                description: Summary of managed resources.
+                nullable: true
+                properties:
+                  added:
+                    default: 0
+                    description: Resources to be added in the pending plan.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  changed:
+                    default: 0
+                    description: Resources to be changed in the pending plan.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  destroyed:
+                    default: 0
+                    description: Resources to be destroyed in the pending plan.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  total:
+                    default: 0
+                    description: Total number of managed resources.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                type: object
+              stateKey:
+                description: PostgreSQL state key path.
+                nullable: true
+                type: string
+            type: object
+        required:
+        - spec
+        title: InfrastructureTemplate
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

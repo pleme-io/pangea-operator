@@ -1,0 +1,134 @@
+# Pangea Operator Helm Values
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/pleme-io/nexus/pangea-operator
+  pullPolicy: IfNotPresent
+  tag: ""  # Defaults to appVersion
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "9090"
+  prometheus.io/path: "/metrics"
+
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+
+# Operator configuration
+config:
+  # Log format: pretty or json
+  logFormat: json
+  # Log level via RUST_LOG
+  logLevel: "info,pangea_operator=debug"
+  # Health server address
+  healthAddr: "0.0.0.0:8080"
+  # Metrics server address
+  metricsAddr: "0.0.0.0:9090"
+  # GraphQL server address
+  graphqlAddr: "0.0.0.0:8081"
+  # gRPC server address
+  grpcAddr: "0.0.0.0:50051"
+  # OpenTelemetry endpoint (optional)
+  otelEndpoint: ""
+
+# Service configuration
+service:
+  type: ClusterIP
+  ports:
+    health: 8080
+    metrics: 9090
+    graphql: 8081
+    grpc: 50051
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Leader election settings
+leaderElection:
+  enabled: true
+  leaseDuration: 15s
+  renewDeadline: 10s
+  retryPeriod: 2s
+
+# Compiler sidecar configuration (Ruby Pangea gem)
+compilerSidecar:
+  enabled: true
+  image:
+    repository: ghcr.io/pleme-io/nexus/pangea-compiler
+    tag: latest
+    pullPolicy: IfNotPresent
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Ingress configuration for GraphQL API
+ingress:
+  enabled: false
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+  hosts:
+    - host: pangea-api.quero.local
+      paths:
+        - path: /
+          pathType: Prefix
+          port: 8081
+  tls: []
+
+# API authentication
+auth:
+  # Enable API token authentication
+  enabled: true
+  # Reference to existing secret containing API_TOKEN key
+  existingSecret: ""
+  # Secret key name (if using existingSecret)
+  secretKey: "API_TOKEN"
+  # Create secret with this token value (only if existingSecret is empty)
+  token: ""
+
+# ServiceMonitor for Prometheus Operator
+serviceMonitor:
+  enabled: false
+  namespace: ""
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}

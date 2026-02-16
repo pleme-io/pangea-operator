@@ -1,0 +1,81 @@
+//! OpenTofu executor for infrastructure operations.
+//!
+//! Manages the execution of OpenTofu commands (init, plan, apply, destroy)
+//! in isolated workspaces with proper credential and state handling.
+
+mod tofu;
+mod workspace;
+mod plan;
+
+pub use tofu::{TofuExecutor, TofuCommand, TofuResult};
+pub use workspace::{Workspace, WorkspaceManager};
+pub use plan::{Plan, PlanSummary, ResourceChange, ChangeType};
+
+use crate::crd::InfrastructureTemplate;
+use crate::error::Result;
+use std::path::PathBuf;
+
+/// Configuration for the executor.
+#[derive(Debug, Clone)]
+pub struct ExecutorConfig {
+    /// Path to the OpenTofu binary.
+    pub tofu_binary: PathBuf,
+
+    /// Base directory for workspaces.
+    pub workspace_base: PathBuf,
+
+    /// Command execution timeout in seconds.
+    pub timeout_secs: u64,
+
+    /// Path to Ruby binary for compilation.
+    pub ruby_binary: Option<PathBuf>,
+
+    /// Whether to enable verbose output.
+    pub verbose: bool,
+}
+
+impl Default for ExecutorConfig {
+    fn default() -> Self {
+        Self {
+            tofu_binary: PathBuf::from("tofu"),
+            workspace_base: PathBuf::from("/tmp/pangea-workspaces"),
+            timeout_secs: 600, // 10 minutes
+            ruby_binary: None,
+            verbose: false,
+        }
+    }
+}
+
+impl ExecutorConfig {
+    /// Create from environment variables.
+    pub fn from_env() -> Self {
+        let tofu_binary = std::env::var("TOFU_BINARY")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("tofu"));
+
+        let workspace_base = std::env::var("PANGEA_WORKSPACE_BASE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("/tmp/pangea-workspaces"));
+
+        let timeout_secs = std::env::var("PANGEA_TIMEOUT")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(600);
+
+        let ruby_binary = std::env::var("RUBY_BINARY")
+            .map(PathBuf::from)
+            .ok();
+
+        let verbose = std::env::var("PANGEA_VERBOSE")
+            .map(|s| s == "1" || s.to_lowercase() == "true")
+            .unwrap_or(false);
+
+        Self {
+            tofu_binary,
+            workspace_base,
+            timeout_secs,
+            ruby_binary,
+            verbose,
+        }
+    }
+}

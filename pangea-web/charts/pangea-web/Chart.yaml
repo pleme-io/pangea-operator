@@ -1,0 +1,17 @@
+apiVersion: v2
+name: pangea-web
+description: Yew/WASM frontend for Pangea infrastructure management
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+maintainers:
+  - name: Pleme Engineering
+    email: engineering@pleme.io
+sources:
+  - https://github.com/pleme-io/nexus
+keywords:
+  - pangea
+  - infrastructure
+  - yew
+  - wasm
+  - frontend
