@@ -18,6 +18,10 @@
     };
     # Reference nexus flake for nexus-deploy
     nexus.url = "path:../../..";
+    devenv = {
+      url = "github:cachix/devenv";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = { self, nixpkgs, flake-utils, rust-overlay, crane, fenix, nexus }:
