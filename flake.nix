@@ -15,45 +15,20 @@
   };
 
   outputs = { self, nixpkgs, substrate, crate2nix, forge }:
-    let
-      baseOutputs = (import "${substrate}/lib/build/rust/service-flake.nix" {
-        inherit nixpkgs substrate forge crate2nix;
-      }) {
-        inherit self;
-        serviceName = "pangea-operator";
-        registry = "ghcr.io/pleme-io/pangea-operator";
-        packageName = "pangea-operator";
-        moduleDir = null;
-        nixosModuleFile = null;
-      };
+    (import "${substrate}/lib/build/rust/service-flake.nix" {
+      inherit nixpkgs substrate forge crate2nix;
+    }) {
+      inherit self;
+      serviceName = "pangea-operator";
+      registry = "ghcr.io/pleme-io/pangea-operator";
+      packageName = "pangea-operator";
+      moduleDir = null;
+      nixosModuleFile = null;
 
-      # Add opentofu and git to the Docker image for each system
-      addRuntimeDeps = system: let
-        pkgs = import nixpkgs { inherit system; };
-        targetSystem = if system == "aarch64-darwin" then "aarch64-linux" else "x86_64-linux";
-        targetPkgs = import nixpkgs { system = targetSystem; };
-
-        baseImage = baseOutputs.packages.${system}.${"dockerImage-" + (if system == "aarch64-darwin" then "arm64" else "amd64")} or null;
-      in if baseImage == null then {} else {
-        # Override the Docker image to include opentofu and git
-        ${"dockerImage-" + (if system == "aarch64-darwin" then "arm64" else "amd64")} =
-          targetPkgs.dockerTools.buildLayeredImage {
-            name = "pangea-operator-service";
-            tag = "latest";
-            architecture = if system == "aarch64-darwin" then "arm64" else "amd64";
-            fromImage = baseImage;
-            contents = with targetPkgs; [
-              opentofu
-              git
-              busybox  # for basic shell commands
-            ];
-          };
-      };
-    in baseOutputs // {
-      packages = baseOutputs.packages // {
-        "aarch64-darwin" = (baseOutputs.packages."aarch64-darwin" or {}) // (addRuntimeDeps "aarch64-darwin");
-        "x86_64-linux" = (baseOutputs.packages."x86_64-linux" or {}) // (addRuntimeDeps "x86_64-linux");
-        "aarch64-linux" = (baseOutputs.packages."aarch64-linux" or {}) // (addRuntimeDeps "aarch64-linux");
-      };
+      # Runtime dependencies for the operator container image.
+      # tofu: runs terraform/opentofu operations on infrastructure templates
+      # git: clones git repository template sources
+      # busybox: basic shell utilities for workspace management
+      extraContents = pkgs: with pkgs; [ opentofu git busybox ];
     };
 }

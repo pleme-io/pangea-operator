@@ -22,9 +22,9 @@ use std::time::Duration;
 use tracing::{debug, error, info, instrument, warn};
 
 use super::{
-    conditions_for_phase, conditions_for_suspended, create_condition, exponential_backoff,
-    parse_duration, ControllerState, ReconcileAction, DEFAULT_REQUEUE_INTERVAL,
-    ERROR_REQUEUE_INTERVAL, SHORT_REQUEUE_INTERVAL,
+    conditions_for_phase, conditions_for_suspended, exponential_backoff, parse_duration,
+    ControllerState, ReconcileAction, DEFAULT_REQUEUE_INTERVAL, ERROR_REQUEUE_INTERVAL,
+    SHORT_REQUEUE_INTERVAL,
 };
 
 /// Finalizer name for cleanup on deletion.

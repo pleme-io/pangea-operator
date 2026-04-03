@@ -1,7 +1,7 @@
 //! Core reconciliation types and utilities.
 
 use crate::crd::Phase;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use std::time::Duration;
 
 /// Default requeue interval for successful reconciliation.
