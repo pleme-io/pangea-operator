@@ -60,6 +60,9 @@ prometheus = "0.13"
 thiserror.workspace = true
 anyhow.workspace = true
 
+# HTTP client (for compiler sidecar)
+reqwest.workspace = true
+
 # Utilities
 chrono = { workspace = true, features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }

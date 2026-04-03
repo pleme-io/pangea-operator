@@ -13,7 +13,7 @@ pub use postgres::PostgresBackend;
 pub use schema::SchemaManager;
 pub use state::StateStore;
 pub use lock::{StateLock, LockGuard};
-pub use config::BackendConfigGenerator;
+pub use config::{BackendConfigGenerator, AwsCredentialsConfig, CloudflareCredentialsConfig};
 
 use crate::crd::PangeaNamespace;
 use crate::error::Result;

@@ -12,8 +12,10 @@ pub use template_controller::TemplateController;
 pub use namespace_controller::NamespaceController;
 
 use crate::error::Result;
+use crate::executor::{ExecutorConfig, TofuExecutor, WorkspaceManager};
 use kube::Client;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 
 /// Shared state for all controllers.
@@ -27,15 +29,40 @@ pub struct ControllerState {
 
     /// PostgreSQL connection pool (if configured).
     pub db_pool: Option<Arc<RwLock<sqlx::PgPool>>>,
+
+    /// OpenTofu executor for running infrastructure commands.
+    pub executor: Arc<TofuExecutor>,
+
+    /// Workspace manager for isolated template directories.
+    pub workspace_manager: Arc<WorkspaceManager>,
 }
 
 impl ControllerState {
-    /// Create new controller state.
-    pub async fn new(client: Client, metrics: Arc<crate::observability::Metrics>) -> Result<Self> {
+    /// Create new controller state with executor configuration.
+    pub async fn new(
+        client: Client,
+        metrics: Arc<crate::observability::Metrics>,
+        executor_config: ExecutorConfig,
+    ) -> Result<Self> {
+        let executor = Arc::new(TofuExecutor::new(
+            executor_config.tofu_binary.clone(),
+            Duration::from_secs(executor_config.timeout_secs),
+            executor_config.verbose,
+        ));
+
+        let workspace_manager = Arc::new(WorkspaceManager::new(
+            executor_config.workspace_base.clone(),
+        ));
+
+        // Ensure workspace base directory exists
+        workspace_manager.init().await?;
+
         Ok(Self {
             client,
             metrics,
             db_pool: None,
+            executor,
+            workspace_manager,
         })
     }
 

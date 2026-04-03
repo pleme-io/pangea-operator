@@ -4,6 +4,7 @@ use pangea_operator::{
     controller::{ControllerState, NamespaceController, TemplateController},
     crd::generate_crds,
     error::Result,
+    executor::ExecutorConfig,
     observability::{init_tracing, run_health_server, Metrics},
 };
 
@@ -102,8 +103,17 @@ async fn main() -> Result<()> {
     // Initialize metrics
     let metrics = Arc::new(Metrics::new());
 
+    // Load executor configuration from environment
+    let executor_config = ExecutorConfig::from_env();
+    info!(
+        tofu_binary = ?executor_config.tofu_binary,
+        workspace_base = ?executor_config.workspace_base,
+        timeout_secs = executor_config.timeout_secs,
+        "Executor configuration loaded"
+    );
+
     // Create controller state
-    let state = ControllerState::new(client.clone(), metrics.clone()).await?;
+    let state = ControllerState::new(client.clone(), metrics.clone(), executor_config).await?;
 
     // Spawn health/metrics server
     let health_metrics = metrics.clone();

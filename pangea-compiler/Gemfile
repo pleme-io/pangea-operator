@@ -1,0 +1,19 @@
+source "https://rubygems.org"
+
+gem "sinatra", "~> 4.0"
+gem "puma", "~> 6.0"
+gem "json"
+
+# Pangea provider gems (local paths for dev, rubygems for production)
+gem "pangea-core"
+gem "pangea-aws"
+gem "pangea-akeyless"
+gem "pangea-cloudflare"
+gem "pangea-azure"
+gem "pangea-gcp"
+gem "pangea-hcloud"
+gem "pangea-kubernetes"
+gem "pangea-datadog"
+gem "pangea-splunk"
+
+gem "terraform-synthesizer", "~> 0.0.28"

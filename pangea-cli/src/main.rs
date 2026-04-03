@@ -82,6 +82,33 @@ enum Commands {
         namespace: Option<String>,
     },
 
+    /// Import existing Terraform state into pangea-operator
+    Import {
+        /// Path to the local Terraform state directory
+        #[arg(long)]
+        state_dir: String,
+
+        /// Target template name to create
+        #[arg(long)]
+        template_name: String,
+
+        /// Target Kubernetes namespace for the template
+        #[arg(long, short, default_value = "default")]
+        namespace: String,
+
+        /// PangeaNamespace to use for state storage
+        #[arg(long, default_value = "development")]
+        pangea_namespace: String,
+
+        /// Enable auto-approve on the imported template
+        #[arg(long)]
+        auto_approve: bool,
+
+        /// Enable destroy protection (recommended for bootstrap infrastructure)
+        #[arg(long)]
+        destroy_protection: bool,
+    },
+
     /// Stream logs for a template
     Logs {
         /// Template reference (namespace/name or just name)
@@ -158,6 +185,27 @@ async fn main() -> Result<()> {
 
         Commands::Approve { template, namespace } => {
             template::approve(&client, &template, namespace.as_deref(), cli.output).await?;
+        }
+
+        Commands::Import {
+            state_dir,
+            template_name,
+            namespace,
+            pangea_namespace,
+            auto_approve,
+            destroy_protection,
+        } => {
+            commands::import::import_state(
+                &client,
+                &state_dir,
+                &template_name,
+                &namespace,
+                &pangea_namespace,
+                auto_approve,
+                destroy_protection,
+                cli.output,
+            )
+            .await?;
         }
 
         Commands::Logs {

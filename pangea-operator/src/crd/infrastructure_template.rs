@@ -25,6 +25,7 @@ use strum::{Display, EnumString};
     printcolumn = r#"{"name":"Phase","type":"string","jsonPath":".status.phase"}"#,
     printcolumn = r#"{"name":"Namespace","type":"string","jsonPath":".spec.pangeaNamespace"}"#,
     printcolumn = r#"{"name":"Resources","type":"integer","jsonPath":".status.resources.total"}"#,
+    printcolumn = r#"{"name":"Protected","type":"boolean","jsonPath":".spec.destroyProtection"}"#,
     printcolumn = r#"{"name":"Age","type":"date","jsonPath":".metadata.creationTimestamp"}"#
 )]
 #[serde(rename_all = "camelCase")]
@@ -58,6 +59,18 @@ pub struct InfrastructureTemplateSpec {
     /// Suspend reconciliation for this template.
     #[serde(default)]
     pub suspend: bool,
+
+    /// Prevent destruction of the managed infrastructure.
+    ///
+    /// When enabled, the operator will refuse to run `tofu destroy` even if
+    /// the CR is deleted. Plan and apply continue to work normally for drift
+    /// correction. This is critical for self-managed bootstrap infrastructure
+    /// — the cluster, database, and network that the operator itself runs on.
+    ///
+    /// To actually destroy protected infrastructure, first set this to false,
+    /// then delete the CR.
+    #[serde(default)]
+    pub destroy_protection: bool,
 
     /// Retry policy for failed operations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -256,6 +269,17 @@ pub struct InfrastructureTemplateStatus {
     /// Last error message if in Failed state.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+
+    /// Hash of the pending plan awaiting approval.
+    /// Set by the operator after planning. Users approve by copying this
+    /// value to `approvedPlanHash` via kubectl patch or GraphQL mutation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_plan_hash: Option<String>,
+
+    /// Hash of the approved plan. Set by the user to approve a pending plan.
+    /// When this matches `pendingPlanHash`, the operator proceeds to apply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_plan_hash: Option<String>,
 
     /// Compliance check results.
     #[serde(default, skip_serializing_if = "Option::is_none")]
