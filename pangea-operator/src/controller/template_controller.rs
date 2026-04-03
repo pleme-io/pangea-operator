@@ -22,8 +22,9 @@ use std::time::Duration;
 use tracing::{debug, error, info, instrument, warn};
 
 use super::{
-    create_condition, exponential_backoff, parse_duration, ControllerState, ReconcileAction,
-    DEFAULT_REQUEUE_INTERVAL, ERROR_REQUEUE_INTERVAL, SHORT_REQUEUE_INTERVAL,
+    conditions_for_phase, conditions_for_suspended, create_condition, exponential_backoff,
+    parse_duration, ControllerState, ReconcileAction, DEFAULT_REQUEUE_INTERVAL,
+    ERROR_REQUEUE_INTERVAL, SHORT_REQUEUE_INTERVAL,
 };
 
 /// Finalizer name for cleanup on deletion.
@@ -137,9 +138,21 @@ async fn reconcile_template(
         return Ok(Action::requeue(Duration::from_secs(1)));
     }
 
-    // Check if suspended
+    // Check if suspended — emit conditions so FluxCD sees definitive state
     if template.spec.suspend {
         info!("Template is suspended, skipping reconciliation");
+        let ns = template.namespace().unwrap_or_default();
+        let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &ns);
+        let patch = serde_json::json!({
+            "status": { "conditions": conditions_for_suspended() }
+        });
+        let _ = api
+            .patch_status(
+                &name,
+                &PatchParams::apply("pangea-operator"),
+                &Patch::Merge(&patch),
+            )
+            .await;
         return Ok(Action::requeue(DEFAULT_REQUEUE_INTERVAL));
     }
 
@@ -844,6 +857,8 @@ async fn update_phase(
     let mut status = template.status.clone().unwrap_or_default();
     status.phase = Some(phase);
     status.observed_generation = template.metadata.generation.unwrap_or(0);
+    // Always set conditions so FluxCD healthChecks see current state
+    status.conditions = conditions_for_phase(phase, None);
 
     // Clear error on non-Failed transitions
     if phase != Phase::Failed {
@@ -887,12 +902,7 @@ async fn update_phase_with_error(
     status.observed_generation = template.metadata.generation.unwrap_or(0);
     status.last_error = Some(error_msg.to_string());
     status.failure_count = status.failure_count.saturating_add(1);
-    status.conditions.push(create_condition(
-        "Ready",
-        false,
-        "OperationFailed",
-        error_msg,
-    ));
+    status.conditions = conditions_for_phase(phase, Some(error_msg));
 
     let patch = serde_json::json!({ "status": status });
 
@@ -952,12 +962,7 @@ async fn update_apply_status(
     // Clear approval hashes after successful apply
     status.pending_plan_hash = None;
     status.approved_plan_hash = None;
-    status.conditions = vec![create_condition(
-        "Ready",
-        true,
-        "ApplySucceeded",
-        "Infrastructure applied successfully",
-    )];
+    status.conditions = conditions_for_phase(Phase::Ready, None);
 
     let patch = serde_json::json!({ "status": status });
 

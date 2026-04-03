@@ -100,6 +100,52 @@ pub fn create_condition(
     }
 }
 
+/// Generate the canonical set of conditions for a given phase.
+///
+/// FluxCD healthChecks watches `status.conditions[type=Ready]`. This
+/// function ensures every phase transition emits well-defined conditions
+/// so FluxCD can determine readiness at any point.
+pub fn conditions_for_phase(phase: Phase, error_msg: Option<&str>) -> Vec<crate::crd::Condition> {
+    let (ready, reconciling, drift) = match phase {
+        Phase::Pending => (false, false, false),
+        Phase::Compiling => (false, true, false),
+        Phase::Initializing => (false, true, false),
+        Phase::Planning => (false, true, false),
+        Phase::Applying => (false, true, false),
+        Phase::Ready => (true, false, false),
+        Phase::Drifted => (false, false, true),
+        Phase::Failed => (false, false, false),
+        Phase::Destroying => (false, false, false),
+    };
+
+    let reason = format!("{}", phase);
+
+    let message = match (phase, error_msg) {
+        (_, Some(msg)) => msg.to_string(),
+        (Phase::Ready, _) => "Infrastructure is up to date".into(),
+        (Phase::Drifted, _) => "Infrastructure drift detected".into(),
+        (Phase::Failed, _) => "Operation failed".into(),
+        (Phase::Pending, _) => "Waiting to be processed".into(),
+        (Phase::Destroying, _) => "Infrastructure is being destroyed".into(),
+        (phase, _) => format!("{} in progress", phase),
+    };
+
+    vec![
+        create_condition("Ready", ready, &reason, &message),
+        create_condition("Reconciling", reconciling, &reason, &message),
+        create_condition("DriftDetected", drift, &reason, &message),
+    ]
+}
+
+/// Generate conditions for a suspended template.
+pub fn conditions_for_suspended() -> Vec<crate::crd::Condition> {
+    vec![
+        create_condition("Ready", false, "Suspended", "Template reconciliation is suspended"),
+        create_condition("Reconciling", false, "Suspended", "Template reconciliation is suspended"),
+        create_condition("DriftDetected", false, "Suspended", "Template reconciliation is suspended"),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,5 +173,44 @@ mod tests {
         assert_eq!(next_phase(Phase::Pending, true), Phase::Compiling);
         assert_eq!(next_phase(Phase::Compiling, true), Phase::Initializing);
         assert_eq!(next_phase(Phase::Planning, false), Phase::Failed);
+    }
+
+    #[test]
+    fn test_conditions_for_phase_ready() {
+        let conditions = conditions_for_phase(Phase::Ready, None);
+        assert_eq!(conditions.len(), 3);
+        assert_eq!(conditions[0].r#type, "Ready");
+        assert_eq!(conditions[0].status, "True");
+        assert_eq!(conditions[1].r#type, "Reconciling");
+        assert_eq!(conditions[1].status, "False");
+        assert_eq!(conditions[2].r#type, "DriftDetected");
+        assert_eq!(conditions[2].status, "False");
+    }
+
+    #[test]
+    fn test_conditions_for_phase_compiling() {
+        let conditions = conditions_for_phase(Phase::Compiling, None);
+        assert_eq!(conditions[0].r#type, "Ready");
+        assert_eq!(conditions[0].status, "False");
+        assert_eq!(conditions[1].r#type, "Reconciling");
+        assert_eq!(conditions[1].status, "True");
+        assert_eq!(conditions[2].r#type, "DriftDetected");
+        assert_eq!(conditions[2].status, "False");
+    }
+
+    #[test]
+    fn test_conditions_for_phase_drifted() {
+        let conditions = conditions_for_phase(Phase::Drifted, None);
+        assert_eq!(conditions[0].status, "False"); // Ready
+        assert_eq!(conditions[1].status, "False"); // Reconciling
+        assert_eq!(conditions[2].status, "True"); // DriftDetected
+    }
+
+    #[test]
+    fn test_conditions_for_phase_failed_with_error() {
+        let conditions = conditions_for_phase(Phase::Failed, Some("tofu plan failed"));
+        assert_eq!(conditions[0].status, "False");
+        assert_eq!(conditions[0].reason, "Failed");
+        assert_eq!(conditions[0].message, "tofu plan failed");
     }
 }
