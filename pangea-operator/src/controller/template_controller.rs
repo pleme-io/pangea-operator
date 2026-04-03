@@ -373,8 +373,8 @@ async fn handle_compiling(
             "template_name": template.spec.template_name,
         });
 
-        let client = reqwest::Client::new();
-        let response = client
+        let http = reqwest::Client::new();
+        let resp = http
             .post(format!("{}/compile", compiler_url))
             .json(&compile_request)
             .timeout(Duration::from_secs(120))
@@ -382,16 +382,16 @@ async fn handle_compiling(
             .await
             .map_err(|e| Error::Compilation(format!("Compiler sidecar request failed: {}", e)))?;
 
-        if !response.status().is_success() {
-            let error_body = response.text().await.unwrap_or_default();
+        if !resp.status().is_success() {
+            let error_body: String = resp.text().await.unwrap_or_default();
             return Err(Error::Compilation(format!(
                 "Compiler returned error: {}",
                 error_body
             )));
         }
 
-        let compile_result: serde_json::Value = response
-            .json()
+        let compile_result: serde_json::Value = resp
+            .json::<serde_json::Value>()
             .await
             .map_err(|e| Error::Compilation(format!("Failed to parse compiler response: {}", e)))?;
 
