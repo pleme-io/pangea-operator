@@ -773,7 +773,7 @@ async fn handle_failed(
 
     if template.retries_exhausted() {
         warn!("Retries exhausted, not requeuing");
-        return Ok(ReconcileAction::Requeue(Duration::from_secs(3600))); // Check hourly
+        return Ok(ReconcileAction::Requeue(Duration::from_secs(3600)));
     }
 
     let backoff = exponential_backoff(
@@ -786,6 +786,13 @@ async fn handle_failed(
             .unwrap_or(30),
         600,
     );
+
+    // Clean workspace and restart from Pending on retry
+    info!("Cleaning workspace and retrying from Pending");
+    let workspace = state.workspace_manager.get_workspace(template).await?;
+    workspace.clean().await?;
+    update_phase(template, Phase::Pending, state).await?;
+    record_event(template, state, EventType::Normal, "Retry", &format!("Retrying after failure (attempt {})", failure_count)).await;
 
     Ok(ReconcileAction::Requeue(backoff))
 }
