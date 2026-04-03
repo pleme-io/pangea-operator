@@ -156,12 +156,33 @@ async fn reconcile_template(
         return Ok(Action::requeue(DEFAULT_REQUEUE_INTERVAL));
     }
 
-    // Determine current phase
+    // Detect spec changes (generation mismatch) — clean workspace and restart from Pending.
+    // This ensures stale .terraform state, lock files, and cached providers are cleared
+    // when the template source or configuration changes.
+    let observed_gen = template
+        .status
+        .as_ref()
+        .map(|s| s.observed_generation)
+        .unwrap_or(0);
+    let current_gen = template.metadata.generation.unwrap_or(0);
     let current_phase = template
         .status
         .as_ref()
         .and_then(|s| s.phase)
         .unwrap_or(Phase::Pending);
+
+    if current_gen != observed_gen && current_phase != Phase::Pending && current_phase != Phase::Destroying {
+        info!(
+            current_gen,
+            observed_gen,
+            "Spec changed — cleaning workspace and restarting from Pending"
+        );
+        let workspace = state.workspace_manager.get_workspace(&template).await?;
+        workspace.clean().await?;
+        update_phase(&template, Phase::Pending, &state).await?;
+        record_event(&template, &state, EventType::Normal, "SpecChanged", "Template spec changed, restarting reconciliation").await;
+        return Ok(Action::requeue(SHORT_REQUEUE_INTERVAL));
+    }
 
     let action = match current_phase {
         Phase::Pending => handle_pending(&template, &state).await?,
