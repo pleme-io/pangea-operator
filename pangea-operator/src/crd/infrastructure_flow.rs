@@ -251,12 +251,22 @@ pub struct FlowStepStatus {
 
     /// Full terraform state snapshot (from `tofu show -json`).
     /// Enables {{ steps.X.state.resource_type.resource_name.attribute }} references.
+    /// Stored as an opaque JSON object.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "opaque_json_schema")]
     pub state: Option<serde_json::Value>,
 
     /// Whether workspace has been pre-initialized (warm-up).
     #[serde(default)]
     pub warmed_up: bool,
+}
+
+/// Generate an opaque JSON object schema (type: object with no properties).
+fn opaque_json_schema(_gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+    schemars::schema::Schema::Object(schemars::schema::SchemaObject {
+        instance_type: Some(schemars::schema::InstanceType::Object.into()),
+        ..Default::default()
+    })
 }
 
 impl InfrastructureFlow {
