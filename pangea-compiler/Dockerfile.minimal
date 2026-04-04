@@ -1,0 +1,22 @@
+FROM ruby:3.3-alpine
+
+RUN apk add --no-cache build-base
+
+WORKDIR /app
+
+# Minimal Gemfile — just the synthesizer framework, no pangea provider gems
+RUN echo 'source "https://rubygems.org"' > Gemfile && \
+    echo 'gem "sinatra", "~> 4.0"' >> Gemfile && \
+    echo 'gem "puma", "~> 6.0"' >> Gemfile && \
+    echo 'gem "json"' >> Gemfile && \
+    echo 'gem "terraform-synthesizer", "~> 0.0.28"' >> Gemfile
+
+RUN bundle install --jobs 4
+
+COPY app.rb .
+COPY config.ru .
+
+EXPOSE 8082
+
+USER 65534:65534
+CMD ["bundle", "exec", "puma", "-p", "8082", "-b", "tcp://0.0.0.0"]
