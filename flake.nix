@@ -7,7 +7,10 @@
       url = "github:pleme-io/substrate";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    crate2nix.url = "github:nix-community/crate2nix";
+    crate2nix = {
+      url = "github:nix-community/crate2nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     forge = {
       url = "github:pleme-io/forge";
       inputs.nixpkgs.follows = "nixpkgs";
