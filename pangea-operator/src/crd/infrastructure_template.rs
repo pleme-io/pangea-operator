@@ -72,6 +72,19 @@ pub struct InfrastructureTemplateSpec {
     #[serde(default)]
     pub destroy_protection: bool,
 
+    /// Cross-template variable references. Resolved before compilation by
+    /// fetching the referenced template's outputs.
+    ///
+    /// Example:
+    /// ```yaml
+    /// variableRefs:
+    ///   vpc_id:
+    ///     templateRef: { name: vpc-template }
+    ///     outputKey: vpc_id
+    /// ```
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variable_refs: Option<BTreeMap<String, VariableRef>>,
+
     /// Retry policy for failed operations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_policy: Option<RetryPolicy>,
@@ -152,6 +165,29 @@ pub struct SecretRef {
     pub name: String,
 
     /// Namespace of the Secret (defaults to same namespace as the resource).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+}
+
+/// Cross-template variable reference. Fetches an output from another template.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct VariableRef {
+    /// Reference to the source template.
+    pub template_ref: TemplateObjectRef,
+
+    /// Key in the source template's status.outputs to read.
+    pub output_key: String,
+}
+
+/// Reference to another InfrastructureTemplate.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TemplateObjectRef {
+    /// Name of the InfrastructureTemplate.
+    pub name: String,
+
+    /// Namespace (defaults to same namespace as the referencing template).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub namespace: Option<String>,
 }

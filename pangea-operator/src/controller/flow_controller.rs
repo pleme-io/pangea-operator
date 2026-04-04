@@ -152,6 +152,8 @@ async fn reconcile_flow(
                     template_name: Some(template_name.clone()),
                     dependencies_ready: deps_ready,
                     last_error: template.status.as_ref().and_then(|s| s.last_error.clone()),
+                    state: None,
+                    warmed_up: false,
                 });
             }
             Ok(None) => {
@@ -169,6 +171,8 @@ async fn reconcile_flow(
                                     template_name: None,
                                     dependencies_ready: true,
                                     last_error: Some(format!("Variable resolution failed: {}", e)),
+                                    state: None,
+                                    warmed_up: false,
                                 });
                                 any_progressing = true;
                                 continue;
@@ -193,6 +197,7 @@ async fn reconcile_flow(
                             pangea_namespace: flow.spec.pangea_namespace.clone(),
                             template_name: None,
                             variables,
+                            variable_refs: None,
                             auto_approve: step.auto_approve.unwrap_or(true),
                             refresh_interval: step.refresh_interval.clone().unwrap_or_else(|| "10m".into()),
                             suspend: false,
@@ -222,6 +227,8 @@ async fn reconcile_flow(
                     template_name: if deps_ready { Some(template_name) } else { None },
                     dependencies_ready: deps_ready,
                     last_error: None,
+                    state: None,
+                    warmed_up: false,
                 });
             }
             Err(e) => {
@@ -398,6 +405,7 @@ mod tests {
             auto_approve: None,
             destroy_protection: None,
             refresh_interval: None,
+            retry: None,
         }
     }
 

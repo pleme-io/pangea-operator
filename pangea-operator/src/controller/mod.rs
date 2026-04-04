@@ -4,6 +4,7 @@
 //! and PangeaNamespace custom resources.
 
 mod flow_controller;
+pub mod flow_scheduler;
 mod reconciler;
 mod template_controller;
 mod namespace_controller;

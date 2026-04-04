@@ -85,6 +85,58 @@ pub struct FlowStep {
     /// Override refresh interval for drift detection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refresh_interval: Option<String>,
+
+    /// Retry policy for this step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry: Option<FlowRetryPolicy>,
+}
+
+/// Retry policy for a flow step.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowRetryPolicy {
+    /// Maximum retry attempts. Default: 3.
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+
+    /// Backoff strategy: exponential (default), linear, or constant.
+    #[serde(default)]
+    pub backoff: BackoffStrategy,
+
+    /// Initial delay between retries. Default: "30s".
+    #[serde(default = "default_initial_delay")]
+    pub initial_delay: String,
+
+    /// Maximum delay between retries. Default: "10m".
+    #[serde(default = "default_max_delay")]
+    pub max_delay: String,
+}
+
+fn default_max_retries() -> u32 {
+    3
+}
+
+fn default_initial_delay() -> String {
+    "30s".into()
+}
+
+fn default_max_delay() -> String {
+    "10m".into()
+}
+
+/// Backoff strategy for retries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, EnumString)]
+#[serde(rename_all = "camelCase")]
+pub enum BackoffStrategy {
+    Exponential,
+    Linear,
+    Constant,
+}
+
+impl Default for BackoffStrategy {
+    fn default() -> Self {
+        BackoffStrategy::Exponential
+    }
 }
 
 /// Reference to a template: either an existing one or an inline source.
@@ -196,6 +248,15 @@ pub struct FlowStepStatus {
     /// Last error for this step.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+
+    /// Full terraform state snapshot (from `tofu show -json`).
+    /// Enables {{ steps.X.state.resource_type.resource_name.attribute }} references.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<serde_json::Value>,
+
+    /// Whether workspace has been pre-initialized (warm-up).
+    #[serde(default)]
+    pub warmed_up: bool,
 }
 
 impl InfrastructureFlow {

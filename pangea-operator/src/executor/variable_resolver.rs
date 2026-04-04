@@ -6,10 +6,20 @@
 use crate::error::{Error, Result};
 use std::collections::BTreeMap;
 
-/// Resolve `{{ steps.NAME.outputs.KEY }}` references in variable values.
+/// Context for resolving step references, including both outputs and full state.
+#[derive(Default)]
+pub struct ResolutionContext {
+    /// Step outputs: step_name -> { key: value }
+    pub outputs: BTreeMap<String, BTreeMap<String, serde_json::Value>>,
+    /// Step state snapshots: step_name -> full terraform state JSON
+    pub states: BTreeMap<String, serde_json::Value>,
+}
+
+/// Resolve `{{ steps.NAME.outputs.KEY }}` and `{{ steps.NAME.state.TYPE.NAME.ATTR }}`
+/// references in variable values.
 ///
 /// Walks all values in the variables map. For string values containing
-/// `{{ steps.X.outputs.Y }}`, looks up the output in `step_outputs`.
+/// references, looks up the value from the resolution context.
 /// Non-string values and strings without references pass through unchanged.
 pub fn resolve_step_references(
     variables: &BTreeMap<String, serde_json::Value>,
@@ -150,6 +160,161 @@ fn extract_references(s: &str) -> Vec<Reference> {
     refs
 }
 
+/// Resolve references using the full resolution context (outputs + state).
+pub fn resolve_with_context(
+    variables: &BTreeMap<String, serde_json::Value>,
+    ctx: &ResolutionContext,
+) -> Result<BTreeMap<String, serde_json::Value>> {
+    let mut resolved = BTreeMap::new();
+
+    for (key, value) in variables {
+        let resolved_value = resolve_value_with_context(value, ctx)?;
+        resolved.insert(key.clone(), resolved_value);
+    }
+
+    Ok(resolved)
+}
+
+fn resolve_value_with_context(
+    value: &serde_json::Value,
+    ctx: &ResolutionContext,
+) -> Result<serde_json::Value> {
+    match value {
+        serde_json::Value::String(s) => {
+            let resolved = resolve_string_with_context(s, ctx)?;
+            Ok(serde_json::Value::String(resolved))
+        }
+        serde_json::Value::Array(arr) => {
+            let resolved: Result<Vec<_>> = arr
+                .iter()
+                .map(|v| resolve_value_with_context(v, ctx))
+                .collect();
+            Ok(serde_json::Value::Array(resolved?))
+        }
+        serde_json::Value::Object(obj) => {
+            let mut resolved = serde_json::Map::new();
+            for (k, v) in obj {
+                resolved.insert(k.clone(), resolve_value_with_context(v, ctx)?);
+            }
+            Ok(serde_json::Value::Object(resolved))
+        }
+        other => Ok(other.clone()),
+    }
+}
+
+fn resolve_string_with_context(s: &str, ctx: &ResolutionContext) -> Result<String> {
+    let mut result = s.to_string();
+
+    // Resolve output references: {{ steps.NAME.outputs.KEY }}
+    for reference in extract_references(s) {
+        let outputs = ctx.outputs.get(&reference.step_name).ok_or_else(|| {
+            Error::Config(format!("Step '{}' not found in context", reference.step_name))
+        })?;
+        let value = outputs.get(&reference.output_key).ok_or_else(|| {
+            Error::Config(format!("Output '{}' not found in step '{}'", reference.output_key, reference.step_name))
+        })?;
+        let replacement = match value {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        let pattern = format!("{{{{ steps.{}.outputs.{} }}}}", reference.step_name, reference.output_key);
+        result = result.replace(&pattern, &replacement);
+    }
+
+    // Resolve state references: {{ steps.NAME.state.TYPE.RESNAME.ATTR }}
+    for state_ref in extract_state_references(s) {
+        let state = ctx.states.get(&state_ref.step_name).ok_or_else(|| {
+            Error::Config(format!("State for step '{}' not available", state_ref.step_name))
+        })?;
+
+        // Navigate: values.root_module.resources[type=TYPE, name=RESNAME].values.ATTR
+        let value = resolve_state_attribute(state, &state_ref.resource_type, &state_ref.resource_name, &state_ref.attribute)
+            .ok_or_else(|| {
+                Error::Config(format!(
+                    "State attribute {}.{}.{} not found in step '{}'",
+                    state_ref.resource_type, state_ref.resource_name, state_ref.attribute, state_ref.step_name
+                ))
+            })?;
+
+        let replacement = match value {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        let pattern = format!(
+            "{{{{ steps.{}.state.{}.{}.{} }}}}",
+            state_ref.step_name, state_ref.resource_type, state_ref.resource_name, state_ref.attribute
+        );
+        result = result.replace(&pattern, &replacement);
+    }
+
+    Ok(result)
+}
+
+#[derive(Debug)]
+struct StateReference {
+    step_name: String,
+    resource_type: String,
+    resource_name: String,
+    attribute: String,
+}
+
+fn extract_state_references(s: &str) -> Vec<StateReference> {
+    let mut refs = Vec::new();
+    let mut remaining = s;
+
+    while let Some(start) = remaining.find("{{ steps.") {
+        let after_start = &remaining[start + 9..];
+        if let Some(end) = after_start.find(" }}") {
+            let inner = &after_start[..end];
+            // Check for state pattern: NAME.state.TYPE.RESNAME.ATTR
+            if let Some(state_pos) = inner.find(".state.") {
+                let step_name = inner[..state_pos].to_string();
+                let after_state = &inner[state_pos + 7..];
+                let parts: Vec<&str> = after_state.splitn(3, '.').collect();
+                if parts.len() == 3 {
+                    refs.push(StateReference {
+                        step_name,
+                        resource_type: parts[0].to_string(),
+                        resource_name: parts[1].to_string(),
+                        attribute: parts[2].to_string(),
+                    });
+                }
+            }
+            remaining = &after_start[end + 3..];
+        } else {
+            break;
+        }
+    }
+
+    refs
+}
+
+/// Navigate terraform state JSON to find a resource attribute.
+fn resolve_state_attribute(
+    state: &serde_json::Value,
+    resource_type: &str,
+    resource_name: &str,
+    attribute: &str,
+) -> Option<serde_json::Value> {
+    // Terraform state JSON structure:
+    // { "values": { "root_module": { "resources": [ { "type": "...", "name": "...", "values": { ... } } ] } } }
+    let resources = state
+        .get("values")?
+        .get("root_module")?
+        .get("resources")?
+        .as_array()?;
+
+    for resource in resources {
+        let rtype = resource.get("type")?.as_str()?;
+        let rname = resource.get("name")?.as_str()?;
+        if rtype == resource_type && rname == resource_name {
+            return resource.get("values")?.get(attribute).cloned();
+        }
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,6 +381,47 @@ mod tests {
         assert_eq!(missing.len(), 2);
         assert!(missing.contains(&"step-b".to_string()));
         assert!(missing.contains(&"step-c".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_state_reference() {
+        let state = serde_json::json!({
+            "values": {
+                "root_module": {
+                    "resources": [
+                        {
+                            "type": "aws_vpc",
+                            "name": "main",
+                            "values": {
+                                "id": "vpc-12345",
+                                "cidr_block": "10.0.0.0/16"
+                            }
+                        }
+                    ]
+                }
+            }
+        });
+
+        let mut ctx = ResolutionContext::default();
+        ctx.states.insert("vpc-step".into(), state);
+
+        let mut vars = BTreeMap::new();
+        vars.insert("vpc_id".into(), serde_json::json!("{{ steps.vpc-step.state.aws_vpc.main.id }}"));
+        vars.insert("cidr".into(), serde_json::json!("{{ steps.vpc-step.state.aws_vpc.main.cidr_block }}"));
+
+        let resolved = resolve_with_context(&vars, &ctx).unwrap();
+        assert_eq!(resolved["vpc_id"], serde_json::json!("vpc-12345"));
+        assert_eq!(resolved["cidr"], serde_json::json!("10.0.0.0/16"));
+    }
+
+    #[test]
+    fn test_extract_state_references() {
+        let refs = extract_state_references("{{ steps.net.state.aws_vpc.main.id }}");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].step_name, "net");
+        assert_eq!(refs[0].resource_type, "aws_vpc");
+        assert_eq!(refs[0].resource_name, "main");
+        assert_eq!(refs[0].attribute, "id");
     }
 
     #[test]

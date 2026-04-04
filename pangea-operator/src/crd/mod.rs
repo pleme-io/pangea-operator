@@ -14,13 +14,13 @@ pub use infrastructure_template::{
     AwsCredentials, CloudflareCredentials, ComplianceStatus, Condition, ConfigMapRef,
     GitRepositoryRef, InfrastructureTemplate, InfrastructureTemplateSpec,
     InfrastructureTemplateStatus, Phase, ProfileResult, ProviderCredentials, ResourceSummary,
-    RetryPolicy, SecretRef, TemplateSource,
+    RetryPolicy, SecretRef, TemplateObjectRef, TemplateSource, VariableRef,
 };
 
 // Re-export InfrastructureFlow types
 pub use infrastructure_flow::{
-    DestroyOrder, FlowPhase, FlowStep, FlowStepStatus, FlowTemplateRef,
-    InfrastructureFlow, InfrastructureFlowSpec, InfrastructureFlowStatus,
+    BackoffStrategy, DestroyOrder, FlowPhase, FlowRetryPolicy, FlowStep, FlowStepStatus,
+    FlowTemplateRef, InfrastructureFlow, InfrastructureFlowSpec, InfrastructureFlowStatus,
 };
 
 // Re-export PangeaNamespace types (SecretRef renamed to avoid collision)
