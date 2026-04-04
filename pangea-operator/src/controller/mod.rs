@@ -1,21 +1,28 @@
 //! Kubernetes controller components for the Pangea Operator.
 //!
-//! This module contains the reconciliation logic for InfrastructureTemplate
-//! and PangeaNamespace custom resources.
+//! This module contains the reconciliation logic for all custom resources:
+//! InfrastructureTemplate, PangeaNamespace, InfrastructureFlow, PackerBuild,
+//! AmiTest, and ImagePipeline.
 
 mod flow_controller;
 pub mod flow_scheduler;
 mod reconciler;
 mod template_controller;
 mod namespace_controller;
+mod packer_build_controller;
+mod ami_test_controller;
+mod image_pipeline_controller;
 
 pub use reconciler::*;
 pub use flow_controller::FlowController;
 pub use template_controller::TemplateController;
 pub use namespace_controller::NamespaceController;
+pub use packer_build_controller::PackerBuildController;
+pub use ami_test_controller::AmiTestController;
+pub use image_pipeline_controller::ImagePipelineController;
 
 use crate::error::Result;
-use crate::executor::{ExecutorConfig, TofuExecutor, WorkspaceManager};
+use crate::executor::{ExecutorConfig, PackerExecutor, TofuExecutor, WorkspaceManager};
 use kube::Client;
 use std::sync::Arc;
 use std::time::Duration;
@@ -36,6 +43,9 @@ pub struct ControllerState {
     /// OpenTofu executor for running infrastructure commands.
     pub executor: Arc<TofuExecutor>,
 
+    /// Packer executor for running AMI build commands.
+    pub packer_executor: Arc<PackerExecutor>,
+
     /// Workspace manager for isolated template directories.
     pub workspace_manager: Arc<WorkspaceManager>,
 }
@@ -53,6 +63,12 @@ impl ControllerState {
             executor_config.verbose,
         ));
 
+        let packer_executor = Arc::new(PackerExecutor::new(
+            executor_config.packer_binary.clone(),
+            Duration::from_secs(executor_config.packer_timeout_secs),
+            executor_config.verbose,
+        ));
+
         let workspace_manager = Arc::new(WorkspaceManager::new(
             executor_config.workspace_base.clone(),
         ));
@@ -65,6 +81,7 @@ impl ControllerState {
             metrics,
             db_pool: None,
             executor,
+            packer_executor,
             workspace_manager,
         })
     }

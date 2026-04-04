@@ -1,7 +1,10 @@
 //! Pangea Operator - Kubernetes operator for Pangea infrastructure management.
 
 use pangea_operator::{
-    controller::{ControllerState, FlowController, NamespaceController, TemplateController},
+    controller::{
+        AmiTestController, ControllerState, FlowController, ImagePipelineController,
+        NamespaceController, PackerBuildController, TemplateController,
+    },
     crd::generate_crds,
     error::Result,
     executor::ExecutorConfig,
@@ -151,6 +154,30 @@ async fn main() -> Result<()> {
         }
     });
 
+    let packer_build_state = state.clone();
+    let packer_build_controller = tokio::spawn(async move {
+        let controller = PackerBuildController::new(packer_build_state);
+        if let Err(e) = controller.run().await {
+            error!(error = %e, "PackerBuild controller error");
+        }
+    });
+
+    let ami_test_state = state.clone();
+    let ami_test_controller = tokio::spawn(async move {
+        let controller = AmiTestController::new(ami_test_state);
+        if let Err(e) = controller.run().await {
+            error!(error = %e, "AmiTest controller error");
+        }
+    });
+
+    let image_pipeline_state = state.clone();
+    let image_pipeline_controller = tokio::spawn(async move {
+        let controller = ImagePipelineController::new(image_pipeline_state);
+        if let Err(e) = controller.run().await {
+            error!(error = %e, "ImagePipeline controller error");
+        }
+    });
+
     info!("Controllers started");
 
     // Start GraphQL server
@@ -175,6 +202,9 @@ async fn main() -> Result<()> {
     template_controller.abort();
     namespace_controller.abort();
     flow_controller.abort();
+    packer_build_controller.abort();
+    ami_test_controller.abort();
+    image_pipeline_controller.abort();
 
     info!("Pangea Operator stopped");
     Ok(())

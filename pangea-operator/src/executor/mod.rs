@@ -6,11 +6,13 @@
 mod tofu;
 mod workspace;
 mod plan;
+pub mod packer;
 pub mod variable_resolver;
 
 pub use tofu::{TofuExecutor, TofuCommand, TofuResult};
 pub use workspace::{Workspace, WorkspaceManager};
 pub use plan::{Plan, PlanSummary, ResourceChange, ChangeType};
+pub use packer::{PackerExecutor, PackerCommand, PackerResult, parse_packer_manifest, parse_packer_manifest_region};
 
 use crate::crd::InfrastructureTemplate;
 use crate::error::Result;
@@ -22,11 +24,17 @@ pub struct ExecutorConfig {
     /// Path to the OpenTofu binary.
     pub tofu_binary: PathBuf,
 
+    /// Path to the Packer binary.
+    pub packer_binary: PathBuf,
+
     /// Base directory for workspaces.
     pub workspace_base: PathBuf,
 
     /// Command execution timeout in seconds.
     pub timeout_secs: u64,
+
+    /// Packer command execution timeout in seconds.
+    pub packer_timeout_secs: u64,
 
     /// Path to Ruby binary for compilation.
     pub ruby_binary: Option<PathBuf>,
@@ -39,8 +47,10 @@ impl Default for ExecutorConfig {
     fn default() -> Self {
         Self {
             tofu_binary: PathBuf::from("tofu"),
+            packer_binary: PathBuf::from("packer"),
             workspace_base: PathBuf::from("/tmp/pangea-workspaces"),
-            timeout_secs: 600, // 10 minutes
+            timeout_secs: 600,        // 10 minutes
+            packer_timeout_secs: 2700, // 45 minutes
             ruby_binary: None,
             verbose: false,
         }
@@ -54,6 +64,10 @@ impl ExecutorConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("tofu"));
 
+        let packer_binary = std::env::var("PACKER_BINARY")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("packer"));
+
         let workspace_base = std::env::var("PANGEA_WORKSPACE_BASE")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("/tmp/pangea-workspaces"));
@@ -62,6 +76,11 @@ impl ExecutorConfig {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(600);
+
+        let packer_timeout_secs = std::env::var("PACKER_TIMEOUT")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(2700);
 
         let ruby_binary = std::env::var("RUBY_BINARY")
             .map(PathBuf::from)
@@ -73,8 +92,10 @@ impl ExecutorConfig {
 
         Self {
             tofu_binary,
+            packer_binary,
             workspace_base,
             timeout_secs,
+            packer_timeout_secs,
             ruby_binary,
             verbose,
         }

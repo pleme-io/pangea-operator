@@ -4,9 +4,15 @@
 //! - `InfrastructureTemplate`: Represents a Pangea infrastructure template to be deployed
 //! - `PangeaNamespace`: Cluster-scoped configuration for Pangea namespaces
 //! - `InfrastructureFlow`: DAG orchestrator for multi-template deployments
+//! - `PackerBuild`: Packer build execution (Ruby DSL → JSON → AMI)
+//! - `AmiTest`: AMI validation through tiered test suites
+//! - `ImagePipeline`: Full AMI lifecycle orchestrator (build → test → deploy → verify)
 
+pub mod ami_test;
 mod infrastructure_flow;
 mod infrastructure_template;
+pub mod image_pipeline;
+mod packer_build;
 mod pangea_namespace;
 
 // Re-export InfrastructureTemplate types
@@ -28,6 +34,26 @@ pub use pangea_namespace::{
     BackendConfig, BackendType, DefaultProviders, PangeaNamespace, PangeaNamespaceSpec,
     PangeaNamespaceStatus, PoolConfig, PostgresBackendConfig, PostgresSecretRef, ResourceStats,
     S3BackendConfig, S3SecretRef, SecretRef as ProviderSecretRef,
+};
+
+// Re-export PackerBuild types
+pub use packer_build::{
+    PackerBuild, PackerBuildPhase, PackerBuildSpec, PackerBuildStatus, VarFileSource,
+};
+
+// Re-export AmiTest types
+pub use ami_test::{
+    AmiSource, AmiTest, AmiTestPhase, AmiTestSpec, AmiTestStatus, FailurePolicy, SuitePhase,
+    SuiteResult, TestSuite, TestSuiteType,
+};
+
+// Re-export ImagePipeline types
+pub use image_pipeline::{
+    ApprovalMode, ChangeVerification, HealthCheck, HealthCheckResult, HealthCheckType,
+    ImagePipeline, ImagePipelinePhase, ImagePipelineSpec, ImagePipelineStatus, PipelineBuildSpec,
+    PipelineBuildStatus, PipelineDeploySpec, PipelineDeployStatus, PipelineTestSpec,
+    PipelineTestStatus, PipelineVerificationStatus, PlanAssertion, PlanAssertionRule,
+    RollbackConfig, RollbackTrigger,
 };
 
 use kube::CustomResourceExt;
@@ -52,6 +78,24 @@ pub fn generate_crds() -> String {
     crds.push_str(
         &serde_yaml::to_string(&InfrastructureFlow::crd())
             .expect("Failed to serialize InfrastructureFlow CRD"),
+    );
+
+    crds.push_str("---\n");
+    crds.push_str(
+        &serde_yaml::to_string(&PackerBuild::crd())
+            .expect("Failed to serialize PackerBuild CRD"),
+    );
+
+    crds.push_str("---\n");
+    crds.push_str(
+        &serde_yaml::to_string(&AmiTest::crd())
+            .expect("Failed to serialize AmiTest CRD"),
+    );
+
+    crds.push_str("---\n");
+    crds.push_str(
+        &serde_yaml::to_string(&ImagePipeline::crd())
+            .expect("Failed to serialize ImagePipeline CRD"),
     );
 
     crds

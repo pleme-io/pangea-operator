@@ -109,6 +109,12 @@ enum Commands {
         destroy_protection: bool,
     },
 
+    /// Create a pangea inception cluster
+    Inception {
+        #[command(subcommand)]
+        command: InceptionCommands,
+    },
+
     /// Stream logs for a template
     Logs {
         /// Template reference (namespace/name or just name)
@@ -128,6 +134,26 @@ enum Commands {
         #[command(subcommand)]
         command: Option<ConfigCommands>,
     },
+}
+
+#[derive(Subcommand)]
+enum InceptionCommands {
+    /// Generate inception cluster Terraform configs and print kubectl commands
+    Create {
+        /// Cluster name
+        #[arg(long, default_value = "inception")]
+        cluster_name: String,
+
+        /// AWS region
+        #[arg(long, default_value = "us-east-1")]
+        region: String,
+
+        /// Profile (dev or production)
+        #[arg(long, default_value = "dev")]
+        profile: String,
+    },
+    /// Show inception cluster status
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -215,6 +241,48 @@ async fn main() -> Result<()> {
         } => {
             logs::stream_logs(&client, &template, namespace.as_deref(), follow).await?;
         }
+
+        Commands::Inception { command } => match command {
+            InceptionCommands::Create {
+                cluster_name,
+                region,
+                profile,
+            } => {
+                println!("Pangea Inception Cluster: {}", cluster_name);
+                println!("Region: {}, Profile: {}", region, profile);
+                println!();
+                println!("Step 1 — Deploy the cluster using pangea-architectures:");
+                println!("  cd ~/code/github/pleme-io/pangea-architectures/workspaces/inception");
+                println!("  CLUSTER_NAME={} REGION={} PROFILE={} nix develop -c pangea apply inception_network.rb", cluster_name, region, profile);
+                println!("  CLUSTER_NAME={} REGION={} PROFILE={} nix develop -c pangea apply inception_cluster.rb", cluster_name, region, profile);
+                println!("  CLUSTER_NAME={} REGION={} PROFILE={} nix develop -c pangea apply inception_database.rb", cluster_name, region, profile);
+                println!("  CLUSTER_NAME={} REGION={} PROFILE={} nix develop -c pangea apply inception_bootstrap.rb", cluster_name, region, profile);
+                println!();
+                println!("Step 2 — Wait for FluxCD to deploy the operator:");
+                println!("  aws eks update-kubeconfig --name {} --region {}", cluster_name, region);
+                println!("  kubectl get ks -A  # wait for infrastructure-pangea → Ready");
+                println!();
+                println!("Step 3 — Import state and unsuspend the inception flow:");
+                println!("  pangea import --state-dir ~/.pangea/workspaces/production/inception_network \\");
+                println!("    --template-name inception-network --namespace pangea-system \\");
+                println!("    --pangea-namespace inception --destroy-protection --auto-approve");
+                println!("  # Repeat for cluster, database");
+                println!();
+                println!("Step 4 — Unsuspend the inception flow:");
+                println!("  kubectl patch flow inception -n pangea-system --type merge -p '{{\"spec\":{{\"suspend\":false}}}}'");
+                println!();
+                println!("Step 5 — Verify inception complete:");
+                println!("  kubectl get flow inception -n pangea-system  # Ready 3/3");
+                println!("  flux get ks workloads-pangea-inception       # Ready");
+            }
+            InceptionCommands::Status => {
+                println!("Checking inception cluster status...");
+                println!();
+                println!("Run: kubectl get flow inception -n pangea-system");
+                println!("Run: kubectl get infra -A");
+                println!("Run: flux get ks -A | grep pangea");
+            }
+        },
 
         Commands::Config { command } => match command {
             Some(ConfigCommands::Show) | None => {

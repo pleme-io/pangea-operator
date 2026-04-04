@@ -73,6 +73,31 @@ impl WorkspaceManager {
         })
     }
 
+    /// Get or create a workspace by namespace and name strings.
+    /// Used by controllers that don't have an InfrastructureTemplate reference
+    /// (e.g., PackerBuild, AmiTest).
+    pub async fn get_or_create(&self, namespace: &str, name: &str) -> Result<Workspace> {
+        let workspace_path = self.base_dir.join(namespace).join(name);
+
+        fs::create_dir_all(&workspace_path)
+            .await
+            .map_err(|e| Error::Io(e))?;
+
+        debug!(
+            namespace = %namespace,
+            name = %name,
+            path = ?workspace_path,
+            "Workspace ready"
+        );
+
+        Ok(Workspace {
+            path: workspace_path,
+            namespace: namespace.to_string(),
+            name: name.to_string(),
+            cleanup_on_drop: false,
+        })
+    }
+
     /// Create a temporary workspace.
     pub async fn create_temp_workspace(&self, prefix: &str) -> Result<Workspace> {
         let temp_name = format!("{}_{}", prefix, uuid::Uuid::new_v4());

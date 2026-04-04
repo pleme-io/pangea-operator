@@ -33,6 +33,30 @@ pub enum Error {
     #[error("OpenTofu execution failed: {0}")]
     TofuExecution(String),
 
+    /// Packer execution error.
+    #[error("Packer execution failed: {0}")]
+    PackerExecution(String),
+
+    /// Packer manifest parse error.
+    #[error("Packer manifest parse error: {0}")]
+    PackerManifest(String),
+
+    /// AMI test failure.
+    #[error("AMI test failed: {0}")]
+    AmiTestFailed(String),
+
+    /// Image pipeline error.
+    #[error("Image pipeline error: {0}")]
+    ImagePipeline(String),
+
+    /// Health check failure.
+    #[error("Health check failed: {0}")]
+    HealthCheckFailed(String),
+
+    /// Assertion failure.
+    #[error("Assertion failed: {0}")]
+    AssertionFailed(String),
+
     /// State backend error.
     #[error("State backend error: {0}")]
     StateBackend(String),
@@ -98,6 +122,8 @@ impl Error {
                 | Error::Timeout(_)
                 | Error::LockFailed(_)
                 | Error::Io(_)
+                | Error::PackerExecution(_)
+                | Error::AmiTestFailed(_)
         )
     }
 }
