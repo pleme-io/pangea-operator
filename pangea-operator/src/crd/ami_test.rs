@@ -91,6 +91,7 @@ pub struct TestSuite {
 
     /// Type-specific configuration (JSON value interpreted per suite_type).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "super::opaque_json_schema")]
     pub config: Option<serde_json::Value>,
 }
 

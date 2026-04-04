@@ -127,24 +127,39 @@ pub struct PipelineDeploySpec {
     pub rollback: Option<RollbackConfig>,
 }
 
-/// Approval mode for the deploy phase.
+/// Approval configuration for the deploy phase.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub enum ApprovalMode {
-    /// Automatically approve and apply.
-    Auto,
-    /// Wait for manual approval (user patches status.deploy.approvedBy).
-    Manual,
-    /// POST plan summary to a webhook URL and wait for callback.
-    Webhook {
-        /// URL to POST the plan summary to.
-        url: String,
-    },
+pub struct ApprovalMode {
+    /// Mode: "auto", "manual", or "webhook".
+    #[serde(default = "default_approval_mode")]
+    pub mode: String,
+
+    /// Webhook URL (required when mode is "webhook").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webhook_url: Option<String>,
+}
+
+fn default_approval_mode() -> String {
+    "manual".to_string()
 }
 
 impl Default for ApprovalMode {
     fn default() -> Self {
-        ApprovalMode::Manual
+        Self {
+            mode: "manual".to_string(),
+            webhook_url: None,
+        }
+    }
+}
+
+impl ApprovalMode {
+    pub fn is_auto(&self) -> bool {
+        self.mode == "auto"
+    }
+
+    pub fn is_manual(&self) -> bool {
+        self.mode == "manual"
     }
 }
 
@@ -163,24 +178,29 @@ pub struct PlanAssertion {
     pub rule: PlanAssertionRule,
 }
 
-/// Rules for plan assertions.
+/// Rules for plan assertions. Only one field should be set per assertion.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub enum PlanAssertionRule {
+pub struct PlanAssertionRule {
     /// Maximum number of resources that may be destroyed.
-    MaxDestroyed(u32),
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_destroyed: Option<u32>,
 
     /// Maximum number of resources that may be added.
-    MaxAdded(u32),
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_added: Option<u32>,
 
     /// Only these resource types may be changed.
-    AllowedResourceTypes(Vec<String>),
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_resource_types: Vec<String>,
 
     /// These resource types must NOT be changed.
-    ForbiddenResourceTypes(Vec<String>),
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub forbidden_resource_types: Vec<String>,
 
     /// Maximum total resources changed (added + changed + destroyed).
-    MaxTotalChanged(u32),
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_total_changed: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -214,31 +234,49 @@ fn default_check_interval() -> String {
     "10s".to_string()
 }
 
-/// Type of health check.
+/// Type of health check. Set one of http, tcp, or kubernetes.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub enum HealthCheckType {
+pub struct HealthCheckType {
     /// HTTP GET probe.
-    Http {
-        /// URL to probe (supports `{{ outputs.key }}` interpolation).
-        endpoint: String,
-        /// Expected HTTP status code.
-        expected_status: u16,
-    },
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http: Option<HttpHealthCheck>,
 
     /// TCP connection probe.
-    Tcp {
-        /// Host:port to connect to.
-        endpoint: String,
-    },
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tcp: Option<TcpHealthCheck>,
 
     /// Kubernetes resource check via a Job.
-    Kubernetes {
-        /// Secret containing kubeconfig for the target cluster.
-        kubeconfig_secret_ref: SecretRef,
-        /// kubectl/script command to execute.
-        check: String,
-    },
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kubernetes: Option<KubernetesHealthCheck>,
+}
+
+/// HTTP health check configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HttpHealthCheck {
+    /// URL to probe.
+    pub endpoint: String,
+    /// Expected HTTP status code.
+    pub expected_status: u16,
+}
+
+/// TCP health check configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TcpHealthCheck {
+    /// Host:port to connect to.
+    pub endpoint: String,
+}
+
+/// Kubernetes health check configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct KubernetesHealthCheck {
+    /// Secret containing kubeconfig for the target cluster.
+    pub kubeconfig_secret_ref: SecretRef,
+    /// kubectl/script command to execute.
+    pub check: String,
 }
 
 // ---------------------------------------------------------------------------

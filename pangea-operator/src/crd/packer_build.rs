@@ -87,6 +87,7 @@ fn default_manifest_path() -> String {
 pub struct VarFileSource {
     /// Inline JSON content for the var file.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "super::opaque_json_schema")]
     pub inline: Option<serde_json::Value>,
 
     /// Reference to a ConfigMap key containing the var file.

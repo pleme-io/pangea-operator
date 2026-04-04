@@ -14,6 +14,9 @@ mod infrastructure_template;
 pub mod image_pipeline;
 mod packer_build;
 mod pangea_namespace;
+pub mod synthesizer_format;
+pub mod compliance_schedule;
+pub mod compliance_binding;
 
 // Re-export InfrastructureTemplate types
 pub use infrastructure_template::{
@@ -47,6 +50,26 @@ pub use ami_test::{
     SuiteResult, TestSuite, TestSuiteType,
 };
 
+// Re-export ComplianceSchedule types
+pub use compliance_schedule::{
+    AttestationConfig, ComplianceRunner, ComplianceSchedule, ComplianceSchedulePhase,
+    ComplianceScheduleSpec, ComplianceScheduleStatus, ComplianceSuite, ComplianceSuiteResult,
+    PrometheusConfig, ReportingConfig, S3ReportConfig, VectorConfig,
+};
+
+// Re-export ComplianceBinding types
+pub use compliance_binding::{
+    BindingComplianceState, BindingTarget, ComplianceBinding, ComplianceBindingSpec,
+    ComplianceBindingStatus, ComplianceEvent, ComplianceRef, EnforcementLevel, Reaction,
+    ReactionAction, SekibanIntegration, TargetKind, TargetStatus,
+};
+
+// Re-export SynthesizerFormat types
+pub use synthesizer_format::{
+    ArraySectionSpec, KeyTransform, MapSectionSpec, SynthesizerFormat, SynthesizerFormatPhase,
+    SynthesizerFormatSpec, SynthesizerFormatStatus,
+};
+
 // Re-export ImagePipeline types
 pub use image_pipeline::{
     ApprovalMode, ChangeVerification, HealthCheck, HealthCheckResult, HealthCheckType,
@@ -57,6 +80,15 @@ pub use image_pipeline::{
 };
 
 use kube::CustomResourceExt;
+
+/// Generate an opaque JSON object schema (type: object with no properties).
+/// Used for `serde_json::Value` fields that hold arbitrary JSON.
+pub fn opaque_json_schema(_gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+    schemars::schema::Schema::Object(schemars::schema::SchemaObject {
+        instance_type: Some(schemars::schema::InstanceType::Object.into()),
+        ..Default::default()
+    })
+}
 
 /// Generate CRD manifests for all Pangea custom resources.
 pub fn generate_crds() -> String {
@@ -96,6 +128,24 @@ pub fn generate_crds() -> String {
     crds.push_str(
         &serde_yaml::to_string(&ImagePipeline::crd())
             .expect("Failed to serialize ImagePipeline CRD"),
+    );
+
+    crds.push_str("---\n");
+    crds.push_str(
+        &serde_yaml::to_string(&SynthesizerFormat::crd())
+            .expect("Failed to serialize SynthesizerFormat CRD"),
+    );
+
+    crds.push_str("---\n");
+    crds.push_str(
+        &serde_yaml::to_string(&ComplianceSchedule::crd())
+            .expect("Failed to serialize ComplianceSchedule CRD"),
+    );
+
+    crds.push_str("---\n");
+    crds.push_str(
+        &serde_yaml::to_string(&ComplianceBinding::crd())
+            .expect("Failed to serialize ComplianceBinding CRD"),
     );
 
     crds

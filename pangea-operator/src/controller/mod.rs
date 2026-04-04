@@ -12,6 +12,9 @@ mod namespace_controller;
 mod packer_build_controller;
 mod ami_test_controller;
 mod image_pipeline_controller;
+mod synthesizer_format_controller;
+mod compliance_schedule_controller;
+mod compliance_binding_controller;
 
 pub use reconciler::*;
 pub use flow_controller::FlowController;
@@ -20,6 +23,9 @@ pub use namespace_controller::NamespaceController;
 pub use packer_build_controller::PackerBuildController;
 pub use ami_test_controller::AmiTestController;
 pub use image_pipeline_controller::ImagePipelineController;
+pub use synthesizer_format_controller::SynthesizerFormatController;
+pub use compliance_schedule_controller::ComplianceScheduleController;
+pub use compliance_binding_controller::ComplianceBindingController;
 
 use crate::error::Result;
 use crate::executor::{ExecutorConfig, PackerExecutor, TofuExecutor, WorkspaceManager};

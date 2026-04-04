@@ -138,6 +138,7 @@
             pangeaApp
             pkgs.cacert        # CA certificates for TLS
             pkgs.opentofu      # Infrastructure execution
+            pkgs.packer        # AMI build execution
             pkgs.tzdata        # Timezone data
           ];
 
@@ -189,6 +190,7 @@
             kubernetes-helm
             k9s
             opentofu
+            packer
             protobuf
             grpcurl
             postgresql_16

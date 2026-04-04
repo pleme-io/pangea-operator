@@ -90,6 +90,10 @@ class TypedArraySynthesizer
       @method_map[singular] = section
       @method_map[section]  = section # also allow plural form
     end
+
+    # Pluggable key transform — defaults to snake_case → kebab-case.
+    # Override via instance_variable_set(:@key_transform, proc) from outside.
+    @key_transform = ->(k) { k.to_s.tr("_", "-") }
   end
 
   def synthesis
@@ -161,7 +165,7 @@ class TypedArraySynthesizer
   end
 
   def stringify_keys(hash)
-    hash.transform_keys { |k| k.to_s.tr("_", "-") }
+    hash.transform_keys { |k| @key_transform.call(k) }
   end
 end
 
@@ -287,29 +291,69 @@ class PangeaCompiler < Sinatra::Base
     compile_with_synthesizer(:packer, "packer_json")
   end
 
-  # Generic compilation endpoint for any registered synthesizer format.
+  # Generic compilation endpoint for any synthesizer format — registered or dynamic.
   #
-  # Request body:
+  # Request body (registered format):
   #   {
-  #     "format": "packer",           (or "ansible", "github_actions", etc.)
+  #     "format": "packer",
   #     "source": "synth.builder(:amazon_ebs, ...)",
   #     "variables": { "region": "us-east-1" }
   #   }
   #
-  # Response:
+  # Request body (dynamic format from SynthesizerFormat CRD):
   #   {
-  #     "output_json": "{ ... }",
-  #     "format": "packer",
-  #     "errors": []
+  #     "source": "synth.builder(:amazon_ebs, ...)",
+  #     "variables": {},
+  #     "format_definition": {
+  #       "array_sections": [{"name":"builders","type_field":"type","allow_name":true}],
+  #       "map_sections":   [{"name":"variables"}],
+  #       "key_transform":  "snake-to-kebab",
+  #       "extend_modules": [],
+  #       "preamble":       null
+  #     }
   #   }
+  #
+  # Response:
+  #   { "output_json": "{ ... }", "format": "dynamic", "errors": [] }
   post "/compile-any" do
     begin
       body = JSON.parse(request.body.read)
-      format = body["format"]
+      source = body["source"]
+      variables = body["variables"] || {}
+      format_def = body["format_definition"]
+      format_name = body["format"]
 
-      halt 400, { error: "Missing 'format' field. Available: #{SynthesizerRegistry.available.join(', ')}" }.to_json unless format
+      halt 400, { error: "Missing 'source' field" }.to_json unless source
 
-      compile_with_synthesizer(format.to_sym, "output_json")
+      synth = if format_def
+        # Dynamic: build synthesizer from inline CRD definition
+        create_synthesizer_from_definition(format_def)
+      elsif format_name
+        # Registered: look up by name
+        SynthesizerRegistry.create(format_name.to_sym)
+      else
+        halt 400, { error: "Provide 'format' (registered name) or 'format_definition' (inline CRD spec)" }.to_json
+      end
+
+      binding_context = create_binding(variables)
+      binding_context.local_variable_set(:synth, synth)
+
+      # Inject preamble if defined
+      preamble = format_def&.dig("preamble")
+      eval(preamble, binding_context, "(preamble)", 1) if preamble && !preamble.strip.empty? # rubocop:disable Security/Eval
+
+      eval(source, binding_context, "(pangea-#{format_name || 'dynamic'}-template)", 1) # rubocop:disable Security/Eval
+
+      result = synth.synthesis
+
+      {
+        output_json: JSON.pretty_generate(result),
+        format: (format_name || "dynamic"),
+        errors: []
+      }.to_json
+    rescue SyntaxError => e
+      status 422
+      { error: "Template syntax error: #{e.message}", errors: [e.message] }.to_json
     rescue StandardError => e
       status 422
       { error: "Compilation failed: #{e.message}", errors: [e.message, e.backtrace&.first(5)] }.to_json
@@ -352,6 +396,49 @@ class PangeaCompiler < Sinatra::Base
   rescue StandardError => e
     status 422
     { error: "#{format} compilation failed: #{e.message}", errors: [e.message, e.backtrace&.first(5)] }.to_json
+  end
+
+  # Create a TypedArraySynthesizer from a CRD-sourced format definition hash.
+  def create_synthesizer_from_definition(defn)
+    array_sections = (defn["array_sections"] || []).map { |s| s["name"] }
+    map_sections   = (defn["map_sections"]   || []).map { |s| s["name"] }
+
+    synth = TypedArraySynthesizer.new(
+      array_sections: array_sections,
+      map_sections:   map_sections
+    )
+
+    # Apply key transform from CRD
+    default_kt = defn["key_transform"]
+    if default_kt && default_kt != "none"
+      synth.instance_variable_set(:@key_transform, key_transform_proc(default_kt))
+    end
+
+    # Extend with requested Ruby modules
+    (defn["extend_modules"] || []).each do |mod_name|
+      begin
+        mod_const = Object.const_get(mod_name)
+        synth.extend(mod_const)
+      rescue NameError => e
+        $stderr.puts "Warning: module #{mod_name} not available: #{e.message}"
+      end
+    end
+
+    synth
+  end
+
+  # Return a Proc that transforms keys according to the named strategy.
+  def key_transform_proc(name)
+    case name.to_s.tr("_", "-")
+    when "snake-to-kebab"
+      ->(k) { k.to_s.tr("_", "-") }
+    when "snake-to-camel"
+      ->(k) { k.to_s.gsub(/_([a-z])/) { ::Regexp.last_match(1).upcase } }
+    when "snake-to-screaming"
+      ->(k) { k.to_s.upcase }
+    else
+      ->(k) { k.to_s }
+    end
   end
 
   def extend_synthesizer(synth)

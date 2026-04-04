@@ -1,0 +1,14 @@
+# Pangea Operator — Forge Release Configuration
+# Currently push-only (no environment deployments).
+# FluxCD handles deployment via GitOps (pleme-io/k8s).
+
+release:
+  # No environments — operator deploys via FluxCD GitOps, not forge
+  environment_order: []
+  active_environments: []
+  test_image:
+    enabled: false
+
+deployment:
+  wait_for_rollout: false
+  skip_flux_health_check: true

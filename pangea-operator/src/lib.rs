@@ -42,7 +42,10 @@ pub mod observability;
 pub mod api;
 
 // Re-exports for convenience
-pub use crd::{InfrastructureTemplate, PangeaNamespace, PackerBuild, AmiTest, ImagePipeline};
+pub use crd::{
+    AmiTest, ComplianceBinding, ComplianceSchedule, ImagePipeline, InfrastructureTemplate,
+    PackerBuild, PangeaNamespace, SynthesizerFormat,
+};
 pub use error::{Error, Result};
 
 #[cfg(feature = "graphql")]

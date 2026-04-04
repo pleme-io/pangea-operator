@@ -466,14 +466,11 @@ async fn handle_planning(
             update_deploy_status(pipeline, &ds, state).await?;
 
             // Move to approval
-            match &deploy.approval {
-                crate::crd::ApprovalMode::Auto => {
-                    update_phase(pipeline, ImagePipelinePhase::Applying, None, state).await?;
-                }
-                _ => {
-                    update_phase(pipeline, ImagePipelinePhase::AwaitingApproval, None, state)
-                        .await?;
-                }
+            if deploy.approval.is_auto() {
+                update_phase(pipeline, ImagePipelinePhase::Applying, None, state).await?;
+            } else {
+                update_phase(pipeline, ImagePipelinePhase::AwaitingApproval, None, state)
+                    .await?;
             }
 
             return Ok(Action::requeue(SHORT_REQUEUE_INTERVAL));
@@ -720,38 +717,39 @@ fn validate_plan_assertion(
     assertion: &crate::crd::PlanAssertion,
     resources: &crate::crd::ResourceSummary,
 ) -> std::result::Result<(), Error> {
-    match &assertion.rule {
-        crate::crd::PlanAssertionRule::MaxDestroyed(max) => {
-            if resources.destroyed > *max {
-                return Err(Error::AssertionFailed(format!(
-                    "{}: {} resources would be destroyed (max {})",
-                    assertion.name, resources.destroyed, max
-                )));
-            }
+    let rule = &assertion.rule;
+
+    if let Some(max) = rule.max_destroyed {
+        if resources.destroyed > max {
+            return Err(Error::AssertionFailed(format!(
+                "{}: {} resources would be destroyed (max {})",
+                assertion.name, resources.destroyed, max
+            )));
         }
-        crate::crd::PlanAssertionRule::MaxAdded(max) => {
-            if resources.added > *max {
-                return Err(Error::AssertionFailed(format!(
-                    "{}: {} resources would be added (max {})",
-                    assertion.name, resources.added, max
-                )));
-            }
-        }
-        crate::crd::PlanAssertionRule::MaxTotalChanged(max) => {
-            let total = resources.added + resources.changed + resources.destroyed;
-            if total > *max {
-                return Err(Error::AssertionFailed(format!(
-                    "{}: {} total changes (max {})",
-                    assertion.name, total, max
-                )));
-            }
-        }
-        // AllowedResourceTypes and ForbiddenResourceTypes require plan detail
-        // parsing that isn't available from ResourceSummary alone. These would
-        // need the full plan JSON. For now, they pass.
-        crate::crd::PlanAssertionRule::AllowedResourceTypes(_)
-        | crate::crd::PlanAssertionRule::ForbiddenResourceTypes(_) => {}
     }
+
+    if let Some(max) = rule.max_added {
+        if resources.added > max {
+            return Err(Error::AssertionFailed(format!(
+                "{}: {} resources would be added (max {})",
+                assertion.name, resources.added, max
+            )));
+        }
+    }
+
+    if let Some(max) = rule.max_total_changed {
+        let total = resources.added + resources.changed + resources.destroyed;
+        if total > max {
+            return Err(Error::AssertionFailed(format!(
+                "{}: {} total changes (max {})",
+                assertion.name, total, max
+            )));
+        }
+    }
+
+    // AllowedResourceTypes and ForbiddenResourceTypes require plan detail
+    // parsing that isn't available from ResourceSummary alone.
+
     Ok(())
 }
 
@@ -760,69 +758,63 @@ async fn run_health_check(check: &crate::crd::HealthCheck) -> HealthCheckResult 
     let interval = super::parse_duration(&check.interval).unwrap_or(Duration::from_secs(10));
 
     for attempt in 1..=max_retries {
-        match &check.check_type {
-            crate::crd::HealthCheckType::Http {
-                endpoint,
-                expected_status,
-            } => {
-                match reqwest::get(endpoint).await {
-                    Ok(resp) if resp.status().as_u16() == *expected_status => {
-                        return HealthCheckResult {
-                            name: check.name.clone(),
-                            passed: true,
-                            attempts: attempt,
-                            error: None,
-                        };
-                    }
-                    Ok(resp) => {
-                        info!(
-                            check = %check.name,
-                            attempt,
-                            status = resp.status().as_u16(),
-                            expected = expected_status,
-                            "Health check attempt failed"
-                        );
-                    }
-                    Err(e) => {
-                        info!(
-                            check = %check.name,
-                            attempt,
-                            error = %e,
-                            "Health check attempt failed"
-                        );
-                    }
+        let ct = &check.check_type;
+
+        if let Some(ref http) = ct.http {
+            match reqwest::get(&http.endpoint).await {
+                Ok(resp) if resp.status().as_u16() == http.expected_status => {
+                    return HealthCheckResult {
+                        name: check.name.clone(),
+                        passed: true,
+                        attempts: attempt,
+                        error: None,
+                    };
+                }
+                Ok(resp) => {
+                    info!(
+                        check = %check.name,
+                        attempt,
+                        status = resp.status().as_u16(),
+                        expected = http.expected_status,
+                        "Health check attempt failed"
+                    );
+                }
+                Err(e) => {
+                    info!(
+                        check = %check.name,
+                        attempt,
+                        error = %e,
+                        "Health check attempt failed"
+                    );
                 }
             }
-            crate::crd::HealthCheckType::Tcp { endpoint } => {
-                match tokio::net::TcpStream::connect(endpoint).await {
-                    Ok(_) => {
-                        return HealthCheckResult {
-                            name: check.name.clone(),
-                            passed: true,
-                            attempts: attempt,
-                            error: None,
-                        };
-                    }
-                    Err(e) => {
-                        info!(
-                            check = %check.name,
-                            attempt,
-                            error = %e,
-                            "TCP health check attempt failed"
-                        );
-                    }
+        } else if let Some(ref tcp) = ct.tcp {
+            match tokio::net::TcpStream::connect(&tcp.endpoint).await {
+                Ok(_) => {
+                    return HealthCheckResult {
+                        name: check.name.clone(),
+                        passed: true,
+                        attempts: attempt,
+                        error: None,
+                    };
+                }
+                Err(e) => {
+                    info!(
+                        check = %check.name,
+                        attempt,
+                        error = %e,
+                        "TCP health check attempt failed"
+                    );
                 }
             }
-            crate::crd::HealthCheckType::Kubernetes { .. } => {
-                // K8s health checks would require creating a Job.
-                // For now, skip and pass.
-                return HealthCheckResult {
-                    name: check.name.clone(),
-                    passed: true,
-                    attempts: 1,
-                    error: None,
-                };
-            }
+        } else if ct.kubernetes.is_some() {
+            // K8s health checks would require creating a Job.
+            return HealthCheckResult {
+                name: check.name.clone(),
+                passed: true,
+                attempts: 1,
+                error: None,
+            };
         }
 
         if attempt < max_retries {

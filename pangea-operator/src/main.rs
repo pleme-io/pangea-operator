@@ -2,8 +2,9 @@
 
 use pangea_operator::{
     controller::{
-        AmiTestController, ControllerState, FlowController, ImagePipelineController,
-        NamespaceController, PackerBuildController, TemplateController,
+        AmiTestController, ComplianceBindingController, ComplianceScheduleController,
+        ControllerState, FlowController, ImagePipelineController, NamespaceController,
+        PackerBuildController, SynthesizerFormatController, TemplateController,
     },
     crd::generate_crds,
     error::Result,
@@ -178,6 +179,30 @@ async fn main() -> Result<()> {
         }
     });
 
+    let synth_format_state = state.clone();
+    let synth_format_controller = tokio::spawn(async move {
+        let controller = SynthesizerFormatController::new(synth_format_state);
+        if let Err(e) = controller.run().await {
+            error!(error = %e, "SynthesizerFormat controller error");
+        }
+    });
+
+    let compliance_schedule_state = state.clone();
+    let compliance_schedule_controller = tokio::spawn(async move {
+        let controller = ComplianceScheduleController::new(compliance_schedule_state);
+        if let Err(e) = controller.run().await {
+            error!(error = %e, "ComplianceSchedule controller error");
+        }
+    });
+
+    let compliance_binding_state = state.clone();
+    let compliance_binding_controller = tokio::spawn(async move {
+        let controller = ComplianceBindingController::new(compliance_binding_state);
+        if let Err(e) = controller.run().await {
+            error!(error = %e, "ComplianceBinding controller error");
+        }
+    });
+
     info!("Controllers started");
 
     // Start GraphQL server
@@ -205,6 +230,9 @@ async fn main() -> Result<()> {
     packer_build_controller.abort();
     ami_test_controller.abort();
     image_pipeline_controller.abort();
+    synth_format_controller.abort();
+    compliance_schedule_controller.abort();
+    compliance_binding_controller.abort();
 
     info!("Pangea Operator stopped");
     Ok(())

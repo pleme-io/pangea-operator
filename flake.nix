@@ -29,6 +29,6 @@
       # tofu: runs terraform/opentofu operations on infrastructure templates
       # git: clones git repository template sources
       # busybox: basic shell utilities for workspace management
-      extraContents = pkgs: with pkgs; [ opentofu git busybox ];
+      extraContents = pkgs: with pkgs; [ opentofu packer git busybox ];
     };
 }
