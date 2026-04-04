@@ -1,7 +1,7 @@
 //! Pangea Operator - Kubernetes operator for Pangea infrastructure management.
 
 use pangea_operator::{
-    controller::{ControllerState, NamespaceController, TemplateController},
+    controller::{ControllerState, FlowController, NamespaceController, TemplateController},
     crd::generate_crds,
     error::Result,
     executor::ExecutorConfig,
@@ -143,6 +143,14 @@ async fn main() -> Result<()> {
         }
     });
 
+    let flow_state = state.clone();
+    let flow_controller = tokio::spawn(async move {
+        let controller = FlowController::new(flow_state);
+        if let Err(e) = controller.run().await {
+            error!(error = %e, "Flow controller error");
+        }
+    });
+
     info!("Controllers started");
 
     // Start GraphQL server
@@ -166,6 +174,7 @@ async fn main() -> Result<()> {
     // Abort controllers (they run forever)
     template_controller.abort();
     namespace_controller.abort();
+    flow_controller.abort();
 
     info!("Pangea Operator stopped");
     Ok(())

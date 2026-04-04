@@ -6,6 +6,7 @@
 mod tofu;
 mod workspace;
 mod plan;
+pub mod variable_resolver;
 
 pub use tofu::{TofuExecutor, TofuCommand, TofuResult};
 pub use workspace::{Workspace, WorkspaceManager};

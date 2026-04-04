@@ -3,11 +3,13 @@
 //! This module contains the reconciliation logic for InfrastructureTemplate
 //! and PangeaNamespace custom resources.
 
+mod flow_controller;
 mod reconciler;
 mod template_controller;
 mod namespace_controller;
 
 pub use reconciler::*;
+pub use flow_controller::FlowController;
 pub use template_controller::TemplateController;
 pub use namespace_controller::NamespaceController;
 

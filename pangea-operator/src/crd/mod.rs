@@ -3,7 +3,9 @@
 //! This module defines the Kubernetes custom resources used by the Pangea operator:
 //! - `InfrastructureTemplate`: Represents a Pangea infrastructure template to be deployed
 //! - `PangeaNamespace`: Cluster-scoped configuration for Pangea namespaces
+//! - `InfrastructureFlow`: DAG orchestrator for multi-template deployments
 
+mod infrastructure_flow;
 mod infrastructure_template;
 mod pangea_namespace;
 
@@ -13,6 +15,12 @@ pub use infrastructure_template::{
     GitRepositoryRef, InfrastructureTemplate, InfrastructureTemplateSpec,
     InfrastructureTemplateStatus, Phase, ProfileResult, ProviderCredentials, ResourceSummary,
     RetryPolicy, SecretRef, TemplateSource,
+};
+
+// Re-export InfrastructureFlow types
+pub use infrastructure_flow::{
+    DestroyOrder, FlowPhase, FlowStep, FlowStepStatus, FlowTemplateRef,
+    InfrastructureFlow, InfrastructureFlowSpec, InfrastructureFlowStatus,
 };
 
 // Re-export PangeaNamespace types (SecretRef renamed to avoid collision)
@@ -38,6 +46,12 @@ pub fn generate_crds() -> String {
     crds.push_str(
         &serde_yaml::to_string(&PangeaNamespace::crd())
             .expect("Failed to serialize PangeaNamespace CRD"),
+    );
+
+    crds.push_str("---\n");
+    crds.push_str(
+        &serde_yaml::to_string(&InfrastructureFlow::crd())
+            .expect("Failed to serialize InfrastructureFlow CRD"),
     );
 
     crds
