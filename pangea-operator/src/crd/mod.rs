@@ -17,6 +17,7 @@ mod pangea_namespace;
 pub mod synthesizer_format;
 pub mod compliance_schedule;
 pub mod compliance_binding;
+pub mod pangea_dashboard;
 
 // Re-export InfrastructureTemplate types
 pub use infrastructure_template::{
@@ -62,6 +63,12 @@ pub use compliance_binding::{
     BindingComplianceState, BindingTarget, ComplianceBinding, ComplianceBindingSpec,
     ComplianceBindingStatus, ComplianceEvent, ComplianceRef, EnforcementLevel, Reaction,
     ReactionAction, SekibanIntegration, TargetKind, TargetStatus,
+};
+
+// Re-export PangeaDashboard types
+pub use pangea_dashboard::{
+    DashboardSource, PangeaDashboard, PangeaDashboardPhase, PangeaDashboardSpec,
+    PangeaDashboardStatus,
 };
 
 // Re-export SynthesizerFormat types
@@ -146,6 +153,12 @@ pub fn generate_crds() -> String {
     crds.push_str(
         &serde_yaml::to_string(&ComplianceBinding::crd())
             .expect("Failed to serialize ComplianceBinding CRD"),
+    );
+
+    crds.push_str("---\n");
+    crds.push_str(
+        &serde_yaml::to_string(&PangeaDashboard::crd())
+            .expect("Failed to serialize PangeaDashboard CRD"),
     );
 
     crds

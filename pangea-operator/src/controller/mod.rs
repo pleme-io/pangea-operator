@@ -15,6 +15,7 @@ mod image_pipeline_controller;
 mod synthesizer_format_controller;
 mod compliance_schedule_controller;
 mod compliance_binding_controller;
+mod dashboard_controller;
 
 pub use reconciler::*;
 pub use flow_controller::FlowController;
@@ -26,6 +27,7 @@ pub use image_pipeline_controller::ImagePipelineController;
 pub use synthesizer_format_controller::SynthesizerFormatController;
 pub use compliance_schedule_controller::ComplianceScheduleController;
 pub use compliance_binding_controller::ComplianceBindingController;
+pub use dashboard_controller::DashboardController;
 
 use crate::error::Result;
 use crate::executor::{ExecutorConfig, PackerExecutor, TofuExecutor, WorkspaceManager};
