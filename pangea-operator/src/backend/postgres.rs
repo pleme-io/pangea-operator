@@ -108,11 +108,91 @@ fn parse_ssl_mode(mode: &str) -> Result<PgSslMode> {
 mod tests {
     use super::*;
 
+    fn make_pg_config() -> PostgresBackendConfig {
+        PostgresBackendConfig {
+            host: "db.example.com".to_string(),
+            port: 5432,
+            database: "pangea".to_string(),
+            schema_prefix: "pangea_".to_string(),
+            ssl_mode: "require".to_string(),
+            secret_ref: crate::crd::PostgresSecretRef {
+                name: "db-secret".to_string(),
+                namespace: None,
+                username_key: "username".to_string(),
+                password_key: "password".to_string(),
+                ca_cert_key: None,
+            },
+            pool: None,
+        }
+    }
+
     #[test]
     fn test_parse_ssl_mode() {
         assert!(matches!(parse_ssl_mode("disable").unwrap(), PgSslMode::Disable));
         assert!(matches!(parse_ssl_mode("require").unwrap(), PgSslMode::Require));
         assert!(matches!(parse_ssl_mode("verify-full").unwrap(), PgSslMode::VerifyFull));
         assert!(parse_ssl_mode("invalid").is_err());
+    }
+
+    #[test]
+    fn test_parse_ssl_mode_all_variants() {
+        assert!(matches!(parse_ssl_mode("disable").unwrap(), PgSslMode::Disable));
+        assert!(matches!(parse_ssl_mode("allow").unwrap(), PgSslMode::Allow));
+        assert!(matches!(parse_ssl_mode("prefer").unwrap(), PgSslMode::Prefer));
+        assert!(matches!(parse_ssl_mode("require").unwrap(), PgSslMode::Require));
+        assert!(matches!(parse_ssl_mode("verify-ca").unwrap(), PgSslMode::VerifyCa));
+        assert!(matches!(parse_ssl_mode("verify_ca").unwrap(), PgSslMode::VerifyCa));
+        assert!(matches!(parse_ssl_mode("verify-full").unwrap(), PgSslMode::VerifyFull));
+        assert!(matches!(parse_ssl_mode("verify_full").unwrap(), PgSslMode::VerifyFull));
+    }
+
+    #[test]
+    fn test_parse_ssl_mode_case_insensitive() {
+        assert!(matches!(parse_ssl_mode("REQUIRE").unwrap(), PgSslMode::Require));
+        assert!(matches!(parse_ssl_mode("Disable").unwrap(), PgSslMode::Disable));
+        assert!(matches!(parse_ssl_mode("VERIFY-FULL").unwrap(), PgSslMode::VerifyFull));
+    }
+
+    #[test]
+    fn test_parse_ssl_mode_empty_string() {
+        assert!(parse_ssl_mode("").is_err());
+    }
+
+    #[test]
+    fn test_build_connection_url() {
+        let config = make_pg_config();
+        let credentials = Credentials::new("admin", "secret");
+        let url = PostgresBackend::build_connection_url(&config, &credentials);
+        assert!(url.starts_with("postgres://"));
+        assert!(url.contains("admin"));
+        assert!(url.contains("secret"));
+        assert!(url.contains("db.example.com:5432"));
+        assert!(url.contains("pangea"));
+        assert!(url.contains("sslmode=require"));
+    }
+
+    #[test]
+    fn test_build_connection_url_encodes_special_chars() {
+        let config = make_pg_config();
+        let credentials = Credentials::new("user@domain", "p@ss:word/123");
+        let url = PostgresBackend::build_connection_url(&config, &credentials);
+        assert!(url.contains("user%40domain"));
+        assert!(url.contains("p%40ss%3Aword%2F123"));
+    }
+
+    #[test]
+    fn test_credentials_new() {
+        let creds = Credentials::new("user", "pass");
+        assert_eq!(creds.username, "user");
+        assert_eq!(creds.password, "pass");
+        assert!(creds.ca_cert.is_none());
+    }
+
+    #[test]
+    fn test_credentials_with_ca_cert() {
+        let creds = Credentials::new("user", "pass")
+            .with_ca_cert("-----BEGIN CERTIFICATE-----\nMIIC...\n-----END CERTIFICATE-----");
+        assert!(creds.ca_cert.is_some());
+        assert!(creds.ca_cert.unwrap().contains("BEGIN CERTIFICATE"));
     }
 }

@@ -157,9 +157,8 @@ fn build_conn_str(pg: &PostgresBackendConfig, credentials: &Credentials) -> Stri
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_build_conn_str() {
-        let pg = PostgresBackendConfig {
+    fn make_pg_config() -> PostgresBackendConfig {
+        PostgresBackendConfig {
             host: "localhost".to_string(),
             port: 5432,
             database: "pangea_state".to_string(),
@@ -173,15 +172,112 @@ mod tests {
                 ca_cert_key: None,
             },
             pool: None,
-        };
+        }
+    }
 
+    #[test]
+    fn test_build_conn_str() {
+        let pg = make_pg_config();
         let credentials = Credentials::new("user", "pass@word");
-
         let conn_str = build_conn_str(&pg, &credentials);
 
         assert!(conn_str.contains("postgres://"));
         assert!(conn_str.contains("localhost:5432"));
         assert!(conn_str.contains("pangea_state"));
         assert!(conn_str.contains("pass%40word")); // URL encoded
+    }
+
+    #[test]
+    fn test_build_conn_str_special_chars_in_username() {
+        let pg = make_pg_config();
+        let credentials = Credentials::new("user@host/db", "password");
+        let conn_str = build_conn_str(&pg, &credentials);
+        assert!(conn_str.contains("user%40host%2Fdb"));
+    }
+
+    #[test]
+    fn test_generate_provider_config_aws_only() {
+        let config = BackendConfigGenerator::generate_provider_config(
+            Some("us-east-1"),
+            Some(&AwsCredentialsConfig {
+                access_key: "AKID123".to_string(),
+                secret_key: "secret456".to_string(),
+                session_token: None,
+            }),
+            None,
+        );
+
+        let aws = &config["provider"]["aws"];
+        assert_eq!(aws["region"], "us-east-1");
+        assert_eq!(aws["access_key"], "AKID123");
+        assert_eq!(aws["secret_key"], "secret456");
+        assert!(aws.get("token").is_none());
+    }
+
+    #[test]
+    fn test_generate_provider_config_aws_with_session_token() {
+        let config = BackendConfigGenerator::generate_provider_config(
+            Some("us-west-2"),
+            Some(&AwsCredentialsConfig {
+                access_key: "AKID".to_string(),
+                secret_key: "SK".to_string(),
+                session_token: Some("TOKEN123".to_string()),
+            }),
+            None,
+        );
+
+        assert_eq!(config["provider"]["aws"]["token"], "TOKEN123");
+    }
+
+    #[test]
+    fn test_generate_provider_config_cloudflare_only() {
+        let config = BackendConfigGenerator::generate_provider_config(
+            None,
+            None,
+            Some(&CloudflareCredentialsConfig {
+                api_token: "cf-token-xyz".to_string(),
+            }),
+        );
+
+        assert_eq!(config["provider"]["cloudflare"]["api_token"], "cf-token-xyz");
+        assert!(config["provider"].get("aws").is_none());
+    }
+
+    #[test]
+    fn test_generate_provider_config_both_providers() {
+        let config = BackendConfigGenerator::generate_provider_config(
+            Some("eu-west-1"),
+            Some(&AwsCredentialsConfig {
+                access_key: "AK".to_string(),
+                secret_key: "SK".to_string(),
+                session_token: None,
+            }),
+            Some(&CloudflareCredentialsConfig {
+                api_token: "cf-token".to_string(),
+            }),
+        );
+
+        assert!(config["provider"]["aws"].is_object());
+        assert!(config["provider"]["cloudflare"].is_object());
+    }
+
+    #[test]
+    fn test_generate_provider_config_no_providers() {
+        let config = BackendConfigGenerator::generate_provider_config(None, None, None);
+        let providers = config["provider"].as_object().unwrap();
+        assert!(providers.is_empty());
+    }
+
+    #[test]
+    fn test_generate_provider_config_region_without_creds() {
+        let config = BackendConfigGenerator::generate_provider_config(
+            Some("ap-southeast-1"),
+            None,
+            None,
+        );
+        let aws = &config["provider"]["aws"];
+        assert_eq!(aws["region"], "ap-southeast-1");
+        assert!(aws.get("access_key").is_none());
+        assert!(aws.get("secret_key").is_none());
     }
 }

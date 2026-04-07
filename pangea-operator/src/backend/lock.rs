@@ -282,4 +282,32 @@ mod tests {
         assert_eq!(id1, id2); // Same inputs = same ID
         assert_ne!(id1, id3); // Different inputs = different ID
     }
+
+    #[test]
+    fn test_compute_lock_id_different_template_same_schema() {
+        let id1 = compute_lock_id("pangea_prod", "web_server");
+        let id2 = compute_lock_id("pangea_prod", "database");
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn test_compute_lock_id_order_matters() {
+        let id1 = compute_lock_id("a", "b");
+        let id2 = compute_lock_id("b", "a");
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn test_compute_lock_id_empty_strings() {
+        let id1 = compute_lock_id("", "");
+        let id2 = compute_lock_id("", "something");
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn test_compute_lock_id_similar_names() {
+        let id1 = compute_lock_id("pangea_production", "web");
+        let id2 = compute_lock_id("pangea_prod", "uction_web");
+        assert_ne!(id1, id2);
+    }
 }
