@@ -142,3 +142,126 @@ impl<T> ResultExt<T> for Result<T> {
         self.map_err(|e| e.context(context))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_display_string_variants() {
+        let e = Error::Compilation("syntax error".into());
+        assert_eq!(format!("{}", e), "Template compilation failed: syntax error");
+
+        let e = Error::TofuExecution("plan failed".into());
+        assert_eq!(format!("{}", e), "OpenTofu execution failed: plan failed");
+
+        let e = Error::Config("bad config".into());
+        assert_eq!(format!("{}", e), "Configuration error: bad config");
+
+        let e = Error::StateBackend("connection refused".into());
+        assert_eq!(format!("{}", e), "State backend error: connection refused");
+    }
+
+    #[test]
+    fn test_error_display_secret_not_found() {
+        let e = Error::SecretNotFound {
+            namespace: "default".into(),
+            name: "db-creds".into(),
+        };
+        assert_eq!(format!("{}", e), "Secret not found: default/db-creds");
+    }
+
+    #[test]
+    fn test_error_display_timeout() {
+        let e = Error::Timeout(300);
+        assert_eq!(format!("{}", e), "Reconciliation timeout after 300 seconds");
+    }
+
+    #[test]
+    fn test_error_context_wraps() {
+        let inner = Error::Compilation("parse error".into());
+        let wrapped = inner.context("while processing template");
+        match &wrapped {
+            Error::WithContext { context, source } => {
+                assert_eq!(context, "while processing template");
+                assert!(matches!(source.as_ref(), Error::Compilation(_)));
+            }
+            _ => panic!("Expected WithContext variant"),
+        }
+        assert!(format!("{}", wrapped).contains("while processing template"));
+    }
+
+    #[test]
+    fn test_error_context_nested() {
+        let inner = Error::Config("missing field".into());
+        let wrapped1 = inner.context("loading namespace");
+        let wrapped2 = wrapped1.context("during reconciliation");
+        assert!(format!("{}", wrapped2).contains("during reconciliation"));
+    }
+
+    #[test]
+    fn test_is_retryable_true_variants() {
+        assert!(Error::Timeout(60).is_retryable());
+        assert!(Error::LockFailed("locked".into()).is_retryable());
+        assert!(Error::PackerExecution("timeout".into()).is_retryable());
+        assert!(Error::AmiTestFailed("connection error".into()).is_retryable());
+        assert!(Error::Io(std::io::Error::new(std::io::ErrorKind::Other, "io")).is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_false_variants() {
+        assert!(!Error::Compilation("bad syntax".into()).is_retryable());
+        assert!(!Error::Config("invalid".into()).is_retryable());
+        assert!(!Error::InvalidSource("missing".into()).is_retryable());
+        assert!(!Error::StateBackend("bad".into()).is_retryable());
+        assert!(!Error::PackerManifest("missing".into()).is_retryable());
+        assert!(!Error::SecretNotFound {
+            namespace: "ns".into(),
+            name: "s".into(),
+        }.is_retryable());
+        assert!(!Error::NamespaceNotFound("ns".into()).is_retryable());
+        assert!(!Error::HealthCheckFailed("fail".into()).is_retryable());
+        assert!(!Error::AssertionFailed("fail".into()).is_retryable());
+        assert!(!Error::ImagePipeline("fail".into()).is_retryable());
+    }
+
+    #[test]
+    fn test_result_ext_context_on_err() {
+        let result: Result<i32> = Err(Error::Config("bad".into()));
+        let with_ctx = result.context("loading config");
+        assert!(with_ctx.is_err());
+        let err = with_ctx.unwrap_err();
+        assert!(matches!(err, Error::WithContext { .. }));
+    }
+
+    #[test]
+    fn test_result_ext_context_on_ok() {
+        let result: Result<i32> = Ok(42);
+        let with_ctx = result.context("loading config");
+        assert_eq!(with_ctx.unwrap(), 42);
+    }
+
+    #[test]
+    fn test_error_from_serde_json() {
+        let result: std::result::Result<serde_json::Value, _> = serde_json::from_str("{invalid}");
+        let err: Error = result.unwrap_err().into();
+        assert!(matches!(err, Error::Serialization(_)));
+        assert!(format!("{}", err).contains("Serialization error"));
+    }
+
+    #[test]
+    fn test_error_from_io() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let err: Error = io_err.into();
+        assert!(matches!(err, Error::Io(_)));
+        assert!(format!("{}", err).contains("IO error"));
+    }
+
+    #[test]
+    fn test_with_context_display() {
+        let inner = Error::Timeout(30);
+        let wrapped = inner.context("applying step vpc");
+        let display = format!("{}", wrapped);
+        assert_eq!(display, "applying step vpc: Reconciliation timeout after 30 seconds");
+    }
+}

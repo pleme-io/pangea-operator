@@ -163,3 +163,73 @@ pub fn generate_crds() -> String {
 
     crds
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_opaque_json_schema_produces_object_type() {
+        let mut gen = schemars::gen::SchemaGenerator::default();
+        let schema = opaque_json_schema(&mut gen);
+        match schema {
+            schemars::schema::Schema::Object(obj) => {
+                assert_eq!(
+                    obj.instance_type,
+                    Some(schemars::schema::InstanceType::Object.into())
+                );
+            }
+            _ => panic!("Expected Schema::Object variant"),
+        }
+    }
+
+    #[test]
+    fn test_generate_crds_not_empty() {
+        let crds = generate_crds();
+        assert!(!crds.is_empty());
+    }
+
+    #[test]
+    fn test_generate_crds_contains_all_resources() {
+        let crds = generate_crds();
+        assert!(crds.contains("InfrastructureTemplate"), "Missing InfrastructureTemplate CRD");
+        assert!(crds.contains("PangeaNamespace"), "Missing PangeaNamespace CRD");
+        assert!(crds.contains("InfrastructureFlow"), "Missing InfrastructureFlow CRD");
+        assert!(crds.contains("PackerBuild"), "Missing PackerBuild CRD");
+        assert!(crds.contains("AmiTest"), "Missing AmiTest CRD");
+        assert!(crds.contains("ImagePipeline"), "Missing ImagePipeline CRD");
+        assert!(crds.contains("SynthesizerFormat"), "Missing SynthesizerFormat CRD");
+        assert!(crds.contains("ComplianceSchedule"), "Missing ComplianceSchedule CRD");
+        assert!(crds.contains("ComplianceBinding"), "Missing ComplianceBinding CRD");
+        assert!(crds.contains("PangeaDashboard"), "Missing PangeaDashboard CRD");
+    }
+
+    #[test]
+    fn test_generate_crds_valid_yaml() {
+        let crds = generate_crds();
+        let mut count = 0;
+        for doc in crds.split("---\n") {
+            let trimmed = doc.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let parsed: Result<serde_yaml::Value, _> = serde_yaml::from_str(trimmed);
+            assert!(parsed.is_ok(), "Invalid YAML in CRD document {}: {:?}", count, parsed.err());
+            count += 1;
+        }
+        assert_eq!(count, 10, "Expected 10 CRD documents");
+    }
+
+    #[test]
+    fn test_generate_crds_each_has_api_version() {
+        let crds = generate_crds();
+        for doc in crds.split("---\n") {
+            let trimmed = doc.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            assert!(trimmed.contains("apiextensions.k8s.io"),
+                "CRD document missing apiextensions.k8s.io");
+        }
+    }
+}

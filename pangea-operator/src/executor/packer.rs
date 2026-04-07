@@ -365,4 +365,86 @@ mod tests {
         let result = parse_packer_manifest(f.path());
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_parse_packer_manifest_missing_artifact_id() {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(f, r#"{{"builds": [{{"name": "test"}}]}}"#).unwrap();
+
+        let result = parse_packer_manifest(f.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_packer_manifest_invalid_json() {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(f, "not valid json").unwrap();
+
+        let result = parse_packer_manifest(f.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_packer_manifest_nonexistent_file() {
+        let result = parse_packer_manifest(Path::new("/tmp/nonexistent_packer_manifest.json"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_packer_manifest_region_empty_builds() {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(f, r#"{{"builds": []}}"#).unwrap();
+
+        let region = parse_packer_manifest_region(f.path()).unwrap();
+        assert!(region.is_none());
+    }
+
+    #[test]
+    fn test_parse_packer_manifest_region_nonexistent_file() {
+        let result = parse_packer_manifest_region(Path::new("/tmp/nonexistent_file.json"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_packer_command_as_str() {
+        assert_eq!(PackerCommand::Init.as_str(), "init");
+        assert_eq!(PackerCommand::Validate.as_str(), "validate");
+        assert_eq!(PackerCommand::Build.as_str(), "build");
+        assert_eq!(PackerCommand::Inspect.as_str(), "inspect");
+    }
+
+    #[test]
+    fn test_packer_executor_new() {
+        let exec = PackerExecutor::new(
+            std::path::PathBuf::from("/usr/bin/packer"),
+            Duration::from_secs(300),
+            true,
+        );
+        assert!(exec.verbose);
+        assert_eq!(exec.timeout, Duration::from_secs(300));
+    }
+
+    #[test]
+    fn test_parse_packer_manifest_artifact_without_colon() {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(f, r#"{{"builds": [{{"artifact_id": "ami-no-region"}}]}}"#).unwrap();
+
+        let result = parse_packer_manifest(f.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_packer_manifest_picks_last_build() {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(f, r#"{{
+            "builds": [
+                {{"artifact_id": "us-east-1:ami-first"}},
+                {{"artifact_id": "us-east-1:ami-second"}},
+                {{"artifact_id": "us-east-1:ami-third"}}
+            ]
+        }}"#).unwrap();
+
+        let ami = parse_packer_manifest(f.path()).unwrap();
+        assert_eq!(ami, "ami-third");
+    }
 }

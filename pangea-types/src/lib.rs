@@ -55,3 +55,35 @@ mod server_impls {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_datetime_from_chrono() {
+        let dt = chrono::Utc::now();
+        let pangea_dt = DateTime::from(dt.clone());
+        assert_eq!(pangea_dt.0, dt.to_rfc3339());
+    }
+
+    #[test]
+    fn test_datetime_display() {
+        let dt = DateTime("2024-01-15T10:30:00Z".to_string());
+        assert_eq!(format!("{}", dt), "2024-01-15T10:30:00Z");
+    }
+
+    #[test]
+    fn test_datetime_roundtrip_serde() {
+        let dt = DateTime("2024-06-01T00:00:00+00:00".to_string());
+        let json = serde_json::to_string(&dt).unwrap();
+        let back: DateTime = serde_json::from_str(&json).unwrap();
+        assert_eq!(dt, back);
+    }
+
+    #[test]
+    fn test_datetime_empty_string() {
+        let dt = DateTime(String::new());
+        assert_eq!(format!("{}", dt), "");
+    }
+}

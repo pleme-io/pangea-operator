@@ -433,4 +433,180 @@ mod tests {
         assert_eq!(refs[1].step_name, "b");
         assert_eq!(refs[1].output_key, "y");
     }
+
+    #[test]
+    fn test_extract_references_no_refs() {
+        let refs = extract_references("plain string with no references");
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn test_extract_references_incomplete_ref() {
+        let refs = extract_references("{{ steps.a.outputs.x");
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn test_extract_references_missing_outputs_keyword() {
+        let refs = extract_references("{{ steps.a.something.x }}");
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn test_resolve_nested_json_objects() {
+        let outputs = make_outputs();
+        let mut vars = BTreeMap::new();
+        vars.insert("config".into(), serde_json::json!({
+            "vpc": "{{ steps.step-a.outputs.vpc_id }}",
+            "static": "value"
+        }));
+
+        let resolved = resolve_step_references(&vars, &outputs).unwrap();
+        let config = &resolved["config"];
+        assert_eq!(config["vpc"], "vpc-abc123");
+        assert_eq!(config["static"], "value");
+    }
+
+    #[test]
+    fn test_resolve_array_values() {
+        let outputs = make_outputs();
+        let mut vars = BTreeMap::new();
+        vars.insert("list".into(), serde_json::json!([
+            "{{ steps.step-a.outputs.vpc_id }}",
+            "static"
+        ]));
+
+        let resolved = resolve_step_references(&vars, &outputs).unwrap();
+        let list = resolved["list"].as_array().unwrap();
+        assert_eq!(list[0], "vpc-abc123");
+        assert_eq!(list[1], "static");
+    }
+
+    #[test]
+    fn test_resolve_preserves_non_string_types() {
+        let outputs = make_outputs();
+        let mut vars = BTreeMap::new();
+        vars.insert("num".into(), serde_json::json!(42));
+        vars.insert("bool".into(), serde_json::json!(true));
+        vars.insert("null".into(), serde_json::Value::Null);
+
+        let resolved = resolve_step_references(&vars, &outputs).unwrap();
+        assert_eq!(resolved["num"], 42);
+        assert_eq!(resolved["bool"], true);
+        assert!(resolved["null"].is_null());
+    }
+
+    #[test]
+    fn test_unresolved_dependencies_empty_when_all_resolved() {
+        let outputs = make_outputs();
+        let mut vars = BTreeMap::new();
+        vars.insert("vpc".into(), serde_json::json!("{{ steps.step-a.outputs.vpc_id }}"));
+
+        let missing = unresolved_dependencies(&vars, &outputs);
+        assert!(missing.is_empty());
+    }
+
+    #[test]
+    fn test_unresolved_dependencies_deduplicates() {
+        let outputs = BTreeMap::new();
+        let mut vars = BTreeMap::new();
+        vars.insert("a".into(), serde_json::json!("{{ steps.missing.outputs.x }}"));
+        vars.insert("b".into(), serde_json::json!("{{ steps.missing.outputs.y }}"));
+
+        let missing = unresolved_dependencies(&vars, &outputs);
+        assert_eq!(missing.len(), 1);
+        assert_eq!(missing[0], "missing");
+    }
+
+    #[test]
+    fn test_resolve_with_context_missing_state() {
+        let ctx = ResolutionContext::default();
+        let mut vars = BTreeMap::new();
+        vars.insert("x".into(), serde_json::json!("{{ steps.net.state.aws_vpc.main.id }}"));
+
+        let result = resolve_with_context(&vars, &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_resolve_with_context_missing_resource_in_state() {
+        let state = serde_json::json!({
+            "values": {
+                "root_module": {
+                    "resources": []
+                }
+            }
+        });
+        let mut ctx = ResolutionContext::default();
+        ctx.states.insert("net".into(), state);
+
+        let mut vars = BTreeMap::new();
+        vars.insert("x".into(), serde_json::json!("{{ steps.net.state.aws_vpc.nonexistent.id }}"));
+
+        let result = resolve_with_context(&vars, &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_resolve_with_context_mixed_output_and_state() {
+        let state = serde_json::json!({
+            "values": {
+                "root_module": {
+                    "resources": [{
+                        "type": "aws_vpc",
+                        "name": "main",
+                        "values": { "id": "vpc-state-123" }
+                    }]
+                }
+            }
+        });
+
+        let mut outputs = BTreeMap::new();
+        outputs.insert("vpc_id".into(), serde_json::json!("vpc-output-456"));
+        let mut step_outputs = BTreeMap::new();
+        step_outputs.insert("net".into(), outputs);
+
+        let mut ctx = ResolutionContext::default();
+        ctx.states.insert("net".into(), state);
+        ctx.outputs = step_outputs;
+
+        let mut vars = BTreeMap::new();
+        vars.insert("from_output".into(), serde_json::json!("{{ steps.net.outputs.vpc_id }}"));
+        vars.insert("from_state".into(), serde_json::json!("{{ steps.net.state.aws_vpc.main.id }}"));
+
+        let resolved = resolve_with_context(&vars, &ctx).unwrap();
+        assert_eq!(resolved["from_output"], "vpc-output-456");
+        assert_eq!(resolved["from_state"], "vpc-state-123");
+    }
+
+    #[test]
+    fn test_extract_state_references_multiple() {
+        let refs = extract_state_references(
+            "a={{ steps.net.state.aws_vpc.main.id }} b={{ steps.db.state.aws_rds.primary.endpoint }}"
+        );
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0].step_name, "net");
+        assert_eq!(refs[1].step_name, "db");
+        assert_eq!(refs[1].resource_type, "aws_rds");
+        assert_eq!(refs[1].resource_name, "primary");
+        assert_eq!(refs[1].attribute, "endpoint");
+    }
+
+    #[test]
+    fn test_extract_state_references_none() {
+        let refs = extract_state_references("no state refs here");
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn test_resolve_string_interpolation_embedded_in_text() {
+        let outputs = make_outputs();
+        let mut vars = BTreeMap::new();
+        vars.insert("url".into(), serde_json::json!(
+            "https://{{ steps.step-a.outputs.vpc_id }}.example.com"
+        ));
+
+        let resolved = resolve_step_references(&vars, &outputs).unwrap();
+        assert_eq!(resolved["url"], "https://vpc-abc123.example.com");
+    }
 }

@@ -204,3 +204,122 @@ impl Default for Metrics {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_metrics_new_does_not_panic() {
+        let _metrics = Metrics::new();
+    }
+
+    #[test]
+    fn test_metrics_default_does_not_panic() {
+        let _metrics = Metrics::default();
+    }
+
+    #[test]
+    fn test_gather_returns_valid_prometheus_text() {
+        let metrics = Metrics::new();
+        let output = metrics.gather();
+        assert!(output.is_empty() || output.contains("pangea_"));
+    }
+
+    #[test]
+    fn test_reconciliation_counter_increments() {
+        let metrics = Metrics::new();
+        metrics.reconciliations_total.inc();
+        metrics.reconciliations_total.inc();
+
+        let output = metrics.gather();
+        assert!(output.contains("pangea_reconciliations_total"));
+        assert!(output.contains(" 2"));
+    }
+
+    #[test]
+    fn test_namespace_reconciliation_counter() {
+        let metrics = Metrics::new();
+        metrics.namespace_reconciliations_total.inc();
+
+        let output = metrics.gather();
+        assert!(output.contains("pangea_namespace_reconciliations_total"));
+    }
+
+    #[test]
+    fn test_templates_by_phase_gauge() {
+        let metrics = Metrics::new();
+        metrics.templates_by_phase.with_label_values(&["Ready"]).set(5);
+        metrics.templates_by_phase.with_label_values(&["Failed"]).set(1);
+
+        let output = metrics.gather();
+        assert!(output.contains("pangea_templates_by_phase"));
+        assert!(output.contains("Ready"));
+        assert!(output.contains("Failed"));
+    }
+
+    #[test]
+    fn test_active_reconciliations_gauge() {
+        let metrics = Metrics::new();
+        metrics.active_reconciliations.set(3);
+        assert_eq!(metrics.active_reconciliations.get(), 3);
+
+        metrics.active_reconciliations.inc();
+        assert_eq!(metrics.active_reconciliations.get(), 4);
+
+        metrics.active_reconciliations.dec();
+        assert_eq!(metrics.active_reconciliations.get(), 3);
+    }
+
+    #[test]
+    fn test_tofu_operations_counter() {
+        let metrics = Metrics::new();
+        metrics.tofu_operations_total.with_label_values(&["plan", "success"]).inc();
+        metrics.tofu_operations_total.with_label_values(&["apply", "failure"]).inc();
+
+        let output = metrics.gather();
+        assert!(output.contains("pangea_tofu_operations_total"));
+    }
+
+    #[test]
+    fn test_reconciliation_errors_counter() {
+        let metrics = Metrics::new();
+        metrics.reconciliation_errors_total.with_label_values(&["kube_error"]).inc();
+        metrics.reconciliation_errors_total.with_label_values(&["timeout"]).inc();
+        metrics.reconciliation_errors_total.with_label_values(&["timeout"]).inc();
+
+        let output = metrics.gather();
+        assert!(output.contains("pangea_reconciliation_errors_total"));
+    }
+
+    #[test]
+    fn test_drift_detected_counter() {
+        let metrics = Metrics::new();
+        metrics.drift_detected_total.inc();
+
+        let output = metrics.gather();
+        assert!(output.contains("pangea_drift_detected_total"));
+    }
+
+    #[test]
+    fn test_histogram_records_observation() {
+        let metrics = Metrics::new();
+        metrics.reconciliation_duration_seconds.with_label_values(&["Planning"]).observe(1.5);
+        metrics.compilation_duration_seconds.observe(0.3);
+
+        let output = metrics.gather();
+        assert!(output.contains("pangea_reconciliation_duration_seconds"));
+        assert!(output.contains("pangea_compilation_duration_seconds"));
+    }
+
+    #[test]
+    fn test_metrics_clone() {
+        let metrics = Metrics::new();
+        metrics.reconciliations_total.inc();
+        let cloned = metrics.clone();
+        cloned.reconciliations_total.inc();
+
+        let output = metrics.gather();
+        assert!(output.contains(" 2"));
+    }
+}

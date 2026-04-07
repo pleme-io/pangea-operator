@@ -183,4 +183,48 @@ mod tests {
         assert!(!is_valid_identifier("has spaces"));
         assert!(!is_valid_identifier("has;semicolon"));
     }
+
+    #[test]
+    fn test_valid_identifier_max_length() {
+        let name = "a".repeat(63);
+        assert!(is_valid_identifier(&name));
+
+        let too_long = "a".repeat(64);
+        assert!(!is_valid_identifier(&too_long));
+    }
+
+    #[test]
+    fn test_valid_identifier_single_char() {
+        assert!(is_valid_identifier("a"));
+        assert!(is_valid_identifier("_"));
+    }
+
+    #[test]
+    fn test_valid_identifier_with_digits() {
+        assert!(is_valid_identifier("schema_v2"));
+        assert!(is_valid_identifier("_123"));
+        assert!(is_valid_identifier("a1b2c3"));
+    }
+
+    #[test]
+    fn test_valid_identifier_sql_injection_attempts() {
+        assert!(!is_valid_identifier("schema; DROP TABLE"));
+        assert!(!is_valid_identifier("schema' OR '1'='1"));
+        assert!(!is_valid_identifier("schema--comment"));
+        assert!(!is_valid_identifier("schema/*comment*/"));
+        assert!(!is_valid_identifier("schema.other"));
+    }
+
+    #[test]
+    fn test_valid_identifier_unicode() {
+        assert!(!is_valid_identifier("schéma"));
+        assert!(!is_valid_identifier("表"));
+    }
+
+    #[test]
+    fn test_valid_identifier_uppercase_rejected() {
+        assert!(!is_valid_identifier("Schema"));
+        assert!(!is_valid_identifier("SCHEMA"));
+        assert!(!is_valid_identifier("schemA"));
+    }
 }

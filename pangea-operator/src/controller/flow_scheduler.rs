@@ -493,4 +493,152 @@ mod tests {
         assert_eq!(batch[0].name, "b");
         assert!(batch[0].critical);
     }
+
+    #[test]
+    fn test_step_state_from_phase_none() {
+        assert_eq!(StepState::from_phase(None), StepState::Pending);
+    }
+
+    #[test]
+    fn test_step_state_from_phase_ready() {
+        assert_eq!(StepState::from_phase(Some("Ready")), StepState::Ready);
+    }
+
+    #[test]
+    fn test_step_state_from_phase_failed() {
+        assert_eq!(StepState::from_phase(Some("Failed")), StepState::Failed);
+    }
+
+    #[test]
+    fn test_step_state_from_phase_cancelled() {
+        assert_eq!(StepState::from_phase(Some("Cancelled")), StepState::Cancelled);
+    }
+
+    #[test]
+    fn test_step_state_from_phase_warming_up() {
+        assert_eq!(StepState::from_phase(Some("WarmingUp")), StepState::WarmingUp);
+    }
+
+    #[test]
+    fn test_step_state_from_phase_running_phases() {
+        for phase in ["Compiling", "Initializing", "Planning", "Applying", "Destroying"] {
+            assert_eq!(
+                StepState::from_phase(Some(phase)),
+                StepState::Running,
+                "Phase '{}' should map to Running",
+                phase
+            );
+        }
+    }
+
+    #[test]
+    fn test_step_state_from_phase_unknown_maps_to_running() {
+        assert_eq!(StepState::from_phase(Some("SomeUnknown")), StepState::Running);
+    }
+
+    #[test]
+    fn test_next_batch_empty_when_parallelism_full() {
+        let steps = vec![step("a", &[]), step("b", &[])];
+        let mut statuses = BTreeMap::new();
+        statuses.insert("a".into(), status("Planning"));
+        statuses.insert("b".into(), status("Planning"));
+        let sched = FlowScheduler::new(&steps, &statuses, 2);
+        let batch = sched.next_batch();
+        assert!(batch.is_empty());
+    }
+
+    #[test]
+    fn test_next_batch_counts_warming_as_running() {
+        let steps = vec![step("a", &[]), step("b", &[])];
+        let mut statuses = BTreeMap::new();
+        statuses.insert("a".into(), status("WarmingUp"));
+        let sched = FlowScheduler::new(&steps, &statuses, 1);
+        let batch = sched.next_batch();
+        assert!(batch.is_empty());
+    }
+
+    #[test]
+    fn test_warmable_not_found_when_dep_failed() {
+        let steps = vec![step("a", &[]), step("b", &["a"])];
+        let mut statuses = BTreeMap::new();
+        statuses.insert("a".into(), status("Failed"));
+        let sched = FlowScheduler::new(&steps, &statuses, 2);
+        let warmable = sched.find_warmable_steps();
+        assert!(warmable.is_empty());
+    }
+
+    #[test]
+    fn test_cascade_failure_no_dependents() {
+        let steps = vec![step("a", &[]), step("b", &[])];
+        let statuses = BTreeMap::new();
+        let sched = FlowScheduler::new(&steps, &statuses, 2);
+        let cancelled = sched.cascade_failure("a");
+        assert!(!cancelled.contains(&"b".to_string()));
+    }
+
+    #[test]
+    fn test_cascade_failure_skips_running_steps() {
+        let steps = vec![
+            step("a", &[]),
+            step("b", &["a"]),
+            step("c", &["a"]),
+        ];
+        let mut statuses = BTreeMap::new();
+        statuses.insert("b".into(), status("Planning")); // Running
+        let sched = FlowScheduler::new(&steps, &statuses, 3);
+        let cancelled = sched.cascade_failure("a");
+        assert!(!cancelled.contains(&"b".to_string())); // Running, not cascaded
+        assert!(cancelled.contains(&"c".to_string()));  // Pending, cascaded
+    }
+
+    #[test]
+    fn test_stats_all_cancelled() {
+        let steps = vec![step("a", &[]), step("b", &[])];
+        let mut statuses = BTreeMap::new();
+        statuses.insert("a".into(), status("Cancelled"));
+        statuses.insert("b".into(), status("Cancelled"));
+        let sched = FlowScheduler::new(&steps, &statuses, 2);
+        let stats = sched.stats();
+        assert_eq!(stats.cancelled, 2);
+        assert_eq!(stats.pending, 0);
+        assert_eq!(stats.running, 0);
+        assert_eq!(stats.ready, 0);
+        assert_eq!(stats.failed, 0);
+    }
+
+    #[test]
+    fn test_stats_warming_counted_as_running() {
+        let steps = vec![step("a", &[])];
+        let mut statuses = BTreeMap::new();
+        statuses.insert("a".into(), status("WarmingUp"));
+        let sched = FlowScheduler::new(&steps, &statuses, 1);
+        let stats = sched.stats();
+        assert_eq!(stats.running, 1);
+    }
+
+    #[test]
+    fn test_empty_flow() {
+        let steps: Vec<FlowStep> = vec![];
+        let statuses = BTreeMap::new();
+        let sched = FlowScheduler::new(&steps, &statuses, 3);
+        assert!(sched.find_ready_steps().is_empty());
+        assert!(sched.find_warmable_steps().is_empty());
+        assert!(sched.next_batch().is_empty());
+        let stats = sched.stats();
+        assert_eq!(stats.total, 0);
+    }
+
+    #[test]
+    fn test_single_step_flow() {
+        let steps = vec![step("only", &[])];
+        let statuses = BTreeMap::new();
+        let sched = FlowScheduler::new(&steps, &statuses, 1);
+        let ready = sched.find_ready_steps();
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].name, "only");
+
+        let batch = sched.next_batch();
+        assert_eq!(batch.len(), 1);
+        assert!(batch[0].critical);
+    }
 }

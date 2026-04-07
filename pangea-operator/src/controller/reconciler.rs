@@ -161,6 +161,28 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_duration_bare_number_defaults_to_seconds() {
+        assert_eq!(parse_duration("60"), Some(Duration::from_secs(60)));
+        assert_eq!(parse_duration("0"), Some(Duration::from_secs(0)));
+    }
+
+    #[test]
+    fn test_parse_duration_whitespace_trimmed() {
+        assert_eq!(parse_duration("  5m  "), Some(Duration::from_secs(300)));
+    }
+
+    #[test]
+    fn test_parse_duration_invalid_unit() {
+        assert_eq!(parse_duration("5x"), None);
+        assert_eq!(parse_duration("10y"), None);
+    }
+
+    #[test]
+    fn test_parse_duration_non_numeric() {
+        assert_eq!(parse_duration("abcs"), None);
+    }
+
+    #[test]
     fn test_exponential_backoff() {
         assert_eq!(exponential_backoff(0, 30, 600), Duration::from_secs(30));
         assert_eq!(exponential_backoff(1, 30, 600), Duration::from_secs(60));
@@ -169,10 +191,64 @@ mod tests {
     }
 
     #[test]
+    fn test_exponential_backoff_capped_at_max() {
+        let result = exponential_backoff(10, 30, 600);
+        assert_eq!(result, Duration::from_secs(600));
+    }
+
+    #[test]
+    fn test_exponential_backoff_zero_base() {
+        assert_eq!(exponential_backoff(5, 0, 600), Duration::from_secs(0));
+    }
+
+    #[test]
+    fn test_exponential_backoff_large_attempt_saturates() {
+        let result = exponential_backoff(31, 30, 3600);
+        assert!(result <= Duration::from_secs(3600));
+    }
+
+    #[test]
     fn test_next_phase() {
         assert_eq!(next_phase(Phase::Pending, true), Phase::Compiling);
         assert_eq!(next_phase(Phase::Compiling, true), Phase::Initializing);
         assert_eq!(next_phase(Phase::Planning, false), Phase::Failed);
+    }
+
+    #[test]
+    fn test_next_phase_full_success_chain() {
+        assert_eq!(next_phase(Phase::Pending, true), Phase::Compiling);
+        assert_eq!(next_phase(Phase::Compiling, true), Phase::Initializing);
+        assert_eq!(next_phase(Phase::Initializing, true), Phase::Planning);
+        assert_eq!(next_phase(Phase::Planning, true), Phase::Applying);
+        assert_eq!(next_phase(Phase::Applying, true), Phase::Ready);
+        assert_eq!(next_phase(Phase::Ready, true), Phase::Ready);
+    }
+
+    #[test]
+    fn test_next_phase_failure_always_returns_failed() {
+        for phase in [
+            Phase::Pending, Phase::Compiling, Phase::Initializing,
+            Phase::Planning, Phase::Applying, Phase::Ready,
+            Phase::Drifted, Phase::Failed, Phase::Destroying,
+        ] {
+            assert_eq!(next_phase(phase, false), Phase::Failed,
+                "Phase {:?} with failure should go to Failed", phase);
+        }
+    }
+
+    #[test]
+    fn test_next_phase_drifted_success_goes_to_planning() {
+        assert_eq!(next_phase(Phase::Drifted, true), Phase::Planning);
+    }
+
+    #[test]
+    fn test_next_phase_failed_success_retries_from_pending() {
+        assert_eq!(next_phase(Phase::Failed, true), Phase::Pending);
+    }
+
+    #[test]
+    fn test_next_phase_destroying_success_goes_to_pending() {
+        assert_eq!(next_phase(Phase::Destroying, true), Phase::Pending);
     }
 
     #[test]
@@ -212,5 +288,91 @@ mod tests {
         assert_eq!(conditions[0].status, "False");
         assert_eq!(conditions[0].reason, "Failed");
         assert_eq!(conditions[0].message, "tofu plan failed");
+    }
+
+    #[test]
+    fn test_conditions_for_phase_pending() {
+        let conditions = conditions_for_phase(Phase::Pending, None);
+        assert_eq!(conditions[0].status, "False"); // Not Ready
+        assert_eq!(conditions[1].status, "False"); // Not Reconciling
+        assert_eq!(conditions[2].status, "False"); // No drift
+        assert!(conditions[0].message.contains("Waiting"));
+    }
+
+    #[test]
+    fn test_conditions_for_phase_destroying() {
+        let conditions = conditions_for_phase(Phase::Destroying, None);
+        assert_eq!(conditions[0].status, "False");
+        assert_eq!(conditions[1].status, "False");
+        assert_eq!(conditions[2].status, "False");
+        assert!(conditions[0].message.contains("destroyed"));
+    }
+
+    #[test]
+    fn test_conditions_for_phase_active_phases_reconciling() {
+        for phase in [Phase::Compiling, Phase::Initializing, Phase::Planning, Phase::Applying] {
+            let conditions = conditions_for_phase(phase, None);
+            assert_eq!(conditions[1].status, "True",
+                "Phase {:?} should have Reconciling=True", phase);
+        }
+    }
+
+    #[test]
+    fn test_conditions_for_phase_custom_error_overrides_message() {
+        let conditions = conditions_for_phase(Phase::Ready, Some("override msg"));
+        assert_eq!(conditions[0].message, "override msg");
+    }
+
+    #[test]
+    fn test_conditions_for_suspended() {
+        let conditions = conditions_for_suspended();
+        assert_eq!(conditions.len(), 3);
+
+        assert_eq!(conditions[0].r#type, "Ready");
+        assert_eq!(conditions[0].status, "False");
+        assert_eq!(conditions[0].reason, "Suspended");
+
+        assert_eq!(conditions[1].r#type, "Reconciling");
+        assert_eq!(conditions[1].status, "False");
+        assert_eq!(conditions[1].reason, "Suspended");
+
+        assert_eq!(conditions[2].r#type, "DriftDetected");
+        assert_eq!(conditions[2].status, "False");
+        assert_eq!(conditions[2].reason, "Suspended");
+
+        for c in &conditions {
+            assert!(c.message.contains("suspended"));
+        }
+    }
+
+    #[test]
+    fn test_create_condition_true() {
+        let c = create_condition("TestType", true, "TestReason", "test message");
+        assert_eq!(c.r#type, "TestType");
+        assert_eq!(c.status, "True");
+        assert_eq!(c.reason, "TestReason");
+        assert_eq!(c.message, "test message");
+    }
+
+    #[test]
+    fn test_create_condition_false() {
+        let c = create_condition("TestType", false, "TestReason", "test message");
+        assert_eq!(c.status, "False");
+    }
+
+    #[test]
+    fn test_reconcile_action_default() {
+        let action = ReconcileAction::default();
+        match action {
+            ReconcileAction::Requeue(d) => assert_eq!(d, DEFAULT_REQUEUE_INTERVAL),
+            _ => panic!("Expected Requeue"),
+        }
+    }
+
+    #[test]
+    fn test_requeue_intervals_ordering() {
+        assert!(SHORT_REQUEUE_INTERVAL < DEFAULT_REQUEUE_INTERVAL);
+        assert!(ERROR_REQUEUE_INTERVAL < DEFAULT_REQUEUE_INTERVAL);
+        assert!(SHORT_REQUEUE_INTERVAL < ERROR_REQUEUE_INTERVAL);
     }
 }
