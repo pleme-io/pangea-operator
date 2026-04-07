@@ -437,4 +437,96 @@ mod tests {
         let steps = vec![step("a", &["missing"])];
         assert!(toposort(&steps).is_err());
     }
+
+    #[test]
+    fn test_toposort_empty() {
+        let steps: Vec<crate::crd::FlowStep> = vec![];
+        let order = toposort(&steps).unwrap();
+        assert!(order.is_empty());
+    }
+
+    #[test]
+    fn test_toposort_single_step() {
+        let steps = vec![step("only", &[])];
+        let order = toposort(&steps).unwrap();
+        assert_eq!(order, vec!["only"]);
+    }
+
+    #[test]
+    fn test_toposort_self_cycle() {
+        let steps = vec![step("a", &["a"])];
+        assert!(toposort(&steps).is_err());
+    }
+
+    #[test]
+    fn test_toposort_three_node_cycle() {
+        let steps = vec![step("a", &["c"]), step("b", &["a"]), step("c", &["b"])];
+        assert!(toposort(&steps).is_err());
+    }
+
+    #[test]
+    fn test_toposort_wide_fan_out() {
+        let steps = vec![
+            step("root", &[]),
+            step("leaf1", &["root"]),
+            step("leaf2", &["root"]),
+            step("leaf3", &["root"]),
+            step("leaf4", &["root"]),
+        ];
+        let order = toposort(&steps).unwrap();
+        assert_eq!(order[0], "root");
+        assert_eq!(order.len(), 5);
+    }
+
+    #[test]
+    fn test_toposort_diamond_converges() {
+        let steps = vec![
+            step("a", &[]),
+            step("b", &["a"]),
+            step("c", &["a"]),
+            step("d", &["b", "c"]),
+        ];
+        let order = toposort(&steps).unwrap();
+        assert_eq!(order[0], "a");
+        assert_eq!(order[3], "d");
+    }
+
+    #[test]
+    fn test_toposort_deterministic() {
+        let steps = vec![step("c", &[]), step("a", &[]), step("b", &[])];
+        let order1 = toposort(&steps).unwrap();
+        let order2 = toposort(&steps).unwrap();
+        assert_eq!(order1, order2);
+    }
+
+    #[test]
+    fn test_flow_conditions_all_phases() {
+        for phase in [FlowPhase::Pending, FlowPhase::Progressing, FlowPhase::Ready, FlowPhase::Failed, FlowPhase::Destroying] {
+            let conditions = flow_conditions(phase);
+            assert_eq!(conditions.len(), 2);
+            assert_eq!(conditions[0].r#type, "Ready");
+            assert_eq!(conditions[1].r#type, "Progressing");
+        }
+    }
+
+    #[test]
+    fn test_flow_conditions_ready_phase() {
+        let conditions = flow_conditions(FlowPhase::Ready);
+        assert_eq!(conditions[0].status, "True");
+        assert_eq!(conditions[1].status, "False");
+    }
+
+    #[test]
+    fn test_flow_conditions_progressing_phase() {
+        let conditions = flow_conditions(FlowPhase::Progressing);
+        assert_eq!(conditions[0].status, "False");
+        assert_eq!(conditions[1].status, "True");
+    }
+
+    #[test]
+    fn test_flow_conditions_failed_phase() {
+        let conditions = flow_conditions(FlowPhase::Failed);
+        assert_eq!(conditions[0].status, "False");
+        assert_eq!(conditions[1].status, "False");
+    }
 }
