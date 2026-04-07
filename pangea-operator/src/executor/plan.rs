@@ -298,6 +298,62 @@ impl PlanSummary {
 mod tests {
     use super::*;
 
+    fn minimal_plan_json() -> String {
+        serde_json::json!({
+            "format_version": "1.2",
+            "terraform_version": "1.6.0",
+            "resource_changes": [],
+            "output_changes": {},
+            "configuration": {}
+        }).to_string()
+    }
+
+    fn plan_json_with_changes() -> String {
+        serde_json::json!({
+            "format_version": "1.2",
+            "terraform_version": "1.6.0",
+            "resource_changes": [
+                {
+                    "address": "aws_vpc.main",
+                    "type": "aws_vpc",
+                    "name": "main",
+                    "provider_name": "registry.terraform.io/hashicorp/aws",
+                    "change": { "actions": ["create"] }
+                },
+                {
+                    "address": "aws_subnet.public",
+                    "type": "aws_subnet",
+                    "name": "public",
+                    "provider_name": "registry.terraform.io/hashicorp/aws",
+                    "change": { "actions": ["update"] }
+                },
+                {
+                    "address": "aws_security_group.old",
+                    "type": "aws_security_group",
+                    "name": "old",
+                    "provider_name": "registry.terraform.io/hashicorp/aws",
+                    "change": { "actions": ["delete"] }
+                },
+                {
+                    "address": "aws_instance.web",
+                    "type": "aws_instance",
+                    "name": "web",
+                    "provider_name": "registry.terraform.io/hashicorp/aws",
+                    "change": { "actions": ["delete", "create"] }
+                },
+                {
+                    "address": "aws_s3_bucket.data",
+                    "type": "aws_s3_bucket",
+                    "name": "data",
+                    "provider_name": "registry.terraform.io/hashicorp/aws",
+                    "change": { "actions": ["no-op"] }
+                }
+            ],
+            "output_changes": {},
+            "configuration": {}
+        }).to_string()
+    }
+
     #[test]
     fn test_change_type_from_actions() {
         assert_eq!(
@@ -323,6 +379,23 @@ mod tests {
     }
 
     #[test]
+    fn test_change_type_from_empty_actions() {
+        assert_eq!(ChangeType::from_actions(&[]), ChangeType::NoOp);
+    }
+
+    #[test]
+    fn test_change_type_replace_order_independent() {
+        assert_eq!(
+            ChangeType::from_actions(&["create".to_string(), "delete".to_string()]),
+            ChangeType::Replace
+        );
+        assert_eq!(
+            ChangeType::from_actions(&["delete".to_string(), "create".to_string()]),
+            ChangeType::Replace
+        );
+    }
+
+    #[test]
     fn test_plan_summary_format() {
         let mut summary = PlanSummary::default();
         assert_eq!(summary.format(), "No changes");
@@ -333,5 +406,129 @@ mod tests {
         summary.has_changes = true;
 
         assert_eq!(summary.format(), "+2 ~1 -3");
+    }
+
+    #[test]
+    fn test_plan_from_json_minimal() {
+        let plan = Plan::from_json(&minimal_plan_json()).unwrap();
+        assert_eq!(plan.format_version, "1.2");
+        assert_eq!(plan.terraform_version, "1.6.0");
+        assert!(plan.resource_changes.is_empty());
+    }
+
+    #[test]
+    fn test_plan_from_json_invalid() {
+        assert!(Plan::from_json("{invalid json}").is_err());
+        assert!(Plan::from_json("").is_err());
+    }
+
+    #[test]
+    fn test_plan_summary_with_changes() {
+        let plan = Plan::from_json(&plan_json_with_changes()).unwrap();
+        let summary = plan.summary();
+
+        assert!(summary.has_changes);
+        // create (1) + replace adds 1 = 2
+        assert_eq!(summary.added, 2);
+        assert_eq!(summary.changed, 1);
+        // delete (1) + replace adds 1 = 2
+        assert_eq!(summary.destroyed, 2);
+        assert_eq!(summary.total, 5);
+    }
+
+    #[test]
+    fn test_plan_summary_no_changes() {
+        let plan = Plan::from_json(&minimal_plan_json()).unwrap();
+        let summary = plan.summary();
+        assert!(!summary.has_changes);
+        assert_eq!(summary.added, 0);
+        assert_eq!(summary.changed, 0);
+        assert_eq!(summary.destroyed, 0);
+    }
+
+    #[test]
+    fn test_plan_summary_changes_by_type() {
+        let plan = Plan::from_json(&plan_json_with_changes()).unwrap();
+        let summary = plan.summary();
+        assert_eq!(*summary.changes_by_type.get("aws_vpc").unwrap(), 1);
+        assert_eq!(*summary.changes_by_type.get("aws_subnet").unwrap(), 1);
+        assert_eq!(*summary.changes_by_type.get("aws_security_group").unwrap(), 1);
+        assert_eq!(*summary.changes_by_type.get("aws_instance").unwrap(), 1);
+        assert_eq!(*summary.changes_by_type.get("aws_s3_bucket").unwrap(), 1);
+    }
+
+    #[test]
+    fn test_plan_resources_to_create() {
+        let plan = Plan::from_json(&plan_json_with_changes()).unwrap();
+        let creates = plan.resources_to_create();
+        let names: Vec<&str> = creates.iter().map(|r| r.name.as_str()).collect();
+        assert!(names.contains(&"main"));  // create
+        assert!(names.contains(&"web"));   // replace includes create
+        assert!(!names.contains(&"public")); // update only
+        assert!(!names.contains(&"old"));    // delete only
+    }
+
+    #[test]
+    fn test_plan_resources_to_destroy() {
+        let plan = Plan::from_json(&plan_json_with_changes()).unwrap();
+        let destroys = plan.resources_to_destroy();
+        let names: Vec<&str> = destroys.iter().map(|r| r.name.as_str()).collect();
+        assert!(names.contains(&"old"));   // delete
+        assert!(names.contains(&"web"));   // replace includes delete
+        assert!(!names.contains(&"main")); // create only
+    }
+
+    #[test]
+    fn test_plan_resources_to_update() {
+        let plan = Plan::from_json(&plan_json_with_changes()).unwrap();
+        let updates = plan.resources_to_update();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].name, "public");
+    }
+
+    #[test]
+    fn test_plan_format_summary_with_changes() {
+        let plan = Plan::from_json(&plan_json_with_changes()).unwrap();
+        let formatted = plan.format_summary();
+        assert!(formatted.contains("to add"));
+        assert!(formatted.contains("to change"));
+        assert!(formatted.contains("to destroy"));
+    }
+
+    #[test]
+    fn test_plan_format_summary_no_changes() {
+        let plan = Plan::from_json(&minimal_plan_json()).unwrap();
+        let formatted = plan.format_summary();
+        assert_eq!(formatted, "No changes. Infrastructure is up-to-date.");
+    }
+
+    #[test]
+    fn test_plan_summary_default() {
+        let summary = PlanSummary::default();
+        assert_eq!(summary.added, 0);
+        assert_eq!(summary.changed, 0);
+        assert_eq!(summary.destroyed, 0);
+        assert_eq!(summary.total, 0);
+        assert!(!summary.has_changes);
+        assert!(summary.changes_by_type.is_empty());
+    }
+
+    #[test]
+    fn test_plan_from_json_with_output_changes() {
+        let json = serde_json::json!({
+            "format_version": "1.2",
+            "terraform_version": "1.6.0",
+            "resource_changes": [],
+            "output_changes": {
+                "vpc_id": {
+                    "actions": ["create"],
+                    "after": "vpc-12345"
+                }
+            },
+            "configuration": {}
+        }).to_string();
+        let plan = Plan::from_json(&json).unwrap();
+        assert_eq!(plan.output_changes.len(), 1);
+        assert!(plan.output_changes.contains_key("vpc_id"));
     }
 }
