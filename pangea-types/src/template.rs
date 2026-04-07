@@ -101,3 +101,129 @@ impl InfrastructureTemplate {
         rc.added > 0 || rc.changed > 0 || rc.destroyed > 0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resource_counts_default() {
+        let rc = ResourceCounts::default();
+        assert_eq!(rc.total, 0);
+        assert_eq!(rc.added, 0);
+        assert_eq!(rc.changed, 0);
+        assert_eq!(rc.destroyed, 0);
+    }
+
+    #[test]
+    fn test_template_source_default() {
+        let ts = TemplateSource::default();
+        assert_eq!(ts.source_type, "inline");
+        assert!(ts.reference.is_empty());
+    }
+
+    #[test]
+    fn test_infrastructure_template_default() {
+        let tmpl = InfrastructureTemplate::default();
+        assert_eq!(tmpl.phase, Phase::Pending);
+        assert_eq!(tmpl.pangea_namespace, "default");
+        assert!(!tmpl.auto_approve);
+        assert!(!tmpl.suspended);
+        assert!(tmpl.namespace.is_none());
+        assert!(tmpl.name.is_none());
+        assert!(tmpl.last_applied_at.is_none());
+        assert!(tmpl.plan_summary.is_none());
+        assert!(tmpl.last_error.is_none());
+        assert_eq!(tmpl.failure_count, 0);
+    }
+
+    #[test]
+    fn test_full_name_with_both() {
+        let tmpl = InfrastructureTemplate {
+            namespace: Some("prod".to_string()),
+            name: Some("web-server".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(tmpl.full_name(), "prod/web-server");
+    }
+
+    #[test]
+    fn test_full_name_defaults_when_none() {
+        let tmpl = InfrastructureTemplate::default();
+        assert_eq!(tmpl.full_name(), "default/unnamed");
+    }
+
+    #[test]
+    fn test_full_name_partial_none() {
+        let tmpl = InfrastructureTemplate {
+            namespace: Some("staging".to_string()),
+            name: None,
+            ..Default::default()
+        };
+        assert_eq!(tmpl.full_name(), "staging/unnamed");
+
+        let tmpl2 = InfrastructureTemplate {
+            namespace: None,
+            name: Some("db".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(tmpl2.full_name(), "default/db");
+    }
+
+    #[test]
+    fn test_has_pending_changes_no_changes() {
+        let tmpl = InfrastructureTemplate::default();
+        assert!(!tmpl.has_pending_changes());
+    }
+
+    #[test]
+    fn test_has_pending_changes_added() {
+        let tmpl = InfrastructureTemplate {
+            resource_counts: ResourceCounts { added: 1, ..Default::default() },
+            ..Default::default()
+        };
+        assert!(tmpl.has_pending_changes());
+    }
+
+    #[test]
+    fn test_has_pending_changes_changed() {
+        let tmpl = InfrastructureTemplate {
+            resource_counts: ResourceCounts { changed: 1, ..Default::default() },
+            ..Default::default()
+        };
+        assert!(tmpl.has_pending_changes());
+    }
+
+    #[test]
+    fn test_has_pending_changes_destroyed() {
+        let tmpl = InfrastructureTemplate {
+            resource_counts: ResourceCounts { destroyed: 1, ..Default::default() },
+            ..Default::default()
+        };
+        assert!(tmpl.has_pending_changes());
+    }
+
+    #[test]
+    fn test_infrastructure_template_serde_roundtrip() {
+        let tmpl = InfrastructureTemplate {
+            namespace: Some("test".to_string()),
+            name: Some("my-template".to_string()),
+            phase: Phase::Ready,
+            pangea_namespace: "production".to_string(),
+            source: TemplateSource {
+                source_type: "gitRepository".to_string(),
+                reference: "https://github.com/example/repo".to_string(),
+            },
+            auto_approve: true,
+            suspended: false,
+            last_applied_at: Some(DateTime("2024-01-01T00:00:00Z".to_string())),
+            resource_counts: ResourceCounts { total: 10, added: 2, changed: 1, destroyed: 0 },
+            plan_summary: Some("2 to add, 1 to change".to_string()),
+            last_error: None,
+            failure_count: 0,
+        };
+        let json = serde_json::to_string(&tmpl).unwrap();
+        let back: InfrastructureTemplate = serde_json::from_str(&json).unwrap();
+        assert_eq!(tmpl, back);
+    }
+}
