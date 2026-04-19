@@ -17,8 +17,8 @@ use pangea_operator::run_graphql_server;
 
 use kube::Client;
 use std::{env, net::SocketAddr, sync::Arc};
-use tokio::signal;
 use tracing::{error, info};
+use tsunagu::ShutdownController;
 
 /// Application configuration from environment variables.
 struct Config {
@@ -218,8 +218,9 @@ async fn main() -> Result<()> {
         info!(%config.graphql_addr, "GraphQL server started");
     }
 
-    // Wait for shutdown signal
-    shutdown_signal().await;
+    // Install SIGTERM/SIGINT handler and wait for drain.
+    let shutdown = ShutdownController::install();
+    shutdown.token().wait().await;
 
     info!("Shutdown signal received, stopping operator");
 
@@ -238,27 +239,3 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Wait for shutdown signal (SIGTERM or SIGINT).
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        signal::ctrl_c()
-            .await
-            .expect("Failed to install Ctrl+C handler");
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("Failed to install SIGTERM handler")
-            .recv()
-            .await;
-    };
-
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
-    }
-}

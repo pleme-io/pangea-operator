@@ -25,6 +25,9 @@ tokio = { workspace = true, features = ["signal"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 futures = "0.3"
 
+# Drain coordinator — SIGTERM/SIGINT handling shared across pleme-io daemons
+tsunagu = { git = "https://github.com/pleme-io/tsunagu" }
+
 # Web framework
 axum = { workspace = true, features = ["tokio"] }
 tower.workspace = true
