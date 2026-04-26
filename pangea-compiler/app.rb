@@ -266,11 +266,33 @@ class PangeaCompiler < Sinatra::Base
       # Extend with all available provider resources
       extend_synthesizer(synth)
 
-      # Set variables in the binding context
-      binding_context = create_binding(variables)
+      # Pangea workspace pattern is `template :name do … end`. `template`
+      # is not a method on TerraformSynthesizer — it's a wrapper that
+      # the pangea CLI parses to extract the block, then runs that
+      # block via `synth.instance_eval(&block)` so resource/provider/
+      # output calls dispatch to the synth's method_missing.
+      #
+      # Mirror the CLI's `capture_template_block` here: define a
+      # singleton `template` method that captures the block, eval the
+      # source against the local binding (which now has `template`
+      # available), then instance_eval the captured block on synth.
+      captured_block = nil
+      singleton_class.send(:define_method, :template) do |_name, &blk|
+        captured_block = blk
+      end
 
-      # Evaluate the template source
-      eval(source, binding_context, "(pangea-template)", 1) # rubocop:disable Security/Eval
+      begin
+        binding_context = create_binding(variables)
+        eval(source, binding_context, "(pangea-template)", 1) # rubocop:disable Security/Eval
+      ensure
+        singleton_class.send(:remove_method, :template) if singleton_class.method_defined?(:template)
+      end
+
+      # Run the captured DSL block with self=synth. If the source used
+      # the bare `template :name do … end` wrapper we have a block; if
+      # it called synth methods directly without the wrapper, the
+      # source already mutated synth via instance methods (rare).
+      synth.instance_eval(&captured_block) if captured_block
 
       # Synthesize to Terraform JSON
       result = synth.synthesis
