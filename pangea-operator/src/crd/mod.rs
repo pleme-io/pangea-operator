@@ -21,7 +21,7 @@ pub mod pangea_dashboard;
 
 // Re-export InfrastructureTemplate types
 pub use infrastructure_template::{
-    AwsCredentials, CloudflareCredentials, ComplianceStatus, Condition, ConfigMapRef,
+    AwsCredentials, CloudflareCredentials, ComplianceStatus, Condition, ConfigMapRef, DriftDetail,
     GitRepositoryRef, InfrastructureTemplate, InfrastructureTemplateSpec,
     InfrastructureTemplateStatus, Phase, ProfileResult, ProviderCredentials, ResourceSummary,
     RetryPolicy, SecretRef, TemplateObjectRef, TemplateSource, VariableRef,

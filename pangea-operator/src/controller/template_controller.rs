@@ -583,31 +583,44 @@ async fn handle_planning(
         return Ok(ReconcileAction::Requeue(ERROR_REQUEUE_INTERVAL));
     }
 
-    // Parse plan output for resource summary
-    let summary = if plan_path.exists() {
+    // Parse plan output for resource summary + per-resource drift detail.
+    // Drift details are capped at 50 entries so the K8s status object
+    // stays tractable; full per-plan list is available via GraphQL.
+    let (summary, drift_details) = if plan_path.exists() {
         let show_result = state.executor.show_plan(&workspace.path, &plan_path).await?;
         if show_result.success {
             match Plan::from_json(&show_result.stdout) {
                 Ok(plan) => {
                     let s = plan.summary();
+                    let details: Vec<crate::crd::DriftDetail> = plan
+                        .drift_details(50)
+                        .into_iter()
+                        .map(|d| crate::crd::DriftDetail {
+                            address: d.address,
+                            action: d.action,
+                            risk: d.risk,
+                            attributes: d.attributes,
+                        })
+                        .collect();
                     info!(
                         added = s.added,
                         changed = s.changed,
                         destroyed = s.destroyed,
+                        drift_count = details.len(),
                         "Plan analysis complete"
                     );
-                    Some(s)
+                    (Some(s), details)
                 }
                 Err(e) => {
                     warn!(error = %e, "Failed to parse plan JSON, continuing without summary");
-                    None
+                    (None, Vec::new())
                 }
             }
         } else {
-            None
+            (None, Vec::new())
         }
     } else {
-        None
+        (None, Vec::new())
     };
 
     let has_changes = result.has_changes();
@@ -620,7 +633,7 @@ async fn handle_planning(
         destroyed: s.destroyed,
     });
     let plan_text = summary.as_ref().map(|s| s.format());
-    update_plan_status(template, resource_summary, plan_text.as_deref(), state).await?;
+    update_plan_status(template, resource_summary, plan_text.as_deref(), drift_details, state).await?;
 
     if has_changes {
         if template.spec.auto_approve {
@@ -991,6 +1004,7 @@ async fn update_plan_status(
     template: &InfrastructureTemplate,
     resources: Option<ResourceSummary>,
     plan_summary: Option<&str>,
+    drift_details: Vec<crate::crd::DriftDetail>,
     state: &ControllerState,
 ) -> Result<()> {
     let name = template.name_any();
@@ -1002,6 +1016,7 @@ async fn update_plan_status(
     status.resources = resources;
     status.plan_summary = plan_summary.map(|s| s.to_string());
     status.last_planned_at = Some(Utc::now());
+    status.drift_details = drift_details;
 
     let patch = serde_json::json!({ "status": status });
 

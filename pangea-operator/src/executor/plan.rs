@@ -278,6 +278,116 @@ impl Plan {
             summary.added, summary.changed, summary.destroyed
         )
     }
+
+    /// Render per-resource drift details for status surfacing.
+    ///
+    /// Capped at `limit` entries so the K8s status object stays small
+    /// (default 50 — full list is available via the operator's
+    /// GraphQL API for large plans). Skips no-op changes since they
+    /// add noise without observability value.
+    ///
+    /// Attribute names are emitted but values are intentionally
+    /// elided — keeps secrets out of the K8s API surface.
+    pub fn drift_details(&self, limit: usize) -> Vec<DriftDetail> {
+        self.resource_changes
+            .iter()
+            .filter_map(|rc| {
+                let action = ChangeType::from_actions(&rc.change.actions);
+                if matches!(action, ChangeType::NoOp) {
+                    return None;
+                }
+                let attrs = changed_attributes(&rc.change);
+                let risk = risk_level(action, &rc.resource_type, attrs.len());
+                Some(DriftDetail {
+                    address: rc.address.clone(),
+                    action: action.as_str().to_string(),
+                    risk: risk.to_string(),
+                    attributes: attrs,
+                })
+            })
+            .take(limit)
+            .collect()
+    }
+}
+
+/// Per-resource drift summary destined for the status object.
+/// Mirrors `crd::infrastructure_template::DriftDetail`; kept here as
+/// a plain struct so the executor module stays free of CRD imports.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DriftDetail {
+    pub address: String,
+    pub action: String,
+    pub risk: String,
+    #[serde(default)]
+    pub attributes: Vec<String>,
+}
+
+/// Compute the symmetric set of attribute names that differ between
+/// `before` and `after`. Used as a coarse-grained "what changed"
+/// signal — values are deliberately not exposed.
+fn changed_attributes(change: &Change) -> Vec<String> {
+    use serde_json::Value;
+    let before = change.before.as_ref().and_then(|v| v.as_object());
+    let after = change.after.as_ref().and_then(|v| v.as_object());
+    match (before, after) {
+        (Some(b), Some(a)) => {
+            let mut keys: Vec<String> = Vec::new();
+            for (k, v_after) in a {
+                let v_before = b.get(k).unwrap_or(&Value::Null);
+                if v_before != v_after {
+                    keys.push(k.clone());
+                }
+            }
+            for k in b.keys() {
+                if !a.contains_key(k) {
+                    keys.push(k.clone());
+                }
+            }
+            keys.sort();
+            keys.dedup();
+            keys
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Heuristic risk classifier.
+///
+/// Conservative defaults: deletes / replaces of stateful resource
+/// types (database, dns, network) are `high`; updates with many
+/// attribute diffs are `medium`; single-attr updates are `low`;
+/// pure creates are `low` (no risk to existing infra).
+fn risk_level(action: ChangeType, resource_type: &str, attr_count: usize) -> &'static str {
+    let stateful = matches!(
+        resource_type,
+        t if t.contains("dns_record")
+            || t.contains("zone")
+            || t.contains("database")
+            || t.contains("rds")
+            || t.contains("vpc")
+            || t.contains("tunnel")
+    );
+    match action {
+        ChangeType::Delete | ChangeType::Replace if stateful => "high",
+        ChangeType::Delete | ChangeType::Replace => "medium",
+        ChangeType::Update if attr_count > 3 => "medium",
+        ChangeType::Update => "low",
+        ChangeType::Create => "low",
+        ChangeType::NoOp => "none",
+    }
+}
+
+impl ChangeType {
+    /// Lowercase action string for status surfacing.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ChangeType::Create => "create",
+            ChangeType::Update => "update",
+            ChangeType::Delete => "delete",
+            ChangeType::Replace => "replace",
+            ChangeType::NoOp => "noop",
+        }
+    }
 }
 
 impl PlanSummary {
@@ -530,5 +640,66 @@ mod tests {
         let plan = Plan::from_json(&json).unwrap();
         assert_eq!(plan.output_changes.len(), 1);
         assert!(plan.output_changes.contains_key("vpc_id"));
+    }
+
+    #[test]
+    fn test_drift_details_skips_noop_and_caps_to_limit() {
+        let plan = Plan::from_json(&plan_json_with_changes()).unwrap();
+        let details = plan.drift_details(50);
+
+        // 5 changes total in fixture, 1 is no-op → 4 entries.
+        assert_eq!(details.len(), 4);
+        assert!(details.iter().all(|d| d.action != "noop"));
+
+        let by_addr: std::collections::HashMap<&str, &DriftDetail> =
+            details.iter().map(|d| (d.address.as_str(), d)).collect();
+        assert_eq!(by_addr.get("aws_vpc.main").unwrap().action, "create");
+        assert_eq!(by_addr.get("aws_subnet.public").unwrap().action, "update");
+        assert_eq!(by_addr.get("aws_security_group.old").unwrap().action, "delete");
+        assert_eq!(by_addr.get("aws_instance.web").unwrap().action, "replace");
+    }
+
+    #[test]
+    fn test_drift_details_risk_classification() {
+        let plan = Plan::from_json(&plan_json_with_changes()).unwrap();
+        let details = plan.drift_details(50);
+        let by_addr: std::collections::HashMap<&str, &DriftDetail> =
+            details.iter().map(|d| (d.address.as_str(), d)).collect();
+
+        // VPC delete/replace → high (stateful keyword match)
+        assert_eq!(by_addr.get("aws_vpc.main").unwrap().risk, "low"); // create-only
+        // SG delete on a non-stateful resource → medium
+        assert_eq!(by_addr.get("aws_security_group.old").unwrap().risk, "medium");
+    }
+
+    #[test]
+    fn test_drift_details_limit_caps_results() {
+        let plan = Plan::from_json(&plan_json_with_changes()).unwrap();
+        let details = plan.drift_details(2);
+        assert_eq!(details.len(), 2);
+    }
+
+    #[test]
+    fn test_changed_attributes_diffs_keys() {
+        let json = serde_json::json!({
+            "format_version": "1.2",
+            "terraform_version": "1.6.0",
+            "resource_changes": [{
+                "address": "test.foo",
+                "type": "test",
+                "name": "foo",
+                "provider_name": "registry/test",
+                "change": {
+                    "actions": ["update"],
+                    "before": { "name": "old", "ttl": 60, "kept": "same" },
+                    "after":  { "name": "new", "ttl": 120, "kept": "same" }
+                }
+            }]
+        }).to_string();
+        let plan = Plan::from_json(&json).unwrap();
+        let details = plan.drift_details(50);
+        assert_eq!(details.len(), 1);
+        assert_eq!(details[0].attributes, vec!["name".to_string(), "ttl".to_string()]);
+        assert!(!details[0].attributes.contains(&"kept".to_string()));
     }
 }

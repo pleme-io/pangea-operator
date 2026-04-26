@@ -306,6 +306,14 @@ pub struct InfrastructureTemplateStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
 
+    /// Per-resource drift / change detail from the last plan.
+    /// Populated whenever a plan reports `has_changes`. Lets external
+    /// observers see WHICH resources changed and HOW without parsing
+    /// raw tofu output. Capped to 50 entries (full list available via
+    /// the operator's GraphQL API for large plans).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub drift_details: Vec<DriftDetail>,
+
     /// Hash of the pending plan awaiting approval.
     /// Set by the operator after planning. Users approve by copying this
     /// value to `approvedPlanHash` via kubectl patch or GraphQL mutation.
@@ -390,6 +398,32 @@ pub struct ResourceSummary {
     /// Resources to be destroyed in the pending plan.
     #[serde(default)]
     pub destroyed: u32,
+}
+
+/// Per-resource drift / change detail from a plan.
+///
+/// One entry per resource the plan would touch. Action is the
+/// terraform action category; risk is a heuristic so observers can
+/// quickly triage (a `delete` on a destroy-protected resource is
+/// `high`, a no-op refresh is `none`, a single-attribute update is
+/// `low`). `attributes` lists the field names that differ — values
+/// are intentionally elided so secrets don't leak into the K8s API.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DriftDetail {
+    /// Terraform resource address (e.g. `cloudflare_dns_record.foo`).
+    pub address: String,
+
+    /// Action category: create | update | delete | replace | noop.
+    pub action: String,
+
+    /// Risk heuristic: none | low | medium | high.
+    pub risk: String,
+
+    /// Attribute names that differ between current and desired state.
+    /// Empty for create / delete (no per-attr diff applies).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attributes: Vec<String>,
 }
 
 /// Compliance check status.
