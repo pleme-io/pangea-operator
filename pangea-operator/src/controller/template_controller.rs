@@ -382,11 +382,53 @@ async fn handle_compiling(
         let compiler_url = std::env::var("COMPILER_ENDPOINT")
             .unwrap_or_else(|_| "http://localhost:8082".to_string());
 
-        let variables = template
+        // Variables from spec.variables (explicit, plain values)
+        let mut variables = template
             .spec
             .variables
             .clone()
             .unwrap_or_default();
+
+        // Plus every key from any providerCredentials secret —
+        // Pangea workspace templates use `ENV.fetch('CF_API_TOKEN')`
+        // etc. for provider config, which the compiler installs into
+        // ENV around eval. The convention is that secret data keys
+        // ARE the env var names (so the secret has `CF_API_TOKEN`,
+        // `CF_ACCOUNT_ID`, … verbatim). Operator-side naming
+        // transforms would re-introduce the kind of brittle wiring
+        // we just stripped out elsewhere.
+        if let Some(provider_creds) = template.spec.provider_credentials.as_ref() {
+            let provider_secret_refs: Vec<&crate::crd::SecretRef> = [
+                provider_creds.aws.as_ref().map(|c| &c.secret_ref),
+                provider_creds.cloudflare.as_ref().map(|c| &c.secret_ref),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+
+            for sref in provider_secret_refs {
+                let ns = sref
+                    .namespace
+                    .clone()
+                    .or_else(|| template.namespace())
+                    .unwrap_or_default();
+                let secret_api: Api<Secret> = Api::namespaced(state.client.clone(), &ns);
+                let secret = secret_api.get(&sref.name).await.map_err(|_| {
+                    Error::SecretNotFound {
+                        namespace: ns.clone(),
+                        name: sref.name.clone(),
+                    }
+                })?;
+                if let Some(data) = &secret.data {
+                    for (k, v) in data.iter() {
+                        let val = String::from_utf8_lossy(&v.0).to_string();
+                        variables
+                            .entry(k.clone())
+                            .or_insert(serde_json::Value::String(val));
+                    }
+                }
+            }
+        }
 
         let compile_request = serde_json::json!({
             "source": content,

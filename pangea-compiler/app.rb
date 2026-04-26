@@ -281,11 +281,36 @@ class PangeaCompiler < Sinatra::Base
         captured_block = blk
       end
 
+      # Variables are exposed two ways:
+      #   1. As local variables on the eval binding (existing behaviour
+      #      — lets templates write `account_id = variables[:foo]`).
+      #   2. As process ENV entries — required because Pangea workspace
+      #      templates use `ENV.fetch('CF_API_TOKEN')` for provider
+      #      credentials, matching how the workspace .rb files run
+      #      under the pangea CLI (which inherits ENV from the user's
+      #      shell). Without this, every template that calls ENV.fetch
+      #      fails to compile inside the operator.
+      #   Restore previous ENV state (including unset → unset) so
+      #   concurrent /compile requests don't see each other's leaks.
+      env_overrides = {}
+      variables.each do |k, v|
+        key = k.to_s
+        env_overrides[key] = ENV[key]   # nil if unset
+        ENV[key] = v.to_s
+      end
+
       begin
         binding_context = create_binding(variables)
         eval(source, binding_context, "(pangea-template)", 1) # rubocop:disable Security/Eval
       ensure
         singleton_class.send(:remove_method, :template) if singleton_class.method_defined?(:template)
+        env_overrides.each do |k, prev|
+          if prev.nil?
+            ENV.delete(k)
+          else
+            ENV[k] = prev
+          end
+        end
       end
 
       # Run the captured DSL block with self=synth. If the source used
