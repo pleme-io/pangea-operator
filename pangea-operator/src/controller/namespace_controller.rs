@@ -186,6 +186,13 @@ async fn ensure_schema(namespace: &PangeaNamespace, state: &ControllerState) -> 
 }
 
 /// Update namespace status.
+///
+/// Skips the patch if no meaningful field has changed AND
+/// `last_verified_at` was bumped within the last minute. Without
+/// this guard the reconcile loop is self-driving — every patch_status
+/// triggers a watch event → another reconcile → another timestamp
+/// bump → ~1 reconcile/sec forever, which API-floods the operator
+/// and starves the template/flow controllers.
 async fn update_status(
     namespace: &PangeaNamespace,
     backend_ready: bool,
@@ -195,15 +202,38 @@ async fn update_status(
     let name = namespace.name_any();
     let api: Api<PangeaNamespace> = Api::all(state.client.clone());
 
+    let now = chrono::Utc::now();
+    let schema_name = if namespace.uses_postgres() {
+        Some(namespace.schema_name())
+    } else {
+        None
+    };
+
+    let prev = namespace.status.as_ref();
+    let prev_ready = prev.map(|s| s.backend_ready).unwrap_or(false);
+    let prev_error = prev.and_then(|s| s.error.clone());
+    let prev_schema = prev.and_then(|s| s.schema_name.clone());
+    let last_verified_age = prev
+        .and_then(|s| s.last_verified_at)
+        .map(|t| now.signed_duration_since(t));
+
+    let meaningful_change = prev_ready != backend_ready
+        || prev_error != error
+        || prev_schema != schema_name;
+    let stale = last_verified_age
+        .map(|d| d >= chrono::Duration::seconds(60))
+        .unwrap_or(true);
+
+    if !meaningful_change && !stale {
+        debug!(backend_ready, "namespace status unchanged, skipping patch");
+        return Ok(());
+    }
+
     let status = PangeaNamespaceStatus {
         backend_ready,
         error,
-        schema_name: if namespace.uses_postgres() {
-            Some(namespace.schema_name())
-        } else {
-            None
-        },
-        last_verified_at: Some(chrono::Utc::now()),
+        schema_name,
+        last_verified_at: Some(now),
         ..namespace.status.clone().unwrap_or_default()
     };
 
