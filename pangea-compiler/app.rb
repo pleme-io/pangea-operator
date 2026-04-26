@@ -523,7 +523,14 @@ class PangeaCompiler < Sinatra::Base
   def create_binding(variables)
     b = binding
     variables.each do |key, value|
-      b.local_variable_set(key.to_sym, value)
+      name = key.to_s
+      # Ruby local variable names must start with [a-z_]; uppercase
+      # names parse as constants and `local_variable_set` raises
+      # NameError on them. ENV-style ALL_CAPS keys (CF_API_TOKEN,
+      # CF_ACCOUNT_ID, …) flow through the ENV-override branch in
+      # /compile only — skip them here.
+      next unless name.match?(/\A[a-z_][a-zA-Z0-9_]*\z/)
+      b.local_variable_set(name.to_sym, value)
     end
     b
   end
