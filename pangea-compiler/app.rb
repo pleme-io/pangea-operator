@@ -302,6 +302,13 @@ class PangeaCompiler < Sinatra::Base
       begin
         binding_context = create_binding(variables)
         eval(source, binding_context, "(pangea-template)", 1) # rubocop:disable Security/Eval
+        # The ENV-overrides need to remain in scope during the inner
+        # block too — that block is where workspace templates make
+        # their `ENV.fetch('CF_API_TOKEN')` calls (provider config
+        # arguments, account_ids, etc.). Restoring ENV before this
+        # second eval would re-introduce the original "key not found"
+        # failure mode.
+        synth.instance_eval(&captured_block) if captured_block
       ensure
         singleton_class.send(:remove_method, :template) if singleton_class.method_defined?(:template)
         env_overrides.each do |k, prev|
@@ -312,12 +319,6 @@ class PangeaCompiler < Sinatra::Base
           end
         end
       end
-
-      # Run the captured DSL block with self=synth. If the source used
-      # the bare `template :name do … end` wrapper we have a block; if
-      # it called synth methods directly without the wrapper, the
-      # source already mutated synth via instance methods (rare).
-      synth.instance_eval(&captured_block) if captured_block
 
       # Synthesize to Terraform JSON
       result = synth.synthesis
