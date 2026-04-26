@@ -669,6 +669,28 @@ async fn handle_planning(
     )
     .await?;
 
+    // Emit per-template policy + drift-detail gauges for Prometheus.
+    // Counter for total decisions accumulates over time; gauges
+    // reflect the CURRENT plan state and reset on next reconcile.
+    let tname = template.name_any();
+    let tns = template.namespace().unwrap_or_default();
+    state
+        .metrics
+        .policy_decisions_total
+        .with_label_values(&[&tname, &tns, "autoApply"])
+        .inc_by(policy_outcome.evaluation.auto_apply_count as u64);
+    state
+        .metrics
+        .policy_decisions_total
+        .with_label_values(&[&tname, &tns, "requireApproval"])
+        .inc_by(policy_outcome.evaluation.require_approval_count as u64);
+    state
+        .metrics
+        .policy_decisions_total
+        .with_label_values(&[&tname, &tns, "refuse"])
+        .inc_by(policy_outcome.evaluation.refuse_count as u64);
+    update_drift_detail_gauges(&state.metrics, &tname, &tns, &policy_outcome.annotated_drifts);
+
     if !has_changes {
         info!("No changes detected");
         update_phase(template, Phase::Ready, state).await?;
@@ -897,6 +919,28 @@ async fn handle_ready(
 
     update_settling_status(template, &outcome, &drift_details, state).await?;
 
+    // Mirror settling state into Prometheus gauges + counters.
+    let tname = template.name_any();
+    let tns = template.namespace().unwrap_or_default();
+    state
+        .metrics
+        .consecutive_drift_cycles
+        .with_label_values(&[&tname, &tns])
+        .set(outcome.cycle_count() as i64);
+    let (cycles, stuck_addrs) = stuck_summary(&outcome);
+    state
+        .metrics
+        .stuck_resources
+        .with_label_values(&[&tname, &tns])
+        .set(stuck_addrs.len() as i64);
+    state
+        .metrics
+        .settled
+        .with_label_values(&[&tname, &tns])
+        .set(if matches!(outcome, crate::controller::settling::SettlingOutcome::Settled) { 1 } else { 0 });
+    let _ = cycles;
+    update_drift_detail_gauges(&state.metrics, &tname, &tns, &drift_details);
+
     use crate::controller::settling::{SettlingAction, SettlingOutcome};
     match action {
         SettlingAction::AcceptSettled => {
@@ -912,6 +956,16 @@ async fn handle_ready(
         }
         SettlingAction::AlertButContinue => {
             let (cycles, addrs) = stuck_summary(&outcome);
+            let reason_label = match outcome {
+                SettlingOutcome::StuckByFingerprint { .. } => "StuckByFingerprint",
+                SettlingOutcome::StuckByCount { .. } => "StuckByCount",
+                _ => "Unknown",
+            };
+            state
+                .metrics
+                .settling_failures_total
+                .with_label_values(&[&tname, &tns, reason_label])
+                .inc();
             let msg = format!(
                 "State has not settled after {} cycle(s). Stuck resources: {}. Continuing to retry.",
                 cycles,
@@ -925,11 +979,22 @@ async fn handle_ready(
         }
         SettlingAction::EscalateToFailed => {
             let (cycles, addrs) = stuck_summary(&outcome);
-            let reason = match outcome {
-                SettlingOutcome::StuckByFingerprint { .. } => "identical drift fingerprint across cycles",
-                SettlingOutcome::StuckByCount { .. } => "exceeded max consecutive drift cycles",
-                _ => "stuck",
+            let (reason, reason_label) = match outcome {
+                SettlingOutcome::StuckByFingerprint { .. } => (
+                    "identical drift fingerprint across cycles",
+                    "StuckByFingerprint",
+                ),
+                SettlingOutcome::StuckByCount { .. } => (
+                    "exceeded max consecutive drift cycles",
+                    "StuckByCount",
+                ),
+                _ => ("stuck", "Unknown"),
             };
+            state
+                .metrics
+                .settling_failures_total
+                .with_label_values(&[&tname, &tns, reason_label])
+                .inc();
             let err_msg = format!(
                 "STATE-SETTLING FAILED — {} after {} cycle(s). Stuck resources: {}. \
                  Manual investigation required (provider quota, broken provider config, \
@@ -942,6 +1007,39 @@ async fn handle_ready(
             update_phase_with_error(template, Phase::Failed, &err_msg, state).await?;
             record_event(template, state, EventType::Warning, "SettlingFailed", &err_msg).await;
             Ok(ReconcileAction::Requeue(ERROR_REQUEUE_INTERVAL))
+        }
+    }
+}
+
+/// Set per-template gauges from the latest annotated drift list.
+///
+/// Resets the four (action, risk) buckets to zero before counting,
+/// otherwise stale entries from the prior plan would linger forever.
+/// Prometheus client doesn't expose a per-label-set delete that's
+/// safe across versions, so we just zero the bounded action×risk
+/// matrix (4×4 = 16 series per template).
+fn update_drift_detail_gauges(
+    metrics: &crate::observability::Metrics,
+    template: &str,
+    namespace: &str,
+    drifts: &[crate::crd::DriftDetail],
+) {
+    use std::collections::HashMap;
+    let actions = ["create", "update", "delete", "replace"];
+    let risks = ["none", "low", "medium", "high"];
+    let mut buckets: HashMap<(&str, &str), u64> = HashMap::new();
+    for d in drifts {
+        let action = actions.iter().copied().find(|a| *a == d.action).unwrap_or("update");
+        let risk = risks.iter().copied().find(|r| *r == d.risk).unwrap_or("low");
+        *buckets.entry((action, risk)).or_default() += 1;
+    }
+    for &a in &actions {
+        for &r in &risks {
+            let v = buckets.get(&(a, r)).copied().unwrap_or(0) as i64;
+            metrics
+                .template_drift_detail
+                .with_label_values(&[template, namespace, a, r])
+                .set(v);
         }
     }
 }

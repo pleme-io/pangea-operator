@@ -42,6 +42,43 @@ pub struct Metrics {
 
     /// Failed reconciliations.
     pub reconciliation_errors_total: IntCounterVec,
+
+    // -----------------------------------------------------------------
+    // Policy engine + state-settling metrics (chart 0.4.0)
+    //
+    // Cardinality budget: each metric is keyed by (template, namespace)
+    // → grows linearly with number of InfrastructureTemplates. Safe up
+    // to a few hundred templates per cluster. The decision/action/risk
+    // labels are bounded enums (3-4 values each).
+    // -----------------------------------------------------------------
+
+    /// Per-resource policy decisions emitted during plan evaluation.
+    /// Labels: template, namespace, decision (autoApply|requireApproval|refuse).
+    /// Use to alert on unexpected `refuse` rates or to track audit-mode
+    /// rollouts before flipping a rule to enforce.
+    pub policy_decisions_total: IntCounterVec,
+
+    /// Current consecutive-drift-cycle count per template. 0 = settled.
+    /// Crossing `spec.settlingPolicy.maxConsecutiveDriftCycles` is the
+    /// alert trigger; PrometheusRule below uses this directly.
+    pub consecutive_drift_cycles: IntGaugeVec,
+
+    /// Settled flag per template: 1 when `Settled=True`, 0 when False.
+    /// The single most useful "is this template healthy" gauge.
+    pub settled: IntGaugeVec,
+
+    /// Number of resources currently in the stuck-set per template.
+    /// Non-zero only when settling has escalated.
+    pub stuck_resources: IntGaugeVec,
+
+    /// Settling-failure escalations. Labels: template, namespace,
+    /// reason (StuckByCount|StuckByFingerprint).
+    pub settling_failures_total: IntCounterVec,
+
+    /// Per-template count of pending changes by action+risk. Lets a
+    /// dashboard show "5 high-risk deletes pending across the fleet"
+    /// without parsing each driftDetail.
+    pub template_drift_detail: IntGaugeVec,
 }
 
 impl Metrics {
@@ -137,6 +174,60 @@ impl Metrics {
         )
         .expect("metric can be created");
 
+        let policy_decisions_total = IntCounterVec::new(
+            Opts::new(
+                "pangea_policy_decisions_total",
+                "Per-resource policy decisions emitted during plan evaluation",
+            ),
+            &["template", "namespace", "decision"],
+        )
+        .expect("metric can be created");
+
+        let consecutive_drift_cycles = IntGaugeVec::new(
+            Opts::new(
+                "pangea_consecutive_drift_cycles",
+                "Current consecutive-drift-cycle count per template (0 = settled)",
+            ),
+            &["template", "namespace"],
+        )
+        .expect("metric can be created");
+
+        let settled = IntGaugeVec::new(
+            Opts::new(
+                "pangea_settled",
+                "1 when Settled condition is True, 0 when False",
+            ),
+            &["template", "namespace"],
+        )
+        .expect("metric can be created");
+
+        let stuck_resources = IntGaugeVec::new(
+            Opts::new(
+                "pangea_stuck_resources",
+                "Number of resources in the stuck set per template",
+            ),
+            &["template", "namespace"],
+        )
+        .expect("metric can be created");
+
+        let settling_failures_total = IntCounterVec::new(
+            Opts::new(
+                "pangea_settling_failures_total",
+                "Settling-failure escalations by reason",
+            ),
+            &["template", "namespace", "reason"],
+        )
+        .expect("metric can be created");
+
+        let template_drift_detail = IntGaugeVec::new(
+            Opts::new(
+                "pangea_template_drift_detail",
+                "Pending changes per template by action and risk",
+            ),
+            &["template", "namespace", "action", "risk"],
+        )
+        .expect("metric can be created");
+
         // Register all metrics
         registry
             .register(Box::new(reconciliations_total.clone()))
@@ -171,6 +262,24 @@ impl Metrics {
         registry
             .register(Box::new(reconciliation_errors_total.clone()))
             .expect("metric can be registered");
+        registry
+            .register(Box::new(policy_decisions_total.clone()))
+            .expect("metric can be registered");
+        registry
+            .register(Box::new(consecutive_drift_cycles.clone()))
+            .expect("metric can be registered");
+        registry
+            .register(Box::new(settled.clone()))
+            .expect("metric can be registered");
+        registry
+            .register(Box::new(stuck_resources.clone()))
+            .expect("metric can be registered");
+        registry
+            .register(Box::new(settling_failures_total.clone()))
+            .expect("metric can be registered");
+        registry
+            .register(Box::new(template_drift_detail.clone()))
+            .expect("metric can be registered");
 
         Self {
             registry,
@@ -185,6 +294,12 @@ impl Metrics {
             active_reconciliations,
             compilation_duration_seconds,
             reconciliation_errors_total,
+            policy_decisions_total,
+            consecutive_drift_cycles,
+            settled,
+            stuck_resources,
+            settling_failures_total,
+            template_drift_detail,
         }
     }
 
@@ -321,5 +436,79 @@ mod tests {
 
         let output = metrics.gather();
         assert!(output.contains(" 2"));
+    }
+
+    #[test]
+    fn test_policy_decisions_counter() {
+        let metrics = Metrics::new();
+        metrics
+            .policy_decisions_total
+            .with_label_values(&["t1", "ns", "autoApply"])
+            .inc_by(3);
+        metrics
+            .policy_decisions_total
+            .with_label_values(&["t1", "ns", "refuse"])
+            .inc();
+        let output = metrics.gather();
+        assert!(output.contains("pangea_policy_decisions_total"));
+        assert!(output.contains("autoApply"));
+        assert!(output.contains("refuse"));
+    }
+
+    #[test]
+    fn test_settled_gauge_set_clear() {
+        let metrics = Metrics::new();
+        metrics.settled.with_label_values(&["t1", "ns"]).set(1);
+        assert_eq!(metrics.settled.with_label_values(&["t1", "ns"]).get(), 1);
+        metrics.settled.with_label_values(&["t1", "ns"]).set(0);
+        assert_eq!(metrics.settled.with_label_values(&["t1", "ns"]).get(), 0);
+    }
+
+    #[test]
+    fn test_consecutive_drift_cycles_gauge() {
+        let metrics = Metrics::new();
+        metrics
+            .consecutive_drift_cycles
+            .with_label_values(&["t1", "ns"])
+            .set(4);
+        let output = metrics.gather();
+        assert!(output.contains("pangea_consecutive_drift_cycles"));
+        assert!(output.contains("4"));
+    }
+
+    #[test]
+    fn test_settling_failures_counter() {
+        let metrics = Metrics::new();
+        metrics
+            .settling_failures_total
+            .with_label_values(&["t1", "ns", "StuckByFingerprint"])
+            .inc();
+        metrics
+            .settling_failures_total
+            .with_label_values(&["t1", "ns", "StuckByCount"])
+            .inc();
+        let output = metrics.gather();
+        assert!(output.contains("StuckByFingerprint"));
+        assert!(output.contains("StuckByCount"));
+    }
+
+    #[test]
+    fn test_template_drift_detail_gauge() {
+        let metrics = Metrics::new();
+        metrics
+            .template_drift_detail
+            .with_label_values(&["t1", "ns", "delete", "high"])
+            .set(2);
+        let output = metrics.gather();
+        assert!(output.contains("pangea_template_drift_detail"));
+        assert!(output.contains("delete"));
+        assert!(output.contains("high"));
+    }
+
+    #[test]
+    fn test_stuck_resources_gauge() {
+        let metrics = Metrics::new();
+        metrics.stuck_resources.with_label_values(&["t1", "ns"]).set(7);
+        assert_eq!(metrics.stuck_resources.with_label_values(&["t1", "ns"]).get(), 7);
     }
 }
