@@ -193,6 +193,16 @@
     };
     version = "0.1.0";
   };
+  pangea-compiler = {
+    dependencies = ["json" "pangea-akeyless" "pangea-architectures" "pangea-aws" "pangea-azure" "pangea-cloudflare" "pangea-core" "pangea-datadog" "pangea-gcp" "pangea-hcloud" "pangea-kubernetes" "pangea-splunk" "pangea-spot" "puma" "sinatra" "terraform-synthesizer"];
+    groups = ["default"];
+    platforms = [];
+    source = {
+      path = ./.;
+      type = "path";
+    };
+    version = "0.1.0";
+  };
   pangea-core = {
     dependencies = ["base64" "dry-struct" "dry-types" "terraform-synthesizer"];
     groups = ["default"];

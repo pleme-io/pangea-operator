@@ -1,27 +1,15 @@
 # frozen_string_literal: true
 #
-# Pangea Compiler service Gemfile.
-#
-# Provider gems are vendored under vendor/<gem-name>:
-#   - Locally:  the regen helper symlinks sibling pleme-io repos into
-#               vendor/, then runs `bundle lock --update` + `bundix`.
-#   - In Nix:   the compiler image's synth derivation copies each
-#               provider gem from a flake input into vendor/<gem-name>.
-#
-# Both flows resolve to the same vendor/* paths, so Gemfile.lock and
-# gemset.nix are deterministic across dev and build.
+# Standard nixpkgs bundlerApp Gemfile pattern: declare the app as a
+# gem (via `gemspec`), pin provider versions to local paths so the
+# Nix build can vendor them. Vendored repos are populated by the
+# regen helper (locally) or the synth derivation (in the Nix build);
+# either way, both produce vendor/<name>/ for bundler to resolve.
 
 source 'https://rubygems.org'
 
-# HTTP layer
-gem 'sinatra', '~> 4.0'
-gem 'puma',    '~> 6.0'
-gem 'json'
+gemspec
 
-# Synthesis framework (RubyGems)
-gem 'terraform-synthesizer', '~> 0.0.28'
-
-# Pangea provider gems (vendored — see header)
 gem 'pangea-core',          path: 'vendor/pangea-core'
 gem 'pangea-akeyless',      path: 'vendor/pangea-akeyless'
 gem 'pangea-aws',           path: 'vendor/pangea-aws'

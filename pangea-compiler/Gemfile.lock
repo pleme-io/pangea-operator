@@ -1,4 +1,25 @@
 PATH
+  remote: .
+  specs:
+    pangea-compiler (0.1.0)
+      json
+      pangea-akeyless
+      pangea-architectures
+      pangea-aws
+      pangea-azure
+      pangea-cloudflare
+      pangea-core
+      pangea-datadog
+      pangea-gcp
+      pangea-hcloud
+      pangea-kubernetes
+      pangea-splunk
+      pangea-spot
+      puma (~> 6.0)
+      sinatra (~> 4.0)
+      terraform-synthesizer (~> 0.0.28)
+
+PATH
   remote: vendor/pangea-akeyless
   specs:
     pangea-akeyless (0.1.0)
@@ -176,12 +197,12 @@ PLATFORMS
   x86_64-linux
 
 DEPENDENCIES
-  json
   pangea-akeyless!
   pangea-architectures!
   pangea-aws!
   pangea-azure!
   pangea-cloudflare!
+  pangea-compiler!
   pangea-core!
   pangea-datadog!
   pangea-gcp!
@@ -189,9 +210,6 @@ DEPENDENCIES
   pangea-kubernetes!
   pangea-splunk!
   pangea-spot!
-  puma (~> 6.0)
-  sinatra (~> 4.0)
-  terraform-synthesizer (~> 0.0.28)
 
 BUNDLED WITH
    2.7.2

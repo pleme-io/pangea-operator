@@ -1,0 +1,20 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+#
+# pangea-compiler — entrypoint exe declared by the gemspec.
+#
+# Hands off to puma directly so bundlerApp's standard binstub
+# wrapping (BUNDLE_GEMFILE / GEM_HOME / Bundler.setup) takes effect
+# on this script before the server boots. config.ru is resolved
+# relative to this file's directory so the binary works the same
+# in the gem checkout, the Nix-built bundle, and the rendered
+# Docker image.
+
+require 'puma/cli'
+
+config_ru = File.expand_path('../config.ru', __dir__)
+port      = ENV.fetch('PORT', '8082')
+bind      = ENV.fetch('BIND', 'tcp://0.0.0.0')
+
+argv = ARGV.empty? ? ['-p', port, '-b', bind, config_ru] : ARGV
+exit Puma::CLI.new(argv).run
