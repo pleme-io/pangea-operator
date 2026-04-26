@@ -1,19 +1,36 @@
-source "https://rubygems.org"
+# frozen_string_literal: true
+#
+# Pangea Compiler service Gemfile.
+#
+# Provider gems are vendored under vendor/<gem-name>:
+#   - Locally:  the regen helper symlinks sibling pleme-io repos into
+#               vendor/, then runs `bundle lock --update` + `bundix`.
+#   - In Nix:   the compiler image's synth derivation copies each
+#               provider gem from a flake input into vendor/<gem-name>.
+#
+# Both flows resolve to the same vendor/* paths, so Gemfile.lock and
+# gemset.nix are deterministic across dev and build.
 
-gem "sinatra", "~> 4.0"
-gem "puma", "~> 6.0"
-gem "json"
+source 'https://rubygems.org'
 
-# Pangea provider gems (local paths for dev, rubygems for production)
-gem "pangea-core"
-gem "pangea-aws"
-gem "pangea-akeyless"
-gem "pangea-cloudflare"
-gem "pangea-azure"
-gem "pangea-gcp"
-gem "pangea-hcloud"
-gem "pangea-kubernetes"
-gem "pangea-datadog"
-gem "pangea-splunk"
+# HTTP layer
+gem 'sinatra', '~> 4.0'
+gem 'puma',    '~> 6.0'
+gem 'json'
 
-gem "terraform-synthesizer", "~> 0.0.28"
+# Synthesis framework (RubyGems)
+gem 'terraform-synthesizer', '~> 0.0.28'
+
+# Pangea provider gems (vendored — see header)
+gem 'pangea-core',          path: 'vendor/pangea-core'
+gem 'pangea-akeyless',      path: 'vendor/pangea-akeyless'
+gem 'pangea-aws',           path: 'vendor/pangea-aws'
+gem 'pangea-azure',         path: 'vendor/pangea-azure'
+gem 'pangea-cloudflare',    path: 'vendor/pangea-cloudflare'
+gem 'pangea-datadog',       path: 'vendor/pangea-datadog'
+gem 'pangea-gcp',           path: 'vendor/pangea-gcp'
+gem 'pangea-hcloud',        path: 'vendor/pangea-hcloud'
+gem 'pangea-kubernetes',    path: 'vendor/pangea-kubernetes'
+gem 'pangea-splunk',        path: 'vendor/pangea-splunk'
+gem 'pangea-spot',          path: 'vendor/pangea-spot'
+gem 'pangea-architectures', path: 'vendor/pangea-architectures'
