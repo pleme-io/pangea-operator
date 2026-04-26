@@ -446,21 +446,30 @@ class PangeaCompiler < Sinatra::Base
   end
 
   def extend_synthesizer(synth)
-    # Extend with available provider resource modules
-    [
-      Pangea::Resources::AWS,
-      Pangea::Resources::Akeyless,
-      Pangea::Resources::Cloudflare,
-      Pangea::Resources::Azure,
-      Pangea::Resources::GCP,
-      Pangea::Resources::HCloud,
-      Pangea::Resources::Kubernetes,
-      Pangea::Resources::Datadog,
-      Pangea::Resources::Splunk,
-    ].each do |mod_const|
-      synth.extend(mod_const)
-    rescue NameError
-      # Provider not loaded
+    # Extend with available provider resource modules.
+    #
+    # Use `const_get` per-name (inside the per-iteration rescue) instead
+    # of an array literal of bare constant references. The literal form
+    # raises NameError at array construction if ANY provider failed to
+    # load, before the rescue can catch it — that aborts the whole
+    # request as 422 rather than the intended best-effort skip.
+    %w[
+      AWS
+      Akeyless
+      Cloudflare
+      Azure
+      GCP
+      HCloud
+      Kubernetes
+      Datadog
+      Splunk
+      Spot
+    ].each do |name|
+      begin
+        synth.extend(Pangea::Resources.const_get(name))
+      rescue NameError => e
+        $stderr.puts "Warning: Pangea::Resources::#{name} not available: #{e.message}"
+      end
     end
   end
 

@@ -114,6 +114,13 @@ impl Error {
     }
 
     /// Check if this error is retryable.
+    ///
+    /// Compilation errors are retryable: the most common failure mode is
+    /// the compiler sidecar not being ready yet at operator startup
+    /// (race between operator init and compiler Bundler.setup, ~5s).
+    /// Real source errors will be retried too, but the controller's
+    /// failure_count keeps accumulating so the template eventually moves
+    /// to Failed if the user's source is genuinely broken.
     pub fn is_retryable(&self) -> bool {
         matches!(
             self,
@@ -124,6 +131,7 @@ impl Error {
                 | Error::Io(_)
                 | Error::PackerExecution(_)
                 | Error::AmiTestFailed(_)
+                | Error::Compilation(_)
         )
     }
 }
@@ -206,11 +214,13 @@ mod tests {
         assert!(Error::PackerExecution("timeout".into()).is_retryable());
         assert!(Error::AmiTestFailed("connection error".into()).is_retryable());
         assert!(Error::Io(std::io::Error::new(std::io::ErrorKind::Other, "io")).is_retryable());
+        // Compilation errors are retryable to absorb the compiler-sidecar
+        // startup race; persistent source errors get caught via failure_count.
+        assert!(Error::Compilation("compiler unreachable".into()).is_retryable());
     }
 
     #[test]
     fn test_is_retryable_false_variants() {
-        assert!(!Error::Compilation("bad syntax".into()).is_retryable());
         assert!(!Error::Config("invalid".into()).is_retryable());
         assert!(!Error::InvalidSource("missing".into()).is_retryable());
         assert!(!Error::StateBackend("bad".into()).is_retryable());
