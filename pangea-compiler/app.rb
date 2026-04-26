@@ -4,7 +4,10 @@ require "sinatra/base"
 require "json"
 require "terraform-synthesizer"
 
-# Load all available pangea provider gems
+# Load all available pangea provider gems. Each gem's canonical
+# entrypoint is its dashed name (e.g. lib/pangea-core.rb), not the
+# slashed namespace (lib/pangea/core.rb), so require the dashed form
+# directly — matches how pangea-architectures itself requires them.
 %w[
   pangea-core
   pangea-aws
@@ -16,9 +19,10 @@ require "terraform-synthesizer"
   pangea-kubernetes
   pangea-datadog
   pangea-splunk
+  pangea-spot
 ].each do |gem_name|
   begin
-    require gem_name.tr("-", "/")
+    require gem_name
   rescue LoadError => e
     $stderr.puts "Warning: #{gem_name} not available: #{e.message}"
   end
