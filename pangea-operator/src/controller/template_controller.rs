@@ -1,9 +1,12 @@
 //! Controller for InfrastructureTemplate resources.
 
 use crate::backend::{BackendConfigGenerator, Credentials};
-use crate::crd::{InfrastructureTemplate, PangeaNamespace, Phase, ResourceSummary};
+use crate::crd::{
+    InfrastructureTemplate, PangeaNamespace, Phase, PolicyDecision, PolicyEvaluation,
+    ResourceSummary, SettlingExhaustionAction, SettlingPolicy,
+};
 use crate::error::{Error, Result};
-use crate::executor::Plan;
+use crate::executor::{evaluate_policy, policy_is_configured, Plan};
 
 use chrono::Utc;
 use futures::StreamExt;
@@ -586,7 +589,7 @@ async fn handle_planning(
     // Parse plan output for resource summary + per-resource drift detail.
     // Drift details are capped at 50 entries so the K8s status object
     // stays tractable; full per-plan list is available via GraphQL.
-    let (summary, drift_details) = if plan_path.exists() {
+    let (summary, raw_drifts) = if plan_path.exists() {
         let show_result = state.executor.show_plan(&workspace.path, &plan_path).await?;
         if show_result.success {
             match Plan::from_json(&show_result.stdout) {
@@ -600,6 +603,8 @@ async fn handle_planning(
                             action: d.action,
                             risk: d.risk,
                             attributes: d.attributes,
+                            policy_decision: None,
+                            matched_policy: None,
                         })
                         .collect();
                     info!(
@@ -625,7 +630,19 @@ async fn handle_planning(
 
     let has_changes = result.has_changes();
 
-    // Update status with plan details
+    // Run the per-resource policy engine. Empty rules + unset
+    // defaultDecision = aggressive auto-apply on every change (the
+    // documented default). The engine annotates each drift entry with
+    // its resolved decision and emits an aggregate that drives the
+    // plan→apply gate below.
+    let policy_outcome = evaluate_policy(
+        &template.spec.policies,
+        template.spec.default_decision,
+        &raw_drifts,
+    );
+    let policy_was_configured =
+        policy_is_configured(&template.spec.policies, template.spec.default_decision);
+
     let resource_summary = summary.as_ref().map(|s| ResourceSummary {
         total: s.total,
         added: s.added,
@@ -633,26 +650,73 @@ async fn handle_planning(
         destroyed: s.destroyed,
     });
     let plan_text = summary.as_ref().map(|s| s.format());
-    update_plan_status(template, resource_summary, plan_text.as_deref(), drift_details, state).await?;
 
-    if has_changes {
-        if template.spec.auto_approve {
-            info!("Changes detected, auto-approving");
+    // Persist annotated drifts + policyEvaluation (only when configured —
+    // otherwise we'd noisily attach `<default>` everywhere on every
+    // legacy template).
+    let evaluation_to_store = if policy_was_configured {
+        Some(policy_outcome.evaluation.clone())
+    } else {
+        None
+    };
+    update_plan_status(
+        template,
+        resource_summary,
+        plan_text.as_deref(),
+        policy_outcome.annotated_drifts.clone(),
+        evaluation_to_store,
+        state,
+    )
+    .await?;
+
+    if !has_changes {
+        info!("No changes detected");
+        update_phase(template, Phase::Ready, state).await?;
+        return Ok(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL));
+    }
+
+    match policy_outcome.aggregate {
+        PolicyDecision::Refuse => {
+            // Refuse is a hard stop: name the offending resources
+            // loudly so the operator surface tells the human exactly
+            // which rule blocked which change.
+            let refused_count = policy_outcome.evaluation.refuse_count;
+            let sample = policy_outcome.evaluation.refused_addresses.join(", ");
+            let err_msg = format!(
+                "Plan refused by policy: {} refused change(s). Refused addresses: {}",
+                refused_count, sample
+            );
+            warn!(%err_msg, "Policy refused plan");
+            update_phase_with_error(template, Phase::Failed, &err_msg, state).await?;
+            record_event(template, state, EventType::Warning, "PolicyRefused", &err_msg).await;
+            Ok(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL))
+        }
+        PolicyDecision::AutoApply => {
+            info!(
+                auto = policy_outcome.evaluation.auto_apply_count,
+                "Policy permits auto-apply for all changes"
+            );
             update_phase(template, Phase::Applying, state).await?;
-            record_event(template, state, EventType::Normal, "PlanApproved", "Changes detected and auto-approved").await;
+            record_event(
+                template,
+                state,
+                EventType::Normal,
+                "PlanApproved",
+                "Changes detected and auto-applied per policy",
+            )
+            .await;
             Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
-        } else {
-            // Check if user has already approved the pending plan
+        }
+        PolicyDecision::RequireApproval => {
+            // Standard pendingPlanHash / approvedPlanHash gate.
             let is_approved = template
                 .status
                 .as_ref()
-                .and_then(|s| {
-                    match (&s.pending_plan_hash, &s.approved_plan_hash) {
-                        (Some(pending), Some(approved)) if !pending.is_empty() => {
-                            Some(pending == approved)
-                        }
-                        _ => None,
+                .and_then(|s| match (&s.pending_plan_hash, &s.approved_plan_hash) {
+                    (Some(pending), Some(approved)) if !pending.is_empty() => {
+                        Some(pending == approved)
                     }
+                    _ => None,
                 })
                 .unwrap_or(false);
 
@@ -662,18 +726,22 @@ async fn handle_planning(
                 record_event(template, state, EventType::Normal, "PlanApproved", "Plan approved by user").await;
                 Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
             } else {
-                // Hash the plan content for deterministic approval
                 let plan_content = result.stdout.as_str();
                 let plan_hash = format!("{:016x}", content_hash(plan_content));
-
-                info!(plan_hash, "Changes detected, waiting for manual approval");
+                info!(
+                    plan_hash,
+                    require_approval_count = policy_outcome.evaluation.require_approval_count,
+                    "Policy requires approval, waiting"
+                );
                 update_pending_plan_hash(template, &plan_hash, state).await?;
                 record_event(
                     template,
                     state,
                     EventType::Normal,
                     "PlanPending",
-                    &format!("Changes detected. Approve with: kubectl patch infra {} -n {} --type merge --subresource status -p '{{\"status\":{{\"approvedPlanHash\":\"{}\"}}}}'",
+                    &format!(
+                        "Changes detected ({} require approval). Approve with: kubectl patch infra {} -n {} --type merge --subresource status -p '{{\"status\":{{\"approvedPlanHash\":\"{}\"}}}}'",
+                        policy_outcome.evaluation.require_approval_count,
                         template.name_any(),
                         template.namespace().unwrap_or_default(),
                         plan_hash
@@ -682,10 +750,6 @@ async fn handle_planning(
                 Ok(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL))
             }
         }
-    } else {
-        info!("No changes detected");
-        update_phase(template, Phase::Ready, state).await?;
-        Ok(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL))
     }
 }
 
@@ -735,7 +799,18 @@ async fn handle_applying(
     Ok(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL))
 }
 
-/// Handle Ready phase - periodic drift detection.
+/// Handle Ready phase - periodic drift detection + state-settling tracking.
+///
+/// Settling is the controller's primary success metric: each
+/// Ready→Drifted→Ready cycle that still reports drift is one
+/// "non-settling" cycle. Two stuck signals — either is loud:
+///   * count: `consecutive_drift_cycles >= max` (configurable, default 5)
+///   * fingerprint: drift content identical across cycles (we're not
+///     making progress even before the count threshold)
+///
+/// On stuck, the configured `SettlingPolicy.on_exhaustion` decides:
+/// fail (transition to Failed, default), alert (emit Warning + flip
+/// `Settled=False` condition but keep trying), or continue (silent).
 async fn handle_ready(
     template: &InfrastructureTemplate,
     state: &ControllerState,
@@ -743,7 +818,6 @@ async fn handle_ready(
     let interval = parse_duration(&template.spec.refresh_interval)
         .unwrap_or(DEFAULT_REQUEUE_INTERVAL);
 
-    // Check if enough time has elapsed since last drift check
     if let Some(last_check) = template
         .status
         .as_ref()
@@ -761,21 +835,126 @@ async fn handle_ready(
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
 
-    // Run plan without saving to file — just detect changes
-    let result = state.executor.plan(&workspace.path, None, &[]).await?;
+    // We need structured drift data (for fingerprinting / settling)
+    // so save the plan to a side file and parse it. If JSON parsing
+    // fails we fall back to the boolean has_changes signal — better
+    // a missed fingerprint than a controller wedge.
+    let drift_plan_path = workspace.path.join("_drift_plan.tfplan");
+    let result = state
+        .executor
+        .plan(&workspace.path, Some(&drift_plan_path), &[])
+        .await?;
 
-    // Update last drift check timestamp
     update_drift_check_timestamp(template, state).await?;
 
-    if result.has_changes() {
-        warn!("Drift detected");
-        state.metrics.drift_detected_total.inc();
-        update_phase(template, Phase::Drifted, state).await?;
-        record_event(template, state, EventType::Warning, "DriftDetected", "Infrastructure drift detected").await;
-        Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
+    let drift_details: Vec<crate::crd::DriftDetail> = if result.has_changes() && drift_plan_path.exists() {
+        let show = state.executor.show_plan(&workspace.path, &drift_plan_path).await?;
+        if show.success {
+            match Plan::from_json(&show.stdout) {
+                Ok(plan) => plan
+                    .drift_details(50)
+                    .into_iter()
+                    .map(|d| crate::crd::DriftDetail {
+                        address: d.address,
+                        action: d.action,
+                        risk: d.risk,
+                        attributes: d.attributes,
+                        policy_decision: None,
+                        matched_policy: None,
+                    })
+                    .collect(),
+                Err(e) => {
+                    warn!(error = %e, "Failed to parse drift plan JSON");
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        }
     } else {
-        debug!("No drift detected");
-        Ok(ReconcileAction::Requeue(interval))
+        Vec::new()
+    };
+
+    let settling_policy = template.spec.settling_policy.clone().unwrap_or_default();
+    let prior_cycles = template
+        .status
+        .as_ref()
+        .map(|s| s.consecutive_drift_cycles)
+        .unwrap_or(0);
+    let prior_fingerprint = template
+        .status
+        .as_ref()
+        .filter(|s| !s.drift_details.is_empty())
+        .map(|s| crate::controller::settling::fingerprint(&s.drift_details));
+
+    let outcome = crate::controller::settling::evaluate(
+        &settling_policy,
+        prior_cycles,
+        prior_fingerprint.as_deref(),
+        &drift_details,
+    );
+    let action = crate::controller::settling::action_for(&outcome, &settling_policy);
+
+    update_settling_status(template, &outcome, &drift_details, state).await?;
+
+    use crate::controller::settling::{SettlingAction, SettlingOutcome};
+    match action {
+        SettlingAction::AcceptSettled => {
+            debug!("No drift detected — system has settled");
+            Ok(ReconcileAction::Requeue(interval))
+        }
+        SettlingAction::KeepTrying => {
+            warn!("Drift detected, transitioning to Drifted");
+            state.metrics.drift_detected_total.inc();
+            update_phase(template, Phase::Drifted, state).await?;
+            record_event(template, state, EventType::Warning, "DriftDetected", "Infrastructure drift detected").await;
+            Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
+        }
+        SettlingAction::AlertButContinue => {
+            let (cycles, addrs) = stuck_summary(&outcome);
+            let msg = format!(
+                "State has not settled after {} cycle(s). Stuck resources: {}. Continuing to retry.",
+                cycles,
+                addrs.join(", ")
+            );
+            warn!(%msg, "Settling alert");
+            state.metrics.drift_detected_total.inc();
+            record_event(template, state, EventType::Warning, "SettlingAlert", &msg).await;
+            update_phase(template, Phase::Drifted, state).await?;
+            Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
+        }
+        SettlingAction::EscalateToFailed => {
+            let (cycles, addrs) = stuck_summary(&outcome);
+            let reason = match outcome {
+                SettlingOutcome::StuckByFingerprint { .. } => "identical drift fingerprint across cycles",
+                SettlingOutcome::StuckByCount { .. } => "exceeded max consecutive drift cycles",
+                _ => "stuck",
+            };
+            let err_msg = format!(
+                "STATE-SETTLING FAILED — {} after {} cycle(s). Stuck resources: {}. \
+                 Manual investigation required (provider quota, broken provider config, \
+                 conflicting external automation, or upstream API not converging).",
+                reason,
+                cycles,
+                addrs.join(", ")
+            );
+            warn!(%err_msg, "Settling escalated to Failed");
+            update_phase_with_error(template, Phase::Failed, &err_msg, state).await?;
+            record_event(template, state, EventType::Warning, "SettlingFailed", &err_msg).await;
+            Ok(ReconcileAction::Requeue(ERROR_REQUEUE_INTERVAL))
+        }
+    }
+}
+
+fn stuck_summary(outcome: &crate::controller::settling::SettlingOutcome) -> (u32, Vec<String>) {
+    use crate::controller::settling::SettlingOutcome;
+    match outcome {
+        SettlingOutcome::StuckByFingerprint { cycles, stuck_addresses, .. }
+        | SettlingOutcome::StuckByCount { cycles, stuck_addresses } => {
+            (*cycles, stuck_addresses.clone())
+        }
+        SettlingOutcome::Progressing { cycles } => (*cycles, vec![]),
+        SettlingOutcome::Settled => (0, vec![]),
     }
 }
 
@@ -1005,6 +1184,7 @@ async fn update_plan_status(
     resources: Option<ResourceSummary>,
     plan_summary: Option<&str>,
     drift_details: Vec<crate::crd::DriftDetail>,
+    policy_evaluation: Option<PolicyEvaluation>,
     state: &ControllerState,
 ) -> Result<()> {
     let name = template.name_any();
@@ -1017,6 +1197,7 @@ async fn update_plan_status(
     status.plan_summary = plan_summary.map(|s| s.to_string());
     status.last_planned_at = Some(Utc::now());
     status.drift_details = drift_details;
+    status.policy_evaluation = policy_evaluation;
 
     let patch = serde_json::json!({ "status": status });
 
@@ -1051,6 +1232,93 @@ async fn update_apply_status(
 
     let patch = serde_json::json!({ "status": status });
 
+    api.patch_status(
+        &name,
+        &PatchParams::apply("pangea-operator"),
+        &Patch::Merge(&patch),
+    )
+    .await?;
+
+    Ok(())
+}
+
+/// Persist state-settling tracking fields to status.
+///
+/// Updates `consecutive_drift_cycles`, `stuck_resources`, and (when
+/// drift was detected) `drift_details`. Also flips the `Settled`
+/// condition to reflect the current outcome — this is what an
+/// external observer (Flux healthCheck, Prometheus alert, kubectl
+/// describe) reads to know whether the system has actually converged.
+async fn update_settling_status(
+    template: &InfrastructureTemplate,
+    outcome: &crate::controller::settling::SettlingOutcome,
+    drift_details: &[crate::crd::DriftDetail],
+    state: &ControllerState,
+) -> Result<()> {
+    use crate::controller::settling::SettlingOutcome;
+    let name = template.name_any();
+    let namespace = template.namespace().unwrap_or_default();
+    let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
+
+    let cycles = outcome.cycle_count();
+    let stuck_addresses: Vec<String> = match outcome {
+        SettlingOutcome::StuckByFingerprint { stuck_addresses, .. }
+        | SettlingOutcome::StuckByCount { stuck_addresses, .. } => stuck_addresses.clone(),
+        _ => Vec::new(),
+    };
+
+    let (settled_status, settled_reason, settled_msg) = match outcome {
+        SettlingOutcome::Settled => (
+            "True",
+            "Settled".to_string(),
+            "Drift check found no changes — desired state matches actual state.".to_string(),
+        ),
+        SettlingOutcome::Progressing { cycles } => (
+            "False",
+            "Reconciling".to_string(),
+            format!("Drift detected; reconciling (cycle {}).", cycles),
+        ),
+        SettlingOutcome::StuckByFingerprint { cycles, fingerprint, .. } => (
+            "False",
+            "StuckByFingerprint".to_string(),
+            format!(
+                "Drift fingerprint {} unchanged across {} cycle(s) — system is not converging.",
+                fingerprint, cycles
+            ),
+        ),
+        SettlingOutcome::StuckByCount { cycles, .. } => (
+            "False",
+            "StuckByCount".to_string(),
+            format!(
+                "Exceeded max consecutive drift cycles ({}) without settling.",
+                cycles
+            ),
+        ),
+    };
+
+    let mut status = template.status.clone().unwrap_or_default();
+    status.consecutive_drift_cycles = cycles;
+    status.stuck_resources = stuck_addresses;
+    if !drift_details.is_empty() {
+        status.drift_details = drift_details.to_vec();
+    } else if matches!(outcome, SettlingOutcome::Settled) {
+        // Clear stale drift details once we've settled.
+        status.drift_details = Vec::new();
+    }
+    status.last_drift_check_at = Some(Utc::now());
+
+    // Replace any prior `Settled` condition; preserve other types.
+    let now = Utc::now();
+    status.conditions.retain(|c| c.r#type != "Settled");
+    status.conditions.push(crate::crd::Condition {
+        r#type: "Settled".to_string(),
+        status: settled_status.to_string(),
+        last_transition_time: now,
+        reason: settled_reason,
+        message: settled_msg,
+    });
+
+    let patch = serde_json::json!({ "status": status });
     api.patch_status(
         &name,
         &PatchParams::apply("pangea-operator"),

@@ -7,12 +7,14 @@ mod tofu;
 mod workspace;
 mod plan;
 pub mod packer;
+pub mod policy;
 pub mod variable_resolver;
 
 pub use tofu::{TofuExecutor, TofuCommand, TofuResult};
 pub use workspace::{Workspace, WorkspaceManager};
 pub use plan::{Plan, PlanSummary, ResourceChange, ChangeType};
 pub use packer::{PackerExecutor, PackerCommand, PackerResult, parse_packer_manifest, parse_packer_manifest_region};
+pub use policy::{evaluate as evaluate_policy, is_configured as policy_is_configured, PolicyOutcome};
 
 use crate::crd::InfrastructureTemplate;
 use crate::error::Result;

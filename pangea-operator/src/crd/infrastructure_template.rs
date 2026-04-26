@@ -96,6 +96,51 @@ pub struct InfrastructureTemplateSpec {
     /// InSpec compliance profiles to run after apply.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub compliance_profiles: Vec<String>,
+
+    /// Per-resource policy rules controlling what the operator may do
+    /// without human approval. Evaluated top-to-bottom against each
+    /// resource change in a plan; the FIRST matching rule's `decision`
+    /// applies. Changes that match no rule fall back to
+    /// `defaultDecision` (or to `autoApprove` if `defaultDecision` is
+    /// unset).
+    ///
+    /// Aggregation across all changes:
+    ///   - any `refuse`          → operator marks plan Failed, won't apply
+    ///   - else any `requireApproval` → operator waits for `approvedPlanHash`
+    ///   - else                  → operator applies immediately
+    ///
+    /// Empty list = behave exactly as before (`autoApprove` controls
+    /// everything). Use this to express things like "auto-apply
+    /// low-risk DNS creates, require approval for any
+    /// `cloudflare_dns_record` delete, refuse any `cloudflare_zone`
+    /// destroy".
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub policies: Vec<PolicyRule>,
+
+    /// Decision applied to changes that match no rule in `policies`.
+    /// If unset, defaults to `autoApply` — the operator aggressively
+    /// settles drift on every change at every risk level. Set this to
+    /// `refuse` to make the policy list strictly opt-in (only changes
+    /// explicitly allowed by a rule may be applied), or to
+    /// `requireApproval` to gate everything not explicitly auto-applied.
+    ///
+    /// `spec.autoApprove` is no longer consulted by this engine; it
+    /// remains in the schema for legacy compatibility but does not
+    /// override `defaultDecision`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_decision: Option<PolicyDecision>,
+
+    /// Bounds on how long the operator may keep cycling through
+    /// drift→apply→drift loops before declaring the template stuck.
+    /// State settling is the operator's primary success metric — when
+    /// it can't reach a settled state after the configured number of
+    /// cycles, this is escalated loudly via a `Settled=False`
+    /// condition + Warning event.
+    ///
+    /// Defaults: 5 cycles, then `fail` (transition to Failed, surface
+    /// the address list of resources that keep re-drifting).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settling_policy: Option<SettlingPolicy>,
 }
 
 fn default_refresh_interval() -> String {
@@ -328,6 +373,28 @@ pub struct InfrastructureTemplateStatus {
     /// Compliance check results.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compliance: Option<ComplianceStatus>,
+
+    /// Aggregate result of evaluating `spec.policies` against the last
+    /// plan's drift details. Drives the plan→apply gate. Absent when
+    /// the template uses legacy `autoApprove`-only mode (no `policies`
+    /// and no `defaultDecision`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_evaluation: Option<PolicyEvaluation>,
+
+    /// State-settling counter. Counts consecutive drift cycles where
+    /// applying a plan does NOT result in a clean drift check. Reset
+    /// to zero when a Ready→Ready transition sees no drift. Drives
+    /// `SettlingPolicy` escalation.
+    #[serde(default)]
+    pub consecutive_drift_cycles: u32,
+
+    /// Resource addresses that keep showing up in successive drift
+    /// cycles — the "stuck" set. Computed as the intersection of
+    /// drift-detail addresses across the last N cycles. Capped at 20
+    /// for status hygiene; full set available via the operator's
+    /// GraphQL API. Empty when `consecutiveDriftCycles == 0`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stuck_resources: Vec<String>,
 }
 
 /// Lifecycle phase of an InfrastructureTemplate.
@@ -424,6 +491,195 @@ pub struct DriftDetail {
     /// Empty for create / delete (no per-attr diff applies).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attributes: Vec<String>,
+
+    /// Resolved policy decision for this specific change. Set when
+    /// `spec.policies` is non-empty or `spec.defaultDecision` is
+    /// non-null. Values: `autoApply` | `requireApproval` | `refuse`.
+    /// Absent means policy evaluation didn't run (legacy
+    /// `autoApprove`-only mode).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_decision: Option<String>,
+
+    /// Name of the `PolicyRule` that matched this change, or
+    /// `<default>` if no rule matched and the default decision was
+    /// applied. Absent means policy evaluation didn't run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matched_policy: Option<String>,
+}
+
+/// One policy rule. Match clauses use AND semantics (all set fields must
+/// match the change); within a clause, list entries use OR semantics
+/// (any list entry that matches counts). Empty / omitted clauses are
+/// wildcards.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PolicyRule {
+    /// Human-readable label. Surfaced in `status.driftDetails[].matchedPolicy`
+    /// and in the per-rule planSummary, so a quick `kubectl describe`
+    /// shows which rule triggered which decision.
+    pub name: String,
+
+    /// Match criteria. All set fields must match (AND); within each
+    /// list, any entry counts (OR).
+    #[serde(rename = "match")]
+    pub match_: PolicyMatch,
+
+    /// What the controller may do for changes this rule matches.
+    pub decision: PolicyDecision,
+}
+
+/// Match criteria for a `PolicyRule`. All set fields are AND'd.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PolicyMatch {
+    /// Glob patterns against the terraform resource type
+    /// (e.g. `cloudflare_dns_record`, `cloudflare_*`, `aws_iam_*`).
+    /// Only `*` (zero-or-more chars) is supported — keeps matching
+    /// trivial and predictable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resource_types: Vec<String>,
+
+    /// Regular expressions matched against the full resource address
+    /// (e.g. `^cloudflare_dns_record\\.rio-.*$`). Invalid regexes are
+    /// rejected at evaluation time and logged — they never silently
+    /// match nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub address_patterns: Vec<String>,
+
+    /// Restrict to specific actions. Empty = any action.
+    /// Valid values: `create`, `update`, `delete`, `replace`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<String>,
+
+    /// Restrict to specific risk levels. Empty = any risk.
+    /// Valid values: `none`, `low`, `medium`, `high`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub risk_levels: Vec<String>,
+
+    /// Glob patterns against the changed-attribute names. Matches if
+    /// ANY of the change's attributes matches ANY of these patterns.
+    /// Useful for "require approval if `ttl` or any `secret*` field
+    /// changes".
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attributes: Vec<String>,
+}
+
+/// Decision a `PolicyRule` (or the default fallback) carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum PolicyDecision {
+    /// Apply immediately without human approval.
+    AutoApply,
+    /// Set `pendingPlanHash` and wait for matching `approvedPlanHash`.
+    RequireApproval,
+    /// Mark the template Failed; never apply this plan. Strongest gate.
+    Refuse,
+}
+
+impl PolicyDecision {
+    /// Lowercase string for status surfacing.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PolicyDecision::AutoApply => "autoApply",
+            PolicyDecision::RequireApproval => "requireApproval",
+            PolicyDecision::Refuse => "refuse",
+        }
+    }
+}
+
+/// Aggregate policy result for an entire plan. Surfaced in
+/// `status.policyEvaluation` so observers see the worst-case decision
+/// without re-walking every drift entry.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PolicyEvaluation {
+    /// Worst decision across all changes. Drives the
+    /// plan→apply transition.
+    pub aggregate: String,
+
+    /// Number of changes that resolved to `autoApply`.
+    #[serde(default)]
+    pub auto_apply_count: u32,
+
+    /// Number of changes that resolved to `requireApproval`.
+    #[serde(default)]
+    pub require_approval_count: u32,
+
+    /// Number of changes that resolved to `refuse`. Non-zero means
+    /// `aggregate == refuse` and the plan is blocked.
+    #[serde(default)]
+    pub refuse_count: u32,
+
+    /// Sample of refused resource addresses (capped at 10) to give
+    /// quick triage signal in `kubectl describe`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refused_addresses: Vec<String>,
+}
+
+/// State-settling escalation policy.
+///
+/// State settling means: after applying a plan, the next drift-check
+/// reports no changes. Each Ready→Drifted→Ready cycle increments
+/// `status.consecutiveDriftCycles`; a clean drift check (Ready → Ready
+/// with no changes) resets it to zero. Once the counter exceeds
+/// `maxConsecutiveDriftCycles`, the operator takes the
+/// `onExhaustion` action and emits a Warning event listing the
+/// resources that keep re-drifting.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SettlingPolicy {
+    /// Maximum allowed consecutive drift cycles before escalation.
+    /// A "cycle" is one Ready→Drifted→(plan→apply)→Ready transition
+    /// where the post-apply drift check still reports changes.
+    /// Defaults to 5.
+    #[serde(default = "default_max_drift_cycles")]
+    pub max_consecutive_drift_cycles: u32,
+
+    /// What to do when `maxConsecutiveDriftCycles` is exceeded.
+    /// Defaults to `fail` — the loudest signal: phase Failed, error
+    /// message naming the stuck resources, Warning event, condition
+    /// `Settled=False reason=StuckInDriftLoop`. The point is to make
+    /// it impossible to ignore a system that can't reach steady state.
+    #[serde(default)]
+    pub on_exhaustion: SettlingExhaustionAction,
+}
+
+impl Default for SettlingPolicy {
+    fn default() -> Self {
+        Self {
+            max_consecutive_drift_cycles: default_max_drift_cycles(),
+            on_exhaustion: SettlingExhaustionAction::default(),
+        }
+    }
+}
+
+fn default_max_drift_cycles() -> u32 {
+    5
+}
+
+/// What to do when state-settling fails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum SettlingExhaustionAction {
+    /// Transition to phase=Failed with a loud error message naming
+    /// the stuck resource addresses. Stops further reconciliation
+    /// until human intervention. **Default.**
+    Fail,
+    /// Stay in the current loop but flip `Settled=False` condition
+    /// and emit a Warning event each cycle. Keeps trying — useful
+    /// for transient flakiness in a provider where you'd rather page
+    /// than stop.
+    Alert,
+    /// Just track the counter, surface it in status, but keep
+    /// retrying silently. Use only when you genuinely don't want the
+    /// operator to escalate (e.g. a known-flaky third-party API).
+    Continue,
+}
+
+impl Default for SettlingExhaustionAction {
+    fn default() -> Self {
+        SettlingExhaustionAction::Fail
+    }
 }
 
 /// Compliance check status.

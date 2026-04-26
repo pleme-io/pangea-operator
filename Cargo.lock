@@ -2432,6 +2432,7 @@ dependencies = [
  "prost-build",
  "prost-types",
  "rand 0.8.5",
+ "regex",
  "reqwest",
  "rstest",
  "schemars",

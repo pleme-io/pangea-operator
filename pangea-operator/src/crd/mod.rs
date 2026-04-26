@@ -23,8 +23,9 @@ pub mod pangea_dashboard;
 pub use infrastructure_template::{
     AwsCredentials, CloudflareCredentials, ComplianceStatus, Condition, ConfigMapRef, DriftDetail,
     GitRepositoryRef, InfrastructureTemplate, InfrastructureTemplateSpec,
-    InfrastructureTemplateStatus, Phase, ProfileResult, ProviderCredentials, ResourceSummary,
-    RetryPolicy, SecretRef, TemplateObjectRef, TemplateSource, VariableRef,
+    InfrastructureTemplateStatus, Phase, PolicyDecision, PolicyEvaluation, PolicyMatch, PolicyRule,
+    ProfileResult, ProviderCredentials, ResourceSummary, RetryPolicy, SecretRef,
+    SettlingExhaustionAction, SettlingPolicy, TemplateObjectRef, TemplateSource, VariableRef,
 };
 
 // Re-export InfrastructureFlow types
