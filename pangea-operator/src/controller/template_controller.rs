@@ -1285,13 +1285,21 @@ async fn resolve_provider_config(
             Error::Config("Cloudflare credentials secret has no data".into())
         })?;
 
+        // Several legacy + current key names — be tolerant so the
+        // operator works with secrets that follow either the
+        // pangea-CLI naming convention (api_token / CLOUDFLARE_API_TOKEN)
+        // or the workspace-template ENV-fetch convention
+        // (CF_API_TOKEN). If none are present we skip writing a
+        // backend-managed provider block — the template's inline
+        // `provider :cloudflare, …` (with ENV.fetch) already covers
+        // that case via the new compile-time variables injection.
         let api_token = data
             .get("api_token")
             .or_else(|| data.get("CLOUDFLARE_API_TOKEN"))
-            .map(|v| String::from_utf8_lossy(&v.0).to_string())
-            .ok_or_else(|| Error::Config("api_token not found in Cloudflare secret".into()))?;
+            .or_else(|| data.get("CF_API_TOKEN"))
+            .map(|v| String::from_utf8_lossy(&v.0).to_string());
 
-        Some(crate::backend::CloudflareCredentialsConfig { api_token })
+        api_token.map(|t| crate::backend::CloudflareCredentialsConfig { api_token: t })
     } else {
         None
     };
