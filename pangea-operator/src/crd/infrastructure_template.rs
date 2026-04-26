@@ -356,7 +356,11 @@ pub struct InfrastructureTemplateStatus {
     /// observers see WHICH resources changed and HOW without parsing
     /// raw tofu output. Capped to 50 entries (full list available via
     /// the operator's GraphQL API for large plans).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    ///
+    /// Always serialized (no skip-if-empty) so an explicit empty array
+    /// clears the field via JSON Merge Patch — otherwise stale drift
+    /// would survive a clean settle.
+    #[serde(default)]
     pub drift_details: Vec<DriftDetail>,
 
     /// Hash of the pending plan awaiting approval.
@@ -393,7 +397,10 @@ pub struct InfrastructureTemplateStatus {
     /// drift-detail addresses across the last N cycles. Capped at 20
     /// for status hygiene; full set available via the operator's
     /// GraphQL API. Empty when `consecutiveDriftCycles == 0`.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    ///
+    /// Always serialized (no skip-if-empty) so explicit clearing on a
+    /// settle propagates via JSON Merge Patch.
+    #[serde(default)]
     pub stuck_resources: Vec<String>,
 }
 
