@@ -7,6 +7,7 @@
 mod flow_controller;
 pub mod flow_scheduler;
 mod reconciler;
+pub mod settling;
 mod template_controller;
 mod namespace_controller;
 mod packer_build_controller;

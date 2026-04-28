@@ -205,6 +205,9 @@ async fn reconcile_flow(
                             retry_policy: None,
                             provider_credentials: None,
                             compliance_profiles: vec![],
+                            policies: vec![],
+                            default_decision: None,
+                            settling_policy: None,
                         },
                     );
 

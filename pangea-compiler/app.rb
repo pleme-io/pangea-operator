@@ -4,7 +4,10 @@ require "sinatra/base"
 require "json"
 require "terraform-synthesizer"
 
-# Load all available pangea provider gems
+# Load all available pangea provider gems. Each gem's canonical
+# entrypoint is its dashed name (e.g. lib/pangea-core.rb), not the
+# slashed namespace (lib/pangea/core.rb), so require the dashed form
+# directly — matches how pangea-architectures itself requires them.
 %w[
   pangea-core
   pangea-aws
@@ -16,9 +19,10 @@ require "terraform-synthesizer"
   pangea-kubernetes
   pangea-datadog
   pangea-splunk
+  pangea-spot
 ].each do |gem_name|
   begin
-    require gem_name.tr("-", "/")
+    require gem_name
   rescue LoadError => e
     $stderr.puts "Warning: #{gem_name} not available: #{e.message}"
   end
@@ -262,11 +266,59 @@ class PangeaCompiler < Sinatra::Base
       # Extend with all available provider resources
       extend_synthesizer(synth)
 
-      # Set variables in the binding context
-      binding_context = create_binding(variables)
+      # Pangea workspace pattern is `template :name do … end`. `template`
+      # is not a method on TerraformSynthesizer — it's a wrapper that
+      # the pangea CLI parses to extract the block, then runs that
+      # block via `synth.instance_eval(&block)` so resource/provider/
+      # output calls dispatch to the synth's method_missing.
+      #
+      # Mirror the CLI's `capture_template_block` here: define a
+      # singleton `template` method that captures the block, eval the
+      # source against the local binding (which now has `template`
+      # available), then instance_eval the captured block on synth.
+      captured_block = nil
+      singleton_class.send(:define_method, :template) do |_name, &blk|
+        captured_block = blk
+      end
 
-      # Evaluate the template source
-      eval(source, binding_context, "(pangea-template)", 1) # rubocop:disable Security/Eval
+      # Variables are exposed two ways:
+      #   1. As local variables on the eval binding (existing behaviour
+      #      — lets templates write `account_id = variables[:foo]`).
+      #   2. As process ENV entries — required because Pangea workspace
+      #      templates use `ENV.fetch('CF_API_TOKEN')` for provider
+      #      credentials, matching how the workspace .rb files run
+      #      under the pangea CLI (which inherits ENV from the user's
+      #      shell). Without this, every template that calls ENV.fetch
+      #      fails to compile inside the operator.
+      #   Restore previous ENV state (including unset → unset) so
+      #   concurrent /compile requests don't see each other's leaks.
+      env_overrides = {}
+      variables.each do |k, v|
+        key = k.to_s
+        env_overrides[key] = ENV[key]   # nil if unset
+        ENV[key] = v.to_s
+      end
+
+      begin
+        binding_context = create_binding(variables)
+        eval(source, binding_context, "(pangea-template)", 1) # rubocop:disable Security/Eval
+        # The ENV-overrides need to remain in scope during the inner
+        # block too — that block is where workspace templates make
+        # their `ENV.fetch('CF_API_TOKEN')` calls (provider config
+        # arguments, account_ids, etc.). Restoring ENV before this
+        # second eval would re-introduce the original "key not found"
+        # failure mode.
+        synth.instance_eval(&captured_block) if captured_block
+      ensure
+        singleton_class.send(:remove_method, :template) if singleton_class.method_defined?(:template)
+        env_overrides.each do |k, prev|
+          if prev.nil?
+            ENV.delete(k)
+          else
+            ENV[k] = prev
+          end
+        end
+      end
 
       # Synthesize to Terraform JSON
       result = synth.synthesis
@@ -442,28 +494,44 @@ class PangeaCompiler < Sinatra::Base
   end
 
   def extend_synthesizer(synth)
-    # Extend with available provider resource modules
-    [
-      Pangea::Resources::AWS,
-      Pangea::Resources::Akeyless,
-      Pangea::Resources::Cloudflare,
-      Pangea::Resources::Azure,
-      Pangea::Resources::GCP,
-      Pangea::Resources::HCloud,
-      Pangea::Resources::Kubernetes,
-      Pangea::Resources::Datadog,
-      Pangea::Resources::Splunk,
-    ].each do |mod_const|
-      synth.extend(mod_const)
-    rescue NameError
-      # Provider not loaded
+    # Extend with available provider resource modules.
+    #
+    # Use `const_get` per-name (inside the per-iteration rescue) instead
+    # of an array literal of bare constant references. The literal form
+    # raises NameError at array construction if ANY provider failed to
+    # load, before the rescue can catch it — that aborts the whole
+    # request as 422 rather than the intended best-effort skip.
+    %w[
+      AWS
+      Akeyless
+      Cloudflare
+      Azure
+      GCP
+      HCloud
+      Kubernetes
+      Datadog
+      Splunk
+      Spot
+    ].each do |name|
+      begin
+        synth.extend(Pangea::Resources.const_get(name))
+      rescue NameError => e
+        $stderr.puts "Warning: Pangea::Resources::#{name} not available: #{e.message}"
+      end
     end
   end
 
   def create_binding(variables)
     b = binding
     variables.each do |key, value|
-      b.local_variable_set(key.to_sym, value)
+      name = key.to_s
+      # Ruby local variable names must start with [a-z_]; uppercase
+      # names parse as constants and `local_variable_set` raises
+      # NameError on them. ENV-style ALL_CAPS keys (CF_API_TOKEN,
+      # CF_ACCOUNT_ID, …) flow through the ENV-override branch in
+      # /compile only — skip them here.
+      next unless name.match?(/\A[a-z_][a-zA-Z0-9_]*\z/)
+      b.local_variable_set(name.to_sym, value)
     end
     b
   end

@@ -13,3 +13,8 @@
 
 # Nix
 .direnv/
+
+# pangea-compiler build artifacts
+pangea-compiler/.bundle/
+pangea-compiler/vendor/
+crate-hashes.json

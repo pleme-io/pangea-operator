@@ -119,7 +119,9 @@ async fn main() -> Result<()> {
     // Create controller state
     let state = ControllerState::new(client.clone(), metrics.clone(), executor_config).await?;
 
-    // Spawn health/metrics server
+    // Spawn health server (8080) — /healthz + /readyz; also serves
+    // /metrics for back-compat with scrape configs that hit the
+    // health port.
     let health_metrics = metrics.clone();
     let health_addr = config.health_addr;
     tokio::spawn(async move {
@@ -128,7 +130,18 @@ async fn main() -> Result<()> {
         }
     });
 
-    info!(%config.health_addr, "Health server started");
+    // Spawn dedicated metrics server (9090) so the container/service
+    // declared "metrics" port actually has something behind it. Same
+    // handler shape as health_addr; ServiceMonitor scrapes hit this.
+    let metrics_only = metrics.clone();
+    let metrics_addr = config.metrics_addr;
+    tokio::spawn(async move {
+        if let Err(e) = run_health_server(metrics_addr, metrics_only).await {
+            error!(error = %e, "Metrics server error");
+        }
+    });
+
+    info!(%config.health_addr, %config.metrics_addr, "Health + metrics servers started");
 
     // Spawn controllers
     let template_state = state.clone();

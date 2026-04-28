@@ -1,0 +1,215 @@
+PATH
+  remote: .
+  specs:
+    pangea-compiler (0.1.0)
+      json
+      pangea-akeyless
+      pangea-architectures
+      pangea-aws
+      pangea-azure
+      pangea-cloudflare
+      pangea-core
+      pangea-datadog
+      pangea-gcp
+      pangea-hcloud
+      pangea-kubernetes
+      pangea-splunk
+      pangea-spot
+      puma (~> 6.0)
+      sinatra (~> 4.0)
+      terraform-synthesizer (~> 0.0.28)
+
+PATH
+  remote: vendor/pangea-akeyless
+  specs:
+    pangea-akeyless (0.1.0)
+      dry-struct (~> 1.6)
+      dry-types (~> 1.7)
+      pangea-core (~> 0.2)
+      terraform-synthesizer (~> 0.0.28)
+
+PATH
+  remote: vendor/pangea-architectures
+  specs:
+    pangea-architectures (0.1.0)
+      pangea-akeyless
+      pangea-aws
+      pangea-azure
+      pangea-cloudflare
+      pangea-core (~> 0.2)
+      pangea-datadog
+      pangea-gcp
+      pangea-hcloud
+      pangea-kubernetes
+      pangea-splunk
+      pangea-spot
+      terraform-synthesizer (~> 0.0.28)
+
+PATH
+  remote: vendor/pangea-aws
+  specs:
+    pangea-aws (0.2.0)
+      dry-struct (~> 1.6)
+      dry-types (~> 1.7)
+      pangea-core (~> 0.2)
+      terraform-synthesizer (~> 0.0.28)
+
+PATH
+  remote: vendor/pangea-azure
+  specs:
+    pangea-azure (0.1.0)
+      dry-struct (~> 1.6)
+      dry-types (~> 1.7)
+      pangea-core (~> 0.2)
+      terraform-synthesizer (~> 0.0.28)
+
+PATH
+  remote: vendor/pangea-cloudflare
+  specs:
+    pangea-cloudflare (0.1.0)
+      dry-struct (~> 1.6)
+      dry-types (~> 1.7)
+      pangea-core (~> 0.2)
+      terraform-synthesizer (~> 0.0.28)
+
+PATH
+  remote: vendor/pangea-core
+  specs:
+    pangea-core (0.3.0)
+      base64
+      dry-struct (~> 1.6)
+      dry-types (~> 1.7)
+      terraform-synthesizer (>= 0.0.28)
+
+PATH
+  remote: vendor/pangea-datadog
+  specs:
+    pangea-datadog (0.1.0)
+      dry-struct (~> 1.6)
+      dry-types (~> 1.7)
+      pangea-core (~> 0.2)
+      terraform-synthesizer (~> 0.0.28)
+
+PATH
+  remote: vendor/pangea-gcp
+  specs:
+    pangea-gcp (0.1.0)
+      dry-struct (~> 1.6)
+      dry-types (~> 1.7)
+      pangea-core (~> 0.2)
+      terraform-synthesizer (~> 0.0.28)
+
+PATH
+  remote: vendor/pangea-hcloud
+  specs:
+    pangea-hcloud (0.1.0)
+      dry-struct (~> 1.6)
+      dry-types (~> 1.7)
+      pangea-core (~> 0.2)
+      terraform-synthesizer (~> 0.0.28)
+
+PATH
+  remote: vendor/pangea-kubernetes
+  specs:
+    pangea-kubernetes (0.1.0)
+      dry-struct (~> 1.6)
+      dry-types (~> 1.7)
+      pangea-core (~> 0.2)
+      terraform-synthesizer (~> 0.0.28)
+
+PATH
+  remote: vendor/pangea-splunk
+  specs:
+    pangea-splunk (0.1.0)
+      dry-struct (~> 1.6)
+      dry-types (~> 1.7)
+      pangea-core (~> 0.2)
+      terraform-synthesizer (~> 0.0.28)
+
+PATH
+  remote: vendor/pangea-spot
+  specs:
+    pangea-spot (0.1.0)
+      dry-struct (~> 1.6)
+      dry-types (~> 1.7)
+      pangea-aws (~> 0.1)
+      pangea-core (~> 0.2)
+      terraform-synthesizer (~> 0.0.28)
+
+GEM
+  remote: https://rubygems.org/
+  specs:
+    abstract-synthesizer (0.0.15)
+    base64 (0.3.0)
+    bigdecimal (4.1.2)
+    concurrent-ruby (1.3.6)
+    dry-core (1.2.0)
+      concurrent-ruby (~> 1.0)
+      logger
+      zeitwerk (~> 2.6)
+    dry-inflector (1.3.1)
+    dry-logic (1.6.0)
+      bigdecimal
+      concurrent-ruby (~> 1.0)
+      dry-core (~> 1.1)
+      zeitwerk (~> 2.6)
+    dry-struct (1.8.1)
+      dry-core (~> 1.1)
+      dry-types (~> 1.8, >= 1.8.2)
+      ice_nine (~> 0.11)
+      zeitwerk (~> 2.6)
+    dry-types (1.9.1)
+      bigdecimal (>= 3.0)
+      concurrent-ruby (~> 1.0)
+      dry-core (~> 1.0)
+      dry-inflector (~> 1.0)
+      dry-logic (~> 1.4)
+      zeitwerk (~> 2.6)
+    ice_nine (0.11.2)
+    json (2.19.4)
+    logger (1.7.0)
+    mustermann (3.1.1)
+    nio4r (2.7.5)
+    puma (6.6.1)
+      nio4r (~> 2.0)
+    rack (3.2.6)
+    rack-protection (4.2.1)
+      base64 (>= 0.1.0)
+      logger (>= 1.6.0)
+      rack (>= 3.0.0, < 4)
+    rack-session (2.1.2)
+      base64 (>= 0.1.0)
+      rack (>= 3.0.0)
+    sinatra (4.2.1)
+      logger (>= 1.6.0)
+      mustermann (~> 3.0)
+      rack (>= 3.0.0, < 4)
+      rack-protection (= 4.2.1)
+      rack-session (>= 2.0.0, < 3)
+      tilt (~> 2.0)
+    terraform-synthesizer (0.0.28)
+      abstract-synthesizer
+    tilt (2.7.0)
+    zeitwerk (2.7.5)
+
+PLATFORMS
+  ruby
+  x86_64-linux
+
+DEPENDENCIES
+  pangea-akeyless!
+  pangea-architectures!
+  pangea-aws!
+  pangea-azure!
+  pangea-cloudflare!
+  pangea-compiler!
+  pangea-core!
+  pangea-datadog!
+  pangea-gcp!
+  pangea-hcloud!
+  pangea-kubernetes!
+  pangea-splunk!
+  pangea-spot!
+
+BUNDLED WITH
+   2.7.2

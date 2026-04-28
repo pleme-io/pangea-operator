@@ -66,6 +66,10 @@ anyhow.workspace = true
 # HTTP client (for compiler sidecar)
 reqwest.workspace = true
 
+# Regex — used by the per-resource policy engine for `addressPattern`
+# matching. Already pulled in transitively by tracing-subscriber et al.
+regex = "1"
+
 # Utilities
 chrono = { workspace = true, features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
