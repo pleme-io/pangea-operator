@@ -38,7 +38,9 @@ let
 in
 pkgs.dockerTools.buildLayeredImage {
   name = "pangea-compiler";
-  tag = "amd64-${builtins.substring 0 7 (builtins.toString (pkgs.lib.fileContents ../.git/refs/heads/main or "unknown"))}";
+  # Static tag — `forge push --auto-tags` reads the git SHA from
+  # the source tree at push time and stamps amd64-<sha>+amd64-latest.
+  tag = "latest";
 
   contents = [
     pangeaCompiler
