@@ -42,7 +42,6 @@ PATH
       pangea-gcp
       pangea-hcloud
       pangea-kubernetes
-      pangea-porkbun
       pangea-splunk
       pangea-spot
       terraform-synthesizer (~> 0.0.28)
@@ -123,6 +122,8 @@ PATH
   remote: vendor/pangea-porkbun
   specs:
     pangea-porkbun (0.1.0)
+      dry-struct (~> 1.6)
+      dry-types (~> 1.7)
 
 PATH
   remote: vendor/pangea-splunk

@@ -154,7 +154,7 @@
     version = "0.1.0";
   };
   pangea-architectures = {
-    dependencies = ["pangea-akeyless" "pangea-aws" "pangea-azure" "pangea-cloudflare" "pangea-core" "pangea-datadog" "pangea-gcp" "pangea-hcloud" "pangea-kubernetes" "pangea-porkbun" "pangea-splunk" "pangea-spot" "terraform-synthesizer"];
+    dependencies = ["pangea-akeyless" "pangea-aws" "pangea-azure" "pangea-cloudflare" "pangea-core" "pangea-datadog" "pangea-gcp" "pangea-hcloud" "pangea-kubernetes" "pangea-splunk" "pangea-spot" "terraform-synthesizer"];
     groups = ["default"];
     platforms = [];
     source = {
@@ -254,7 +254,7 @@
     version = "0.1.0";
   };
   pangea-porkbun = {
-    dependencies = [];
+    dependencies = ["dry-struct" "dry-types"];
     groups = ["default"];
     platforms = [];
     source = {
