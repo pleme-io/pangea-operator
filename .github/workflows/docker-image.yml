@@ -1,0 +1,159 @@
+# Build + push pangea-operator + pangea-compiler images on push to main.
+#
+# Mirrors pleme-io/tend's docker-image.yml shape: cargo build →
+# Dockerfile → buildx → ghcr.io. Runs on GitHub-hosted ubuntu-24.04
+# (free unlimited tier), so no Linux JIT builder is required.
+#
+# Two images per build:
+#   - ghcr.io/pleme-io/pangea-operator:amd64-<sha>   (Rust binary)
+#   - ghcr.io/pleme-io/pangea-compiler:amd64-<sha>   (Ruby Sinatra)
+#
+# Consumers (rio's HelmRelease, scale-test, etc.) pin both tags to the
+# same SHA so the operator + compiler stay in lockstep.
+
+name: docker-image
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  operator:
+    name: Build + push ghcr.io/pleme-io/pangea-operator (linux/amd64)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute image tag
+        id: tag
+        run: echo "tag=amd64-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install build deps for kube-rs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libssl-dev
+
+      - name: Build operator binary
+        run: cargo build --release -p pangea-operator --bin pangea-operator
+
+      - name: Stage Dockerfile context
+        run: |
+          mkdir -p docker-context
+          cp target/release/pangea-operator docker-context/pangea-operator
+          cat > docker-context/Dockerfile <<'EOF'
+          FROM debian:bookworm-slim
+          LABEL org.opencontainers.image.source=https://github.com/pleme-io/pangea-operator
+          LABEL org.opencontainers.image.description="Pangea Kubernetes operator"
+          LABEL org.opencontainers.image.licenses=MIT
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+                ca-certificates \
+                git \
+                curl \
+                unzip \
+              && rm -rf /var/lib/apt/lists/*
+          # opentofu via official tarball (bookworm-slim doesn't ship tofu)
+          ARG TOFU_VERSION=1.10.5
+          RUN curl -fsSL "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_amd64.zip" -o /tmp/tofu.zip \
+              && unzip /tmp/tofu.zip -d /usr/local/bin tofu \
+              && rm /tmp/tofu.zip \
+              && chmod +x /usr/local/bin/tofu
+          COPY pangea-operator /usr/local/bin/pangea-operator
+          RUN useradd -u 65534 -m operator
+          USER operator
+          ENTRYPOINT ["/usr/local/bin/pangea-operator"]
+          EOF
+
+      - name: Build + push image
+        uses: docker/build-push-action@v5
+        with:
+          context: docker-context
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/pleme-io/pangea-operator:${{ steps.tag.outputs.tag }}
+            ghcr.io/pleme-io/pangea-operator:latest
+
+  compiler:
+    name: Build + push ghcr.io/pleme-io/pangea-compiler (linux/amd64)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute image tag
+        id: tag
+        run: echo "tag=amd64-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Stage Dockerfile context
+        run: |
+          mkdir -p docker-context
+          cp -r pangea-compiler/. docker-context/
+          cat > docker-context/Dockerfile <<'EOF'
+          FROM ruby:3.4-slim-bookworm
+          LABEL org.opencontainers.image.source=https://github.com/pleme-io/pangea-operator
+          LABEL org.opencontainers.image.description="Pangea Ruby DSL compiler sidecar"
+          LABEL org.opencontainers.image.licenses=MIT
+          WORKDIR /app
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+                build-essential \
+              && rm -rf /var/lib/apt/lists/*
+          COPY Gemfile Gemfile.lock ./
+          RUN bundle config set --local deployment 'true' \
+              && bundle config set --local without 'development test' \
+              && bundle install --jobs 4
+          COPY . ./
+          RUN useradd -u 65534 -m compiler && chown -R compiler:compiler /app
+          USER compiler
+          EXPOSE 8082
+          ENTRYPOINT ["bundle", "exec", "ruby", "app.rb", "-o", "0.0.0.0", "-p", "8082"]
+          EOF
+
+      - name: Build + push image
+        uses: docker/build-push-action@v5
+        with:
+          context: docker-context
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/pleme-io/pangea-compiler:${{ steps.tag.outputs.tag }}
+            ghcr.io/pleme-io/pangea-compiler:latest
