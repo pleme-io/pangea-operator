@@ -17,10 +17,7 @@
     };
     ruby-nix.url = "github:inscapist/ruby-nix";
 
-    # Pangea Ruby gems consumed by pangea-compiler. Treated as
-    # source-only flake inputs (`flake = false`) — substrate's
-    # ruby-workspace builder rewrites the bundix gemset to source
-    # them as path-gems from these inputs at evaluation time.
+    # 12 path-gem source-only inputs for pangea-compiler.
     pangea-akeyless      = { url = "github:pleme-io/pangea-akeyless";      flake = false; };
     pangea-architectures = { url = "github:pleme-io/pangea-architectures"; flake = false; };
     pangea-aws           = { url = "github:pleme-io/pangea-aws";           flake = false; };
@@ -37,7 +34,9 @@
 
   outputs = inputs@{ self, nixpkgs, substrate, crate2nix, forge, ruby-nix, ... }:
     let
-      # ── Operator (Rust) — substrate service-flake ────────────────
+      lib = nixpkgs.lib;
+
+      # Operator (Rust) — substrate service-flake outputs.
       base = (import "${substrate}/lib/build/rust/service-flake.nix" {
         inherit nixpkgs substrate forge crate2nix;
       }) {
@@ -50,11 +49,6 @@
         extraContents = pkgs: with pkgs; [ opentofu packer git busybox ];
       };
 
-      # ── Compiler (Ruby) — substrate ruby-workspace + dockerTools ─
-      # Per-system extension. The ruby-workspace builder reads
-      # pangea-compiler/gemset.nix and rewrites the 12 path-gem
-      # entries to point at the corresponding flake input's source
-      # tree (no manual `vendor/` dir needed; no per-build clone).
       pangeaInputs = {
         "pangea-akeyless"      = inputs.pangea-akeyless;
         "pangea-architectures" = inputs.pangea-architectures;
@@ -70,16 +64,63 @@
         "pangea-spot"          = inputs.pangea-spot;
       };
 
+      # Compiler (Ruby) — call substrate ruby-workspace at output-level
+      # for each Linux system we need, build a docker image from the
+      # resulting bundlerEnv.
+      mkCompilerImage = imageSystem:
+        let
+          imagePkgs = import nixpkgs { system = imageSystem; };
+          ws = (import "${substrate}/lib/build/ruby/workspace.nix" {
+            nixpkgs = nixpkgs;
+            system = imageSystem;
+            inherit ruby-nix substrate forge;
+          }) {
+            name = "pangea-compiler";
+            self = ./pangea-compiler;
+            pathGems = pangeaInputs;
+            gemsetPath = "/gemset.nix";
+          };
+
+          appSource = imagePkgs.runCommand "pangea-compiler-source" { } ''
+            mkdir -p $out/app
+            cp -r ${./pangea-compiler}/. $out/app/
+            rm -rf $out/app/vendor $out/app/.bundle 2>/dev/null || true
+          '';
+
+          entrypoint = imagePkgs.writeShellScript "pangea-compiler-entrypoint" ''
+            export RUBYLIB="${ws.rubylib}:''${RUBYLIB:-}"
+            export DRY_TYPES_WARNINGS=false
+            export PANGEA_WORKSPACE_BASE="''${PANGEA_WORKSPACE_BASE:-/var/pangea/workspaces}"
+            cd /app
+            exec ${ws.env}/bin/bundle exec ruby /app/app.rb -o 0.0.0.0 -p 8082 "$@"
+          '';
+        in imagePkgs.dockerTools.buildLayeredImage {
+          name = "pangea-compiler";
+          tag = "latest";
+          contents = [ ws.env appSource imagePkgs.coreutils imagePkgs.bashInteractive imagePkgs.cacert ];
+          config = {
+            Entrypoint = [ "${entrypoint}" ];
+            ExposedPorts = { "8082/tcp" = { }; };
+            Env = [
+              "PATH=${ws.env}/bin:${imagePkgs.coreutils}/bin"
+              "SSL_CERT_FILE=${imagePkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+              "PANGEA_WORKSPACE_BASE=/var/pangea/workspaces"
+            ];
+            Labels = {
+              "org.opencontainers.image.source" = "https://github.com/pleme-io/pangea-operator";
+              "org.opencontainers.image.description" = "Pangea Ruby DSL compiler sidecar";
+              "org.opencontainers.image.licenses" = "MIT";
+            };
+            User = "65534:65534";
+            WorkingDir = "/app";
+          };
+        };
+
       compilerExtension = system:
         let
           pkgs = import nixpkgs { inherit system; };
-          imageFor = imageSystem:
-            (import nixpkgs { system = imageSystem; }).callPackage ./pangea-compiler/image.nix {
-              inherit ruby-nix substrate forge;
-              pangeaInputs = pangeaInputs;
-            };
-          imageAmd64 = imageFor "x86_64-linux";
-          imageArm64 = imageFor "aarch64-linux";
+          imageAmd64 = mkCompilerImage "x86_64-linux";
+          imageArm64 = mkCompilerImage "aarch64-linux";
           mkPushApp = imagePath: archTag: pkgs.writeShellScript "pangea-compiler-push-${archTag}" ''
             set -euo pipefail
             export GITHUB_TOKEN="''${GITHUB_TOKEN:-''${GHCR_TOKEN:-$(cat "$HOME/.config/github/token" 2>/dev/null || true)}}"
@@ -108,7 +149,6 @@
           };
         };
 
-      lib = nixpkgs.lib;
       extended = lib.foldl' (acc: sys: lib.recursiveUpdate acc (compilerExtension sys))
         base
         [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
