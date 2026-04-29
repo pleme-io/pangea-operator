@@ -82,20 +82,44 @@
           };
 
           # Materialise the 12 path-gems into /app/vendor/ so that
-          # `bundle exec` at runtime — which walks Gemfile.lock and verifies
-          # every `path: vendor/<gem>` entry exists on disk — finds them.
-          # The Nix-built bundlerEnv already resolved every gem at build
-          # time; this is purely to satisfy bundler's runtime path check.
-          # Symlinks (not copies) — the flake inputs are read-only store
-          # paths and bundler only stat()s the directory.
-          appSource = imagePkgs.runCommand "pangea-compiler-source" { } ''
-            mkdir -p $out/app/vendor
+          # `bundle exec` at runtime — which walks Gemfile.lock and
+          # verifies every `path: vendor/<gem>` entry exists on disk —
+          # finds them. The Nix-built bundlerEnv already resolved every
+          # gem at build time; this is purely to satisfy bundler's
+          # runtime path check.
+          #
+          # Bundler's load-gemspec phase evaluates each .gemspec inline
+          # — and every pangea-* gemspec computes `spec.files` via
+          #   `git ls-files -z`.split("\x0")
+          # If git fails, bundler still produces a Definition but the
+          # downstream specs_changed? walk crashes with Errno::ENOENT.
+          # Symlinks to read-only flake-input store paths cannot host a
+          # `.git` dir, so copy the trees and git-init each one with a
+          # single bootstrap commit so `git ls-files` returns a real
+          # file list at runtime.
+          appSource = imagePkgs.runCommand "pangea-compiler-source" {
+            buildInputs = [ imagePkgs.git ];
+          } ''
+            mkdir -p $out/app
             cp -r ${./pangea-compiler}/. $out/app/
+            chmod -R u+w $out/app
             rm -rf $out/app/vendor $out/app/.bundle 2>/dev/null || true
             mkdir -p $out/app/vendor
-            ${lib.concatStringsSep "\n" (lib.mapAttrsToList
-              (gemName: src: "ln -s ${src} $out/app/vendor/${gemName}")
-              pangeaInputs)}
+
+            export GIT_AUTHOR_NAME=pangea-compiler
+            export GIT_AUTHOR_EMAIL=ops@pleme.io
+            export GIT_COMMITTER_NAME=pangea-compiler
+            export GIT_COMMITTER_EMAIL=ops@pleme.io
+            export HOME=$TMPDIR
+
+            ${lib.concatStringsSep "\n" (lib.mapAttrsToList (gemName: src: ''
+              cp -r ${src} $out/app/vendor/${gemName}
+              chmod -R u+w $out/app/vendor/${gemName}
+              ( cd $out/app/vendor/${gemName} && \
+                git init -q -b main && \
+                git add -A && \
+                git -c commit.gpgsign=false commit -q --allow-empty -m bootstrap )
+            '') pangeaInputs)}
           '';
 
           entrypoint = imagePkgs.writeShellScript "pangea-compiler-entrypoint" ''
@@ -108,7 +132,11 @@
         in imagePkgs.dockerTools.buildLayeredImage {
           name = "pangea-compiler";
           tag = "latest";
-          contents = [ ws.env appSource imagePkgs.coreutils imagePkgs.bashInteractive imagePkgs.cacert ];
+          # `git` is needed at startup: every pangea-*.gemspec computes its
+          # spec.files list via `git ls-files`. Without it, bundler's
+          # converge-paths phase crashes with `Errno::ENOENT - git`. Add
+          # before the entrypoint so the binary is on PATH from layer 0.
+          contents = [ ws.env appSource imagePkgs.coreutils imagePkgs.bashInteractive imagePkgs.cacert imagePkgs.git ];
           config = {
             Entrypoint = [ "${entrypoint}" ];
             ExposedPorts = { "8082/tcp" = { }; };
