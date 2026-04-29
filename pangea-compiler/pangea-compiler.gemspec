@@ -53,6 +53,7 @@ Gem::Specification.new do |spec|
     pangea-gcp
     pangea-hcloud
     pangea-kubernetes
+    pangea-porkbun
     pangea-splunk
     pangea-spot
     pangea-architectures

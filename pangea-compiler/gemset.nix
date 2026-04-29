@@ -154,7 +154,7 @@
     version = "0.1.0";
   };
   pangea-architectures = {
-    dependencies = ["pangea-akeyless" "pangea-aws" "pangea-azure" "pangea-cloudflare" "pangea-core" "pangea-datadog" "pangea-gcp" "pangea-hcloud" "pangea-kubernetes" "pangea-splunk" "pangea-spot" "terraform-synthesizer"];
+    dependencies = ["pangea-akeyless" "pangea-aws" "pangea-azure" "pangea-cloudflare" "pangea-core" "pangea-datadog" "pangea-gcp" "pangea-hcloud" "pangea-kubernetes" "pangea-porkbun" "pangea-splunk" "pangea-spot" "terraform-synthesizer"];
     groups = ["default"];
     platforms = [];
     source = {
@@ -194,7 +194,7 @@
     version = "0.1.0";
   };
   pangea-compiler = {
-    dependencies = ["json" "pangea-akeyless" "pangea-architectures" "pangea-aws" "pangea-azure" "pangea-cloudflare" "pangea-core" "pangea-datadog" "pangea-gcp" "pangea-hcloud" "pangea-kubernetes" "pangea-splunk" "pangea-spot" "puma" "sinatra" "terraform-synthesizer"];
+    dependencies = ["json" "pangea-akeyless" "pangea-architectures" "pangea-aws" "pangea-azure" "pangea-cloudflare" "pangea-core" "pangea-datadog" "pangea-gcp" "pangea-hcloud" "pangea-kubernetes" "pangea-porkbun" "pangea-splunk" "pangea-spot" "puma" "sinatra" "terraform-synthesizer"];
     groups = ["default"];
     platforms = [];
     source = {
@@ -249,6 +249,16 @@
     platforms = [];
     source = {
       path = vendor/pangea-kubernetes;
+      type = "path";
+    };
+    version = "0.1.0";
+  };
+  pangea-porkbun = {
+    dependencies = [];
+    groups = ["default"];
+    platforms = [];
+    source = {
+      path = vendor/pangea-porkbun;
       type = "path";
     };
     version = "0.1.0";

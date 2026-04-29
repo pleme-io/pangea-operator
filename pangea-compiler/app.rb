@@ -18,6 +18,7 @@ require "terraform-synthesizer"
   pangea-hcloud
   pangea-kubernetes
   pangea-datadog
+  pangea-porkbun
   pangea-splunk
   pangea-spot
 ].each do |gem_name|

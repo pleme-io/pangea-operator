@@ -28,6 +28,7 @@
     pangea-gcp           = { url = "github:pleme-io/pangea-gcp";           flake = false; };
     pangea-hcloud        = { url = "github:pleme-io/pangea-hcloud";        flake = false; };
     pangea-kubernetes    = { url = "github:pleme-io/pangea-kubernetes";    flake = false; };
+    pangea-porkbun       = { url = "github:pleme-io/pangea-porkbun";       flake = false; };
     pangea-splunk        = { url = "github:pleme-io/pangea-splunk";        flake = false; };
     pangea-spot          = { url = "github:pleme-io/pangea-spot";          flake = false; };
   };
@@ -60,6 +61,7 @@
         "pangea-gcp"           = inputs.pangea-gcp;
         "pangea-hcloud"        = inputs.pangea-hcloud;
         "pangea-kubernetes"    = inputs.pangea-kubernetes;
+        "pangea-porkbun"       = inputs.pangea-porkbun;
         "pangea-splunk"        = inputs.pangea-splunk;
         "pangea-spot"          = inputs.pangea-spot;
       };
