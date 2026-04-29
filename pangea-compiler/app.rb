@@ -255,10 +255,24 @@ class PangeaCompiler < Sinatra::Base
     begin
       body = JSON.parse(request.body.read)
       source = body["source"]
+      template_path = body["template_path"]
       variables = body["variables"] || {}
       template_name = body["template_name"]
 
-      halt 400, { error: "Missing 'source' field" }.to_json unless source
+      # Two source modes:
+      #   1. `source` — a self-contained Ruby string. eval()'d in
+      #      `(pangea-template)` virtual binding. Legacy path; works
+      #      for inline + configMapRef sources.
+      #   2. `template_path` — an absolute path to a .rb file in the
+      #      workspaces emptyDir (shared with the operator container).
+      #      load()'d at that path so __FILE__, __dir__,
+      #      require_relative, and __dir__-relative File.read calls
+      #      all resolve correctly to the workspace dir. Required for
+      #      gitRepository sources whose .rb wrapper has sibling files
+      #      (e.g. domain_template.rb) or YAML companions.
+      if !source && !template_path
+        halt 400, { error: "Missing 'source' or 'template_path' field" }.to_json
+      end
 
       # Create a synthesizer context
       synth = TerraformSynthesizer.new
@@ -273,17 +287,18 @@ class PangeaCompiler < Sinatra::Base
       # output calls dispatch to the synth's method_missing.
       #
       # Mirror the CLI's `capture_template_block` here: define a
-      # singleton `template` method that captures the block, eval the
-      # source against the local binding (which now has `template`
-      # available), then instance_eval the captured block on synth.
+      # singleton `template` method that captures the block, eval/load
+      # the template (which now has `template` available), then
+      # instance_eval the captured block on synth.
       captured_block = nil
       singleton_class.send(:define_method, :template) do |_name, &blk|
         captured_block = blk
       end
 
       # Variables are exposed two ways:
-      #   1. As local variables on the eval binding (existing behaviour
-      #      — lets templates write `account_id = variables[:foo]`).
+      #   1. As local variables on the eval binding (only for `source`
+      #      mode — `load` doesn't accept a binding, so template_path
+      #      mode skips this path).
       #   2. As process ENV entries — required because Pangea workspace
       #      templates use `ENV.fetch('CF_API_TOKEN')` for provider
       #      credentials, matching how the workspace .rb files run
@@ -300,8 +315,37 @@ class PangeaCompiler < Sinatra::Base
       end
 
       begin
-        binding_context = create_binding(variables)
-        eval(source, binding_context, "(pangea-template)", 1) # rubocop:disable Security/Eval
+        if template_path
+          # Workspace-dir mode. Validate path is under PANGEA_WORKSPACE_BASE
+          # (defaults to /var/pangea/workspaces) so we don't load arbitrary
+          # paths the operator might pass.
+          allowed_base = ENV.fetch("PANGEA_WORKSPACE_BASE", "/var/pangea/workspaces")
+          real_path = File.realdirpath(template_path) rescue nil
+          unless real_path && real_path.start_with?("#{allowed_base}/")
+            halt 400, { error: "template_path must resolve under #{allowed_base}: #{template_path}" }.to_json
+          end
+          unless File.file?(real_path)
+            halt 400, { error: "template_path is not a regular file: #{real_path}" }.to_json
+          end
+          # Make `template :name do …` available at TOPLEVEL_BINDING for
+          # the duration of the load — load() runs the file at top-level,
+          # not in our singleton scope, so the singleton :template
+          # method we defined above isn't visible to it.
+          TOPLEVEL_BINDING.eval("def template(_name, &blk); $pangea_captured_block = blk; end")
+          $pangea_captured_block = nil
+          begin
+            Dir.chdir(File.dirname(real_path)) do
+              load(real_path, true)  # wrap=true → isolates load constants
+            end
+            captured_block = $pangea_captured_block
+          ensure
+            TOPLEVEL_BINDING.eval("undef template") rescue nil
+            $pangea_captured_block = nil
+          end
+        else
+          binding_context = create_binding(variables)
+          eval(source, binding_context, "(pangea-template)", 1) # rubocop:disable Security/Eval
+        end
         # The ENV-overrides need to remain in scope during the inner
         # block too — that block is where workspace templates make
         # their `ENV.fetch('CF_API_TOKEN')` calls (provider config

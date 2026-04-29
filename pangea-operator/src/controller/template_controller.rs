@@ -362,21 +362,40 @@ async fn handle_compiling(
             )));
         }
 
-        // Read the template file from the cloned repo
+        // For gitRepository sources, do NOT read the file into memory
+        // and ship it as a `source` string — that would lose the
+        // workspace-dir context that Pangea workspace templates rely
+        // on (sibling .rb files via `require_relative`, __dir__-
+        // relative YAML reads, etc.). Instead, return a sentinel that
+        // tells the downstream compile-request builder to use
+        // `template_path` mode, which lets the compiler `load(path)`
+        // from the shared workspaces emptyDir with CWD set to the
+        // workspace dir.
         let template_path = repo_dir.join(&git_ref.path);
-        tokio::fs::read_to_string(&template_path)
-            .await
-            .map_err(|e| {
-                Error::Compilation(format!(
-                    "Failed to read template file '{}': {}",
-                    git_ref.path, e
-                ))
-            })?
+        if !template_path.is_file() {
+            return Err(Error::Compilation(format!(
+                "Failed to read template file '{}': not a regular file (cloned repo path: {})",
+                git_ref.path,
+                template_path.display()
+            )));
+        }
+        // Use \0-prefixed sentinel so it can never collide with real
+        // template content. The compile-request builder downstream
+        // splits it back into the `template_path` JSON field.
+        format!("\0PATH\0{}", template_path.to_string_lossy())
     } else {
         return Err(Error::InvalidSource("No template source specified".into()));
     };
 
-    // If content looks like Ruby DSL (not JSON), compile via sidecar
+    // Distinguish three modes:
+    //   1. content starts with `{` → already-rendered Terraform JSON, use as-is.
+    //   2. content starts with `\0PATH\0` → gitRepository sentinel; the compile
+    //      request uses `template_path` mode so the compiler `load`s the file
+    //      from the shared workspaces emptyDir with CWD set to the workspace
+    //      dir. Preserves __dir__ + require_relative semantics for canonical
+    //      Pangea workspace patterns.
+    //   3. otherwise → inline / configMap source, send as `source` string
+    //      (legacy eval mode in the compiler).
     let terraform_json = if content.trim_start().starts_with('{') {
         // Already JSON — use directly
         content
@@ -433,11 +452,22 @@ async fn handle_compiling(
             }
         }
 
-        let compile_request = serde_json::json!({
-            "source": content,
-            "variables": variables,
-            "template_name": template.spec.template_name,
-        });
+        let compile_request = if let Some(path) = content.strip_prefix("\0PATH\0") {
+            // gitRepository — let the compiler load the file from disk
+            // so it sees its workspace siblings.
+            serde_json::json!({
+                "template_path": path,
+                "variables": variables,
+                "template_name": template.spec.template_name,
+            })
+        } else {
+            // inline / configMapRef — eval the string in a virtual binding.
+            serde_json::json!({
+                "source": content,
+                "variables": variables,
+                "template_name": template.spec.template_name,
+            })
+        };
 
         let http = reqwest::Client::new();
         let resp = http
