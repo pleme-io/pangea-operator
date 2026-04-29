@@ -1,49 +1,68 @@
-# pangea-compiler — Ruby Sinatra OCI image built via Nix.
+# pangea-compiler — Ruby Sinatra OCI image built via the canonical
+# substrate ruby-workspace pattern (no manual vendor/ dir).
 #
-# Consumed by pangea-operator's flake.nix as a sibling dockerImage
-# target. Mirrors the substrate operator-image shape but for Ruby:
-# bundix-resolved gemset → bundlerEnv → buildLayeredImage.
+# Inputs:
+#   pkgs           — Linux nixpkgs (x86_64-linux for amd64; aarch64-linux for arm64)
+#   ruby-nix       — flake input from inscapist/ruby-nix (substrate convention)
+#   substrate      — flake input
+#   forge          — flake input (unused here but threaded through for symmetry)
+#   pangeaInputs   — { "pangea-core" = <flake-input-src>; ... } map; the 12 path-gems
+#
+# The substrate workspace builder reads gemset.nix and rewrites every
+# entry whose name appears in pangeaInputs to source-from-path against
+# the corresponding flake input. Bundler then resolves locally with no
+# vendor/ dir and no clones at build time.
 
-{ pkgs, system ? pkgs.system }:
+{ pkgs
+, ruby-nix
+, substrate
+, forge
+, pangeaInputs
+, system ? pkgs.system
+}:
 
 let
-  # Resolve the gemset.nix produced by `bundix`. `pangea-compiler` is the
-  # gem name from pangea-compiler.gemspec, which Bundler treats as the
-  # "current gem" — bundlerEnv handles it via the gemspec attr below.
-  pangeaCompiler = pkgs.bundlerEnv {
-    name = "pangea-compiler-env";
-    ruby = pkgs.ruby_3_3;
-    gemfile = ./Gemfile;
-    lockfile = ./Gemfile.lock;
-    gemset = ./gemset.nix;
-    gemdir = ./.;
-    # The Gemfile references the local gemspec via `gemspec` directive;
-    # bundlerEnv picks it up automatically given gemdir.
+  # substrate's workspace.nix takes `nixpkgs` as a path/source so it
+  # can `import { system; overlays; }`. Pass pkgs.path which is the
+  # already-evaluated nixpkgs source tree.
+  ws = (import "${substrate}/lib/build/ruby/workspace.nix" {
+    nixpkgs = pkgs.path;
+    inherit system ruby-nix substrate forge;
+  }) {
+    name = "pangea-compiler";
+    self = ./.;          # the pangea-compiler subdir contains gemset.nix + Gemfile + app.rb
+    pathGems = pangeaInputs;
+    gemsetPath = "/gemset.nix";
   };
 
-  # Tiny entrypoint that activates the bundler env + execs the Sinatra
-  # app on the conventional /app/app.rb path.
+  env = ws.env;
+
+  # The Sinatra app source — staged at /app inside the image so
+  # __FILE__ resolves the way app.rb expects. RUBYLIB augments the
+  # gem load path with the path-gems' lib/ dirs so `require
+  # 'pangea-core'` works without rebundling.
+  rubylibEnv = ws.rubylib;
+
   entrypoint = pkgs.writeShellScript "pangea-compiler-entrypoint" ''
-    exec ${pangeaCompiler}/bin/bundle exec ruby /app/app.rb -o 0.0.0.0 -p 8082 "$@"
+    export RUBYLIB="${rubylibEnv}:''${RUBYLIB:-}"
+    export DRY_TYPES_WARNINGS=false
+    export PANGEA_WORKSPACE_BASE="''${PANGEA_WORKSPACE_BASE:-/var/pangea/workspaces}"
+    cd /app
+    exec ${env}/bin/bundle exec ruby /app/app.rb -o 0.0.0.0 -p 8082 "$@"
   '';
 
-  # Stage the app source under /app inside the image so __FILE__ +
-  # require_relative resolve the way the Ruby Sinatra app expects.
   appSource = pkgs.runCommand "pangea-compiler-source" { } ''
     mkdir -p $out/app
     cp -r ${./.}/. $out/app/
-    # bundix-built paths win — drop the bundler vendor dir to avoid drift.
     rm -rf $out/app/vendor $out/app/.bundle 2>/dev/null || true
   '';
 in
 pkgs.dockerTools.buildLayeredImage {
   name = "pangea-compiler";
-  # Static tag — `forge push --auto-tags` reads the git SHA from
-  # the source tree at push time and stamps amd64-<sha>+amd64-latest.
   tag = "latest";
 
   contents = [
-    pangeaCompiler
+    env
     appSource
     pkgs.coreutils
     pkgs.bashInteractive
@@ -54,9 +73,8 @@ pkgs.dockerTools.buildLayeredImage {
     Entrypoint = [ "${entrypoint}" ];
     ExposedPorts = { "8082/tcp" = { }; };
     Env = [
-      "PATH=${pangeaCompiler}/bin:${pkgs.coreutils}/bin"
+      "PATH=${env}/bin:${pkgs.coreutils}/bin"
       "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
-      "BUNDLE_PATH=${pangeaCompiler}/lib/ruby/gems/3.3.0"
       "PANGEA_WORKSPACE_BASE=/var/pangea/workspaces"
     ];
     Labels = {
