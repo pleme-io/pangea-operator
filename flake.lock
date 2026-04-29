@@ -1513,11 +1513,11 @@
     "pangea-porkbun": {
       "flake": false,
       "locked": {
-        "lastModified": 1777501874,
-        "narHash": "sha256-Buh58j8jbAZvVQujMRJrIN8rsAqlzVaqx6Q0or3EHEY=",
+        "lastModified": 1777504070,
+        "narHash": "sha256-YxgufJ9hfw4K6HJXS0z4YnEDdhVvFvmTR7IpubFvwuQ=",
         "owner": "pleme-io",
         "repo": "pangea-porkbun",
-        "rev": "f75736487807e8a222ea7aa26a4718a5be2a52e2",
+        "rev": "fdbce83ec98bd433cb4c14313db3ec0b8504a676",
         "type": "github"
       },
       "original": {
