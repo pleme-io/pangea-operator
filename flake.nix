@@ -123,6 +123,7 @@
           '';
 
           entrypoint = imagePkgs.writeShellScript "pangea-compiler-entrypoint" ''
+            export PATH="${ws.env}/bin:${imagePkgs.coreutils}/bin:${imagePkgs.git}/bin:''${PATH:-}"
             export RUBYLIB="${ws.rubylib}:''${RUBYLIB:-}"
             export DRY_TYPES_WARNINGS=false
             export PANGEA_WORKSPACE_BASE="''${PANGEA_WORKSPACE_BASE:-/var/pangea/workspaces}"
@@ -141,7 +142,7 @@
             Entrypoint = [ "${entrypoint}" ];
             ExposedPorts = { "8082/tcp" = { }; };
             Env = [
-              "PATH=${ws.env}/bin:${imagePkgs.coreutils}/bin"
+              "PATH=${ws.env}/bin:${imagePkgs.coreutils}/bin:${imagePkgs.git}/bin"
               "SSL_CERT_FILE=${imagePkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
               "PANGEA_WORKSPACE_BASE=/var/pangea/workspaces"
             ];
