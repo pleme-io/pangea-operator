@@ -56,7 +56,6 @@ Gem::Specification.new do |spec|
     pangea-porkbun
     pangea-splunk
     pangea-spot
-    pangea-architectures
   ].each { |g| spec.add_dependency g }
 
   spec.metadata['rubygems_mfa_required'] = 'true'

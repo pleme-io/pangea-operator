@@ -1366,22 +1366,6 @@
         "type": "github"
       }
     },
-    "pangea-architectures": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1777423744,
-        "narHash": "sha256-vsR1CBFoL/9E3lD2YbozMksaPkDCFKqEHiX5ZE8HIA4=",
-        "owner": "pleme-io",
-        "repo": "pangea-architectures",
-        "rev": "77156ad1c66c7725b18111c504d2ddc113c91826",
-        "type": "github"
-      },
-      "original": {
-        "owner": "pleme-io",
-        "repo": "pangea-architectures",
-        "type": "github"
-      }
-    },
     "pangea-aws": {
       "flake": false,
       "locked": {
@@ -1680,7 +1664,6 @@
         "forge": "forge",
         "nixpkgs": "nixpkgs_6",
         "pangea-akeyless": "pangea-akeyless",
-        "pangea-architectures": "pangea-architectures",
         "pangea-aws": "pangea-aws",
         "pangea-azure": "pangea-azure",
         "pangea-cloudflare": "pangea-cloudflare",

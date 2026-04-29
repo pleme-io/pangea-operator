@@ -17,9 +17,11 @@
     };
     ruby-nix.url = "github:inscapist/ruby-nix";
 
-    # 12 path-gem source-only inputs for pangea-compiler.
+    # Path-gem source-only inputs for pangea-compiler — typed
+    # primitive providers ONLY. Composers (pangea-architectures) and
+    # workspace authoring (.rb + .yaml) are operator-cloned at compile
+    # time so workspace SDLC doesn't rebuild the image.
     pangea-akeyless      = { url = "github:pleme-io/pangea-akeyless";      flake = false; };
-    pangea-architectures = { url = "github:pleme-io/pangea-architectures"; flake = false; };
     pangea-aws           = { url = "github:pleme-io/pangea-aws";           flake = false; };
     pangea-azure         = { url = "github:pleme-io/pangea-azure";         flake = false; };
     pangea-cloudflare    = { url = "github:pleme-io/pangea-cloudflare";    flake = false; };
@@ -52,7 +54,6 @@
 
       pangeaInputs = {
         "pangea-akeyless"      = inputs.pangea-akeyless;
-        "pangea-architectures" = inputs.pangea-architectures;
         "pangea-aws"           = inputs.pangea-aws;
         "pangea-azure"         = inputs.pangea-azure;
         "pangea-cloudflare"    = inputs.pangea-cloudflare;

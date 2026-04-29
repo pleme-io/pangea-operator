@@ -381,8 +381,18 @@ async fn handle_compiling(
         }
         // Use \0-prefixed sentinel so it can never collide with real
         // template content. The compile-request builder downstream
-        // splits it back into the `template_path` JSON field.
-        format!("\0PATH\0{}", template_path.to_string_lossy())
+        // splits it back into the `template_path` JSON field. The
+        // \0RUBYLIB\0 segment carries the cloned-tree's `lib/` dir
+        // so the compiler can prepend it to $LOAD_PATH around the
+        // load — that's what lets workspace .rb files
+        // `require 'pangea/architectures'` resolve to the *cloned*
+        // composer copy instead of an image-baked path-gem. Cuts
+        // pangea-architectures out of the image's grammar layer.
+        format!(
+            "\0PATH\0{}\0RUBYLIB\0{}",
+            template_path.to_string_lossy(),
+            repo_dir.join("lib").to_string_lossy(),
+        )
     } else {
         return Err(Error::InvalidSource("No template source specified".into()));
     };
@@ -454,9 +464,17 @@ async fn handle_compiling(
 
         let compile_request = if let Some(path) = content.strip_prefix("\0PATH\0") {
             // gitRepository — let the compiler load the file from disk
-            // so it sees its workspace siblings.
+            // so it sees its workspace siblings, and prepend the
+            // cloned tree's `lib/` to $LOAD_PATH so `require
+            // 'pangea/architectures'` resolves to the cloned composer
+            // copy (not an image-baked path-gem).
+            let (template_path, rubylib_paths) = match path.split_once("\0RUBYLIB\0") {
+                Some((tp, rl)) => (tp.to_string(), vec![rl.to_string()]),
+                None => (path.to_string(), Vec::<String>::new()),
+            };
             serde_json::json!({
-                "template_path": path,
+                "template_path": template_path,
+                "rubylib_paths": rubylib_paths,
                 "variables": variables,
                 "template_name": template.spec.template_name,
             })

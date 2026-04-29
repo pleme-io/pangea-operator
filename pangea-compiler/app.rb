@@ -29,12 +29,12 @@ require "terraform-synthesizer"
   end
 end
 
-# Load architectures if available
-begin
-  require "pangea/architectures"
-rescue LoadError => e
-  $stderr.puts "Warning: pangea-architectures not available: #{e.message}"
-end
+# pangea-architectures (composers) is intentionally NOT loaded at
+# boot — it's not in the image. The operator clones it alongside
+# the workspace tree at compile time and ships its `lib/` path in
+# the /compile request's `rubylib_paths`. Workspace .rb files
+# `require 'pangea/architectures'` at load time and Ruby resolves
+# it via the per-request $LOAD_PATH prepend.
 
 # ---------------------------------------------------------------------------
 # Generic Synthesizer Framework
@@ -259,6 +259,15 @@ class PangeaCompiler < Sinatra::Base
       template_path = body["template_path"]
       variables = body["variables"] || {}
       template_name = body["template_name"]
+      # Per-request $LOAD_PATH prepend list — used in template_path
+      # mode so the cloned-tree's `lib/` is on the load path before
+      # the workspace .rb file does `require 'pangea/architectures'`.
+      # This is what lets pangea-architectures (the composers) live
+      # outside the image — operator clones it alongside the workspace
+      # tree and tells the compiler where its lib/ sits. Validated
+      # against PANGEA_WORKSPACE_BASE below for the same reason
+      # template_path is.
+      rubylib_paths = body["rubylib_paths"] || []
 
       # Two source modes:
       #   1. `source` — a self-contained Ruby string. eval()'d in
@@ -328,18 +337,36 @@ class PangeaCompiler < Sinatra::Base
           unless File.file?(real_path)
             halt 400, { error: "template_path is not a regular file: #{real_path}" }.to_json
           end
+          # Validate + canonicalise rubylib paths. Same allowed_base
+          # constraint as template_path — the cloned-tree's lib/ must
+          # live under PANGEA_WORKSPACE_BASE.
+          real_rubylib_paths = rubylib_paths.map do |rl|
+            r = File.realdirpath(rl) rescue nil
+            unless r && r.start_with?("#{allowed_base}/") && File.directory?(r)
+              halt 400, { error: "rubylib_paths entries must resolve under #{allowed_base} as directories: #{rl}" }.to_json
+            end
+            r
+          end
           # Make `template :name do …` available at TOPLEVEL_BINDING for
           # the duration of the load — load() runs the file at top-level,
           # not in our singleton scope, so the singleton :template
           # method we defined above isn't visible to it.
           TOPLEVEL_BINDING.eval("def template(_name, &blk); $pangea_captured_block = blk; end")
           $pangea_captured_block = nil
+          # Prepend the cloned tree's lib/ to $LOAD_PATH so workspace
+          # .rb files' `require 'pangea/architectures'` (and any other
+          # composer requires) resolves to the cloned copy. Pop after
+          # the load so concurrent /compile requests don't see each
+          # other's prepends.
+          load_path_prepend_count = real_rubylib_paths.length
+          $LOAD_PATH.unshift(*real_rubylib_paths)
           begin
             Dir.chdir(File.dirname(real_path)) do
               load(real_path, true)  # wrap=true → isolates load constants
             end
             captured_block = $pangea_captured_block
           ensure
+            load_path_prepend_count.times { $LOAD_PATH.shift }
             TOPLEVEL_BINDING.eval("undef template") rescue nil
             $pangea_captured_block = nil
           end
