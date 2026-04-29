@@ -81,10 +81,21 @@
             gemsetPath = "/gemset.nix";
           };
 
+          # Materialise the 12 path-gems into /app/vendor/ so that
+          # `bundle exec` at runtime — which walks Gemfile.lock and verifies
+          # every `path: vendor/<gem>` entry exists on disk — finds them.
+          # The Nix-built bundlerEnv already resolved every gem at build
+          # time; this is purely to satisfy bundler's runtime path check.
+          # Symlinks (not copies) — the flake inputs are read-only store
+          # paths and bundler only stat()s the directory.
           appSource = imagePkgs.runCommand "pangea-compiler-source" { } ''
-            mkdir -p $out/app
+            mkdir -p $out/app/vendor
             cp -r ${./pangea-compiler}/. $out/app/
             rm -rf $out/app/vendor $out/app/.bundle 2>/dev/null || true
+            mkdir -p $out/app/vendor
+            ${lib.concatStringsSep "\n" (lib.mapAttrsToList
+              (gemName: src: "ln -s ${src} $out/app/vendor/${gemName}")
+              pangeaInputs)}
           '';
 
           entrypoint = imagePkgs.writeShellScript "pangea-compiler-entrypoint" ''
