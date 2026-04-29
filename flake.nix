@@ -122,13 +122,17 @@
             '') pangeaInputs)}
           '';
 
+          # The Sinatra app is a modular rack app — app.rb defines
+          # PangeaCompiler < Sinatra::Base but never calls .run!.
+          # config.ru rackup-mounts it; puma is the production server
+          # (matches the original Dockerfile CMD).
           entrypoint = imagePkgs.writeShellScript "pangea-compiler-entrypoint" ''
             export PATH="${ws.env}/bin:${imagePkgs.coreutils}/bin:${imagePkgs.git}/bin:''${PATH:-}"
             export RUBYLIB="${ws.rubylib}:''${RUBYLIB:-}"
             export DRY_TYPES_WARNINGS=false
             export PANGEA_WORKSPACE_BASE="''${PANGEA_WORKSPACE_BASE:-/var/pangea/workspaces}"
             cd /app
-            exec ${ws.env}/bin/bundle exec ruby /app/app.rb -o 0.0.0.0 -p 8082 "$@"
+            exec ${ws.env}/bin/bundle exec puma -b tcp://0.0.0.0:8082 "$@"
           '';
         in imagePkgs.dockerTools.buildLayeredImage {
           name = "pangea-compiler";
