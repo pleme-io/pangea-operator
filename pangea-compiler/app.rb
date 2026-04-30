@@ -324,6 +324,10 @@ class PangeaCompiler < Sinatra::Base
         ENV[key] = v.to_s
       end
 
+      # Outer-scoped so the matching pop in the outer ensure can run
+      # after BOTH the load() and the captured-block instance_eval
+      # (composer autoloads fire inside the latter).
+      load_path_prepend_count = 0
       begin
         if template_path
           # Workspace-dir mode. Validate path is under PANGEA_WORKSPACE_BASE
@@ -347,26 +351,26 @@ class PangeaCompiler < Sinatra::Base
             end
             r
           end
+          # Prepend the cloned tree's lib/ to $LOAD_PATH so the
+          # workspace's `require 'pangea/architectures'` AND any
+          # autoloads that fire later (inside the captured block's
+          # instance_eval) resolve to the cloned copy. Popped in the
+          # outer ensure so concurrent /compile requests don't see
+          # each other's prepends.
+          load_path_prepend_count = real_rubylib_paths.length
+          $LOAD_PATH.unshift(*real_rubylib_paths)
           # Make `template :name do …` available at TOPLEVEL_BINDING for
           # the duration of the load — load() runs the file at top-level,
           # not in our singleton scope, so the singleton :template
           # method we defined above isn't visible to it.
           TOPLEVEL_BINDING.eval("def template(_name, &blk); $pangea_captured_block = blk; end")
           $pangea_captured_block = nil
-          # Prepend the cloned tree's lib/ to $LOAD_PATH so workspace
-          # .rb files' `require 'pangea/architectures'` (and any other
-          # composer requires) resolves to the cloned copy. Pop after
-          # the load so concurrent /compile requests don't see each
-          # other's prepends.
-          load_path_prepend_count = real_rubylib_paths.length
-          $LOAD_PATH.unshift(*real_rubylib_paths)
           begin
             Dir.chdir(File.dirname(real_path)) do
               load(real_path, true)  # wrap=true → isolates load constants
             end
             captured_block = $pangea_captured_block
           ensure
-            load_path_prepend_count.times { $LOAD_PATH.shift }
             TOPLEVEL_BINDING.eval("undef template") rescue nil
             $pangea_captured_block = nil
           end
@@ -380,8 +384,18 @@ class PangeaCompiler < Sinatra::Base
         # arguments, account_ids, etc.). Restoring ENV before this
         # second eval would re-introduce the original "key not found"
         # failure mode.
+        #
+        # Same constraint applies to $LOAD_PATH: composer autoloads
+        # (e.g. `autoload :CloudflareDomain, 'pangea/architectures/
+        # cloudflare_domain'` in the cloned `architectures.rb`) fire
+        # lazily INSIDE this instance_eval, when the template body
+        # references `Pangea::Architectures::CloudflareDomain`. The
+        # prepended dirs must still be on $LOAD_PATH at that point,
+        # so the unshift/shift pair brackets BOTH the load() and the
+        # instance_eval. Outer ensure pops it back.
         synth.instance_eval(&captured_block) if captured_block
       ensure
+        load_path_prepend_count.times { $LOAD_PATH.shift }
         singleton_class.send(:remove_method, :template) if singleton_class.method_defined?(:template)
         env_overrides.each do |k, prev|
           if prev.nil?
