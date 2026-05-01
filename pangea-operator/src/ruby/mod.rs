@@ -12,10 +12,13 @@ pub mod backend;
 pub mod http_backend;
 
 #[cfg(feature = "embedded_ruby")]
-pub mod owner;
+pub mod embedded_backend;
 
 #[cfg(feature = "embedded_ruby")]
-pub mod embedded_backend;
+pub mod gem_cache;
+
+#[cfg(feature = "embedded_ruby")]
+pub mod owner;
 
 pub use backend::{
     ArchListing, BackendError, CompileAnyRequest, CompileAnyResult, CompileRequest,
@@ -25,6 +28,9 @@ pub use http_backend::HttpCompilerBackend;
 
 #[cfg(feature = "embedded_ruby")]
 pub use embedded_backend::EmbeddedCompilerBackend;
+
+#[cfg(feature = "embedded_ruby")]
+pub use gem_cache::{GemCache, GemCacheError, GemEntry};
 
 #[cfg(feature = "embedded_ruby")]
 pub use owner::{RubyOwner, RubyRequest};

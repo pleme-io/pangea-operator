@@ -46,6 +46,15 @@ pub enum RubyRequest {
         source: String,
         respond: oneshot::Sender<Result<Json, BackendError>>,
     },
+    /// Permanently prepend a path to `$LOAD_PATH`. Used after the
+    /// gem-cache clones a gem, so that subsequent `require`s in
+    /// fixture smoke-tests / template compiles can resolve it.
+    /// Idempotent at the Ruby level — duplicate prepends are
+    /// harmless ($LOAD_PATH.uniq! is implicit by usage).
+    PrependLoadPath {
+        path: std::path::PathBuf,
+        respond: oneshot::Sender<Result<(), BackendError>>,
+    },
     /// Cooperative shutdown — owner thread drains, returns from its
     /// loop, runs CRuby cleanup.
     Shutdown,
@@ -96,6 +105,25 @@ impl RubyOwner {
 
     pub fn tx_handle(&self) -> mpsc::Sender<RubyRequest> {
         self.tx.clone()
+    }
+
+    /// Convenience: prepend `path/lib` (the gem's standard public-API
+    /// location) to `$LOAD_PATH` so subsequent requires resolve.
+    /// Used by the gem-cache integration after a fresh clone.
+    pub async fn prepend_load_path(
+        &self,
+        path: std::path::PathBuf,
+    ) -> Result<(), BackendError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(RubyRequest::PrependLoadPath {
+                path,
+                respond: rtx,
+            })
+            .await
+            .map_err(|_| BackendError::Ruby("ruby owner channel closed".into()))?;
+        rrx.await
+            .map_err(|_| BackendError::Ruby("prepend reply lost".into()))?
     }
 
     /// Cooperative shutdown. Waits up to ~5s for the owner thread to
@@ -167,6 +195,20 @@ fn run_owner_loop(
                 let res = evaluator
                     .eval_string(&source)
                     .map_err(|e| BackendError::Ruby(format!("eval: {e}")));
+                let _ = respond.send(res);
+            }
+            RubyRequest::PrependLoadPath { path, respond } => {
+                let escaped = path
+                    .to_string_lossy()
+                    .replace('\\', "\\\\")
+                    .replace('"', "\\\"");
+                let src = format!(
+                    r#"$LOAD_PATH.unshift("{escaped}") unless $LOAD_PATH.include?("{escaped}")"#
+                );
+                let res = evaluator
+                    .eval_string(&src)
+                    .map(|_| ())
+                    .map_err(|e| BackendError::Ruby(format!("prepend $LOAD_PATH: {e}")));
                 let _ = respond.send(res);
             }
             RubyRequest::Shutdown => break,

@@ -16,7 +16,7 @@
 #![cfg(feature = "embedded_ruby")]
 
 use pangea_operator::ruby::{
-    CompileRequest, CompilerBackend, EmbeddedCompilerBackend, RubyOwner, SmokeRequest,
+    CompileRequest, CompilerBackend, EmbeddedCompilerBackend, GemCache, RubyOwner, SmokeRequest,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -219,5 +219,86 @@ async fn embedded_backend_smoke() {
         "CF_API_TOKEN leaked out of compile() — with_env bracketing failed"
     );
 
+    // ------------------------------------------------------------
+    // M8.4.1 — gem cache + load-path prepend round-trip.
+    // ------------------------------------------------------------
+    //
+    // We don't shell out to git in this test (network + ssh keys
+    // make it flaky). Instead we drive the cache layout directly:
+    // pre-create a fake gem tree, point GemCache at the parent dir,
+    // call entry_dir to verify path computation, then prepend its
+    // lib path through the owner thread and confirm Ruby sees it
+    // on $LOAD_PATH.
+    //
+    // ensure() with a real git URL is exercised in M8.4.2 against a
+    // fixture repo; this test isolates the cache-layout + Ruby-side
+    // contract.
+    let tmp = tempdir_for_test();
+    std::env::set_var("PANGEA_GEM_CACHE_DIR", tmp.as_os_str());
+    let cache = GemCache::from_env();
+    assert_eq!(cache.base_dir(), tmp.as_path());
+
+    let entry_dir = cache
+        .entry_dir("pangea-fixture-gem", "abc123")
+        .expect("entry_dir");
+    assert_eq!(
+        entry_dir,
+        tmp.join("pangea-fixture-gem-abc123"),
+        "cache layout should be {{name}}-{{ref}}/"
+    );
+
+    let lib_dir = entry_dir.join("lib");
+    std::fs::create_dir_all(&lib_dir).expect("mkdir -p");
+    std::fs::write(
+        lib_dir.join("fake_gem.rb"),
+        b"module FakeGem; VERSION = \"0.0.1\".freeze; end\n",
+    )
+    .expect("write fake gem entrypoint");
+
+    owner
+        .prepend_load_path(lib_dir.clone())
+        .await
+        .expect("prepend_load_path round-trip");
+
+    // Confirm the path is on $LOAD_PATH and require works.
+    {
+        use pangea_operator::ruby::RubyRequest;
+        let (rtx, rrx) = tokio::sync::oneshot::channel();
+        owner
+            .tx_handle()
+            .send(RubyRequest::Eval {
+                source: format!(
+                    r#"
+                    on_path = $LOAD_PATH.include?("{lib}")
+                    require 'fake_gem'
+                    {{ "on_path" => on_path, "version" => FakeGem::VERSION }}
+                    "#,
+                    lib = lib_dir.to_string_lossy(),
+                ),
+                respond: rtx,
+            })
+            .await
+            .expect("send eval");
+        let result = rrx.await.expect("eval reply").expect("eval ok");
+        assert_eq!(result["on_path"], serde_json::json!(true));
+        assert_eq!(result["version"], serde_json::json!("0.0.1"));
+    }
+
+    // Cleanup
+    std::env::remove_var("PANGEA_GEM_CACHE_DIR");
+    let _ = std::fs::remove_dir_all(&tmp);
+
     owner.shutdown().await;
+}
+
+/// Per-test temp dir. We can't pull in `tempfile` for one helper, and
+/// std doesn't give us auto-cleanup, so we do it by hand at end-of-test.
+fn tempdir_for_test() -> std::path::PathBuf {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("pangea-eval-test-{stamp}"));
+    std::fs::create_dir_all(&dir).expect("mkdir tempdir");
+    dir
 }
