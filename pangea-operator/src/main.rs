@@ -216,6 +216,21 @@ async fn main() -> Result<()> {
         }
     });
 
+    // M1 — ArchitectureGem reconciler. Talks to the compiler sidecar
+    // at COMPILER_ENDPOINT (default http://localhost:8082). See
+    // theory/PANGEA-WORKSPACE-RECONCILIATION.md.
+    let arch_gem_client = state.client.clone();
+    let arch_gem_compiler_url = std::env::var("COMPILER_ENDPOINT")
+        .unwrap_or_else(|_| "http://localhost:8082".to_string());
+    let architecture_gem_controller = tokio::spawn(async move {
+        pangea_operator::controller::architecture_gem_controller::run(
+            arch_gem_client,
+            arch_gem_compiler_url,
+        )
+        .await;
+        error!("ArchitectureGem controller exited");
+    });
+
     info!("Controllers started");
 
     // Start GraphQL server
@@ -247,6 +262,7 @@ async fn main() -> Result<()> {
     synth_format_controller.abort();
     compliance_schedule_controller.abort();
     compliance_binding_controller.abort();
+    architecture_gem_controller.abort();
 
     info!("Pangea Operator stopped");
     Ok(())
