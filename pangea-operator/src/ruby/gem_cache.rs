@@ -137,10 +137,16 @@ impl GemCache {
                 ))
             })?;
 
+        // Apply auth token to HTTPS GitHub URLs if PANGEA_GEM_AUTH_TOKEN
+        // is set in the env. Rewrites `https://github.com/...` to
+        // `https://x-access-token:$TOKEN@github.com/...` so private
+        // repo clones succeed. SSH URLs + non-GitHub URLs pass through.
+        let effective_url = inject_github_token(git_url);
+
         info!(
             name,
             git_ref,
-            url = git_url,
+            url = git_url,  // log original (no token leak)
             path = %dir.display(),
             "cloning gem"
         );
@@ -151,7 +157,7 @@ impl GemCache {
             .arg("1")
             .arg("--branch")
             .arg(git_ref)
-            .arg(git_url)
+            .arg(&effective_url)
             .arg(&dir)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -176,7 +182,7 @@ impl GemCache {
             let _ = tokio::fs::remove_dir_all(&dir).await;
             let clone = Command::new("git")
                 .arg("clone")
-                .arg(git_url)
+                .arg(&effective_url)
                 .arg(&dir)
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
@@ -216,6 +222,28 @@ impl GemCache {
     }
 }
 
+/// Rewrite `https://github.com/...` URLs to embed
+/// `x-access-token:$PANGEA_GEM_AUTH_TOKEN@github.com/...` when the
+/// env var is set. Other URL shapes (SSH, non-GitHub HTTPS) pass
+/// through unchanged.
+///
+/// The token is the standard GitHub-Apps pattern accepted by
+/// github.com — works for fine-grained PATs, classic PATs, and
+/// installation tokens. Rewriting at clone time avoids needing to
+/// configure git credential helpers in the container image.
+fn inject_github_token(url: &str) -> String {
+    let token = match std::env::var("PANGEA_GEM_AUTH_TOKEN") {
+        Ok(t) if !t.is_empty() => t,
+        _ => return url.to_string(),
+    };
+    let prefix = "https://github.com/";
+    if let Some(rest) = url.strip_prefix(prefix) {
+        format!("https://x-access-token:{token}@github.com/{rest}")
+    } else {
+        url.to_string()
+    }
+}
+
 /// Validate a name component is safe to use as a filesystem path
 /// segment. Rejects path traversal, NUL, leading dots, slashes.
 fn validate_name_component(s: &str) -> Result<(), GemCacheError> {
@@ -252,5 +280,34 @@ mod tests {
         assert!(cache.entry_dir("ok", "../sneak").is_err());
         assert!(cache.entry_dir("a/b", "main").is_err());
         assert!(cache.entry_dir(".hidden", "main").is_err());
+    }
+
+    #[test]
+    fn inject_github_token_passthrough_when_unset() {
+        std::env::remove_var("PANGEA_GEM_AUTH_TOKEN");
+        let url = "https://github.com/pleme-io/pangea-architectures";
+        assert_eq!(inject_github_token(url), url);
+    }
+
+    #[test]
+    fn inject_github_token_rewrites_when_set() {
+        std::env::set_var("PANGEA_GEM_AUTH_TOKEN", "ghp_test123");
+        let url = "https://github.com/pleme-io/pangea-architectures";
+        let out = inject_github_token(url);
+        assert_eq!(
+            out,
+            "https://x-access-token:ghp_test123@github.com/pleme-io/pangea-architectures"
+        );
+        std::env::remove_var("PANGEA_GEM_AUTH_TOKEN");
+    }
+
+    #[test]
+    fn inject_github_token_passes_through_ssh_and_non_github() {
+        std::env::set_var("PANGEA_GEM_AUTH_TOKEN", "ghp_test123");
+        let ssh = "git@github.com:pleme-io/pangea-architectures.git";
+        assert_eq!(inject_github_token(ssh), ssh, "ssh URL should pass through");
+        let other = "https://gitlab.com/foo/bar";
+        assert_eq!(inject_github_token(other), other, "non-github should pass through");
+        std::env::remove_var("PANGEA_GEM_AUTH_TOKEN");
     }
 }
