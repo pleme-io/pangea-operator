@@ -5,6 +5,7 @@
 //! magnus.
 
 use async_trait::async_trait;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex};
 
@@ -15,16 +16,24 @@ use super::backend::{
 use super::gem_cache::GemCache;
 use super::owner::RubyRequest;
 
+#[derive(Debug, Clone)]
+struct PreparedGem {
+    /// gem ref (the `(name, ref)` part of the cache key — used for
+    /// idempotent skip on repeat prepare_gem calls).
+    git_ref: String,
+    /// Filesystem path the gem cloned to. smoke_test uses this to
+    /// resolve relative fixture paths that Ruby's `Gem.loaded_specs`
+    /// can't reach (the gem was cloned, not gem-installed).
+    gem_path: PathBuf,
+}
+
 #[derive(Clone)]
 pub struct EmbeddedCompilerBackend {
     tx: mpsc::Sender<RubyRequest>,
     cache: Option<GemCache>,
-    /// Tracks which (name, ref) pairs we've already prepended on
-    /// $LOAD_PATH so we don't redundantly send PrependLoadPath
-    /// requests across reconcile cycles. The Ruby snippet that runs
-    /// is idempotent at the Ruby level too; this is just a small
-    /// channel-traffic optimization.
-    prepared: Arc<Mutex<std::collections::HashSet<(String, String)>>>,
+    /// Map of `gem_name → PreparedGem`. prepare_gem populates;
+    /// smoke_test reads to resolve relative fixture paths.
+    prepared: Arc<Mutex<std::collections::HashMap<String, PreparedGem>>>,
 }
 
 impl EmbeddedCompilerBackend {
@@ -83,8 +92,10 @@ impl CompilerBackend for EmbeddedCompilerBackend {
         // Skip if we've already prepared this (name, ref).
         {
             let prepared = self.prepared.lock().await;
-            if prepared.contains(&(source.name.clone(), source.git_ref.clone())) {
-                return Ok(());
+            if let Some(existing) = prepared.get(&source.name) {
+                if existing.git_ref == source.git_ref {
+                    return Ok(());
+                }
             }
         }
 
@@ -98,7 +109,7 @@ impl CompilerBackend for EmbeddedCompilerBackend {
         let (rtx, rrx) = oneshot::channel();
         self.tx
             .send(RubyRequest::PrependLoadPath {
-                path: entry.lib_path,
+                path: entry.lib_path.clone(),
                 respond: rtx,
             })
             .await
@@ -106,9 +117,18 @@ impl CompilerBackend for EmbeddedCompilerBackend {
         rrx.await
             .map_err(|_| BackendError::Ruby("prepend reply lost".into()))??;
 
-        // Mark prepared for this process lifetime.
+        // Mark prepared for this process lifetime; remember the gem
+        // path so smoke_test can resolve relative fixture paths
+        // without consulting Ruby's Gem.loaded_specs (which is empty
+        // for cloned-via-cache gems — they were never gem-installed).
         let mut prepared = self.prepared.lock().await;
-        prepared.insert((source.name.clone(), source.git_ref.clone()));
+        prepared.insert(
+            source.name.clone(),
+            PreparedGem {
+                git_ref: source.git_ref.clone(),
+                gem_path: entry.gem_path,
+            },
+        );
         Ok(())
     }
 
@@ -126,6 +146,21 @@ impl CompilerBackend for EmbeddedCompilerBackend {
     }
 
     async fn smoke_test(&self, req: SmokeRequest) -> Result<FixtureOutcome, BackendError> {
+        // Resolve relative fixture paths via our prepared-gem map
+        // BEFORE forwarding to the owner thread. The owner's
+        // resolve_fixture_path falls back to Ruby's
+        // `Gem.loaded_specs[gem].full_gem_path` which is empty for
+        // cloned-via-cache gems; absolute paths skip that path
+        // entirely.
+        let mut req = req;
+        if !std::path::Path::new(&req.fixture_path).is_absolute() {
+            let prepared = self.prepared.lock().await;
+            if let Some(pg) = prepared.get(&req.gem) {
+                let abs = pg.gem_path.join(&req.fixture_path);
+                req.fixture_path = abs.to_string_lossy().into_owned();
+            }
+        }
+
         let (rtx, rrx) = oneshot::channel();
         self.tx
             .send(RubyRequest::SmokeTest { req, respond: rtx })
