@@ -255,20 +255,21 @@
             gemsetPath = "/gemset.nix";
           };
 
-          # Compute the full $LOAD_PATH at Nix-build time by asking
-          # `bundle exec ruby` to print $LOAD_PATH. Bundler reads each
-          # gemspec's `require_paths` (which can be non-standard like
-          # concurrent-ruby's `["lib/concurrent-ruby"]`) and sets up
-          # the correct $LOAD_PATH. A naive `lib/` glob misses these
-          # gemspec-overridden paths.
-          fullRubylibFile = imagePkgs.runCommand "pangea-full-rubylib" {
-            buildInputs = [ gemWs.env gemWs.ruby ];
-          } ''
-            export PATH="${gemWs.env}/bin:${gemWs.ruby}/bin:$PATH"
-            export HOME=$TMPDIR
-            cd ${./pangea-compiler}
-            ${gemWs.env}/bin/bundle exec ${gemWs.ruby}/bin/ruby -e \
-              'puts $LOAD_PATH.uniq.reject { |p| p.start_with?("/build/") }.join(":")' > $out
+          # Compute the full $LOAD_PATH at Nix-build time by reading
+          # every installed gemspec's `full_require_paths` directly
+          # via RubyGems (skips Bundler — Bundler would need the
+          # vendored path-gems available, which they aren't at this
+          # build context). This honors gemspec-overridden require_paths
+          # (notably concurrent-ruby's `lib/concurrent-ruby`).
+          fullRubylibFile = imagePkgs.runCommand "pangea-full-rubylib" { } ''
+            ${gemWs.ruby}/bin/ruby -e '
+              require "rubygems"
+              ENV["GEM_PATH"] = ENV["GEM_PATH"] ? "${gemWs.env}/lib/ruby/gems/3.3.0:#{ENV["GEM_PATH"]}" : "${gemWs.env}/lib/ruby/gems/3.3.0"
+              Gem.clear_paths
+              paths = Gem::Specification.each.flat_map { |s| s.full_require_paths }.uniq
+              paths.reject! { |p| p.start_with?("/build/") }
+              puts paths.join(":")
+            ' > $out
           '';
           bundlerLibPaths = imagePkgs.lib.removeSuffix "\n" (builtins.readFile fullRubylibFile);
           fullRubylib = "${gemWs.rubylib}:${bundlerLibPaths}";
