@@ -116,8 +116,25 @@ async fn main() -> Result<()> {
         "Executor configuration loaded"
     );
 
+    // Construct the compiler backend (HTTP today, embedded magnus
+    // when feature `embedded_ruby` is on AND PANGEA_COMPILER_BACKEND=embedded
+    // — see theory/PANGEA-WORKSPACE-RECONCILIATION.md § M8.2). Since
+    // the embedded path is M8.4, this default is HTTP across the fleet.
+    let compiler_endpoint = std::env::var("COMPILER_ENDPOINT")
+        .unwrap_or_else(|_| "http://localhost:8082".to_string());
+    let compiler_backend: std::sync::Arc<dyn pangea_operator::ruby::CompilerBackend> =
+        pangea_operator::controller::architecture_gem_controller::http_backend(
+            compiler_endpoint.clone(),
+        );
+
     // Create controller state
-    let state = ControllerState::new(client.clone(), metrics.clone(), executor_config).await?;
+    let state = ControllerState::new(
+        client.clone(),
+        metrics.clone(),
+        executor_config,
+        compiler_backend.clone(),
+    )
+    .await?;
 
     // Spawn health server (8080) — /healthz + /readyz; also serves
     // /metrics for back-compat with scrape configs that hit the
@@ -216,16 +233,12 @@ async fn main() -> Result<()> {
         }
     });
 
-    // M1 — ArchitectureGem reconciler. Dispatches to either the
-    // compiler sidecar (HTTP) or the embedded magnus interpreter
-    // (`embedded_ruby` feature + PANGEA_COMPILER_BACKEND=embedded).
+    // M1 — ArchitectureGem reconciler. Reuses the shared compiler
+    // backend already in state — same dispatch as every other
+    // controller (template, packer, synthesizer-format).
     // See theory/PANGEA-WORKSPACE-RECONCILIATION.md § M8.2.
     let arch_gem_client = state.client.clone();
-    let arch_gem_compiler_url = std::env::var("COMPILER_ENDPOINT")
-        .unwrap_or_else(|_| "http://localhost:8082".to_string());
-    let arch_gem_backend = pangea_operator::controller::architecture_gem_controller::http_backend(
-        arch_gem_compiler_url,
-    );
+    let arch_gem_backend = state.compiler_backend.clone();
     let architecture_gem_controller = tokio::spawn(async move {
         pangea_operator::controller::architecture_gem_controller::run(
             arch_gem_client,

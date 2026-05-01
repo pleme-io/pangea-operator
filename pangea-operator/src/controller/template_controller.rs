@@ -420,10 +420,9 @@ async fn handle_compiling(
         // Already JSON — use directly
         content
     } else {
-        // Ruby DSL — call compiler sidecar
-        let compiler_url = std::env::var("COMPILER_ENDPOINT")
-            .unwrap_or_else(|_| "http://localhost:8082".to_string());
-
+        // Ruby DSL — dispatch via the CompilerBackend trait. Pre-M8.2
+        // this was a direct reqwest to the compiler sidecar; now the
+        // backend chooses HTTP-or-embedded.
         // Variables from spec.variables (explicit, plain values)
         let mut variables = template
             .spec
@@ -482,47 +481,31 @@ async fn handle_compiling(
                 Some((tp, rl)) => (tp.to_string(), vec![rl.to_string()]),
                 None => (path.to_string(), Vec::<String>::new()),
             };
-            serde_json::json!({
-                "template_path": template_path,
-                "rubylib_paths": rubylib_paths,
-                "variables": variables,
-                "template_name": template.spec.template_name,
-            })
+            crate::ruby::CompileRequest {
+                template_path: Some(template_path),
+                rubylib_paths,
+                variables: variables.clone().into_iter().collect(),
+                template_name: template.spec.template_name.clone(),
+                source: None,
+            }
         } else {
             // inline / configMapRef — eval the string in a virtual binding.
-            serde_json::json!({
-                "source": content,
-                "variables": variables,
-                "template_name": template.spec.template_name,
-            })
+            crate::ruby::CompileRequest {
+                source: Some(content.clone()),
+                variables: variables.clone().into_iter().collect(),
+                template_name: template.spec.template_name.clone(),
+                template_path: None,
+                rubylib_paths: Vec::new(),
+            }
         };
 
-        let http = reqwest::Client::new();
-        let resp = http
-            .post(format!("{}/compile", compiler_url))
-            .json(&compile_request)
-            .timeout(Duration::from_secs(120))
-            .send()
+        let compile_result = state
+            .compiler_backend
+            .compile(compile_request)
             .await
-            .map_err(|e| Error::Compilation(format!("Compiler sidecar request failed: {}", e)))?;
+            .map_err(|e| Error::Compilation(format!("Compile failed: {e}")))?;
 
-        if !resp.status().is_success() {
-            let error_body: String = resp.text().await.unwrap_or_default();
-            return Err(Error::Compilation(format!(
-                "Compiler returned error: {}",
-                error_body
-            )));
-        }
-
-        let compile_result: serde_json::Value = resp
-            .json::<serde_json::Value>()
-            .await
-            .map_err(|e| Error::Compilation(format!("Failed to parse compiler response: {}", e)))?;
-
-        compile_result["terraform_json"]
-            .as_str()
-            .ok_or_else(|| Error::Compilation("Compiler response missing terraform_json field".into()))?
-            .to_string()
+        compile_result.terraform_json
     };
 
     // Write template content to workspace

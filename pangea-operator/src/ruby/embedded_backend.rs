@@ -8,7 +8,8 @@ use async_trait::async_trait;
 use tokio::sync::{mpsc, oneshot};
 
 use super::backend::{
-    ArchListing, BackendError, CompilerBackend, FixtureOutcome, SmokeRequest,
+    ArchListing, BackendError, CompileAnyRequest, CompileAnyResult, CompileRequest,
+    CompileResult, CompilerBackend, FixtureOutcome, SmokeRequest,
 };
 use super::owner::RubyRequest;
 
@@ -46,5 +47,27 @@ impl CompilerBackend for EmbeddedCompilerBackend {
             .map_err(|_| BackendError::Ruby("ruby owner channel closed".into()))?;
         rrx.await
             .map_err(|_| BackendError::Ruby("ruby owner reply lost".into()))?
+    }
+
+    async fn compile(&self, _req: CompileRequest) -> Result<CompileResult, BackendError> {
+        // M8.2.2: trait surface complete; embedded /compile lands in
+        // M8.4 alongside per-CR clone-cache + the captured-block
+        // pattern. Surfaces as a typed condition on InfrastructureTemplate
+        // so the operator-human can flip back to HTTP if they tried
+        // embedded prematurely.
+        Err(BackendError::Ruby(
+            "embedded /compile not yet implemented (M8.4); set PANGEA_COMPILER_BACKEND=http"
+                .into(),
+        ))
+    }
+
+    async fn compile_any(
+        &self,
+        _req: CompileAnyRequest,
+    ) -> Result<CompileAnyResult, BackendError> {
+        Err(BackendError::Ruby(
+            "embedded /compile-any not yet implemented (M8.4); set PANGEA_COMPILER_BACKEND=http"
+                .into(),
+        ))
     }
 }

@@ -212,48 +212,24 @@ async fn handle_compiling(
         info!("Source is pre-compiled Packer JSON");
         content
     } else {
-        // Ruby DSL — compile via sidecar
-        info!("Compiling Ruby DSL via sidecar");
-        let compiler_url = std::env::var("COMPILER_ENDPOINT")
-            .unwrap_or_else(|_| "http://localhost:8082".to_string());
-
+        // Ruby DSL — dispatch via the CompilerBackend trait.
+        // /compile-packer collapses to /compile-any with format=packer.
+        info!("Compiling Ruby DSL via compiler backend");
         let variables: HashMap<String, serde_json::Value> =
             build.spec.variables.clone().into_iter().collect();
 
-        let compile_request = serde_json::json!({
-            "source": content,
-            "variables": variables,
-        });
-
-        let http = reqwest::Client::new();
-        let resp = http
-            .post(format!("{}/compile-packer", compiler_url))
-            .json(&compile_request)
-            .timeout(Duration::from_secs(120))
-            .send()
+        let compile_result = state
+            .compiler_backend
+            .compile_any(crate::ruby::CompileAnyRequest {
+                source: content,
+                variables,
+                format: Some("packer".to_string()),
+                format_definition: None,
+            })
             .await
-            .map_err(|e| Error::Compilation(format!("Compiler request failed: {}", e)))?;
+            .map_err(|e| Error::Compilation(format!("Compile failed: {e}")))?;
 
-        if !resp.status().is_success() {
-            let body = resp
-                .text()
-                .await
-                .unwrap_or_else(|_| "unknown error".into());
-            return Err(Error::Compilation(format!(
-                "Compiler returned {}: {}",
-                "error", body
-            )));
-        }
-
-        let result: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| Error::Compilation(format!("Failed to parse compiler response: {}", e)))?;
-
-        result["packer_json"]
-            .as_str()
-            .ok_or_else(|| Error::Compilation("Missing packer_json field in response".into()))?
-            .to_string()
+        compile_result.output_json
     };
 
     // Ensure manifest post-processor is present

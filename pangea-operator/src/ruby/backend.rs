@@ -12,6 +12,7 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use thiserror::Error;
 
 /// What `GET /v1/architectures?gem=…` returns. Mirrors
@@ -62,6 +63,51 @@ pub enum BackendError {
     NotInitialized,
 }
 
+/// Mirrors the `/compile` request shape from `pangea-compiler/app.rb`
+/// lines 391-498. Either `source` (legacy inline-eval mode) or
+/// `template_path` + `rubylib_paths` (gitRepository mode) must be
+/// provided.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CompileRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rubylib_paths: Vec<String>,
+    #[serde(default)]
+    pub variables: HashMap<String, serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template_name: Option<String>,
+}
+
+/// Mirrors the `/compile` response shape — only the `terraform_json`
+/// field is consumed by the controller; we drop the rest.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompileResult {
+    pub terraform_json: String,
+}
+
+/// Mirrors the `/compile-any` request shape (synthesizer-driven
+/// formats). Either `format` (registered name like "packer") or
+/// `format_definition` (inline CRD spec) must be provided.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompileAnyRequest {
+    pub source: String,
+    #[serde(default)]
+    pub variables: HashMap<String, serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub format_definition: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompileAnyResult {
+    pub output_json: String,
+    pub format: String,
+}
+
 #[async_trait]
 pub trait CompilerBackend: Send + Sync {
     /// Equivalent of `GET /v1/architectures?gem=<gem>`.
@@ -69,4 +115,16 @@ pub trait CompilerBackend: Send + Sync {
 
     /// Equivalent of `POST /v1/architectures/smoke-test`.
     async fn smoke_test(&self, req: SmokeRequest) -> Result<FixtureOutcome, BackendError>;
+
+    /// Equivalent of `POST /compile`. Returns the synthesized
+    /// Terraform JSON as a string.
+    async fn compile(&self, req: CompileRequest) -> Result<CompileResult, BackendError>;
+
+    /// Equivalent of `POST /compile-any` (synthesizer-driven).
+    /// Used by both packer builds (`format = Some("packer")`) and the
+    /// SynthesizerFormat CRD (`format_definition = Some(spec)`).
+    async fn compile_any(
+        &self,
+        req: CompileAnyRequest,
+    ) -> Result<CompileAnyResult, BackendError>;
 }

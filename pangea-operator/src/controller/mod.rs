@@ -59,6 +59,11 @@ pub struct ControllerState {
 
     /// Workspace manager for isolated template directories.
     pub workspace_manager: Arc<WorkspaceManager>,
+
+    /// Compiler backend — HTTP sidecar today, embedded magnus when
+    /// `embedded_ruby` is feature-on + `PANGEA_COMPILER_BACKEND=embedded`.
+    /// See `theory/PANGEA-WORKSPACE-RECONCILIATION.md` § M8.2.
+    pub compiler_backend: Arc<dyn crate::ruby::CompilerBackend>,
 }
 
 impl ControllerState {
@@ -67,6 +72,7 @@ impl ControllerState {
         client: Client,
         metrics: Arc<crate::observability::Metrics>,
         executor_config: ExecutorConfig,
+        compiler_backend: Arc<dyn crate::ruby::CompilerBackend>,
     ) -> Result<Self> {
         let executor = Arc::new(TofuExecutor::new(
             executor_config.tofu_binary.clone(),
@@ -94,6 +100,7 @@ impl ControllerState {
             executor,
             packer_executor,
             workspace_manager,
+            compiler_backend,
         })
     }
 

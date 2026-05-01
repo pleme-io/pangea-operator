@@ -18,7 +18,8 @@ pub mod owner;
 pub mod embedded_backend;
 
 pub use backend::{
-    ArchListing, BackendError, CompilerBackend, FixtureOutcome, SmokeRequest,
+    ArchListing, BackendError, CompileAnyRequest, CompileAnyResult, CompileRequest,
+    CompileResult, CompilerBackend, FixtureOutcome, SmokeRequest,
 };
 pub use http_backend::HttpCompilerBackend;
 

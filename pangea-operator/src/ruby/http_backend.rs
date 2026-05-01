@@ -7,7 +7,8 @@
 use async_trait::async_trait;
 
 use super::backend::{
-    ArchListing, BackendError, CompilerBackend, FixtureOutcome, SmokeRequest,
+    ArchListing, BackendError, CompileAnyRequest, CompileAnyResult, CompileRequest,
+    CompileResult, CompilerBackend, FixtureOutcome, SmokeRequest,
 };
 
 #[derive(Clone)]
@@ -40,6 +41,61 @@ impl CompilerBackend for HttpCompilerBackend {
         resp.json::<ArchListing>()
             .await
             .map_err(|e| BackendError::Compiler(format!("decode listing: {e}")))
+    }
+
+    async fn compile(&self, req: CompileRequest) -> Result<CompileResult, BackendError> {
+        let url = format!("{}/compile", self.base_url);
+        let resp = self
+            .http
+            .post(&url)
+            .json(&req)
+            .timeout(std::time::Duration::from_secs(120))
+            .send()
+            .await
+            .map_err(|e| BackendError::Transport(format!("POST {url}: {e}")))?;
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(BackendError::Compiler(format!(
+                "compile returned non-2xx: {body}"
+            )));
+        }
+        // Compiler responds with { terraform_json, template_count, errors }.
+        // Pull just terraform_json — the controller doesn't consume the rest.
+        let raw: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| BackendError::Compiler(format!("decode compile response: {e}")))?;
+        let terraform_json = raw["terraform_json"]
+            .as_str()
+            .ok_or_else(|| {
+                BackendError::Compiler("compile response missing terraform_json".into())
+            })?
+            .to_string();
+        Ok(CompileResult { terraform_json })
+    }
+
+    async fn compile_any(
+        &self,
+        req: CompileAnyRequest,
+    ) -> Result<CompileAnyResult, BackendError> {
+        let url = format!("{}/compile-any", self.base_url);
+        let resp = self
+            .http
+            .post(&url)
+            .json(&req)
+            .timeout(std::time::Duration::from_secs(120))
+            .send()
+            .await
+            .map_err(|e| BackendError::Transport(format!("POST {url}: {e}")))?;
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(BackendError::Compiler(format!(
+                "compile-any returned non-2xx: {body}"
+            )));
+        }
+        resp.json::<CompileAnyResult>()
+            .await
+            .map_err(|e| BackendError::Compiler(format!("decode compile-any response: {e}")))
     }
 
     async fn smoke_test(&self, req: SmokeRequest) -> Result<FixtureOutcome, BackendError> {

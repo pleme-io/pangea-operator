@@ -106,8 +106,8 @@ async fn reconcile(
         return Ok(Action::requeue(DEFAULT_REQUEUE_INTERVAL));
     }
 
-    // Step 2: Probe the compiler sidecar to confirm it can create the synthesizer
-    match probe_sidecar(&format.spec).await {
+    // Step 2: Probe the compiler backend to confirm it can create the synthesizer
+    match probe_sidecar(&format.spec, state.compiler_backend.as_ref()).await {
         Ok(()) => {
             info!("Sidecar probe succeeded, format is Ready");
             update_status(&format, SynthesizerFormatPhase::Ready, None, &state).await?;
@@ -175,33 +175,20 @@ fn validate_spec(
 /// and a no-op source to verify the synthesizer can be created.
 async fn probe_sidecar(
     spec: &crate::crd::synthesizer_format::SynthesizerFormatSpec,
+    backend: &dyn crate::ruby::CompilerBackend,
 ) -> std::result::Result<(), String> {
-    let compiler_url = std::env::var("COMPILER_ENDPOINT")
-        .unwrap_or_else(|_| "http://localhost:8082".to_string());
-
     let format_definition = spec.to_sidecar_definition();
-
-    let probe_request = serde_json::json!({
-        "source": "# no-op probe",
-        "variables": {},
-        "format_definition": format_definition,
-    });
-
-    let http = reqwest::Client::new();
-    let resp = http
-        .post(format!("{}/compile-any", compiler_url))
-        .json(&probe_request)
-        .timeout(Duration::from_secs(10))
-        .send()
+    let req = crate::ruby::CompileAnyRequest {
+        source: "# no-op probe".to_string(),
+        variables: std::collections::HashMap::new(),
+        format: None,
+        format_definition: Some(format_definition),
+    };
+    backend
+        .compile_any(req)
         .await
-        .map_err(|e| format!("HTTP request failed: {e}"))?;
-
-    if resp.status().is_success() {
-        Ok(())
-    } else {
-        let body = resp.text().await.unwrap_or_default();
-        Err(format!("Sidecar returned error: {body}"))
-    }
+        .map(|_| ())
+        .map_err(|e| format!("compile-any probe failed: {e}"))
 }
 
 // ---------------------------------------------------------------------------
