@@ -16,7 +16,7 @@
 #![cfg(feature = "embedded_ruby")]
 
 use pangea_operator::ruby::{
-    CompilerBackend, EmbeddedCompilerBackend, RubyOwner, SmokeRequest,
+    CompileRequest, CompilerBackend, EmbeddedCompilerBackend, RubyOwner, SmokeRequest,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -88,6 +88,135 @@ async fn embedded_backend_smoke() {
     assert!(
         err.contains("uninitialized constant") || err.contains("DoesNotExist"),
         "expected class-not-found error, got: {err}"
+    );
+
+    // ------------------------------------------------------------
+    // M8.4 — compile() works end-to-end via the embedded path.
+    // ------------------------------------------------------------
+    //
+    // We don't have terraform-synthesizer in the dev shell, so we
+    // bootstrap a tiny stub class on the interpreter via the
+    // RubyRequest::Eval channel. This proves the captured-block +
+    // instance_eval pattern works against a real synth.
+    //
+    // The stub records every method call into @manifest, returns
+    // self for fluent chains, and exposes .synthesis as a Hash —
+    // exactly the shape app.rb's TerraformSynthesizer presents.
+    {
+        use pangea_operator::ruby::RubyRequest;
+        let (rtx, rrx) = tokio::sync::oneshot::channel();
+        owner
+            .tx_handle()
+            .send(RubyRequest::Eval {
+                source: r#"
+                class TerraformSynthesizer
+                  def initialize
+                    @manifest = {}
+                  end
+                  def method_missing(name, *args, **kwargs, &blk)
+                    nested = @manifest
+                    section = name.to_s
+                    nested[section] ||= {}
+                    if args.length >= 2
+                      nested[section][args[0].to_s] ||= {}
+                      nested[section][args[0].to_s][args[1].to_s] = kwargs.transform_keys(&:to_s)
+                    else
+                      nested[section][args[0].to_s] = kwargs.transform_keys(&:to_s)
+                    end
+                    self
+                  end
+                  def synthesis
+                    @manifest
+                  end
+                end
+                module Pangea; module Resources; end; end
+                "stub-installed"
+                "#
+                .to_string(),
+                respond: rtx,
+            })
+            .await
+            .expect("send eval");
+        let _ = rrx.await.expect("eval reply").expect("eval ok");
+    }
+
+    // Step 4: source-mode compile against a Pangea-shaped template.
+    // template :hello do
+    //   resource :null_resource, :greeter, message: "world"
+    //   output :greeting, value: "world"
+    // end
+    let compile_result = backend
+        .compile(CompileRequest {
+            source: Some(
+                r#"
+                template :hello do
+                  resource :null_resource, :greeter, message: "world"
+                  output :greeting, value: "world"
+                end
+                "#
+                .to_string(),
+            ),
+            template_path: None,
+            rubylib_paths: vec![],
+            variables: std::collections::HashMap::new(),
+            template_name: Some("hello".to_string()),
+        })
+        .await
+        .expect("compile via embedded backend");
+
+    // The resulting terraform_json is pretty-printed JSON of the
+    // synth's @manifest. Parse it back and verify the captured block
+    // ran end-to-end (resource + output sections present).
+    let parsed: serde_json::Value =
+        serde_json::from_str(&compile_result.terraform_json).expect("compile result is valid JSON");
+    assert!(
+        parsed["resource"]["null_resource"]["greeter"]["message"] == "world",
+        "resource not captured: {parsed:?}"
+    );
+    assert!(
+        parsed["output"]["greeting"]["value"] == "world",
+        "output not captured: {parsed:?}"
+    );
+
+    // Step 5: variables get injected as ENV + as $pangea_variables.
+    // The template references both ENV.fetch (provider-style) and the
+    // $pangea_variables global (M8.4 contract).
+    let mut vars = std::collections::HashMap::new();
+    vars.insert("CF_API_TOKEN".to_string(), serde_json::json!("env-tok-42"));
+    vars.insert("zone".to_string(), serde_json::json!("quero.cloud"));
+    let compile_result = backend
+        .compile(CompileRequest {
+            source: Some(
+                r#"
+                template :env_check do
+                  resource :null_resource, :env_proof, token: ENV.fetch("CF_API_TOKEN"), zone: $pangea_variables["zone"]
+                end
+                "#
+                .to_string(),
+            ),
+            template_path: None,
+            rubylib_paths: vec![],
+            variables: vars,
+            template_name: Some("env_check".to_string()),
+        })
+        .await
+        .expect("compile with vars");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&compile_result.terraform_json).expect("vars compile is valid JSON");
+    assert_eq!(
+        parsed["resource"]["null_resource"]["env_proof"]["token"], "env-tok-42",
+        "ENV.fetch did not see injected variable"
+    );
+    assert_eq!(
+        parsed["resource"]["null_resource"]["env_proof"]["zone"], "quero.cloud",
+        "$pangea_variables['zone'] did not see injected variable"
+    );
+
+    // Step 6: ENV bracketing must restore prior state. After step 5
+    // the variable should NOT be set in the host process.
+    assert!(
+        std::env::var("CF_API_TOKEN").is_err(),
+        "CF_API_TOKEN leaked out of compile() — with_env bracketing failed"
     );
 
     owner.shutdown().await;

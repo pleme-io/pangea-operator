@@ -63,6 +63,13 @@ pub enum BackendError {
     NotInitialized,
 }
 
+#[cfg(feature = "embedded_ruby")]
+impl From<pangea_ruby_eval::EvalError> for BackendError {
+    fn from(e: pangea_ruby_eval::EvalError) -> Self {
+        BackendError::Ruby(e.to_string())
+    }
+}
+
 /// Mirrors the `/compile` request shape from `pangea-compiler/app.rb`
 /// lines 391-498. Either `source` (legacy inline-eval mode) or
 /// `template_path` + `rubylib_paths` (gitRepository mode) must be

@@ -19,7 +19,9 @@ use std::thread::JoinHandle;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{error, info, warn};
 
-use super::backend::{ArchListing, BackendError, FixtureOutcome, SmokeRequest};
+use super::backend::{
+    ArchListing, BackendError, CompileRequest, CompileResult, FixtureOutcome, SmokeRequest,
+};
 
 /// Typed RPC the controllers send into the owner thread.
 pub enum RubyRequest {
@@ -31,8 +33,15 @@ pub enum RubyRequest {
         req: SmokeRequest,
         respond: oneshot::Sender<Result<FixtureOutcome, BackendError>>,
     },
-    /// Eval an arbitrary string. Used by tests + by the future
-    /// `/compile` route port. Returns the Ruby return value as JSON.
+    /// Compile a Pangea Ruby DSL template — equivalent of
+    /// `POST /compile` in `pangea-compiler/app.rb`. M8.4 implements
+    /// the captured-block + instance_eval pattern in Rust.
+    Compile {
+        req: CompileRequest,
+        respond: oneshot::Sender<Result<CompileResult, BackendError>>,
+    },
+    /// Eval an arbitrary string. Used by tests + utility callers.
+    /// Returns the Ruby return value as JSON.
     Eval {
         source: String,
         respond: oneshot::Sender<Result<Json, BackendError>>,
@@ -148,6 +157,10 @@ fn run_owner_loop(
             }
             RubyRequest::SmokeTest { req, respond } => {
                 let res = smoke_test(&evaluator, &req);
+                let _ = respond.send(res);
+            }
+            RubyRequest::Compile { req, respond } => {
+                let res = compile_template(&evaluator, &req);
                 let _ = respond.send(res);
             }
             RubyRequest::Eval { source, respond } => {
@@ -355,6 +368,254 @@ fn smoke_test(
         error,
         input_hash: Some(parsed.input_hash),
     })
+}
+
+/// In-process equivalent of `POST /compile`.
+///
+/// M8.4: implements the captured-block + instance_eval pattern from
+/// `pangea-compiler/app.rb` lines 391-560 in Rust. Two source modes:
+///
+///   1. `req.source` — legacy inline-eval mode. The Ruby string
+///      gets eval'd; the workspace template's `template :name do … end`
+///      stashes its block into `$pangea_captured_block` via the
+///      Object-level `template` method we install around the eval.
+///
+///   2. `req.template_path` + `req.rubylib_paths` — gitRepository
+///      mode. Validates the path is under PANGEA_WORKSPACE_BASE
+///      (default `/var/pangea/workspaces`); brackets `$LOAD_PATH`
+///      with rubylib_paths via [`RubyEvaluator::with_load_paths`];
+///      `Dir.chdir(File.dirname(path))` so __dir__-relative
+///      File.read calls in the workspace .rb resolve correctly;
+///      `load(path, true)` to capture the block.
+///
+/// In both modes the captured block is `synth.instance_eval`'d
+/// against a fresh `TerraformSynthesizer` extended with every
+/// `Pangea::Resources::*` module. The synthesis Hash is converted
+/// back to `serde_json::Value` Rust-side and pretty-serialized — the
+/// fourth and final Pangea-Ruby require (`json`) deleted.
+///
+/// Variables are injected two ways (matching app.rb's contract):
+///   - As process ENV vars (workspace templates use
+///     `ENV.fetch('CF_API_TOKEN')` for provider creds);
+///   - As a `$pangea_variables` Ruby Hash global (so source-mode
+///     templates can reach them via that name).
+///
+/// Both are bracketed via [`RubyEvaluator::with_env`] and a Rust-side
+/// `ensure { $pangea_variables = nil }` so concurrent compile
+/// requests in different fleets don't see each other's leaks.
+fn compile_template(
+    evaluator: &RubyEvaluator,
+    req: &CompileRequest,
+) -> Result<CompileResult, BackendError> {
+    if req.source.is_none() && req.template_path.is_none() {
+        return Err(BackendError::Compiler(
+            "compile request needs either source or template_path".into(),
+        ));
+    }
+
+    // PANGEA_WORKSPACE_BASE validation (template_path mode only).
+    if let Some(path) = req.template_path.as_deref() {
+        let base =
+            std::env::var("PANGEA_WORKSPACE_BASE").unwrap_or_else(|_| "/var/pangea/workspaces".to_string());
+        let real = std::fs::canonicalize(path)
+            .map_err(|e| BackendError::Compiler(format!("template_path canonicalize {path}: {e}")))?;
+        if !real.starts_with(format!("{base}/")) && !real.starts_with(&base) {
+            return Err(BackendError::Compiler(format!(
+                "template_path must resolve under PANGEA_WORKSPACE_BASE ({base}): {}",
+                real.display()
+            )));
+        }
+        if !real.is_file() {
+            return Err(BackendError::Compiler(format!(
+                "template_path is not a regular file: {}",
+                real.display()
+            )));
+        }
+        for rl in &req.rubylib_paths {
+            let r = std::fs::canonicalize(rl)
+                .map_err(|e| BackendError::Compiler(format!("rubylib_path canonicalize {rl}: {e}")))?;
+            if !r.starts_with(format!("{base}/")) && !r.starts_with(&base) {
+                return Err(BackendError::Compiler(format!(
+                    "rubylib_paths entries must resolve under {base}: {rl}"
+                )));
+            }
+            if !r.is_dir() {
+                return Err(BackendError::Compiler(format!(
+                    "rubylib_path is not a directory: {rl}"
+                )));
+            }
+        }
+    }
+
+    // Variables → ENV-overrides Vec + injectable Ruby Hash. Every
+    // value gets stringified for ENV (matches app.rb's `ENV[key] = v.to_s`).
+    let env_overrides: Vec<(String, String)> = req
+        .variables
+        .iter()
+        .map(|(k, v)| {
+            let s = match v {
+                serde_json::Value::String(s) => s.clone(),
+                _ => v.to_string(),
+            };
+            (k.clone(), s)
+        })
+        .collect();
+
+    let variables_json: serde_json::Value = serde_json::Value::Object(
+        req.variables
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+    );
+    let r_vars = pangea_ruby_eval::json_to_ruby(evaluator.ruby(), &variables_json)
+        .map_err(|e| BackendError::Ruby(format!("inject variables: {e}")))?;
+    evaluator
+        .ruby()
+        .define_variable("$pangea_variables", r_vars)
+        .map_err(|e| BackendError::Ruby(format!("define $pangea_variables: {e}")))?;
+
+    // Bracket ENV. Bracket $LOAD_PATH (template_path mode only). Run
+    // the inner eval. Both brackets are drop-guarded so a Ruby panic
+    // doesn't leak ENV/load-path state across requests.
+    let load_paths: Vec<std::path::PathBuf> = req
+        .rubylib_paths
+        .iter()
+        .map(std::path::PathBuf::from)
+        .collect();
+
+    let synthesis_json = evaluator
+        .with_env(&env_overrides, |ev| {
+            ev.with_load_paths(&load_paths, |ev| {
+                // Inner returns BackendError; translate to EvalError
+                // at the bracket boundary. The outer ? then maps
+                // back via the From impl on backend.rs.
+                run_capture_and_synthesize(ev, req).map_err(|e| {
+                    pangea_ruby_eval::EvalError::Other(format!("compile: {e}"))
+                })
+            })
+        })
+        .map_err(BackendError::from)?;
+
+    // Pretty-serialize Rust-side. JSON.pretty_generate on the Ruby
+    // side disappears with this — third Pangea-Ruby require deleted.
+    let terraform_json = serde_json::to_string_pretty(&synthesis_json).map_err(|e| {
+        BackendError::Compiler(format!("serialize synthesis to JSON: {e}"))
+    })?;
+
+    Ok(CompileResult { terraform_json })
+}
+
+/// The inner eval — must run while `with_env` + `with_load_paths`
+/// are still active. Installs the toplevel `template` capture method
+/// + a `$pangea_captured_block` global, evals/loads the source,
+/// runs `synth.instance_eval(&captured_block)`, returns
+/// `synth.synthesis` as JSON.
+fn run_capture_and_synthesize(
+    evaluator: &RubyEvaluator,
+    req: &CompileRequest,
+) -> Result<serde_json::Value, BackendError> {
+    // Phase 1: install the capture method + run the source/load.
+    let load_phase = if let Some(path) = req.template_path.as_deref() {
+        let escaped_path = path.replace('\\', "\\\\").replace('"', "\\\"");
+        // chdir + load(path, true). `wrap=true` isolates the loaded
+        // file's constants in an anonymous module so repeated /compile
+        // calls don't accumulate const namespaces.
+        format!(
+            r#"
+            Dir.chdir(File.dirname("{escaped_path}")) do
+              load("{escaped_path}", true)
+            end
+            "#,
+        )
+    } else {
+        // Inline source mode. We eval at the toplevel binding so
+        // `template` is in scope.
+        let source = req.source.as_deref().unwrap_or("");
+        // The source string can be arbitrary Ruby; we wrap it in a
+        // here-doc-shaped Ruby literal to keep eval correct against
+        // arbitrary content (including embedded backticks/quotes).
+        // Use eval with a sentinel binding context so SyntaxError
+        // surfaces with a useful filename.
+        format!(
+            r#"
+            eval({source_literal}, TOPLEVEL_BINDING, "(pangea-template)", 1)
+            "#,
+            source_literal = ruby_string_literal(source),
+        )
+    };
+
+    let main_src = format!(
+        r#"
+        $pangea_captured_block = nil
+        begin
+          Object.send(:define_method, :template) do |_name, &blk|
+            $pangea_captured_block = blk
+          end
+          {load_phase}
+          if $pangea_captured_block.nil?
+            raise "no template :name do … end block found"
+          end
+
+          synth =
+            if defined?(TerraformSynthesizer)
+              s = TerraformSynthesizer.new
+              if defined?(Pangea::Resources)
+                Pangea::Resources.constants.each do |c|
+                  m = Pangea::Resources.const_get(c)
+                  s.extend(m) if m.is_a?(Module) && !m.is_a?(Class)
+                end
+              end
+              s
+            else
+              raise "TerraformSynthesizer not loaded — bundle terraform-synthesizer or set PANGEA_COMPILER_BACKEND=http"
+            end
+          synth.instance_eval(&$pangea_captured_block)
+          synth.synthesis
+        ensure
+          if Object.method_defined?(:template, true) || Object.private_method_defined?(:template, true)
+            Object.send(:remove_method, :template) rescue nil
+          end
+          $pangea_captured_block = nil
+        end
+        "#,
+    );
+
+    let result = evaluator
+        .eval_string(&main_src)
+        .map_err(|e| BackendError::Compiler(format!("compile eval: {e}")))?;
+
+    // Clear the variables global on the way out so subsequent
+    // compiles don't see this one's leak.
+    let _ = evaluator.eval_string(r#"$pangea_variables = nil"#);
+
+    Ok(result)
+}
+
+/// Render a Rust string as a Ruby double-quoted string literal,
+/// escaping the bare minimum for eval-safety. Used to embed an
+/// arbitrary workspace template body inside the wrapper Ruby code.
+fn ruby_string_literal(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\0' => out.push_str("\\0"),
+            // `#` is escaped to defeat Ruby's `#{}` interpolation.
+            '#' => out.push_str("\\#"),
+            c if (c as u32) < 0x20 => {
+                use std::fmt::Write;
+                let _ = write!(out, "\\x{:02x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// Resolve a fixture path. Absolute paths pass through; relative
