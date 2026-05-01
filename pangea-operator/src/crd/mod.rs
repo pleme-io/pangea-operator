@@ -23,11 +23,12 @@ pub mod workspace_catalog;
 
 // Re-export InfrastructureTemplate types
 pub use infrastructure_template::{
-    AwsCredentials, CloudflareCredentials, ComplianceStatus, Condition, ConfigMapRef, DriftDetail,
-    GitRepositoryRef, InfrastructureTemplate, InfrastructureTemplateSpec,
-    InfrastructureTemplateStatus, Phase, PolicyDecision, PolicyEvaluation, PolicyMatch, PolicyRule,
-    ProfileResult, ProviderCredentials, ResourceSummary, RetryPolicy, SecretRef,
-    SettlingExhaustionAction, SettlingPolicy, TemplateObjectRef, TemplateSource, VariableRef,
+    AwsCredentials, CloudflareCredentials, ComplianceStatus, Condition, ConfigMapRef, CycleSummary,
+    DriftDetail, GitRepositoryRef, InfrastructureTemplate, InfrastructureTemplateSpec,
+    InfrastructureTemplateStatus, Outcome, Phase, PolicyDecision, PolicyEvaluation, PolicyMatch,
+    PolicyRule, ProfileResult, ProviderCredentials, ReconcileCycle, ResourceOutcome,
+    ResourceSummary, RetryPolicy, SecretRef, SettlingExhaustionAction, SettlingPolicy,
+    TemplateObjectRef, TemplateSource, VariableRef,
 };
 
 // Re-export InfrastructureFlow types

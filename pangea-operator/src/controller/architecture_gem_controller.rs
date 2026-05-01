@@ -20,9 +20,10 @@ use kube::{
     runtime::controller::{Action, Controller},
     Client,
 };
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::crd::architecture_gem::{
     ArchitectureGem, ArchitectureGemStatus, Condition, FixtureResult, Phase, SmokeStatus,
@@ -165,7 +166,7 @@ async fn reconcile(gem: Arc<ArchitectureGem>, ctx: Arc<Context>) -> Result<Actio
             loaded = ?listing.classes,
             "ArchitectureGem has missing expected classes"
         );
-        let status = ArchitectureGemStatus {
+        let new_status = ArchitectureGemStatus {
             phase: Some(Phase::Failed),
             smoke_status: Some(SmokeStatus::NotRun),
             loaded_classes: listing.classes.clone(),
@@ -186,7 +187,7 @@ async fn reconcile(gem: Arc<ArchitectureGem>, ctx: Arc<Context>) -> Result<Actio
                 last_transition_time: Utc::now(),
             }],
         };
-        patch_status(&ctx.client, &name, &status).await?;
+        patch_status_if_changed(&ctx.client, &name, gem.status.as_ref(), new_status).await?;
         return Ok(Action::requeue(parse_interval(&gem.spec.refresh_interval)));
     }
 
@@ -238,7 +239,7 @@ async fn reconcile(gem: Arc<ArchitectureGem>, ctx: Arc<Context>) -> Result<Actio
         SmokeStatus::Failed
     };
 
-    let status = ArchitectureGemStatus {
+    let new_status = ArchitectureGemStatus {
         phase: Some(phase.clone()),
         smoke_status: Some(smoke_status),
         loaded_classes: listing.classes.clone(),
@@ -293,7 +294,7 @@ async fn reconcile(gem: Arc<ArchitectureGem>, ctx: Arc<Context>) -> Result<Actio
             },
         ],
     };
-    patch_status(&ctx.client, &name, &status).await?;
+    patch_status_if_changed(&ctx.client, &name, gem.status.as_ref(), new_status).await?;
 
     info!(
         gem = %name,
@@ -305,16 +306,104 @@ async fn reconcile(gem: Arc<ArchitectureGem>, ctx: Arc<Context>) -> Result<Actio
     Ok(Action::requeue(parse_interval(&gem.spec.refresh_interval)))
 }
 
-async fn patch_status(
+/// Patch status only when the computed content differs from what's
+/// already on the resource — and merge condition `last_transition_time`
+/// values from the existing status so each timestamp marks a real
+/// transition, not the latest reconcile cycle.
+///
+/// Without this, every reconcile bumps `lastReconcileTime` plus every
+/// condition's `lastTransitionTime`, the patch lands on the status
+/// subresource, the controller's watch fires immediately on the
+/// resourceVersion bump, the configured `requeue` interval is ignored,
+/// and the loop tightens to whatever the listing+smoke takes (~17ms in
+/// embedded mode) — burning CPU + drowning out useful logs.
+async fn patch_status_if_changed(
     client: &Client,
     name: &str,
-    status: &ArchitectureGemStatus,
+    old: Option<&ArchitectureGemStatus>,
+    mut new_status: ArchitectureGemStatus,
 ) -> Result<(), Error> {
+    if let Some(prev) = old {
+        new_status.conditions =
+            merge_condition_transitions(&prev.conditions, new_status.conditions);
+        if status_content_equal(prev, &new_status) {
+            debug!(
+                gem = %name,
+                "ArchitectureGem status content unchanged; skipping patch (avoids hot reconcile loop)"
+            );
+            return Ok(());
+        }
+    }
+
     let api: Api<ArchitectureGem> = Api::all(client.clone());
     let pp = PatchParams::default();
-    let patch = serde_json::json!({ "status": status });
+    let patch = serde_json::json!({ "status": new_status });
     api.patch_status(name, &pp, &Patch::Merge(&patch)).await?;
     Ok(())
+}
+
+/// For each new condition, look up the existing condition by
+/// `condition_type`. If status/reason/message all match, KEEP the
+/// existing `last_transition_time`. Otherwise USE the new one (a real
+/// transition).
+fn merge_condition_transitions(prev: &[Condition], new: Vec<Condition>) -> Vec<Condition> {
+    new.into_iter()
+        .map(|n| match prev.iter().find(|p| p.condition_type == n.condition_type) {
+            Some(p) if p.status == n.status && p.reason == n.reason && p.message == n.message => {
+                Condition {
+                    last_transition_time: p.last_transition_time,
+                    ..n
+                }
+            }
+            _ => n,
+        })
+        .collect()
+}
+
+/// Two statuses are content-equal when every observable field except
+/// `last_reconcile_time` matches. Conditions are compared by
+/// (type, status, reason, message) with timestamps ignored — caller
+/// should have run `merge_condition_transitions` first so timestamps
+/// already match for unchanged conditions.
+fn status_content_equal(a: &ArchitectureGemStatus, b: &ArchitectureGemStatus) -> bool {
+    if a.phase != b.phase
+        || a.smoke_status != b.smoke_status
+        || a.loaded_class_count != b.loaded_class_count
+        || a.observed_version != b.observed_version
+        || a.missing_classes != b.missing_classes
+    {
+        return false;
+    }
+    let a_loaded: HashSet<&String> = a.loaded_classes.iter().collect();
+    let b_loaded: HashSet<&String> = b.loaded_classes.iter().collect();
+    if a_loaded != b_loaded {
+        return false;
+    }
+    if a.fixture_results.len() != b.fixture_results.len() {
+        return false;
+    }
+    for (af, bf) in a.fixture_results.iter().zip(b.fixture_results.iter()) {
+        if af.class_name != bf.class_name
+            || af.passed != bf.passed
+            || af.error != bf.error
+            || af.input_hash != bf.input_hash
+        {
+            return false;
+        }
+    }
+    if a.conditions.len() != b.conditions.len() {
+        return false;
+    }
+    for (ac, bc) in a.conditions.iter().zip(b.conditions.iter()) {
+        if ac.condition_type != bc.condition_type
+            || ac.status != bc.status
+            || ac.reason != bc.reason
+            || ac.message != bc.message
+        {
+            return false;
+        }
+    }
+    true
 }
 
 async fn patch_status_failed(
@@ -323,6 +412,11 @@ async fn patch_status_failed(
     reason: &str,
     message: &str,
 ) -> Result<(), Error> {
+    // Read fresh status to preserve transition timestamps + skip patch
+    // if the failure shape hasn't changed.
+    let api: Api<ArchitectureGem> = Api::all(client.clone());
+    let prev = api.get(name).await.ok().and_then(|g| g.status);
+
     let status = ArchitectureGemStatus {
         phase: Some(Phase::Failed),
         smoke_status: Some(SmokeStatus::NotRun),
@@ -340,7 +434,7 @@ async fn patch_status_failed(
             last_transition_time: Utc::now(),
         }],
     };
-    patch_status(client, name, &status).await
+    patch_status_if_changed(client, name, prev.as_ref(), status).await
 }
 
 fn error_policy(_obj: Arc<ArchitectureGem>, err: &Error, _ctx: Arc<Context>) -> Action {
@@ -398,5 +492,102 @@ mod tests {
     #[test]
     fn parse_interval_with_whitespace() {
         assert_eq!(parse_interval("  5m  "), Duration::from_secs(300));
+    }
+
+    fn cond(t: &str, s: &str, r: &str, m: &str, ts: chrono::DateTime<Utc>) -> Condition {
+        Condition {
+            condition_type: t.to_string(),
+            status: s.to_string(),
+            reason: r.to_string(),
+            message: m.to_string(),
+            last_transition_time: ts,
+        }
+    }
+
+    #[test]
+    fn merge_keeps_old_timestamp_when_condition_unchanged() {
+        let old_ts = Utc::now() - chrono::Duration::hours(2);
+        let new_ts = Utc::now();
+        let prev = vec![cond("Loaded", "True", "OK", "loaded", old_ts)];
+        let new = vec![cond("Loaded", "True", "OK", "loaded", new_ts)];
+        let merged = merge_condition_transitions(&prev, new);
+        assert_eq!(merged[0].last_transition_time, old_ts);
+    }
+
+    #[test]
+    fn merge_uses_new_timestamp_when_status_transitions() {
+        let old_ts = Utc::now() - chrono::Duration::hours(2);
+        let new_ts = Utc::now();
+        let prev = vec![cond("Loaded", "False", "Missing", "missing X", old_ts)];
+        let new = vec![cond("Loaded", "True", "OK", "loaded", new_ts)];
+        let merged = merge_condition_transitions(&prev, new);
+        assert_eq!(merged[0].last_transition_time, new_ts);
+    }
+
+    #[test]
+    fn merge_uses_new_timestamp_for_brand_new_condition_type() {
+        let old_ts = Utc::now() - chrono::Duration::hours(2);
+        let new_ts = Utc::now();
+        let prev = vec![cond("Loaded", "True", "OK", "loaded", old_ts)];
+        let new = vec![
+            cond("Loaded", "True", "OK", "loaded", new_ts),
+            cond("Ready", "True", "Loaded", "phase: Loaded", new_ts),
+        ];
+        let merged = merge_condition_transitions(&prev, new);
+        assert_eq!(merged[0].last_transition_time, old_ts);
+        assert_eq!(merged[1].last_transition_time, new_ts);
+    }
+
+    fn mk_status(phase: Phase, loaded: Vec<String>) -> ArchitectureGemStatus {
+        ArchitectureGemStatus {
+            phase: Some(phase),
+            smoke_status: Some(SmokeStatus::Passed),
+            loaded_class_count: loaded.len() as u32,
+            loaded_classes: loaded,
+            missing_classes: vec![],
+            fixture_results: vec![],
+            last_reconcile_time: Some(Utc::now()),
+            observed_version: Some("0.x".to_string()),
+            conditions: vec![],
+        }
+    }
+
+    #[test]
+    fn equal_when_only_last_reconcile_time_differs() {
+        let mut a = mk_status(Phase::Loaded, vec!["A".into(), "B".into()]);
+        let mut b = a.clone();
+        a.last_reconcile_time = Some(Utc::now() - chrono::Duration::minutes(5));
+        b.last_reconcile_time = Some(Utc::now());
+        assert!(status_content_equal(&a, &b));
+    }
+
+    #[test]
+    fn equal_when_loaded_classes_in_different_order() {
+        let a = mk_status(Phase::Loaded, vec!["A".into(), "B".into()]);
+        let b = mk_status(Phase::Loaded, vec!["B".into(), "A".into()]);
+        assert!(status_content_equal(&a, &b));
+    }
+
+    #[test]
+    fn unequal_when_phase_differs() {
+        let a = mk_status(Phase::Loaded, vec!["A".into()]);
+        let b = mk_status(Phase::Failed, vec!["A".into()]);
+        assert!(!status_content_equal(&a, &b));
+    }
+
+    #[test]
+    fn unequal_when_loaded_classes_differ() {
+        let a = mk_status(Phase::Loaded, vec!["A".into()]);
+        let b = mk_status(Phase::Loaded, vec!["A".into(), "B".into()]);
+        assert!(!status_content_equal(&a, &b));
+    }
+
+    #[test]
+    fn unequal_when_condition_message_differs() {
+        let mut a = mk_status(Phase::Loaded, vec![]);
+        let mut b = a.clone();
+        a.conditions = vec![cond("Loaded", "True", "OK", "msg-a", Utc::now())];
+        b.conditions = vec![cond("Loaded", "True", "OK", "msg-b", Utc::now())];
+        assert!(!status_content_equal(&a, &b));
     }
 }

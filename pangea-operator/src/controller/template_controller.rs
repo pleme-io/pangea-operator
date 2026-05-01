@@ -2,7 +2,8 @@
 
 use crate::backend::{BackendConfigGenerator, Credentials};
 use crate::crd::{
-    InfrastructureTemplate, PangeaNamespace, Phase, PolicyDecision, PolicyEvaluation,
+    CycleSummary, DriftDetail, InfrastructureTemplate, InfrastructureTemplateStatus, Outcome,
+    PangeaNamespace, Phase, PolicyDecision, PolicyEvaluation, ReconcileCycle, ResourceOutcome,
     ResourceSummary, SettlingExhaustionAction, SettlingPolicy,
 };
 use crate::error::{Error, Result};
@@ -735,6 +736,14 @@ async fn handle_planning(
     if !has_changes {
         info!("No changes detected");
         update_phase(template, Phase::Ready, state).await?;
+        record_reconcile_cycle(
+            template,
+            state,
+            &[],
+            plan_text.clone(),
+            CycleResult::NoChanges,
+        )
+        .await?;
         return Ok(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL));
     }
 
@@ -751,6 +760,14 @@ async fn handle_planning(
             );
             warn!(%err_msg, "Policy refused plan");
             update_phase_with_error(template, Phase::Failed, &err_msg, state).await?;
+            record_reconcile_cycle(
+                template,
+                state,
+                &policy_outcome.annotated_drifts,
+                plan_text.clone(),
+                CycleResult::PolicyGated(PolicyDecision::Refuse),
+            )
+            .await?;
             record_event(template, state, EventType::Warning, "PolicyRefused", &err_msg).await;
             Ok(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL))
         }
@@ -797,6 +814,18 @@ async fn handle_planning(
                     "Policy requires approval, waiting"
                 );
                 update_pending_plan_hash(template, &plan_hash, state).await?;
+                // Emit a Drifted-uncorrected receipt so the user sees
+                // exactly which resources are awaiting approval. The
+                // content-equality guard inside record_reconcile_cycle
+                // suppresses re-patches while the plan keeps matching.
+                record_reconcile_cycle(
+                    template,
+                    state,
+                    &policy_outcome.annotated_drifts,
+                    plan_text.clone(),
+                    CycleResult::PolicyGated(PolicyDecision::RequireApproval),
+                )
+                .await?;
                 record_event(
                     template,
                     state,
@@ -838,6 +867,19 @@ async fn handle_applying(
         .apply(&workspace.path, plan_file, true)
         .await?;
 
+    // Snapshot the drift_details that handle_planning persisted on
+    // status before the apply ran — this is the per-resource change
+    // set the apply just consumed (or just failed against).
+    let prior_drifts = template
+        .status
+        .as_ref()
+        .map(|s| s.drift_details.clone())
+        .unwrap_or_default();
+    let prior_plan_summary = template
+        .status
+        .as_ref()
+        .and_then(|s| s.plan_summary.clone());
+
     if result.success {
         info!(duration_secs = result.duration.as_secs_f64(), "tofu apply completed successfully");
 
@@ -851,11 +893,27 @@ async fn handle_applying(
 
         update_apply_status(template, outputs, state).await?;
         update_phase(template, Phase::Ready, state).await?;
+        record_reconcile_cycle(
+            template,
+            state,
+            &prior_drifts,
+            prior_plan_summary,
+            CycleResult::AppliedSuccess,
+        )
+        .await?;
         record_event(template, state, EventType::Normal, "Applied", "Infrastructure applied successfully").await;
     } else {
         let err_msg = format!("tofu apply failed: {}", result.stderr);
         warn!(%err_msg);
         update_phase_with_error(template, Phase::Failed, &err_msg, state).await?;
+        record_reconcile_cycle(
+            template,
+            state,
+            &prior_drifts,
+            prior_plan_summary,
+            CycleResult::AppliedFailure(err_msg.clone()),
+        )
+        .await?;
         record_event(template, state, EventType::Warning, "ApplyFailed", &err_msg).await;
     }
 
@@ -1531,6 +1589,249 @@ fn content_hash(input: &str) -> u64 {
 }
 
 // ---------------------------------------------------------------------------
+// Reconcile cycle receipts
+// ---------------------------------------------------------------------------
+
+/// What triggered the cycle emission — drives outcome derivation when
+/// translating drift_details into per-resource ResourceOutcome entries.
+#[derive(Debug, Clone)]
+pub(crate) enum CycleResult {
+    /// Plan reported no changes — every managed resource matched
+    /// declared state. Apply did not run.
+    NoChanges,
+    /// Apply ran successfully on every change in `drift_details`.
+    /// Each entry's terraform action becomes the per-resource outcome.
+    AppliedSuccess,
+    /// Apply errored. Every change in `drift_details` becomes
+    /// `Failed`; the apply error is attached as `message`.
+    AppliedFailure(String),
+    /// Policy gated this cycle (refuse / requireApproval). Apply did
+    /// NOT run; every change is `Drifted` (uncorrected) with the
+    /// policy decision as `message`.
+    PolicyGated(PolicyDecision),
+}
+
+/// Build a typed receipt summarizing one reconcile cycle.
+///
+/// `drifts` is the set of resources the plan reported a change on
+/// (already annotated with policy decisions when relevant).
+/// `total` is the total managed-resource count; `total - drifts.len()`
+/// becomes `summary.matched`. `next_cycle` is the cycle number for
+/// THIS cycle (caller has already incremented `status.cycle_count`).
+fn build_reconcile_cycle(
+    next_cycle: u64,
+    started_at: chrono::DateTime<Utc>,
+    drifts: &[DriftDetail],
+    total: u32,
+    plan_summary: Option<String>,
+    source_revision: Option<String>,
+    result: CycleResult,
+) -> ReconcileCycle {
+    let mut summary = CycleSummary::default();
+
+    let outcomes: Vec<ResourceOutcome> = drifts
+        .iter()
+        .take(100)
+        .map(|d| {
+            let (outcome, message) = match result {
+                CycleResult::AppliedFailure(ref err) => {
+                    (Outcome::Failed, Some(truncate_for_status(err)))
+                }
+                CycleResult::PolicyGated(decision) => (
+                    Outcome::Drifted,
+                    Some(format!("policy decision: {}", decision.as_str())),
+                ),
+                CycleResult::NoChanges => {
+                    // Defensive: a NoChanges cycle should have empty
+                    // drifts. If we got here, treat as Matched.
+                    (Outcome::Matched, None)
+                }
+                CycleResult::AppliedSuccess => match outcome_for_action(&d.action) {
+                    o @ Outcome::Matched => (o, None),
+                    o => (o, None),
+                },
+            };
+            match outcome {
+                Outcome::Matched => summary.matched = summary.matched.saturating_add(1),
+                Outcome::Updated => summary.updated = summary.updated.saturating_add(1),
+                Outcome::Created => summary.created = summary.created.saturating_add(1),
+                Outcome::Destroyed => summary.destroyed = summary.destroyed.saturating_add(1),
+                Outcome::Imported => summary.imported = summary.imported.saturating_add(1),
+                Outcome::Drifted => {
+                    summary.drifted_uncorrected = summary.drifted_uncorrected.saturating_add(1)
+                }
+                Outcome::Failed => summary.failed = summary.failed.saturating_add(1),
+            }
+            ResourceOutcome {
+                address: d.address.clone(),
+                outcome,
+                action: Some(d.action.clone()),
+                message,
+            }
+        })
+        .collect();
+
+    // matched aggregate = (total - touched). For NoChanges cycles
+    // drifts is empty so this equals `total`.
+    let touched_count = drifts.len() as u32;
+    let untouched = total.saturating_sub(touched_count);
+    summary.matched = summary.matched.saturating_add(untouched);
+
+    ReconcileCycle {
+        cycle: next_cycle,
+        started_at,
+        completed_at: Utc::now(),
+        source_revision,
+        plan_summary,
+        summary,
+        outcomes,
+    }
+}
+
+/// Map the terraform action vocabulary to the typed `Outcome` the
+/// operator surfaces. The mapping is deliberately conservative:
+/// replaces collapse to `Updated` (net effect = matches declared);
+/// unknown actions land on `Updated` so we never silently lose a
+/// signal.
+fn outcome_for_action(action: &str) -> Outcome {
+    match action {
+        "no-op" | "noop" => Outcome::Matched,
+        "create" => Outcome::Created,
+        "update" => Outcome::Updated,
+        "delete" => Outcome::Destroyed,
+        "replace" => Outcome::Updated,
+        "import" => Outcome::Imported,
+        _ => Outcome::Updated,
+    }
+}
+
+fn truncate_for_status(s: &str) -> String {
+    const MAX: usize = 256;
+    if s.len() <= MAX {
+        s.to_string()
+    } else {
+        let mut t = s[..MAX].to_string();
+        t.push('…');
+        t
+    }
+}
+
+/// Patch `status.lastCycle` + bump `status.cycleCount`. Skips the
+/// patch entirely if the receipt is content-equal to the prior one
+/// (only the timestamps differ) — keeps reconcile-loop chatter off
+/// etcd for steady-state Ready→Ready flows.
+async fn record_reconcile_cycle(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+    drifts: &[DriftDetail],
+    plan_summary: Option<String>,
+    result: CycleResult,
+) -> Result<()> {
+    let name = template.name_any();
+    let namespace = template.namespace().unwrap_or_default();
+    let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
+
+    let prior_status = template.status.clone().unwrap_or_default();
+    let prior_cycle_count = prior_status.cycle_count;
+    let next_cycle = prior_cycle_count.saturating_add(1);
+
+    let total = prior_status
+        .resources
+        .as_ref()
+        .map(|r| r.total)
+        .unwrap_or(0);
+    let started_at = prior_status
+        .last_planned_at
+        .unwrap_or_else(Utc::now);
+    let source_revision = prior_status.last_applied_revision.clone();
+
+    let new_cycle = build_reconcile_cycle(
+        next_cycle,
+        started_at,
+        drifts,
+        total,
+        plan_summary,
+        source_revision,
+        result,
+    );
+
+    if let Some(prev) = prior_status.last_cycle.as_ref() {
+        if cycle_content_equal(prev, &new_cycle) {
+            debug!(
+                template = %name,
+                cycle = prior_cycle_count,
+                "Reconcile cycle content unchanged; skipping status patch"
+            );
+            return Ok(());
+        }
+    }
+
+    let mut new_status = prior_status;
+    new_status.cycle_count = next_cycle;
+    new_status.last_cycle = Some(new_cycle.clone());
+
+    let patch = serde_json::json!({
+        "status": {
+            "cycleCount": new_status.cycle_count,
+            "lastCycle": new_status.last_cycle,
+        }
+    });
+    api.patch_status(
+        &name,
+        &PatchParams::apply("pangea-operator"),
+        &Patch::Merge(&patch),
+    )
+    .await?;
+
+    info!(
+        template = %name,
+        cycle = next_cycle,
+        matched = new_cycle.summary.matched,
+        updated = new_cycle.summary.updated,
+        created = new_cycle.summary.created,
+        destroyed = new_cycle.summary.destroyed,
+        drifted_uncorrected = new_cycle.summary.drifted_uncorrected,
+        failed = new_cycle.summary.failed,
+        "ReconcileCycle recorded"
+    );
+    Ok(())
+}
+
+/// Two cycles are content-equal when summary, source_revision,
+/// plan_summary, and outcomes match. Cycle number and timestamps are
+/// deliberately ignored — they always differ between successive
+/// reconciles, and skipping the patch when nothing else changed is
+/// the whole point (no etcd churn for Matched-only steady state).
+fn cycle_content_equal(a: &ReconcileCycle, b: &ReconcileCycle) -> bool {
+    if a.summary.matched != b.summary.matched
+        || a.summary.updated != b.summary.updated
+        || a.summary.created != b.summary.created
+        || a.summary.destroyed != b.summary.destroyed
+        || a.summary.imported != b.summary.imported
+        || a.summary.drifted_uncorrected != b.summary.drifted_uncorrected
+        || a.summary.failed != b.summary.failed
+    {
+        return false;
+    }
+    if a.source_revision != b.source_revision || a.plan_summary != b.plan_summary {
+        return false;
+    }
+    if a.outcomes.len() != b.outcomes.len() {
+        return false;
+    }
+    for (ao, bo) in a.outcomes.iter().zip(b.outcomes.iter()) {
+        if ao.address != bo.address
+            || ao.outcome != bo.outcome
+            || ao.action != bo.action
+            || ao.message != bo.message
+        {
+            return false;
+        }
+    }
+    true
+}
+
+// ---------------------------------------------------------------------------
 // Finalizer helpers
 // ---------------------------------------------------------------------------
 
@@ -1760,5 +2061,184 @@ impl From<ReconcileAction> for Action {
             ReconcileAction::Requeue(duration) => Action::requeue(duration),
             ReconcileAction::Done => Action::await_change(),
         }
+    }
+}
+
+#[cfg(test)]
+mod cycle_tests {
+    use super::*;
+
+    fn d(addr: &str, action: &str) -> DriftDetail {
+        DriftDetail {
+            address: addr.to_string(),
+            action: action.to_string(),
+            risk: "low".to_string(),
+            attributes: vec![],
+            policy_decision: None,
+            matched_policy: None,
+        }
+    }
+
+    #[test]
+    fn outcome_action_mapping() {
+        assert_eq!(outcome_for_action("no-op"), Outcome::Matched);
+        assert_eq!(outcome_for_action("noop"), Outcome::Matched);
+        assert_eq!(outcome_for_action("create"), Outcome::Created);
+        assert_eq!(outcome_for_action("update"), Outcome::Updated);
+        assert_eq!(outcome_for_action("delete"), Outcome::Destroyed);
+        assert_eq!(outcome_for_action("replace"), Outcome::Updated);
+        assert_eq!(outcome_for_action("import"), Outcome::Imported);
+        assert_eq!(outcome_for_action("anything-else"), Outcome::Updated);
+    }
+
+    #[test]
+    fn no_changes_cycle_marks_all_matched() {
+        let cycle = build_reconcile_cycle(
+            1,
+            Utc::now(),
+            &[],
+            20,
+            Some("+0 ~0 -0".to_string()),
+            None,
+            CycleResult::NoChanges,
+        );
+        assert_eq!(cycle.summary.matched, 20);
+        assert_eq!(cycle.summary.updated, 0);
+        assert_eq!(cycle.summary.failed, 0);
+        assert_eq!(cycle.outcomes.len(), 0);
+    }
+
+    #[test]
+    fn applied_success_derives_per_resource_outcomes() {
+        let drifts = vec![
+            d("cf_dns_record.foo", "update"),
+            d("cf_zone.bar", "create"),
+            d("cf_workers_script.baz", "delete"),
+        ];
+        let cycle = build_reconcile_cycle(
+            5,
+            Utc::now(),
+            &drifts,
+            20,
+            Some("+1 ~1 -1".to_string()),
+            None,
+            CycleResult::AppliedSuccess,
+        );
+        assert_eq!(cycle.summary.matched, 17, "20 total - 3 touched = 17");
+        assert_eq!(cycle.summary.updated, 1);
+        assert_eq!(cycle.summary.created, 1);
+        assert_eq!(cycle.summary.destroyed, 1);
+        assert_eq!(cycle.summary.failed, 0);
+        assert_eq!(cycle.outcomes.len(), 3);
+        assert_eq!(cycle.outcomes[0].outcome, Outcome::Updated);
+        assert_eq!(cycle.outcomes[0].action.as_deref(), Some("update"));
+    }
+
+    #[test]
+    fn apply_failure_marks_all_failed_with_error_message() {
+        let drifts = vec![d("cf_dns_record.foo", "update")];
+        let err = "tofu apply failed: provider error: rate limit".to_string();
+        let cycle = build_reconcile_cycle(
+            6,
+            Utc::now(),
+            &drifts,
+            20,
+            None,
+            None,
+            CycleResult::AppliedFailure(err.clone()),
+        );
+        assert_eq!(cycle.summary.failed, 1);
+        assert_eq!(cycle.summary.matched, 19);
+        assert_eq!(cycle.outcomes[0].outcome, Outcome::Failed);
+        assert!(cycle.outcomes[0].message.as_ref().unwrap().contains("rate limit"));
+    }
+
+    #[test]
+    fn policy_gated_marks_drifted_with_decision_message() {
+        let drifts = vec![d("cf_dns_record.foo", "update")];
+        let cycle = build_reconcile_cycle(
+            7,
+            Utc::now(),
+            &drifts,
+            20,
+            None,
+            None,
+            CycleResult::PolicyGated(PolicyDecision::Refuse),
+        );
+        assert_eq!(cycle.summary.drifted_uncorrected, 1);
+        assert_eq!(cycle.outcomes[0].outcome, Outcome::Drifted);
+        assert!(cycle.outcomes[0].message.as_ref().unwrap().contains("refuse"));
+    }
+
+    #[test]
+    fn cycle_content_equal_ignores_cycle_number_and_timestamps() {
+        let now = Utc::now();
+        let later = now + chrono::Duration::minutes(5);
+        let mk = |c: u64, ts: chrono::DateTime<Utc>| ReconcileCycle {
+            cycle: c,
+            started_at: ts,
+            completed_at: ts,
+            source_revision: None,
+            plan_summary: Some("+0 ~0 -0".into()),
+            summary: CycleSummary {
+                matched: 20,
+                ..Default::default()
+            },
+            outcomes: vec![],
+        };
+        assert!(cycle_content_equal(&mk(1, now), &mk(2, later)));
+    }
+
+    #[test]
+    fn cycle_content_unequal_when_summary_differs() {
+        let now = Utc::now();
+        let mk = |matched: u32| ReconcileCycle {
+            cycle: 1,
+            started_at: now,
+            completed_at: now,
+            source_revision: None,
+            plan_summary: None,
+            summary: CycleSummary {
+                matched,
+                ..Default::default()
+            },
+            outcomes: vec![],
+        };
+        assert!(!cycle_content_equal(&mk(20), &mk(19)));
+    }
+
+    #[test]
+    fn truncate_for_status_caps_long_strings() {
+        let long = "x".repeat(500);
+        let t = truncate_for_status(&long);
+        assert!(t.ends_with('…'));
+        assert!(t.chars().count() <= 257);
+    }
+
+    #[test]
+    fn truncate_for_status_passes_short_through() {
+        assert_eq!(truncate_for_status("ok"), "ok");
+    }
+
+    #[test]
+    fn outcomes_capped_at_100() {
+        let drifts: Vec<DriftDetail> =
+            (0..200).map(|i| d(&format!("cf_dns_record.r{i}"), "update")).collect();
+        let cycle = build_reconcile_cycle(
+            8,
+            Utc::now(),
+            &drifts,
+            500,
+            None,
+            None,
+            CycleResult::AppliedSuccess,
+        );
+        assert_eq!(cycle.outcomes.len(), 100, "outcomes capped at 100");
+        // Summary still counts the FULL touched-set in matched math:
+        // 500 total - 200 touched (all update) = 300 matched.
+        // Per-Outcome counts only reflect what we iterated (capped at 100).
+        // So updated count = 100 (top of the cap).
+        assert_eq!(cycle.summary.updated, 100);
+        assert_eq!(cycle.summary.matched, 300);
     }
 }

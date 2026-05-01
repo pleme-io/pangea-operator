@@ -25,6 +25,10 @@ use strum::{Display, EnumString};
     printcolumn = r#"{"name":"Phase","type":"string","jsonPath":".status.phase"}"#,
     printcolumn = r#"{"name":"Namespace","type":"string","jsonPath":".spec.pangeaNamespace"}"#,
     printcolumn = r#"{"name":"Resources","type":"integer","jsonPath":".status.resources.total"}"#,
+    printcolumn = r#"{"name":"Cycle","type":"integer","jsonPath":".status.cycleCount"}"#,
+    printcolumn = r#"{"name":"Matched","type":"integer","jsonPath":".status.lastCycle.summary.matched"}"#,
+    printcolumn = r#"{"name":"Updated","type":"integer","jsonPath":".status.lastCycle.summary.updated"}"#,
+    printcolumn = r#"{"name":"Drifted","type":"integer","jsonPath":".status.lastCycle.summary.driftedUncorrected"}"#,
     printcolumn = r#"{"name":"Protected","type":"boolean","jsonPath":".spec.destroyProtection"}"#,
     printcolumn = r#"{"name":"Age","type":"date","jsonPath":".metadata.creationTimestamp"}"#
 )]
@@ -402,6 +406,159 @@ pub struct InfrastructureTemplateStatus {
     /// settle propagates via JSON Merge Patch.
     #[serde(default)]
     pub stuck_resources: Vec<String>,
+
+    /// Monotonic cycle counter — bumped once per completed
+    /// reconcile (every plan→apply pair, or every plan-only when no
+    /// changes). Lets observers detect the operator's heartbeat
+    /// without polling timestamps.
+    #[serde(default)]
+    pub cycle_count: u64,
+
+    /// Receipt for the most recent reconcile cycle: per-resource
+    /// outcomes (Matched / Updated / Created / Destroyed / Imported /
+    /// Drifted / Failed) plus aggregate counts. The shape the user
+    /// reads to answer "what did the operator just do, and to what?"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_cycle: Option<ReconcileCycle>,
+}
+
+/// Receipt for one reconcile cycle. Surfaces the answer to "what did
+/// the operator do this cycle?" as typed data instead of free-text logs.
+///
+/// Generated at the end of every plan→apply pair (or every plan-only
+/// when no changes were planned). The aggregate counts answer "how
+/// much converged?"; the `outcomes` list answers "to what?".
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ReconcileCycle {
+    /// Monotonic cycle number (mirrors `status.cycleCount` at the
+    /// moment this cycle was emitted; redundant but lets observers
+    /// snapshot the receipt with its cycle number atomically).
+    pub cycle: u64,
+
+    /// When the cycle started (immediately after Verified gate).
+    pub started_at: DateTime<Utc>,
+
+    /// When the cycle completed (after apply, or after plan-with-no-changes).
+    pub completed_at: DateTime<Utc>,
+
+    /// Source revision the cycle reconciled against — git commit SHA
+    /// for git-sourced templates, content hash for inline / configmap.
+    /// Mirrors `status.lastAppliedRevision` for the cycle that just
+    /// landed; lets observers correlate cycles to source changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_revision: Option<String>,
+
+    /// Human-readable plan summary, mirroring tofu's `Plan: +X ~Y -Z`
+    /// shape. Same string as top-level `status.planSummary` at the
+    /// moment this cycle ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_summary: Option<String>,
+
+    /// Aggregate outcome counts for the cycle. `matched` = total
+    /// managed resources minus everything that planned a change.
+    /// Other counts are per-Outcome variant.
+    #[serde(default)]
+    pub summary: CycleSummary,
+
+    /// Per-resource outcomes for resources the cycle TOUCHED — i.e.
+    /// resources that the plan reported a change on (Created /
+    /// Updated / Destroyed) or that the apply failed on (Failed) or
+    /// that policy gated (Drifted).
+    ///
+    /// Resources that had no planned change are NOT individually
+    /// listed here (they're rolled up into `summary.matched`); listing
+    /// every untouched resource per cycle would balloon status
+    /// payloads unbounded. Capped at 100 entries.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outcomes: Vec<ResourceOutcome>,
+}
+
+/// Aggregate counts for one cycle. Sum of all variants equals total
+/// managed resource count.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CycleSummary {
+    /// Resources whose declared state matched actual state — no plan
+    /// action (`no-op`).
+    #[serde(default)]
+    pub matched: u32,
+    /// Resources updated to declared state by this cycle's apply.
+    #[serde(default)]
+    pub updated: u32,
+    /// Resources newly created by this cycle's apply.
+    #[serde(default)]
+    pub created: u32,
+    /// Resources destroyed by this cycle's apply.
+    #[serde(default)]
+    pub destroyed: u32,
+    /// Resources adopted into state by `tofu import` (reserved — set
+    /// to 0 until the import path lands in a follow-up).
+    #[serde(default)]
+    pub imported: u32,
+    /// Resources where drift was detected but NOT corrected (policy =
+    /// requireApproval / refuse, or apply was skipped).
+    #[serde(default)]
+    pub drifted_uncorrected: u32,
+    /// Resources where the apply errored.
+    #[serde(default)]
+    pub failed: u32,
+}
+
+/// Per-resource cycle outcome. The typed answer to "what happened to
+/// THIS resource this cycle?".
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceOutcome {
+    /// Terraform resource address (e.g. `cloudflare_dns_record.foo`).
+    pub address: String,
+
+    /// What happened.
+    pub outcome: Outcome,
+
+    /// Original tofu action category (`create`, `update`, `delete`,
+    /// `replace`, `noop`) when known. Lets observers see the raw
+    /// terraform shape behind the typed Outcome.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+
+    /// Optional context — for `Drifted` outcomes, the policy decision
+    /// that gated the change; for `Failed`, the tofu error excerpt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// Typed outcome for one resource within one reconcile cycle.
+///
+/// The vocabulary is the user-facing answer to "did the operator
+/// match the declared state, update it, import it, or fail?". Maps
+/// from tofu's lower-level action vocabulary (`create`/`update`/
+/// `delete`/`replace`/`no-op`) plus the apply outcome plus policy
+/// gating.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, EnumString)]
+#[serde(rename_all = "PascalCase")]
+#[strum(serialize_all = "PascalCase")]
+pub enum Outcome {
+    /// Declared state already matched actual state — apply was a no-op
+    /// for this resource (terraform `no-op` action).
+    Matched,
+    /// Apply ran an `update` on this resource (or a replace, which is
+    /// net "updated to declared state").
+    Updated,
+    /// Apply ran a `create` on this resource.
+    Created,
+    /// Apply ran a `destroy` on this resource.
+    Destroyed,
+    /// Apply ran a `tofu import` to adopt an out-of-band resource into
+    /// state. Reserved variant — emitted by the import path landing
+    /// in a follow-up.
+    Imported,
+    /// Plan reported drift, but the operator did NOT correct it
+    /// (policy = requireApproval / refuse, or apply was skipped due
+    /// to a settling escalation).
+    Drifted,
+    /// Apply errored on this specific resource.
+    Failed,
 }
 
 /// Lifecycle phase of an InfrastructureTemplate.
@@ -788,5 +945,89 @@ impl InfrastructureTemplate {
             .unwrap_or(default_max_retries());
 
         self.retry_count() >= max_retries
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kube::CustomResourceExt;
+
+    #[test]
+    fn crd_still_generates_with_cycle_fields() {
+        let crd = InfrastructureTemplate::crd();
+        let yaml = serde_yaml::to_string(&crd).expect("crd serializes");
+        assert!(yaml.contains("InfrastructureTemplate"));
+        assert!(yaml.contains("cycleCount"));
+        assert!(yaml.contains("lastCycle"));
+    }
+
+    #[test]
+    fn outcome_display_round_trips() {
+        for o in [
+            Outcome::Matched,
+            Outcome::Updated,
+            Outcome::Created,
+            Outcome::Destroyed,
+            Outcome::Imported,
+            Outcome::Drifted,
+            Outcome::Failed,
+        ] {
+            let s = o.to_string();
+            let parsed: Outcome = s.parse().expect("outcome round-trips");
+            assert_eq!(parsed, o);
+        }
+    }
+
+    #[test]
+    fn cycle_summary_default_zero() {
+        let s = CycleSummary::default();
+        assert_eq!(s.matched, 0);
+        assert_eq!(s.updated, 0);
+        assert_eq!(s.created, 0);
+        assert_eq!(s.destroyed, 0);
+        assert_eq!(s.imported, 0);
+        assert_eq!(s.drifted_uncorrected, 0);
+        assert_eq!(s.failed, 0);
+    }
+
+    #[test]
+    fn reconcile_cycle_serializes_with_camel_case() {
+        let cycle = ReconcileCycle {
+            cycle: 7,
+            started_at: chrono::Utc::now(),
+            completed_at: chrono::Utc::now(),
+            source_revision: Some("abc1234".into()),
+            plan_summary: Some("+0 ~1 -0".into()),
+            summary: CycleSummary {
+                matched: 19,
+                updated: 1,
+                ..Default::default()
+            },
+            outcomes: vec![ResourceOutcome {
+                address: "cloudflare_dns_record.foo".into(),
+                outcome: Outcome::Updated,
+                action: Some("update".into()),
+                message: None,
+            }],
+        };
+        let json = serde_json::to_string(&cycle).expect("serializes");
+        assert!(json.contains("cycle"));
+        assert!(json.contains("startedAt"));
+        assert!(json.contains("completedAt"));
+        assert!(json.contains("planSummary"));
+        assert!(json.contains("driftedUncorrected"));
+        assert!(json.contains("\"outcome\":\"Updated\""));
+    }
+
+    #[test]
+    fn template_status_default_omits_last_cycle() {
+        let s = InfrastructureTemplateStatus::default();
+        let json = serde_json::to_string(&s).expect("serializes");
+        // `lastCycle` is skip_serializing_if=Option::is_none — must
+        // not appear in default-status payload (no extra etcd churn
+        // for templates that haven't reconciled yet).
+        assert!(!json.contains("lastCycle"));
+        assert!(json.contains("cycleCount"));
     }
 }
