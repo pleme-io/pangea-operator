@@ -302,6 +302,14 @@ pub struct ProviderCredentials {
     /// Cloudflare credentials configuration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cloudflare: Option<CloudflareCredentials>,
+
+    /// GitHub credentials configuration. Used by templates that
+    /// declare github_* providers (e.g. pangea-github's
+    /// `cloudflare_zero_trust_*` adjacent shapes — repos, runner
+    /// groups, branch protection). Same shape as the cloudflare
+    /// credentials block: a secretRef to a Secret containing a PAT.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github: Option<GitHubCredentials>,
 }
 
 /// AWS credentials configuration.
@@ -325,6 +333,17 @@ pub struct AwsCredentials {
 #[serde(rename_all = "camelCase")]
 pub struct CloudflareCredentials {
     /// Secret containing Cloudflare API token.
+    pub secret_ref: SecretRef,
+}
+
+/// GitHub credentials configuration. The referenced Secret holds a
+/// fine-grained or classic PAT exposed to the tofu provider as
+/// `GITHUB_TOKEN` (or whatever envFrom shape the github_* providers
+/// expect).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubCredentials {
+    /// Secret containing the GitHub PAT.
     pub secret_ref: SecretRef,
 }
 
