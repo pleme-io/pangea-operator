@@ -224,17 +224,27 @@ fn list_architectures(
     evaluator: &RubyEvaluator,
     gem: &str,
 ) -> Result<ArchListing, BackendError> {
-    // Try requiring the gem; missing-gem is a typed condition the
-    // controller surfaces, so we absorb LoadError into an empty
-    // listing rather than propagating.
+    // Try requiring the gem under both the dashed name (canonical
+    // gem name; matches the existing pangea-compiler bundler path)
+    // and the slashed form (matches gems whose entry file is at
+    // lib/<dashed>/<arch>.rb instead of lib/<gem-name>.rb — e.g.
+    // pangea-architectures' entry is lib/pangea/architectures.rb).
+    // Missing-gem is a typed condition the controller surfaces.
+    let dashed = gem.replace('\'', "\\'");
+    let slashed = gem.replace('-', "/").replace('\'', "\\'");
     let require_src = format!(r#"
-      begin
-        require '{}'
-        :ok
-      rescue LoadError => e
-        :load_error
+      loaded = false
+      ['{dashed}', '{slashed}'].each do |require_path|
+        begin
+          require require_path
+          loaded = true
+          break
+        rescue LoadError
+          next
+        end
       end
-    "#, gem.replace('\'', "\\'"));
+      loaded ? :ok : :load_error
+    "#);
     let _ = evaluator
         .eval_string(&require_src)
         .map_err(|e| BackendError::Ruby(format!("require {gem}: {e}")))?;
