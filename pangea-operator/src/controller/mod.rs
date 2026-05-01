@@ -4,8 +4,10 @@
 //! InfrastructureTemplate, PangeaNamespace, InfrastructureFlow, PackerBuild,
 //! AmiTest, and ImagePipeline.
 
+pub mod architecture_gem_controller;
 mod flow_controller;
 pub mod flow_scheduler;
+pub mod policy_cascade;
 mod reconciler;
 pub mod settling;
 mod template_controller;

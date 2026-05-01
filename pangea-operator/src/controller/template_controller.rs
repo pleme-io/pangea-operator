@@ -189,6 +189,16 @@ async fn reconcile_template(
 
     let action = match current_phase {
         Phase::Pending => handle_pending(&template, &state).await?,
+        // M2 — Verifying / Verified phases. Skeleton: drop straight to
+        // Compiling. Once M1's ArchitectureGem registry lookup is
+        // wired into the operator's runtime context, `Verifying`
+        // queries the registry and only advances to `Verified` when
+        // every required gem is `Loaded`. Until then, fall through.
+        // See theory/PANGEA-WORKSPACE-RECONCILIATION.md M2.
+        Phase::Verifying | Phase::Verified => {
+            update_phase(&template, Phase::Compiling, &state).await?;
+            ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL)
+        }
         Phase::Compiling => handle_compiling(&template, &state).await?,
         Phase::Initializing => handle_initializing(&template, &state).await?,
         Phase::Planning => handle_planning(&template, &state).await?,

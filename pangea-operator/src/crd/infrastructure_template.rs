@@ -409,6 +409,18 @@ pub struct InfrastructureTemplateStatus {
 pub enum Phase {
     /// Initial state, waiting to be processed.
     Pending,
+    /// M2 — checking that every ArchitectureGem this template
+    /// references has phase `Loaded` (every expected class loaded +
+    /// every fixture passed). Cannot advance until verified. See
+    /// theory/PANGEA-WORKSPACE-RECONCILIATION.md "Reconciliation
+    /// state machine".
+    Verifying,
+    /// M2 — typed gate: every required gem is loaded + smoke-tested.
+    /// Past this point gem-loading-failure modes are eliminated.
+    /// Compiler errors at this stage are environmental
+    /// (Cloudflare API outage, AWS rate limit), never substrate-level
+    /// "the operator forgot to package the gem."
+    Verified,
     /// Compiling Ruby DSL to Terraform JSON.
     Compiling,
     /// Running `tofu init`.

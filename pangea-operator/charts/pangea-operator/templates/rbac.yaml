@@ -91,6 +91,63 @@ rules:
       - create
       - patch
 
+  # M1 — ArchitectureGem (typed registry of pangea-* gems)
+  - apiGroups:
+      - pangea.pleme.io
+    resources:
+      - architecturegems
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - pangea.pleme.io
+    resources:
+      - architecturegems/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - pangea.pleme.io
+    resources:
+      - architecturegems/finalizers
+    verbs:
+      - update
+
+  # M3 — WorkspaceCatalog (typed registry of operator-watched workspaces +
+  # workspace-level cascade policy)
+  - apiGroups:
+      - pangea.pleme.io
+    resources:
+      - workspacecatalogs
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - pangea.pleme.io
+    resources:
+      - workspacecatalogs/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - pangea.pleme.io
+    resources:
+      - workspacecatalogs/finalizers
+    verbs:
+      - update
+
   # Leader election
   - apiGroups:
       - coordination.k8s.io

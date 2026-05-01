@@ -15,6 +15,10 @@ use crate::crd::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Enum, Serialize, Deserialize)]
 pub enum Phase {
     Pending,
+    /// M2 — Verifying ArchitectureGem registry.
+    Verifying,
+    /// M2 — typed gate passed; safe to compile.
+    Verified,
     Compiling,
     Initializing,
     Planning,
@@ -29,6 +33,8 @@ impl From<CrdPhase> for Phase {
     fn from(phase: CrdPhase) -> Self {
         match phase {
             CrdPhase::Pending => Phase::Pending,
+            CrdPhase::Verifying => Phase::Verifying,
+            CrdPhase::Verified => Phase::Verified,
             CrdPhase::Compiling => Phase::Compiling,
             CrdPhase::Initializing => Phase::Initializing,
             CrdPhase::Planning => Phase::Planning,

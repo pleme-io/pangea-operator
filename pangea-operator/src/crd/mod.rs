@@ -9,6 +9,7 @@
 //! - `ImagePipeline`: Full AMI lifecycle orchestrator (build → test → deploy → verify)
 
 pub mod ami_test;
+pub mod architecture_gem;
 mod infrastructure_flow;
 mod infrastructure_template;
 pub mod image_pipeline;
@@ -18,6 +19,7 @@ pub mod synthesizer_format;
 pub mod compliance_schedule;
 pub mod compliance_binding;
 pub mod pangea_dashboard;
+pub mod workspace_catalog;
 
 // Re-export InfrastructureTemplate types
 pub use infrastructure_template::{
@@ -70,6 +72,20 @@ pub use compliance_binding::{
 pub use pangea_dashboard::{
     DashboardSource, PangeaDashboard, PangeaDashboardPhase, PangeaDashboardSpec,
     PangeaDashboardStatus,
+};
+
+// Re-export ArchitectureGem types (M1 — workspace reconciliation hardening)
+pub use architecture_gem::{
+    ApprovalRouting, ArchitectureGem, ArchitectureGemSpec, ArchitectureGemStatus,
+    Condition as ArchitectureGemCondition, DriftReaction, FixtureResult, GemPolicy, GemSource,
+    Phase as ArchitectureGemPhase, SettlingExhaustionAction as GemSettlingExhaustionAction,
+    SettlingPolicy as GemSettlingPolicy, SmokeFixture, SmokeStatus,
+};
+
+// Re-export WorkspaceCatalog types (M3 — hierarchical policy cascade)
+pub use workspace_catalog::{
+    WorkspaceCatalog, WorkspaceCatalogSpec, WorkspaceCatalogStatus,
+    WorkspacePolicy, WorkspaceSource,
 };
 
 // Re-export SynthesizerFormat types
@@ -162,6 +178,21 @@ pub fn generate_crds() -> String {
             .expect("Failed to serialize PangeaDashboard CRD"),
     );
 
+    // M1 — ArchitectureGem: typed registry + smoke-test gate.
+    crds.push_str("---\n");
+    crds.push_str(
+        &serde_yaml::to_string(&ArchitectureGem::crd())
+            .expect("Failed to serialize ArchitectureGem CRD"),
+    );
+
+    // M3 — WorkspaceCatalog: declares operator-watched workspaces +
+    // workspace-level policy in the four-level cascade.
+    crds.push_str("---\n");
+    crds.push_str(
+        &serde_yaml::to_string(&WorkspaceCatalog::crd())
+            .expect("Failed to serialize WorkspaceCatalog CRD"),
+    );
+
     crds
 }
 
@@ -203,6 +234,8 @@ mod tests {
         assert!(crds.contains("ComplianceSchedule"), "Missing ComplianceSchedule CRD");
         assert!(crds.contains("ComplianceBinding"), "Missing ComplianceBinding CRD");
         assert!(crds.contains("PangeaDashboard"), "Missing PangeaDashboard CRD");
+        assert!(crds.contains("ArchitectureGem"), "Missing ArchitectureGem CRD");
+        assert!(crds.contains("WorkspaceCatalog"), "Missing WorkspaceCatalog CRD");
     }
 
     #[test]
@@ -218,7 +251,7 @@ mod tests {
             assert!(parsed.is_ok(), "Invalid YAML in CRD document {}: {:?}", count, parsed.err());
             count += 1;
         }
-        assert_eq!(count, 10, "Expected 10 CRD documents");
+        assert_eq!(count, 12, "Expected 12 CRD documents");
     }
 
     #[test]

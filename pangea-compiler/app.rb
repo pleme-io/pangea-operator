@@ -21,6 +21,7 @@ require "terraform-synthesizer"
   pangea-porkbun
   pangea-splunk
   pangea-spot
+  pangea-architectures
 ].each do |gem_name|
   begin
     require gem_name
@@ -29,12 +30,13 @@ require "terraform-synthesizer"
   end
 end
 
-# pangea-architectures (composers) is intentionally NOT loaded at
-# boot — it's not in the image. The operator clones it alongside
-# the workspace tree at compile time and ships its `lib/` path in
-# the /compile request's `rubylib_paths`. Workspace .rb files
-# `require 'pangea/architectures'` at load time and Ruby resolves
-# it via the per-request $LOAD_PATH prepend.
+# pangea-architectures is now bundled into the compiler image (see
+# Gemfile comment) for M1 of
+# theory/PANGEA-WORKSPACE-RECONCILIATION.md. Workspace .rb files that
+# `require 'pangea/architectures/cloudflare_tunnel'` will resolve via
+# the bundled gem's lib/. Operator-side smoke testing happens via the
+# new /v1/architectures RPCs introduced below — see ArchitectureGem
+# CRD in pangea-operator.
 
 # ---------------------------------------------------------------------------
 # Generic Synthesizer Framework
@@ -235,6 +237,141 @@ class PangeaCompiler < Sinatra::Base
   # Health check
   get "/healthz" do
     { status: "ok" }.to_json
+  end
+
+  # ────────────────────────────────────────────────────────────────
+  # M1: ArchitectureGem RPCs — pleme-io/theory/PANGEA-WORKSPACE-RECONCILIATION.md
+  #
+  # The operator's ArchitectureGem reconciler calls these to verify
+  # at startup (and at refreshInterval) that:
+  #   1. an architecture gem's expected classes are actually loaded
+  #   2. each declared smoke-test fixture passes
+  #
+  # No retry-loops on LoadError — every failure is reported as a
+  # typed RPC response that the operator surfaces as a kube
+  # condition on the ArchitectureGem CR.
+  # ────────────────────────────────────────────────────────────────
+
+  # GET /v1/architectures?gem=<gem-name>
+  #   List the classes a gem exposes under
+  #   `Pangea::Architectures::*`. Operator compares against the CR's
+  #   `expectedClasses`.
+  #
+  # Response:
+  #   {
+  #     "gem": "pangea-architectures",
+  #     "classes": ["Pangea::Architectures::CloudflareTunnel", ...],
+  #     "version": "0.x.y" | null
+  #   }
+  get "/v1/architectures" do
+    gem_name = params["gem"]
+    halt 400, { error: "Missing 'gem' query parameter" }.to_json unless gem_name
+
+    classes = []
+    if defined?(Pangea::Architectures)
+      classes = Pangea::Architectures.constants.map do |c|
+        full = "Pangea::Architectures::#{c}"
+        # Filter to actual classes/modules; ignore lower-level
+        # constants like version strings.
+        const = Pangea::Architectures.const_get(c)
+        if const.is_a?(Class) || const.is_a?(Module)
+          full
+        end
+      end.compact.sort
+    end
+
+    version =
+      begin
+        gem_spec = Gem.loaded_specs[gem_name]
+        gem_spec&.version&.to_s
+      rescue StandardError
+        nil
+      end
+
+    { gem: gem_name, classes: classes, version: version }.to_json
+  end
+
+  # POST /v1/architectures/smoke-test
+  #   Run a smoke-test fixture for one architecture class.
+  #
+  # Request:
+  #   {
+  #     "gem": "pangea-architectures",
+  #     "class_name": "Pangea::Architectures::CloudflareTunnel",
+  #     "fixture_path": "spec/fixtures/cloudflare_tunnel.yaml"
+  #   }
+  #
+  # The compiler resolves `fixture_path` against the gem's
+  # `Gem.loaded_specs[gem].full_gem_path`. Fixture is YAML; the
+  # parsed hash is the second argument to `class_name.build(synth, args)`.
+  # Pass = no exception + non-empty terraform JSON output.
+  #
+  # Response:
+  #   { "passed": true,  "input_hash": "abc123" }
+  #   { "passed": false, "error": "<exception message>" }
+  post "/v1/architectures/smoke-test" do
+    body = JSON.parse(request.body.read)
+    gem_name = body["gem"]
+    class_name = body["class_name"]
+    fixture_path = body["fixture_path"]
+
+    halt 400, { error: "Missing required field(s)" }.to_json unless gem_name && class_name && fixture_path
+
+    begin
+      # Resolve fixture path relative to the gem root if not absolute.
+      gem_spec = Gem.loaded_specs[gem_name]
+      halt 422, { passed: false, error: "Gem not loaded: #{gem_name}" }.to_json unless gem_spec
+      full_path =
+        if fixture_path.start_with?("/")
+          fixture_path
+        else
+          File.join(gem_spec.full_gem_path, fixture_path)
+        end
+
+      halt 422, { passed: false, error: "Fixture not found: #{full_path}" }.to_json unless File.exist?(full_path)
+
+      require "yaml"
+      require "digest"
+
+      raw = File.read(full_path)
+      input_hash = Digest::SHA256.hexdigest(raw)[0, 12]
+      inputs = YAML.safe_load(raw, permitted_classes: [Symbol], aliases: true) || {}
+
+      # Resolve the class.
+      klass =
+        begin
+          class_name.split("::").reduce(Object) { |mod, c| mod.const_get(c) }
+        rescue NameError => e
+          halt 422, { passed: false, error: "Class not loadable: #{e.message}", input_hash: input_hash }.to_json
+        end
+
+      # Build a fresh synthesizer + invoke .build.
+      synth = TerraformSynthesizer.new
+      # Architecture .build methods on pangea-architectures take
+      # (synth, args) — match that signature.
+      klass.build(synth, _stringify_keys(inputs))
+      result = synth.synthesis
+      passed = !result.nil? && !result.empty?
+
+      { passed: passed, input_hash: input_hash }.to_json
+    rescue StandardError => e
+      status 422
+      {
+        passed: false,
+        error: e.message,
+        backtrace: e.backtrace&.first(5)
+      }.to_json
+    end
+  end
+
+  # Internal helper — fixtures are authored with both string and
+  # symbol keys; normalize to strings for downstream Pangea methods.
+  def _stringify_keys(obj)
+    case obj
+    when Hash then obj.map { |k, v| [k.to_s, _stringify_keys(v)] }.to_h
+    when Array then obj.map { |v| _stringify_keys(v) }
+    else obj
+    end
   end
 
   # Compile a Pangea Ruby DSL template to Terraform JSON.

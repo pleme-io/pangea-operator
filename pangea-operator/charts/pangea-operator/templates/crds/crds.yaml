@@ -25,6 +25,9 @@ spec:
     - jsonPath: .status.resources.total
       name: Resources
       type: integer
+    - jsonPath: .spec.destroyProtection
+      name: Protected
+      type: boolean
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -45,9 +48,84 @@ spec:
                 items:
                   type: string
                 type: array
+              defaultDecision:
+                description: |-
+                  Decision applied to changes that match no rule in `policies`. If unset, defaults to `autoApply` — the operator aggressively settles drift on every change at every risk level. Set this to `refuse` to make the policy list strictly opt-in (only changes explicitly allowed by a rule may be applied), or to `requireApproval` to gate everything not explicitly auto-applied.
+
+                  `spec.autoApprove` is no longer consulted by this engine; it remains in the schema for legacy compatibility but does not override `defaultDecision`.
+                enum:
+                - autoApply
+                - requireApproval
+                - refuse
+                nullable: true
+                type: string
+              destroyProtection:
+                default: false
+                description: |-
+                  Prevent destruction of the managed infrastructure.
+
+                  When enabled, the operator will refuse to run `tofu destroy` even if the CR is deleted. Plan and apply continue to work normally for drift correction. This is critical for self-managed bootstrap infrastructure — the cluster, database, and network that the operator itself runs on.
+
+                  To actually destroy protected infrastructure, first set this to false, then delete the CR.
+                type: boolean
               pangeaNamespace:
                 description: Pangea namespace for state isolation. This determines the PostgreSQL schema used for state storage.
                 type: string
+              policies:
+                description: |-
+                  Per-resource policy rules controlling what the operator may do without human approval. Evaluated top-to-bottom against each resource change in a plan; the FIRST matching rule's `decision` applies. Changes that match no rule fall back to `defaultDecision` (or to `autoApprove` if `defaultDecision` is unset).
+
+                  Aggregation across all changes: - any `refuse`          → operator marks plan Failed, won't apply - else any `requireApproval` → operator waits for `approvedPlanHash` - else                  → operator applies immediately
+
+                  Empty list = behave exactly as before (`autoApprove` controls everything). Use this to express things like "auto-apply low-risk DNS creates, require approval for any `cloudflare_dns_record` delete, refuse any `cloudflare_zone` destroy".
+                items:
+                  description: One policy rule. Match clauses use AND semantics (all set fields must match the change); within a clause, list entries use OR semantics (any list entry that matches counts). Empty / omitted clauses are wildcards.
+                  properties:
+                    decision:
+                      description: What the controller may do for changes this rule matches.
+                      enum:
+                      - autoApply
+                      - requireApproval
+                      - refuse
+                      type: string
+                    match:
+                      description: Match criteria. All set fields must match (AND); within each list, any entry counts (OR).
+                      properties:
+                        actions:
+                          description: 'Restrict to specific actions. Empty = any action. Valid values: `create`, `update`, `delete`, `replace`.'
+                          items:
+                            type: string
+                          type: array
+                        addressPatterns:
+                          description: Regular expressions matched against the full resource address (e.g. `^cloudflare_dns_record\\.rio-.*$`). Invalid regexes are rejected at evaluation time and logged — they never silently match nothing.
+                          items:
+                            type: string
+                          type: array
+                        attributes:
+                          description: Glob patterns against the changed-attribute names. Matches if ANY of the change's attributes matches ANY of these patterns. Useful for "require approval if `ttl` or any `secret*` field changes".
+                          items:
+                            type: string
+                          type: array
+                        resourceTypes:
+                          description: Glob patterns against the terraform resource type (e.g. `cloudflare_dns_record`, `cloudflare_*`, `aws_iam_*`). Only `*` (zero-or-more chars) is supported — keeps matching trivial and predictable.
+                          items:
+                            type: string
+                          type: array
+                        riskLevels:
+                          description: 'Restrict to specific risk levels. Empty = any risk. Valid values: `none`, `low`, `medium`, `high`.'
+                          items:
+                            type: string
+                          type: array
+                      type: object
+                    name:
+                      description: Human-readable label. Surfaced in `status.driftDetails[].matchedPolicy` and in the per-rule planSummary, so a quick `kubectl describe` shows which rule triggered which decision.
+                      type: string
+                  required:
+                  - decision
+                  - match
+                  - name
+                  type: object
+                type: array
               providerCredentials:
                 description: Provider credentials configuration.
                 nullable: true
@@ -122,6 +200,28 @@ spec:
                     minimum: 0.0
                     type: integer
                 type: object
+              settlingPolicy:
+                description: |-
+                  Bounds on how long the operator may keep cycling through drift→apply→drift loops before declaring the template stuck. State settling is the operator's primary success metric — when it can't reach a settled state after the configured number of cycles, this is escalated loudly via a `Settled=False` condition + Warning event.
+
+                  Defaults: 5 cycles, then `fail` (transition to Failed, surface the address list of resources that keep re-drifting).
+                nullable: true
+                properties:
+                  maxConsecutiveDriftCycles:
+                    default: 5
+                    description: Maximum allowed consecutive drift cycles before escalation. A "cycle" is one Ready→Drifted→(plan→apply)→Ready transition where the post-apply drift check still reports changes. Defaults to 5.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  onExhaustion:
+                    default: fail
+                    description: 'What to do when `maxConsecutiveDriftCycles` is exceeded. Defaults to `fail` — the loudest signal: phase Failed, error message naming the stuck resources, Warning event, condition `Settled=False reason=StuckInDriftLoop`. The point is to make it impossible to ignore a system that can''t reach steady state.'
+                    enum:
+                    - fail
+                    - alert
+                    - continue
+                    type: string
+                type: object
               source:
                 description: Source of the infrastructure template.
                 properties:
@@ -188,6 +288,36 @@ spec:
                 description: Optional specific template name to deploy if the source file contains multiple templates.
                 nullable: true
                 type: string
+              variableRefs:
+                additionalProperties:
+                  description: Cross-template variable reference. Fetches an output from another template.
+                  properties:
+                    outputKey:
+                      description: Key in the source template's status.outputs to read.
+                      type: string
+                    templateRef:
+                      description: Reference to the source template.
+                      properties:
+                        name:
+                          description: Name of the InfrastructureTemplate.
+                          type: string
+                        namespace:
+                          description: Namespace (defaults to same namespace as the referencing template).
+                          nullable: true
+                          type: string
+                      required:
+                      - name
+                      type: object
+                  required:
+                  - outputKey
+                  - templateRef
+                  type: object
+                description: |-
+                  Cross-template variable references. Resolved before compilation by fetching the referenced template's outputs.
+
+                  Example: ```yaml variableRefs: vpc_id: templateRef: { name: vpc-template } outputKey: vpc_id ```
+                nullable: true
+                type: object
               variables:
                 additionalProperties: true
                 description: Variables to pass to the template during compilation.
@@ -201,6 +331,10 @@ spec:
             description: Status of an InfrastructureTemplate.
             nullable: true
             properties:
+              approvedPlanHash:
+                description: Hash of the approved plan. Set by the user to approve a pending plan. When this matches `pendingPlanHash`, the operator proceeds to apply.
+                nullable: true
+                type: string
               compliance:
                 description: Compliance check results.
                 nullable: true
@@ -294,6 +428,52 @@ spec:
                   - type
                   type: object
                 type: array
+              consecutiveDriftCycles:
+                default: 0
+                description: State-settling counter. Counts consecutive drift cycles where applying a plan does NOT result in a clean drift check. Reset to zero when a Ready→Ready transition sees no drift. Drives `SettlingPolicy` escalation.
+                format: uint32
+                minimum: 0.0
+                type: integer
+              driftDetails:
+                default: []
+                description: |-
+                  Per-resource drift / change detail from the last plan. Populated whenever a plan reports `has_changes`. Lets external observers see WHICH resources changed and HOW without parsing raw tofu output. Capped to 50 entries (full list available via the operator's GraphQL API for large plans).
+
+                  Always serialized (no skip-if-empty) so an explicit empty array clears the field via JSON Merge Patch — otherwise stale drift would survive a clean settle.
+                items:
+                  description: |-
+                    Per-resource drift / change detail from a plan.
+
+                    One entry per resource the plan would touch. Action is the terraform action category; risk is a heuristic so observers can quickly triage (a `delete` on a destroy-protected resource is `high`, a no-op refresh is `none`, a single-attribute update is `low`). `attributes` lists the field names that differ — values are intentionally elided so secrets don't leak into the K8s API.
+                  properties:
+                    action:
+                      description: 'Action category: create | update | delete | replace | noop.'
+                      type: string
+                    address:
+                      description: Terraform resource address (e.g. `cloudflare_dns_record.foo`).
+                      type: string
+                    attributes:
+                      description: Attribute names that differ between current and desired state. Empty for create / delete (no per-attr diff applies).
+                      items:
+                        type: string
+                      type: array
+                    matchedPolicy:
+                      description: Name of the `PolicyRule` that matched this change, or `<default>` if no rule matched and the default decision was applied. Absent means policy evaluation didn't run.
+                      nullable: true
+                      type: string
+                    policyDecision:
+                      description: 'Resolved policy decision for this specific change. Set when `spec.policies` is non-empty or `spec.defaultDecision` is non-null. Values: `autoApply` | `requireApproval` | `refuse`. Absent means policy evaluation didn''t run (legacy `autoApprove`-only mode).'
+                      nullable: true
+                      type: string
+                    risk:
+                      description: 'Risk heuristic: none | low | medium | high.'
+                      type: string
+                  required:
+                  - action
+                  - address
+                  - risk
+                  type: object
+                type: array
               failureCount:
                 default: 0
                 description: Number of consecutive failures.
@@ -333,10 +513,16 @@ spec:
                 description: Outputs from the last successful apply.
                 nullable: true
                 type: object
+              pendingPlanHash:
+                description: Hash of the pending plan awaiting approval. Set by the operator after planning. Users approve by copying this value to `approvedPlanHash` via kubectl patch or GraphQL mutation.
+                nullable: true
+                type: string
               phase:
                 description: Current phase of the template lifecycle.
                 enum:
                 - Pending
+                - Verifying
+                - Verified
                 - Compiling
                 - Initializing
                 - Planning
@@ -351,6 +537,39 @@ spec:
                 description: Human-readable summary of the last plan.
                 nullable: true
                 type: string
+              policyEvaluation:
+                description: Aggregate result of evaluating `spec.policies` against the last plan's drift details. Drives the plan→apply gate. Absent when the template uses legacy `autoApprove`-only mode (no `policies` and no `defaultDecision`).
+                nullable: true
+                properties:
+                  aggregate:
+                    description: Worst decision across all changes. Drives the plan→apply transition.
+                    type: string
+                  autoApplyCount:
+                    default: 0
+                    description: Number of changes that resolved to `autoApply`.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  refuseCount:
+                    default: 0
+                    description: Number of changes that resolved to `refuse`. Non-zero means `aggregate == refuse` and the plan is blocked.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  refusedAddresses:
+                    description: Sample of refused resource addresses (capped at 10) to give quick triage signal in `kubectl describe`.
+                    items:
+                      type: string
+                    type: array
+                  requireApprovalCount:
+                    default: 0
+                    description: Number of changes that resolved to `requireApproval`.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                required:
+                - aggregate
+                type: object
               resources:
                 description: Summary of managed resources.
                 nullable: true
@@ -384,6 +603,15 @@ spec:
                 description: PostgreSQL state key path.
                 nullable: true
                 type: string
+              stuckResources:
+                default: []
+                description: |-
+                  Resource addresses that keep showing up in successive drift cycles — the "stuck" set. Computed as the intersection of drift-detail addresses across the last N cycles. Capped at 20 for status hygiene; full set available via the operator's GraphQL API. Empty when `consecutiveDriftCycles == 0`.
+
+                  Always serialized (no skip-if-empty) so explicit clearing on a settle propagates via JSON Merge Patch.
+                items:
+                  type: string
+                type: array
             type: object
         required:
         - spec
@@ -674,6 +902,3117 @@ spec:
         required:
         - spec
         title: PangeaNamespace
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: infrastructureflows.pangea.pleme.io
+spec:
+  group: pangea.pleme.io
+  names:
+    categories: []
+    kind: InfrastructureFlow
+    plural: infrastructureflows
+    shortNames:
+    - flow
+    singular: infrastructureflow
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.totalSteps
+      name: Steps
+      type: integer
+    - jsonPath: .status.readySteps
+      name: Ready
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for InfrastructureFlowSpec via `CustomResource`
+        properties:
+          spec:
+            description: InfrastructureFlow orchestrates multiple InfrastructureTemplates as a DAG.
+            properties:
+              destroyOrder:
+                default: reverse
+                description: 'How to order destruction. Default: reverse dependency order.'
+                enum:
+                - reverse
+                - parallel
+                - none
+                type: string
+              destroyProtection:
+                default: false
+                description: Prevent destruction of all templates in this flow.
+                type: boolean
+              pangeaNamespace:
+                description: PangeaNamespace for all templates in this flow.
+                type: string
+              parallelism:
+                default: 1
+                description: 'Maximum number of templates to reconcile in parallel. Default: 1.'
+                format: uint32
+                minimum: 0.0
+                type: integer
+              steps:
+                description: Ordered steps in the flow. Dependencies form a DAG.
+                items:
+                  description: A single step in an InfrastructureFlow.
+                  properties:
+                    autoApprove:
+                      description: Override auto-approve for this step.
+                      nullable: true
+                      type: boolean
+                    dependsOn:
+                      description: Steps that must complete before this one starts.
+                      items:
+                        type: string
+                      type: array
+                    destroyProtection:
+                      description: Override destroy protection for this step.
+                      nullable: true
+                      type: boolean
+                    name:
+                      description: Unique name for this step within the flow.
+                      type: string
+                    refreshInterval:
+                      description: Override refresh interval for drift detection.
+                      nullable: true
+                      type: string
+                    retry:
+                      description: Retry policy for this step.
+                      nullable: true
+                      properties:
+                        backoff:
+                          default: exponential
+                          description: 'Backoff strategy: exponential (default), linear, or constant.'
+                          enum:
+                          - exponential
+                          - linear
+                          - constant
+                          type: string
+                        initialDelay:
+                          default: 30s
+                          description: 'Initial delay between retries. Default: "30s".'
+                          type: string
+                        maxDelay:
+                          default: 10m
+                          description: 'Maximum delay between retries. Default: "10m".'
+                          type: string
+                        maxRetries:
+                          default: 3
+                          description: 'Maximum retry attempts. Default: 3.'
+                          format: uint32
+                          minimum: 0.0
+                          type: integer
+                      type: object
+                    templateRef:
+                      description: Template to deploy. Either reference an existing template or provide inline source.
+                      properties:
+                        name:
+                          description: Name of an existing InfrastructureTemplate to manage.
+                          nullable: true
+                          type: string
+                        source:
+                          description: Inline template source. The flow controller creates an InfrastructureTemplate from this source, named `{flow}-{step}`.
+                          nullable: true
+                          properties:
+                            configMapRef:
+                              description: Reference to a ConfigMap containing the template.
+                              nullable: true
+                              properties:
+                                key:
+                                  description: Key within the ConfigMap containing the template.
+                                  type: string
+                                name:
+                                  description: Name of the ConfigMap.
+                                  type: string
+                                namespace:
+                                  description: Namespace of the ConfigMap (defaults to same namespace as the InfrastructureTemplate).
+                                  nullable: true
+                                  type: string
+                              required:
+                              - key
+                              - name
+                              type: object
+                            gitRepository:
+                              description: Reference to a Git repository containing the template.
+                              nullable: true
+                              properties:
+                                path:
+                                  description: Path to the template file within the repository.
+                                  type: string
+                                ref:
+                                  default: main
+                                  description: Git reference (branch, tag, or commit SHA).
+                                  type: string
+                                secretRef:
+                                  description: Reference to a Secret containing Git credentials.
+                                  nullable: true
+                                  properties:
+                                    name:
+                                      description: Name of the Secret.
+                                      type: string
+                                    namespace:
+                                      description: Namespace of the Secret (defaults to same namespace as the resource).
+                                      nullable: true
+                                      type: string
+                                  required:
+                                  - name
+                                  type: object
+                                url:
+                                  description: Git repository URL.
+                                  type: string
+                              required:
+                              - path
+                              - url
+                              type: object
+                            inline:
+                              description: Inline Ruby DSL template content.
+                              nullable: true
+                              type: string
+                          type: object
+                      type: object
+                    variables:
+                      additionalProperties: true
+                      description: Variables for this step. Values may contain {{ steps.X.outputs.Y }} references.
+                      nullable: true
+                      type: object
+                  required:
+                  - name
+                  - templateRef
+                  type: object
+                type: array
+              suspend:
+                default: false
+                description: Suspend the entire flow.
+                type: boolean
+            required:
+            - pangeaNamespace
+            - steps
+            type: object
+          status:
+            description: Status of an InfrastructureFlow.
+            nullable: true
+            properties:
+              conditions:
+                description: Kubernetes-style conditions.
+                items:
+                  description: Kubernetes-style condition.
+                  properties:
+                    lastTransitionTime:
+                      description: Last time the condition transitioned.
+                      format: date-time
+                      type: string
+                    message:
+                      description: Human-readable message.
+                      type: string
+                    reason:
+                      description: Machine-readable reason for the condition.
+                      type: string
+                    status:
+                      description: Status of the condition (True, False, Unknown).
+                      type: string
+                    type:
+                      description: Type of condition.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              lastError:
+                description: Last error message.
+                nullable: true
+                type: string
+              observedGeneration:
+                default: 0
+                description: Last observed generation.
+                format: int64
+                type: integer
+              phase:
+                description: Current phase of the flow.
+                enum:
+                - Pending
+                - Progressing
+                - Ready
+                - Failed
+                - Destroying
+                nullable: true
+                type: string
+              readySteps:
+                default: 0
+                description: Number of steps in Ready phase.
+                format: uint32
+                minimum: 0.0
+                type: integer
+              steps:
+                additionalProperties:
+                  description: Status of a single step within a flow.
+                  properties:
+                    dependenciesReady:
+                      default: false
+                      description: Whether dependencies are satisfied.
+                      type: boolean
+                    lastError:
+                      description: Last error for this step.
+                      nullable: true
+                      type: string
+                    outputs:
+                      additionalProperties: true
+                      description: Outputs from the template (available after Ready).
+                      nullable: true
+                      type: object
+                    phase:
+                      description: Phase of the template for this step.
+                      nullable: true
+                      type: string
+                    state:
+                      description: Full terraform state snapshot (from `tofu show -json`). Enables {{ steps.X.state.resource_type.resource_name.attribute }} references. Stored as an opaque JSON object.
+                      type: object
+                    templateName:
+                      description: Name of the managed InfrastructureTemplate.
+                      nullable: true
+                      type: string
+                    warmedUp:
+                      default: false
+                      description: Whether workspace has been pre-initialized (warm-up).
+                      type: boolean
+                  type: object
+                description: Per-step status.
+                type: object
+              totalSteps:
+                default: 0
+                description: Total number of steps.
+                format: uint32
+                minimum: 0.0
+                type: integer
+            type: object
+        required:
+        - spec
+        title: InfrastructureFlow
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: packerbuilds.pangea.pleme.io
+spec:
+  group: pangea.pleme.io
+  names:
+    categories: []
+    kind: PackerBuild
+    plural: packerbuilds
+    shortNames:
+    - pb
+    singular: packerbuild
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.amiId
+      name: AMI
+      type: string
+    - jsonPath: .status.buildDuration
+      name: Duration
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for PackerBuildSpec via `CustomResource`
+        properties:
+          spec:
+            description: PackerBuild represents a single Packer build execution. The operator compiles the Ruby DSL source to Packer JSON, validates it, runs `packer build`, and extracts the AMI ID from the manifest.
+            properties:
+              manifestPath:
+                default: packer-manifest.json
+                description: Path within workspace for the packer-manifest.json output. Defaults to "packer-manifest.json".
+                type: string
+              onError:
+                default: cleanup
+                description: 'Packer on-error behavior: "cleanup" (default) or "abort".'
+                type: string
+              providerCredentials:
+                description: Provider credentials (AWS, etc.) mounted as environment variables.
+                nullable: true
+                properties:
+                  aws:
+                    description: AWS credentials configuration.
+                    nullable: true
+                    properties:
+                      region:
+                        description: Region to use for AWS operations.
+                        nullable: true
+                        type: string
+                      roleArn:
+                        description: Optional role ARN to assume.
+                        nullable: true
+                        type: string
+                      secretRef:
+                        description: Secret containing AWS credentials.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
+                  cloudflare:
+                    description: Cloudflare credentials configuration.
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing Cloudflare API token.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
+                type: object
+              retainAmi:
+                default: false
+                description: If true, the AMI will not be deregistered when the CR is deleted.
+                type: boolean
+              source:
+                description: Source of the Packer template (Ruby DSL or pre-compiled JSON).
+                properties:
+                  configMapRef:
+                    description: Reference to a ConfigMap containing the template.
+                    nullable: true
+                    properties:
+                      key:
+                        description: Key within the ConfigMap containing the template.
+                        type: string
+                      name:
+                        description: Name of the ConfigMap.
+                        type: string
+                      namespace:
+                        description: Namespace of the ConfigMap (defaults to same namespace as the InfrastructureTemplate).
+                        nullable: true
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                  gitRepository:
+                    description: Reference to a Git repository containing the template.
+                    nullable: true
+                    properties:
+                      path:
+                        description: Path to the template file within the repository.
+                        type: string
+                      ref:
+                        default: main
+                        description: Git reference (branch, tag, or commit SHA).
+                        type: string
+                      secretRef:
+                        description: Reference to a Secret containing Git credentials.
+                        nullable: true
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      url:
+                        description: Git repository URL.
+                        type: string
+                    required:
+                    - path
+                    - url
+                    type: object
+                  inline:
+                    description: Inline Ruby DSL template content.
+                    nullable: true
+                    type: string
+                type: object
+              suspend:
+                default: false
+                description: Suspend reconciliation.
+                type: boolean
+              timeout:
+                default: 45m
+                description: Build timeout. Defaults to "45m".
+                type: string
+              varFiles:
+                description: References to variable files injected via `-var-file`.
+                items:
+                  description: Source for a variable file (-var-file).
+                  properties:
+                    configMapRef:
+                      description: Reference to a ConfigMap key containing the var file.
+                      nullable: true
+                      properties:
+                        key:
+                          description: Key within the ConfigMap containing the template.
+                          type: string
+                        name:
+                          description: Name of the ConfigMap.
+                          type: string
+                        namespace:
+                          description: Namespace of the ConfigMap (defaults to same namespace as the InfrastructureTemplate).
+                          nullable: true
+                          type: string
+                      required:
+                      - key
+                      - name
+                      type: object
+                    inline:
+                      description: Inline JSON content for the var file.
+                      type: object
+                    secretRef:
+                      description: Reference to a Secret key containing the var file.
+                      nullable: true
+                      properties:
+                        name:
+                          description: Name of the Secret.
+                          type: string
+                        namespace:
+                          description: Namespace of the Secret (defaults to same namespace as the resource).
+                          nullable: true
+                          type: string
+                      required:
+                      - name
+                      type: object
+                  type: object
+                type: array
+              variables:
+                additionalProperties: true
+                description: Variables injected into `packer build` via `-var key=value`.
+                type: object
+            required:
+            - source
+            type: object
+          status:
+            description: Status of a PackerBuild.
+            nullable: true
+            properties:
+              amiId:
+                description: AMI ID extracted from the packer manifest.
+                nullable: true
+                type: string
+              amiRegion:
+                description: AWS region of the built AMI.
+                nullable: true
+                type: string
+              buildDuration:
+                description: Duration of the packer build phase.
+                nullable: true
+                type: string
+              completedAt:
+                description: Timestamp of build completion.
+                format: date-time
+                nullable: true
+                type: string
+              conditions:
+                description: Kubernetes-style conditions.
+                items:
+                  description: Kubernetes-style condition.
+                  properties:
+                    lastTransitionTime:
+                      description: Last time the condition transitioned.
+                      format: date-time
+                      type: string
+                    message:
+                      description: Human-readable message.
+                      type: string
+                    reason:
+                      description: Machine-readable reason for the condition.
+                      type: string
+                    status:
+                      description: Status of the condition (True, False, Unknown).
+                      type: string
+                    type:
+                      description: Type of condition.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              errorMessage:
+                description: Last error message if in Failed state.
+                nullable: true
+                type: string
+              observedGeneration:
+                default: 0
+                description: Last observed generation of the spec.
+                format: int64
+                type: integer
+              packerManifest:
+                description: Raw packer-manifest.json content for debugging.
+                nullable: true
+                type: string
+              phase:
+                description: Current phase of the build lifecycle.
+                enum:
+                - Pending
+                - Compiling
+                - Validating
+                - Building
+                - Extracting
+                - Ready
+                - Failed
+                nullable: true
+                type: string
+              retryCount:
+                default: 0
+                description: Number of consecutive retries.
+                format: int32
+                type: integer
+              startedAt:
+                description: Timestamp of build start.
+                format: date-time
+                nullable: true
+                type: string
+            type: object
+        required:
+        - spec
+        title: PackerBuild
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: amitests.pangea.pleme.io
+spec:
+  group: pangea.pleme.io
+  names:
+    categories: []
+    kind: AmiTest
+    plural: amitests
+    shortNames:
+    - at
+    singular: amitest
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.amiId
+      name: AMI
+      type: string
+    - jsonPath: .status.suiteSummary
+      name: Suites
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for AmiTestSpec via `CustomResource`
+        properties:
+          spec:
+            description: AmiTest validates an AMI through a DAG of test suites.
+            properties:
+              amiSource:
+                description: Source of the AMI to test — reference a PackerBuild CR or specify inline.
+                oneOf:
+                - required:
+                  - packerBuildRef
+                - required:
+                  - inline
+                properties:
+                  inline:
+                    description: Inline AMI specification.
+                    properties:
+                      ami_id:
+                        description: AMI ID (e.g., "ami-0abc123def456").
+                        type: string
+                      region:
+                        description: AWS region of the AMI.
+                        type: string
+                    required:
+                    - ami_id
+                    - region
+                    type: object
+                  packerBuildRef:
+                    description: Reference to a PackerBuild CR in the same namespace.
+                    properties:
+                      name:
+                        description: Name of the PackerBuild CR.
+                        type: string
+                    required:
+                    - name
+                    type: object
+                type: object
+              failurePolicy:
+                default:
+                  cleanupSnapshots: false
+                  deregisterAmi: false
+                description: What to do when a suite fails.
+                properties:
+                  cleanupSnapshots:
+                    default: false
+                    description: Delete orphaned EBS snapshots on AMI deregistration.
+                    type: boolean
+                  deregisterAmi:
+                    default: false
+                    description: Deregister the AMI on test failure.
+                    type: boolean
+                type: object
+              providerCredentials:
+                description: Provider credentials (AWS) for test infrastructure.
+                nullable: true
+                properties:
+                  aws:
+                    description: AWS credentials configuration.
+                    nullable: true
+                    properties:
+                      region:
+                        description: Region to use for AWS operations.
+                        nullable: true
+                        type: string
+                      roleArn:
+                        description: Optional role ARN to assume.
+                        nullable: true
+                        type: string
+                      secretRef:
+                        description: Secret containing AWS credentials.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
+                  cloudflare:
+                    description: Cloudflare credentials configuration.
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing Cloudflare API token.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
+                type: object
+              suites:
+                description: Test suites forming a DAG. Each suite can declare dependencies.
+                items:
+                  description: A single test suite within the DAG.
+                  properties:
+                    config:
+                      description: Type-specific configuration (JSON value interpreted per suite_type).
+                      type: object
+                    dependsOn:
+                      description: Suite names that must complete successfully before this suite runs.
+                      items:
+                        type: string
+                      type: array
+                    name:
+                      description: Unique name for this suite within the AmiTest.
+                      type: string
+                    suiteType:
+                      description: Type of test to run.
+                      enum:
+                      - packerTest
+                      - clusterTest
+                      - inSpec
+                      - script
+                      type: string
+                    timeout:
+                      default: 15m
+                      description: Timeout for this suite. Defaults to "15m".
+                      type: string
+                  required:
+                  - name
+                  - suiteType
+                  type: object
+                type: array
+              suspend:
+                default: false
+                description: Suspend reconciliation.
+                type: boolean
+              testRunnerImage:
+                description: Container image to use for test Jobs (must contain ami-forge).
+                nullable: true
+                type: string
+            required:
+            - amiSource
+            - suites
+            type: object
+          status:
+            description: Status of an AmiTest.
+            nullable: true
+            properties:
+              amiId:
+                description: Resolved AMI ID being tested.
+                nullable: true
+                type: string
+              amiRegion:
+                description: AWS region of the AMI.
+                nullable: true
+                type: string
+              completedAt:
+                description: Timestamp when testing completed.
+                format: date-time
+                nullable: true
+                type: string
+              conditions:
+                description: Kubernetes-style conditions.
+                items:
+                  description: Kubernetes-style condition.
+                  properties:
+                    lastTransitionTime:
+                      description: Last time the condition transitioned.
+                      format: date-time
+                      type: string
+                    message:
+                      description: Human-readable message.
+                      type: string
+                    reason:
+                      description: Machine-readable reason for the condition.
+                      type: string
+                    status:
+                      description: Status of the condition (True, False, Unknown).
+                      type: string
+                    type:
+                      description: Type of condition.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              observedGeneration:
+                default: 0
+                description: Last observed generation of the spec.
+                format: int64
+                type: integer
+              phase:
+                description: Current phase of the test lifecycle.
+                enum:
+                - Pending
+                - Resolving
+                - Running
+                - Passed
+                - Failed
+                - Cleaning
+                nullable: true
+                type: string
+              startedAt:
+                description: Timestamp when testing started.
+                format: date-time
+                nullable: true
+                type: string
+              suiteSummary:
+                description: Human-readable summary (e.g., "3/3 passed").
+                nullable: true
+                type: string
+              suites:
+                description: Per-suite results.
+                items:
+                  description: Result of a single test suite execution.
+                  properties:
+                    completedAt:
+                      description: Timestamp when the suite completed.
+                      format: date-time
+                      nullable: true
+                      type: string
+                    duration:
+                      description: Execution duration.
+                      nullable: true
+                      type: string
+                    jobName:
+                      description: Name of the K8s Job executing this suite.
+                      nullable: true
+                      type: string
+                    message:
+                      description: Human-readable result message.
+                      nullable: true
+                      type: string
+                    name:
+                      description: Suite name (matches TestSuite.name).
+                      type: string
+                    phase:
+                      description: Current phase of this suite.
+                      enum:
+                      - Pending
+                      - Running
+                      - Succeeded
+                      - Failed
+                      - Skipped
+                      type: string
+                    startedAt:
+                      description: Timestamp when the suite started.
+                      format: date-time
+                      nullable: true
+                      type: string
+                  required:
+                  - name
+                  - phase
+                  type: object
+                type: array
+            type: object
+        required:
+        - spec
+        title: AmiTest
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: imagepipelines.pangea.pleme.io
+spec:
+  group: pangea.pleme.io
+  names:
+    categories: []
+    kind: ImagePipeline
+    plural: imagepipelines
+    shortNames:
+    - ip
+    singular: imagepipeline
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.build.amiId
+      name: AMI
+      type: string
+    - jsonPath: .status.deploy.planSummary
+      name: Plan
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for ImagePipelineSpec via `CustomResource`
+        properties:
+          spec:
+            description: 'ImagePipeline orchestrates the full AMI lifecycle: build → test → deploy → verify → complete (or rollback).'
+            properties:
+              build:
+                description: 'Phase 1: Build configuration.'
+                properties:
+                  providerCredentials:
+                    description: Provider credentials for the build.
+                    nullable: true
+                    properties:
+                      aws:
+                        description: AWS credentials configuration.
+                        nullable: true
+                        properties:
+                          region:
+                            description: Region to use for AWS operations.
+                            nullable: true
+                            type: string
+                          roleArn:
+                            description: Optional role ARN to assume.
+                            nullable: true
+                            type: string
+                          secretRef:
+                            description: Secret containing AWS credentials.
+                            properties:
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                              namespace:
+                                description: Namespace of the Secret (defaults to same namespace as the resource).
+                                nullable: true
+                                type: string
+                            required:
+                            - name
+                            type: object
+                        required:
+                        - secretRef
+                        type: object
+                      cloudflare:
+                        description: Cloudflare credentials configuration.
+                        nullable: true
+                        properties:
+                          secretRef:
+                            description: Secret containing Cloudflare API token.
+                            properties:
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                              namespace:
+                                description: Namespace of the Secret (defaults to same namespace as the resource).
+                                nullable: true
+                                type: string
+                            required:
+                            - name
+                            type: object
+                        required:
+                        - secretRef
+                        type: object
+                    type: object
+                  source:
+                    description: Source of the Packer template (Ruby DSL or pre-compiled JSON).
+                    properties:
+                      configMapRef:
+                        description: Reference to a ConfigMap containing the template.
+                        nullable: true
+                        properties:
+                          key:
+                            description: Key within the ConfigMap containing the template.
+                            type: string
+                          name:
+                            description: Name of the ConfigMap.
+                            type: string
+                          namespace:
+                            description: Namespace of the ConfigMap (defaults to same namespace as the InfrastructureTemplate).
+                            nullable: true
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                      gitRepository:
+                        description: Reference to a Git repository containing the template.
+                        nullable: true
+                        properties:
+                          path:
+                            description: Path to the template file within the repository.
+                            type: string
+                          ref:
+                            default: main
+                            description: Git reference (branch, tag, or commit SHA).
+                            type: string
+                          secretRef:
+                            description: Reference to a Secret containing Git credentials.
+                            nullable: true
+                            properties:
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                              namespace:
+                                description: Namespace of the Secret (defaults to same namespace as the resource).
+                                nullable: true
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          url:
+                            description: Git repository URL.
+                            type: string
+                        required:
+                        - path
+                        - url
+                        type: object
+                      inline:
+                        description: Inline Ruby DSL template content.
+                        nullable: true
+                        type: string
+                    type: object
+                  timeout:
+                    description: Build timeout. Defaults to "45m".
+                    nullable: true
+                    type: string
+                  variables:
+                    additionalProperties: true
+                    description: Variables injected into `packer build`.
+                    type: object
+                required:
+                - source
+                type: object
+              deploy:
+                description: 'Phase 3+4: Deploy and verify configuration.'
+                properties:
+                  amiVariable:
+                    description: Name of the variable in the template that holds the AMI ID.
+                    type: string
+                  approval:
+                    default:
+                      mode: manual
+                    description: Approval mode for the deploy phase.
+                    properties:
+                      mode:
+                        default: manual
+                        description: 'Mode: "auto", "manual", or "webhook".'
+                        type: string
+                      webhookUrl:
+                        description: Webhook URL (required when mode is "webhook").
+                        nullable: true
+                        type: string
+                    type: object
+                  healthChecks:
+                    description: Post-apply health checks to verify the deployment.
+                    items:
+                      description: Post-deploy health check.
+                      properties:
+                        checkType:
+                          description: Type of health check.
+                          properties:
+                            http:
+                              description: HTTP GET probe.
+                              nullable: true
+                              properties:
+                                endpoint:
+                                  description: URL to probe.
+                                  type: string
+                                expectedStatus:
+                                  description: Expected HTTP status code.
+                                  format: uint16
+                                  minimum: 0.0
+                                  type: integer
+                              required:
+                              - endpoint
+                              - expectedStatus
+                              type: object
+                            kubernetes:
+                              description: Kubernetes resource check via a Job.
+                              nullable: true
+                              properties:
+                                check:
+                                  description: kubectl/script command to execute.
+                                  type: string
+                                kubeconfigSecretRef:
+                                  description: Secret containing kubeconfig for the target cluster.
+                                  properties:
+                                    name:
+                                      description: Name of the Secret.
+                                      type: string
+                                    namespace:
+                                      description: Namespace of the Secret (defaults to same namespace as the resource).
+                                      nullable: true
+                                      type: string
+                                  required:
+                                  - name
+                                  type: object
+                              required:
+                              - check
+                              - kubeconfigSecretRef
+                              type: object
+                            tcp:
+                              description: TCP connection probe.
+                              nullable: true
+                              properties:
+                                endpoint:
+                                  description: Host:port to connect to.
+                                  type: string
+                              required:
+                              - endpoint
+                              type: object
+                          type: object
+                        interval:
+                          default: 10s
+                          description: Interval between retries. Defaults to "10s".
+                          type: string
+                        name:
+                          description: Human-readable name for this check.
+                          type: string
+                        retries:
+                          default: 10
+                          description: Number of retries before failing. Defaults to 10.
+                          format: uint32
+                          minimum: 0.0
+                          type: integer
+                      required:
+                      - checkType
+                      - name
+                      type: object
+                    type: array
+                  planAssertions:
+                    description: Pre-apply assertions evaluated against the `tofu plan` output.
+                    items:
+                      description: Pre-apply assertion evaluated against the infrastructure plan.
+                      properties:
+                        name:
+                          description: Human-readable name for this assertion.
+                          type: string
+                        rule:
+                          description: The assertion rule.
+                          properties:
+                            allowedResourceTypes:
+                              description: Only these resource types may be changed.
+                              items:
+                                type: string
+                              type: array
+                            forbiddenResourceTypes:
+                              description: These resource types must NOT be changed.
+                              items:
+                                type: string
+                              type: array
+                            maxAdded:
+                              description: Maximum number of resources that may be added.
+                              format: uint32
+                              minimum: 0.0
+                              nullable: true
+                              type: integer
+                            maxDestroyed:
+                              description: Maximum number of resources that may be destroyed.
+                              format: uint32
+                              minimum: 0.0
+                              nullable: true
+                              type: integer
+                            maxTotalChanged:
+                              description: Maximum total resources changed (added + changed + destroyed).
+                              format: uint32
+                              minimum: 0.0
+                              nullable: true
+                              type: integer
+                          type: object
+                      required:
+                      - name
+                      - rule
+                      type: object
+                    type: array
+                  rollback:
+                    description: Rollback configuration. If omitted, no automatic rollback.
+                    nullable: true
+                    properties:
+                      autoRollbackOn:
+                        default: []
+                        description: Conditions that trigger automatic rollback.
+                        items:
+                          description: Conditions that trigger automatic rollback.
+                          enum:
+                          - healthCheckFailure
+                          - planAssertionFailure
+                          - applyFailure
+                          type: string
+                        type: array
+                      enabled:
+                        default: true
+                        description: Enable automatic rollback.
+                        type: boolean
+                      retainFailedAmi:
+                        default: true
+                        description: Keep the failed AMI for debugging instead of deregistering it.
+                        type: boolean
+                    type: object
+                  targetTemplateRef:
+                    description: Reference to the InfrastructureTemplate to update with the new AMI ID.
+                    properties:
+                      name:
+                        description: Name of the InfrastructureTemplate.
+                        type: string
+                      namespace:
+                        description: Namespace (defaults to same namespace as the referencing template).
+                        nullable: true
+                        type: string
+                    required:
+                    - name
+                    type: object
+                required:
+                - amiVariable
+                - targetTemplateRef
+                type: object
+              suspend:
+                default: false
+                description: Suspend reconciliation.
+                type: boolean
+              test:
+                description: 'Phase 2: Test configuration. Omit to skip testing.'
+                nullable: true
+                properties:
+                  failurePolicy:
+                    description: Failure policy for the test phase.
+                    nullable: true
+                    properties:
+                      cleanupSnapshots:
+                        default: false
+                        description: Delete orphaned EBS snapshots on AMI deregistration.
+                        type: boolean
+                      deregisterAmi:
+                        default: false
+                        description: Deregister the AMI on test failure.
+                        type: boolean
+                    type: object
+                  providerCredentials:
+                    description: Provider credentials for test infrastructure.
+                    nullable: true
+                    properties:
+                      aws:
+                        description: AWS credentials configuration.
+                        nullable: true
+                        properties:
+                          region:
+                            description: Region to use for AWS operations.
+                            nullable: true
+                            type: string
+                          roleArn:
+                            description: Optional role ARN to assume.
+                            nullable: true
+                            type: string
+                          secretRef:
+                            description: Secret containing AWS credentials.
+                            properties:
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                              namespace:
+                                description: Namespace of the Secret (defaults to same namespace as the resource).
+                                nullable: true
+                                type: string
+                            required:
+                            - name
+                            type: object
+                        required:
+                        - secretRef
+                        type: object
+                      cloudflare:
+                        description: Cloudflare credentials configuration.
+                        nullable: true
+                        properties:
+                          secretRef:
+                            description: Secret containing Cloudflare API token.
+                            properties:
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                              namespace:
+                                description: Namespace of the Secret (defaults to same namespace as the resource).
+                                nullable: true
+                                type: string
+                            required:
+                            - name
+                            type: object
+                        required:
+                        - secretRef
+                        type: object
+                    type: object
+                  suites:
+                    description: Test suites to run (DAG-ordered).
+                    items:
+                      description: A single test suite within the DAG.
+                      properties:
+                        config:
+                          description: Type-specific configuration (JSON value interpreted per suite_type).
+                          type: object
+                        dependsOn:
+                          description: Suite names that must complete successfully before this suite runs.
+                          items:
+                            type: string
+                          type: array
+                        name:
+                          description: Unique name for this suite within the AmiTest.
+                          type: string
+                        suiteType:
+                          description: Type of test to run.
+                          enum:
+                          - packerTest
+                          - clusterTest
+                          - inSpec
+                          - script
+                          type: string
+                        timeout:
+                          default: 15m
+                          description: Timeout for this suite. Defaults to "15m".
+                          type: string
+                      required:
+                      - name
+                      - suiteType
+                      type: object
+                    type: array
+                required:
+                - suites
+                type: object
+            required:
+            - build
+            - deploy
+            type: object
+          status:
+            description: Status of an ImagePipeline.
+            nullable: true
+            properties:
+              build:
+                description: Build phase results.
+                nullable: true
+                properties:
+                  amiId:
+                    description: AMI ID produced by the build.
+                    nullable: true
+                    type: string
+                  amiRegion:
+                    description: AWS region of the built AMI.
+                    nullable: true
+                    type: string
+                  packerBuildRef:
+                    description: Name of the child PackerBuild CR.
+                    type: string
+                required:
+                - packerBuildRef
+                type: object
+              completedAt:
+                description: Timestamp when pipeline completed.
+                format: date-time
+                nullable: true
+                type: string
+              conditions:
+                description: Kubernetes-style conditions.
+                items:
+                  description: Kubernetes-style condition.
+                  properties:
+                    lastTransitionTime:
+                      description: Last time the condition transitioned.
+                      format: date-time
+                      type: string
+                    message:
+                      description: Human-readable message.
+                      type: string
+                    reason:
+                      description: Machine-readable reason for the condition.
+                      type: string
+                    status:
+                      description: Status of the condition (True, False, Unknown).
+                      type: string
+                    type:
+                      description: Type of condition.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              deploy:
+                description: Deploy phase results.
+                nullable: true
+                properties:
+                  approvedAt:
+                    description: When the plan was approved.
+                    format: date-time
+                    nullable: true
+                    type: string
+                  approvedBy:
+                    description: Who approved the plan (for manual approval mode).
+                    nullable: true
+                    type: string
+                  expectedVsActual:
+                    description: Comparison of expected vs actual changes.
+                    items:
+                      description: 'Comparison of a single resource change: expected vs actual.'
+                      properties:
+                        actual:
+                          description: What actually happened.
+                          type: string
+                        expected:
+                          description: What the plan predicted.
+                          type: string
+                        matched:
+                          description: Whether expected matched actual.
+                          type: boolean
+                        resource:
+                          description: Resource address (e.g., "aws_launch_template.control_plane").
+                          type: string
+                      required:
+                      - actual
+                      - expected
+                      - matched
+                      - resource
+                      type: object
+                    type: array
+                  planHash:
+                    description: Hash of the pending plan.
+                    nullable: true
+                    type: string
+                  planSummary:
+                    description: Plan summary from `tofu plan` (e.g., "+0 ~2 -0").
+                    nullable: true
+                    type: string
+                  previousAmiId:
+                    description: AMI ID before the pipeline started (for rollback).
+                    nullable: true
+                    type: string
+                type: object
+              observedGeneration:
+                default: 0
+                description: Last observed generation of the spec.
+                format: int64
+                type: integer
+              phase:
+                description: Current phase of the pipeline.
+                enum:
+                - Pending
+                - Building
+                - Testing
+                - Planning
+                - AwaitingApproval
+                - Applying
+                - Verifying
+                - Completed
+                - Failed
+                - RollingBack
+                nullable: true
+                type: string
+              startedAt:
+                description: Timestamp when pipeline started.
+                format: date-time
+                nullable: true
+                type: string
+              test:
+                description: Test phase results.
+                nullable: true
+                properties:
+                  amiTestRef:
+                    description: Name of the child AmiTest CR.
+                    type: string
+                  passed:
+                    description: Whether all test suites passed.
+                    nullable: true
+                    type: boolean
+                  summary:
+                    description: Human-readable summary (e.g., "3/3 passed").
+                    nullable: true
+                    type: string
+                required:
+                - amiTestRef
+                type: object
+              verification:
+                description: Verification phase results.
+                nullable: true
+                properties:
+                  allPassed:
+                    default: false
+                    description: Whether all health checks passed.
+                    type: boolean
+                  healthChecks:
+                    description: Per-check results.
+                    items:
+                      description: Result of a single health check.
+                      properties:
+                        attempts:
+                          description: Number of attempts made.
+                          format: uint32
+                          minimum: 0.0
+                          type: integer
+                        error:
+                          description: Error message if failed.
+                          nullable: true
+                          type: string
+                        name:
+                          description: Check name (matches HealthCheck.name).
+                          type: string
+                        passed:
+                          description: Whether the check passed.
+                          type: boolean
+                      required:
+                      - attempts
+                      - name
+                      - passed
+                      type: object
+                    type: array
+                type: object
+            type: object
+        required:
+        - spec
+        title: ImagePipeline
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: synthesizerformats.pangea.pleme.io
+spec:
+  group: pangea.pleme.io
+  names:
+    categories: []
+    kind: SynthesizerFormat
+    plural: synthesizerformats
+    shortNames:
+    - sf
+    singular: synthesizerformat
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.sectionSummary
+      name: Sections
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for SynthesizerFormatSpec via `CustomResource`
+        properties:
+          spec:
+            description: SynthesizerFormat declares a synthesizer output format that the compiler sidecar can materialize on the fly.
+            properties:
+              arraySections:
+                description: 'Sections that are arrays of typed objects. Each entry in the array gets a type field derived from the DSL method''s first argument (e.g., `synth.builder(:amazon_ebs, ...)` → `{"type": "amazon-ebs"}`).'
+                items:
+                  description: Specification for an array section.
+                  properties:
+                    allowName:
+                      default: true
+                      description: Whether to include an optional "name" field from the DSL's second positional argument. Defaults to true.
+                      type: boolean
+                    keyTransform:
+                      description: Key transform override for this section. If unset, uses the format default.
+                      enum:
+                      - none
+                      - snake-to-kebab
+                      - snake-to-camel
+                      - snake-to-screaming
+                      nullable: true
+                      type: string
+                    methodAlias:
+                      description: If set, the DSL method name is this value instead of the auto-singularized section name. E.g., section "post-processors" auto-singularizes to "post-processor"; override to use "post_processor" instead.
+                      nullable: true
+                      type: string
+                    name:
+                      description: Section name in the output JSON (e.g., "builders", "provisioners").
+                      type: string
+                    typeField:
+                      default: type
+                      description: Name of the field that holds the type identifier within each entry. Defaults to "type".
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+              compileEndpoint:
+                description: Optional convenience endpoint path to register on the compiler sidecar. E.g., "/compile-packer" creates a dedicated endpoint that doesn't require the `format` field in the request body.
+                nullable: true
+                type: string
+              description:
+                description: Human-readable description of what this format produces.
+                nullable: true
+                type: string
+              extendModules:
+                description: Ruby modules to extend the synthesizer with before evaluation. These must be available in the compiler sidecar's load path.
+                items:
+                  type: string
+                type: array
+              keyTransform:
+                default: none
+                description: Default key transform applied to all hash keys in the output. Individual sections can override this.
+                enum:
+                - none
+                - snake-to-kebab
+                - snake-to-camel
+                - snake-to-screaming
+                type: string
+              mapSections:
+                description: 'Sections that are key-value maps. Entries are stored by name (e.g., `synth.variable(:ami_id, ...)` → `{"ami_id": {...}}`).'
+                items:
+                  description: Specification for a map section.
+                  properties:
+                    keyTransform:
+                      description: Key transform override for this section.
+                      enum:
+                      - none
+                      - snake-to-kebab
+                      - snake-to-camel
+                      - snake-to-screaming
+                      nullable: true
+                      type: string
+                    methodAlias:
+                      description: DSL method alias override.
+                      nullable: true
+                      type: string
+                    name:
+                      description: Section name in the output JSON (e.g., "variables", "env").
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+              preamble:
+                description: Static preamble Ruby code injected before the user source. Useful for requiring libraries or defining helper methods.
+                nullable: true
+                type: string
+            type: object
+          status:
+            description: Status of a SynthesizerFormat.
+            nullable: true
+            properties:
+              conditions:
+                description: Kubernetes-style conditions.
+                items:
+                  description: Kubernetes-style condition.
+                  properties:
+                    lastTransitionTime:
+                      description: Last time the condition transitioned.
+                      format: date-time
+                      type: string
+                    message:
+                      description: Human-readable message.
+                      type: string
+                    reason:
+                      description: Machine-readable reason for the condition.
+                      type: string
+                    status:
+                      description: Status of the condition (True, False, Unknown).
+                      type: string
+                    type:
+                      description: Type of condition.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              dslMethods:
+                description: Generated DSL method names for documentation.
+                items:
+                  type: string
+                type: array
+              error:
+                description: Validation error if phase is Invalid.
+                nullable: true
+                type: string
+              observedGeneration:
+                default: 0
+                description: Last observed generation.
+                format: int64
+                type: integer
+              phase:
+                description: Current phase.
+                enum:
+                - Ready
+                - Invalid
+                nullable: true
+                type: string
+              sectionSummary:
+                description: Human-readable summary of sections (e.g., "3 array, 1 map").
+                nullable: true
+                type: string
+            type: object
+        required:
+        - spec
+        title: SynthesizerFormat
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: complianceschedules.pangea.pleme.io
+spec:
+  group: pangea.pleme.io
+  names:
+    categories: []
+    kind: ComplianceSchedule
+    plural: complianceschedules
+    shortNames:
+    - cs
+    singular: complianceschedule
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.schedule
+      name: Schedule
+      type: string
+    - jsonPath: .status.lastRunAt
+      name: Last Run
+      type: date
+    - jsonPath: .status.controlSummary
+      name: Controls
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for ComplianceScheduleSpec via `CustomResource`
+        properties:
+          spec:
+            description: ComplianceSchedule drives continuous compliance testing against live infrastructure and feeds results into the observability + gating pipeline.
+            properties:
+              attestation:
+                description: Tameshi attestation configuration.
+                nullable: true
+                properties:
+                  certificationRef:
+                    description: Reference to a sekiban Certification to update.
+                    nullable: true
+                    type: string
+                  enabled:
+                    default: true
+                    description: Enable BLAKE3 attestation of compliance results.
+                    type: boolean
+                  heartbeatChainUri:
+                    description: S3 URI for HeartbeatChain persistence.
+                    nullable: true
+                    type: string
+                  layerTypes:
+                    description: Layer types to collect and hash for CertificationArtifact.
+                    items:
+                      type: string
+                    type: array
+                  signatureGateRef:
+                    description: Reference to a sekiban SignatureGate to update with compliance hash.
+                    nullable: true
+                    type: string
+                type: object
+              onChange:
+                description: Trigger a run when referenced InfrastructureTemplates change.
+                items:
+                  description: Reference to another InfrastructureTemplate.
+                  properties:
+                    name:
+                      description: Name of the InfrastructureTemplate.
+                      type: string
+                    namespace:
+                      description: Namespace (defaults to same namespace as the referencing template).
+                      nullable: true
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+              parallelism:
+                default: 2
+                description: Maximum concurrent suite executions.
+                format: uint32
+                minimum: 0.0
+                type: integer
+              providerCredentials:
+                description: Provider credentials for test execution (AWS, etc.).
+                nullable: true
+                properties:
+                  aws:
+                    description: AWS credentials configuration.
+                    nullable: true
+                    properties:
+                      region:
+                        description: Region to use for AWS operations.
+                        nullable: true
+                        type: string
+                      roleArn:
+                        description: Optional role ARN to assume.
+                        nullable: true
+                        type: string
+                      secretRef:
+                        description: Secret containing AWS credentials.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
+                  cloudflare:
+                    description: Cloudflare credentials configuration.
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing Cloudflare API token.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
+                type: object
+              reporting:
+                default:
+                  retentionDays: 0
+                description: Reporting/observability destinations.
+                properties:
+                  prometheus:
+                    description: Expose Prometheus metrics.
+                    nullable: true
+                    properties:
+                      enabled:
+                        default: true
+                        description: Enable Prometheus metrics.
+                        type: boolean
+                      prefix:
+                        default: pangea_compliance_
+                        description: Metric name prefix (e.g., "pangea_compliance_").
+                        type: string
+                    type: object
+                  retentionDays:
+                    default: 90
+                    description: Report retention in days.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  s3:
+                    description: Store reports in S3.
+                    nullable: true
+                    properties:
+                      bucket:
+                        description: S3 bucket name.
+                        type: string
+                      credentialsSecretRef:
+                        description: Credentials for S3 access.
+                        nullable: true
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      prefix:
+                        default: compliance-reports/
+                        description: S3 key prefix.
+                        type: string
+                      region:
+                        description: AWS region.
+                        nullable: true
+                        type: string
+                    required:
+                    - bucket
+                    type: object
+                  vector:
+                    description: Emit structured events to Vector/Shinryu.
+                    nullable: true
+                    properties:
+                      encoding:
+                        default: json
+                        description: 'Encoding format: "json" (default) or "logfmt".'
+                        type: string
+                      endpoint:
+                        description: Vector endpoint (e.g., "vector.observe.svc:6514").
+                        type: string
+                      topic:
+                        default: infrastructure-compliance
+                        description: Topic/source name for events.
+                        type: string
+                    required:
+                    - endpoint
+                    type: object
+                type: object
+              runnerImage:
+                description: Container image for the test runner Jobs.
+                nullable: true
+                type: string
+              schedule:
+                description: Cron schedule for compliance runs (e.g., "0 */6 * * *"). If omitted, runs only on infrastructure change events.
+                nullable: true
+                type: string
+              suites:
+                description: Compliance test suites to execute.
+                items:
+                  description: A single compliance suite to execute.
+                  properties:
+                    config:
+                      description: Additional runner configuration.
+                      type: object
+                    controlFamilies:
+                      description: NIST 800-53 control family mappings for this suite. Used for compliance reporting and OSCAL export.
+                      items:
+                        type: string
+                      type: array
+                    name:
+                      description: Unique name within this schedule.
+                      type: string
+                    profile:
+                      description: Runner-specific profile name or path.
+                      nullable: true
+                      type: string
+                    runner:
+                      description: Which runner executes this suite.
+                      enum:
+                      - kensa
+                      - inSpec
+                      - script
+                      type: string
+                    timeout:
+                      default: 15m
+                      description: Timeout for this suite. Defaults to "15m".
+                      type: string
+                    waivers:
+                      description: Specific controls to skip (waiver).
+                      items:
+                        type: string
+                      type: array
+                  required:
+                  - name
+                  - runner
+                  type: object
+                type: array
+              suspend:
+                default: false
+                description: Suspend scheduling (manual runs still allowed).
+                type: boolean
+            required:
+            - suites
+            type: object
+          status:
+            description: Status of a ComplianceSchedule.
+            nullable: true
+            properties:
+              complianceHash:
+                description: Aggregate compliance hash (BLAKE3 of all suite results).
+                nullable: true
+                type: string
+              conditions:
+                description: Kubernetes-style conditions.
+                items:
+                  description: Kubernetes-style condition.
+                  properties:
+                    lastTransitionTime:
+                      description: Last time the condition transitioned.
+                      format: date-time
+                      type: string
+                    message:
+                      description: Human-readable message.
+                      type: string
+                    reason:
+                      description: Machine-readable reason for the condition.
+                      type: string
+                    status:
+                      description: Status of the condition (True, False, Unknown).
+                      type: string
+                    type:
+                      description: Type of condition.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              consecutiveCompliant:
+                default: 0
+                description: Number of consecutive compliant runs.
+                format: uint32
+                minimum: 0.0
+                type: integer
+              consecutiveNonCompliant:
+                default: 0
+                description: Number of consecutive non-compliant runs.
+                format: uint32
+                minimum: 0.0
+                type: integer
+              controlSummary:
+                description: Human-readable control summary (e.g., "118/120 controls passed").
+                nullable: true
+                type: string
+              lastRunAt:
+                description: Timestamp of last completed run.
+                format: date-time
+                nullable: true
+                type: string
+              nextRunAt:
+                description: Timestamp of next scheduled run.
+                format: date-time
+                nullable: true
+                type: string
+              observedGeneration:
+                default: 0
+                description: Last observed generation.
+                format: int64
+                type: integer
+              phase:
+                description: Current phase.
+                enum:
+                - Idle
+                - Running
+                - Compliant
+                - NonCompliant
+                - Error
+                nullable: true
+                type: string
+              suites:
+                description: Per-suite results from last run.
+                items:
+                  description: Result of a single compliance suite execution.
+                  properties:
+                    completedAt:
+                      description: Timestamp of completion.
+                      format: date-time
+                      nullable: true
+                      type: string
+                    controlsAssessed:
+                      default: 0
+                      description: Number of controls assessed.
+                      format: uint32
+                      minimum: 0.0
+                      type: integer
+                    controlsFailed:
+                      default: 0
+                      description: Number of controls failed.
+                      format: uint32
+                      minimum: 0.0
+                      type: integer
+                    controlsPassed:
+                      default: 0
+                      description: Number of controls passed.
+                      format: uint32
+                      minimum: 0.0
+                      type: integer
+                    controlsSkipped:
+                      default: 0
+                      description: Number of controls skipped (waived).
+                      format: uint32
+                      minimum: 0.0
+                      type: integer
+                    duration:
+                      description: Execution duration.
+                      nullable: true
+                      type: string
+                    failedControls:
+                      description: Failed control IDs (e.g., ["AC-3", "AU-2"]).
+                      items:
+                        type: string
+                      type: array
+                    jobName:
+                      description: K8s Job name that executed this suite.
+                      nullable: true
+                      type: string
+                    name:
+                      description: Suite name.
+                      type: string
+                    passed:
+                      description: Whether the suite passed.
+                      type: boolean
+                    resultHash:
+                      description: BLAKE3 hash of this suite's results.
+                      nullable: true
+                      type: string
+                    runner:
+                      description: Runner used.
+                      enum:
+                      - kensa
+                      - inSpec
+                      - script
+                      type: string
+                  required:
+                  - name
+                  - passed
+                  - runner
+                  type: object
+                type: array
+              totalRuns:
+                default: 0
+                description: Total runs completed.
+                format: uint64
+                minimum: 0.0
+                type: integer
+            type: object
+        required:
+        - spec
+        title: ComplianceSchedule
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: compliancebindings.pangea.pleme.io
+spec:
+  group: pangea.pleme.io
+  names:
+    categories: []
+    kind: ComplianceBinding
+    plural: compliancebindings
+    shortNames:
+    - cb
+    singular: compliancebinding
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.enforcement
+      name: Enforcement
+      type: string
+    - jsonPath: .status.complianceState
+      name: Compliance
+      type: string
+    - jsonPath: .status.targetCount
+      name: Targets
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for ComplianceBindingSpec via `CustomResource`
+        properties:
+          spec:
+            description: ComplianceBinding connects a ComplianceSchedule to infrastructure targets and defines enforcement behavior when compliance state changes.
+            properties:
+              complianceRef:
+                description: Reference to the ComplianceSchedule that provides compliance state.
+                properties:
+                  name:
+                    description: Name of the ComplianceSchedule.
+                    type: string
+                  namespace:
+                    description: Namespace (defaults to same as binding).
+                    nullable: true
+                    type: string
+                required:
+                - name
+                type: object
+              enforcement:
+                default: gate
+                description: Enforcement level when compliance fails.
+                enum:
+                - audit
+                - gate
+                - rollback
+                - admissionOnly
+                type: string
+              minConsecutiveCompliant:
+                default: 1
+                description: Minimum consecutive compliant runs before allowing gated operations. Prevents a single passing run from unblocking after a series of failures.
+                format: uint32
+                minimum: 0.0
+                type: integer
+              reactions:
+                description: Automated reactions to compliance state changes.
+                items:
+                  description: Automated reaction to a compliance state change.
+                  properties:
+                    action:
+                      description: Action to take.
+                      enum:
+                      - suspendTarget
+                      - resumeTarget
+                      - webhook
+                      - event
+                      - reconcile
+                      type: string
+                    event:
+                      description: Event that triggers this reaction.
+                      enum:
+                      - nonCompliant
+                      - compliant
+                      - controlFailed
+                      - error
+                      - hashChanged
+                      type: string
+                    messageTemplate:
+                      description: Custom message template for webhook/alert actions.
+                      nullable: true
+                      type: string
+                    webhookUrl:
+                      description: Webhook URL for webhook actions.
+                      nullable: true
+                      type: string
+                  required:
+                  - action
+                  - event
+                  type: object
+                type: array
+              sekibanIntegration:
+                description: Sekiban admission webhook integration.
+                nullable: true
+                properties:
+                  annotateDeployments:
+                    default: false
+                    description: Update deployment annotations with certification hash for sekiban admission webhook enforcement.
+                    type: boolean
+                  annotationKey:
+                    default: sekiban.pleme.io/certification-hash
+                    description: Annotation key for the certification hash.
+                    type: string
+                  certificationRef:
+                    description: Certification to update with compliance attestation.
+                    nullable: true
+                    type: string
+                  signatureGateRef:
+                    description: SignatureGate to update with compliance hash.
+                    nullable: true
+                    type: string
+                type: object
+              suspend:
+                default: false
+                description: Suspend this binding (targets are ungated).
+                type: boolean
+              targets:
+                description: Infrastructure targets bound to this compliance schedule.
+                items:
+                  description: An infrastructure target bound to compliance.
+                  properties:
+                    kind:
+                      description: Kind of the target resource.
+                      enum:
+                      - InfrastructureTemplate
+                      - InfrastructureFlow
+                      - ImagePipeline
+                      - PackerBuild
+                      type: string
+                    name:
+                      description: Name of the target resource.
+                      type: string
+                    namespace:
+                      description: Namespace (defaults to same as binding).
+                      nullable: true
+                      type: string
+                  required:
+                  - kind
+                  - name
+                  type: object
+                type: array
+            required:
+            - complianceRef
+            - targets
+            type: object
+          status:
+            description: Status of a ComplianceBinding.
+            nullable: true
+            properties:
+              complianceHash:
+                description: Compliance hash from the referenced ComplianceSchedule.
+                nullable: true
+                type: string
+              complianceState:
+                description: Current compliance state as observed by this binding.
+                enum:
+                - compliant
+                - nonCompliant
+                - unknown
+                - suspended
+                nullable: true
+                type: string
+              conditions:
+                description: Kubernetes-style conditions.
+                items:
+                  description: Kubernetes-style condition.
+                  properties:
+                    lastTransitionTime:
+                      description: Last time the condition transitioned.
+                      format: date-time
+                      type: string
+                    message:
+                      description: Human-readable message.
+                      type: string
+                    reason:
+                      description: Machine-readable reason for the condition.
+                      type: string
+                    status:
+                      description: Status of the condition (True, False, Unknown).
+                      type: string
+                    type:
+                      description: Type of condition.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              observedGeneration:
+                default: 0
+                description: Last observed generation.
+                format: int64
+                type: integer
+              targetCount:
+                default: 0
+                description: Number of bound targets.
+                format: uint32
+                minimum: 0.0
+                type: integer
+              targets:
+                description: Per-target enforcement status.
+                items:
+                  description: Enforcement status for a single target.
+                  properties:
+                    gated:
+                      description: Whether the target is currently gated (suspended).
+                      type: boolean
+                    kind:
+                      description: Target kind.
+                      enum:
+                      - InfrastructureTemplate
+                      - InfrastructureFlow
+                      - ImagePipeline
+                      - PackerBuild
+                      type: string
+                    lastAction:
+                      description: Last action taken on this target.
+                      nullable: true
+                      type: string
+                    name:
+                      description: Target name.
+                      type: string
+                  required:
+                  - gated
+                  - kind
+                  - name
+                  type: object
+                type: array
+            type: object
+        required:
+        - spec
+        title: ComplianceBinding
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: pangeadashboards.pangea.pleme.io
+spec:
+  group: pangea.pleme.io
+  names:
+    categories: []
+    kind: PangeaDashboard
+    plural: pangeadashboards
+    shortNames:
+    - pd
+    singular: pangeadashboard
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.folder
+      name: Folder
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.dashboardUid
+      name: Dashboard
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for PangeaDashboardSpec via `CustomResource`
+        properties:
+          spec:
+            description: PangeaDashboard synthesizes a Grafana dashboard from Pangea Ruby DSL.
+            properties:
+              extendModules:
+                default:
+                - Pangea::Grafana
+                description: Ruby modules to extend the synthesizer with before evaluation. Defaults to `["Pangea::Grafana"]` for dashboard builder access.
+                items:
+                  type: string
+                type: array
+              folder:
+                description: Grafana folder to place the dashboard in.
+                nullable: true
+                type: string
+              grafanaInstanceSelector:
+                additionalProperties:
+                  type: string
+                default: {}
+                description: 'Label selector for the target Grafana instance. Must match the Grafana CR''s labels (e.g., `dashboards: grafana`).'
+                type: object
+              message:
+                description: Commit message for Grafana's built-in version tracking.
+                nullable: true
+                type: string
+              overwrite:
+                default: true
+                description: Whether to overwrite an existing dashboard with the same UID.
+                type: boolean
+              source:
+                description: Dashboard source — inline Ruby DSL or reference to a ConfigMap.
+                oneOf:
+                - required:
+                  - inline
+                - required:
+                  - configMapRef
+                properties:
+                  configMapRef:
+                    description: Reference to a ConfigMap containing the Ruby source.
+                    properties:
+                      key:
+                        description: Key within the ConfigMap.
+                        type: string
+                      name:
+                        description: ConfigMap name.
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                  inline:
+                    description: Inline Ruby code that returns a Grafana dashboard JSON string.
+                    properties:
+                      ruby:
+                        description: Ruby source code. Must return a JSON string (e.g., via DashboardBuilder.build).
+                        type: string
+                    required:
+                    - ruby
+                    type: object
+                type: object
+            required:
+            - source
+            type: object
+          status:
+            description: Status of a PangeaDashboard.
+            nullable: true
+            properties:
+              conditions:
+                description: Kubernetes-style conditions.
+                items:
+                  description: Kubernetes-style condition.
+                  properties:
+                    lastTransitionTime:
+                      description: Last time the condition transitioned.
+                      format: date-time
+                      type: string
+                    message:
+                      description: Human-readable message.
+                      type: string
+                    reason:
+                      description: Machine-readable reason for the condition.
+                      type: string
+                    status:
+                      description: Status of the condition (True, False, Unknown).
+                      type: string
+                    type:
+                      description: Type of condition.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              configMapName:
+                description: Name of the generated ConfigMap containing dashboard JSON.
+                nullable: true
+                type: string
+              dashboardUid:
+                description: UID of the dashboard in Grafana (extracted from synthesized JSON).
+                nullable: true
+                type: string
+              error:
+                description: Error message if phase is Failed.
+                nullable: true
+                type: string
+              grafanaDashboardName:
+                description: Name of the generated GrafanaDashboard CRD.
+                nullable: true
+                type: string
+              observedGeneration:
+                default: 0
+                description: Last observed generation.
+                format: int64
+                type: integer
+              phase:
+                description: Current lifecycle phase.
+                enum:
+                - Pending
+                - Synthesizing
+                - Ready
+                - Failed
+                nullable: true
+                type: string
+              sourceHash:
+                description: SHA-256 hash of the last successfully compiled Ruby source. Used for change detection to avoid unnecessary recompilations.
+                nullable: true
+                type: string
+            type: object
+        required:
+        - spec
+        title: PangeaDashboard
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: architecturegems.pangea.pleme.io
+spec:
+  group: pangea.pleme.io
+  names:
+    categories: []
+    kind: ArchitectureGem
+    plural: architecturegems
+    shortNames:
+    - archgem
+    - agem
+    singular: architecturegem
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.loadedClassCount
+      name: Loaded
+      type: integer
+    - jsonPath: .status.smokeStatus
+      name: Smoke
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for ArchitectureGemSpec via `CustomResource`
+        properties:
+          spec:
+            description: ArchitectureGem declares a Pangea architecture gem to be loaded + smoke-tested by the operator's compiler sidecar.
+            properties:
+              expectedClasses:
+                description: |-
+                  Classes the operator EXPECTS this gem to expose. Operator refuses to advance past `Verifying` if any expected class is missing from the compiler's loaded namespace.
+
+                  Format: fully-qualified Ruby class names, e.g. `Pangea::Architectures::CloudflareTunnel`.
+                items:
+                  type: string
+                type: array
+              fixtures:
+                default: []
+                description: Smoke-test fixtures. Each fixture exercises one class with a known-good input; the operator runs them against the compiler sidecar at reconcile time. ALL fixtures must pass for the gem to advance to `Loaded`.
+                items:
+                  description: Smoke-test fixture for one architecture class. The compiler runs the architecture's `.build(...)` method against the inputs and confirms the result compiles to valid Terraform JSON.
+                  properties:
+                    className:
+                      description: Fully-qualified class name being exercised. E.g. `Pangea::Architectures::CloudflareTunnel`.
+                      type: string
+                    description:
+                      description: Optional human-readable description shown in error messages when the fixture fails.
+                      nullable: true
+                      type: string
+                    fixturePath:
+                      description: 'Path to the fixture input file, relative to the gem''s repository root. Format is YAML; the YAML is deserialized as the architecture''s `.build(synth, args)` second argument. Example: `spec/fixtures/cloudflare_tunnel.yaml`.'
+                      type: string
+                  required:
+                  - className
+                  - fixturePath
+                  type: object
+                type: array
+              gemName:
+                description: 'Ruby gem name as it appears in Bundler / require statements. Example: `pangea-architectures`.'
+                type: string
+              policy:
+                default: {}
+                description: Gem-level policy defaults — root of the four-level cascade (gem → workspace → template → resource). Lower levels can override with safety precedence (`refuse > requireApproval > autoApply`).
+                properties:
+                  approvalRouting:
+                    description: Approval routing for `requireApproval` reactions.
+                    nullable: true
+                    properties:
+                      githubIssueTemplate:
+                        description: GitHub issue template name. Operator opens an issue in the workspace's source repo.
+                        nullable: true
+                        type: string
+                      ntfyTopic:
+                        description: ntfy topic name (homelab convention — see pleme-io alertmanager-ntfy module).
+                        nullable: true
+                        type: string
+                      slackChannel:
+                        description: Slack channel (SaaS convention — Datadog/Splunk-paired clusters).
+                        nullable: true
+                        type: string
+                    type: object
+                  destroyProtection:
+                    description: Default destroy protection for resources from this gem.
+                    nullable: true
+                    type: boolean
+                  driftReaction:
+                    description: Default drift reaction for resources from this gem. `autoApply` (silent), `requireApproval` (stall), `refuse` (block all changes), `alert` (notify but don't apply).
+                    enum:
+                    - autoApply
+                    - requireApproval
+                    - refuse
+                    - alert
+                    nullable: true
+                    type: string
+                  settlingPolicy:
+                    description: Settling policy — what to do if the gem keeps drifting.
+                    nullable: true
+                    properties:
+                      maxConsecutiveDriftCycles:
+                        default: 4
+                        description: After this many consecutive drift cycles, take `onExhaustion` action.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      onExhaustion:
+                        default: fail
+                        description: What to do when `maxConsecutiveDriftCycles` is hit.
+                        enum:
+                        - fail
+                        - alert
+                        - retry
+                        type: string
+                    type: object
+                type: object
+              refreshInterval:
+                default: 5m
+                description: How often to re-verify the gem (e.g. catch sidecar restart where the gem was unloaded). Defaults to `5m`.
+                type: string
+              source:
+                description: 'Where the gem source lives. M1 supports gitRepository only; future: published-gem (RubyGems.org) and OCI-artifact modes.'
+                properties:
+                  gitRepository:
+                    description: Git repository — clone the gem at the given ref. Compiler sidecar bundles + requires from this path.
+                    nullable: true
+                    properties:
+                      path:
+                        description: Path to the template file within the repository.
+                        type: string
+                      ref:
+                        default: main
+                        description: Git reference (branch, tag, or commit SHA).
+                        type: string
+                      secretRef:
+                        description: Reference to a Secret containing Git credentials.
+                        nullable: true
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      url:
+                        description: Git repository URL.
+                        type: string
+                    required:
+                    - path
+                    - url
+                    type: object
+                type: object
+              suspend:
+                default: false
+                description: Suspend reconciliation. Operator skips this gem entirely; existing classes stay in the registry (last-known-good).
+                type: boolean
+              version:
+                description: Required gem version (semver constraint or exact). Operator refuses to load if the compiler sidecar reports a different version.
+                type: string
+            required:
+            - expectedClasses
+            - gemName
+            - source
+            - version
+            type: object
+          status:
+            description: Status reflecting the loader's view of this gem.
+            nullable: true
+            properties:
+              conditions:
+                default: []
+                description: 'Standard kube conditions: `Loaded`, `SmokeTested`, `Ready`.'
+                items:
+                  description: Standard kube condition shape.
+                  properties:
+                    lastTransitionTime:
+                      description: When the condition last transitioned.
+                      format: date-time
+                      type: string
+                    message:
+                      description: Human-readable message.
+                      type: string
+                    reason:
+                      description: Machine-readable reason.
+                      type: string
+                    status:
+                      description: '`True`, `False`, `Unknown`.'
+                      type: string
+                    type:
+                      description: Condition type — `Loaded`, `SmokeTested`, `Ready`.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              fixtureResults:
+                default: []
+                description: Per-fixture smoke-test results.
+                items:
+                  description: Per-fixture smoke-test result.
+                  properties:
+                    className:
+                      description: Class the fixture exercised.
+                      type: string
+                    error:
+                      description: Error message if the fixture failed.
+                      nullable: true
+                      type: string
+                    inputHash:
+                      description: Hash of the fixture input — operator detects fixture drift between releases and re-runs accordingly.
+                      nullable: true
+                      type: string
+                    lastRun:
+                      description: When the fixture last ran.
+                      format: date-time
+                      type: string
+                    passed:
+                      description: Whether the fixture passed.
+                      type: boolean
+                  required:
+                  - className
+                  - lastRun
+                  - passed
+                  type: object
+                type: array
+              lastReconcileTime:
+                description: Last reconcile timestamp.
+                format: date-time
+                nullable: true
+                type: string
+              loadedClassCount:
+                default: 0
+                description: '`loadedClasses.len()` — exposed as a printer column for `kubectl get archgem` ergonomics.'
+                format: uint32
+                minimum: 0.0
+                type: integer
+              loadedClasses:
+                default: []
+                description: Classes actually present in the compiler's loaded namespace for this gem. Source of truth for admission webhook + template `Verified` check.
+                items:
+                  type: string
+                type: array
+              missingClasses:
+                default: []
+                description: Classes from `spec.expectedClasses` that are MISSING from the compiler's namespace. Empty when the gem is fully loaded.
+                items:
+                  type: string
+                type: array
+              observedVersion:
+                description: Compiler-reported gem version (compared against `spec.version`).
+                nullable: true
+                type: string
+              phase:
+                description: Lifecycle phase. See `Phase` enum.
+                enum:
+                - Pending
+                - Loading
+                - SmokeTesting
+                - Loaded
+                - Failed
+                - Suspended
+                nullable: true
+                type: string
+              smokeStatus:
+                description: Smoke test outcome.
+                enum:
+                - NotRun
+                - Passed
+                - Failed
+                nullable: true
+                type: string
+            type: object
+        required:
+        - spec
+        title: ArchitectureGem
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: workspacecatalogs.pangea.pleme.io
+spec:
+  group: pangea.pleme.io
+  names:
+    categories: []
+    kind: WorkspaceCatalog
+    plural: workspacecatalogs
+    shortNames:
+    - wsc
+    - wcat
+    singular: workspacecatalog
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.source.gitRepository.url
+      name: Source
+      type: string
+    - jsonPath: .status.templateCount
+      name: Templates
+      type: integer
+    - jsonPath: .status.verified
+      name: Verified
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for WorkspaceCatalogSpec via `CustomResource`
+        properties:
+          spec:
+            properties:
+              policy:
+                default: {}
+                description: Workspace-level policy — applied to every template in the workspace unless overridden at template or resource level (cascade with safety precedence).
+                properties:
+                  approvalRouting:
+                    description: Approval routing.
+                    nullable: true
+                    properties:
+                      githubIssueTemplate:
+                        description: GitHub issue template name. Operator opens an issue in the workspace's source repo.
+                        nullable: true
+                        type: string
+                      ntfyTopic:
+                        description: ntfy topic name (homelab convention — see pleme-io alertmanager-ntfy module).
+                        nullable: true
+                        type: string
+                      slackChannel:
+                        description: Slack channel (SaaS convention — Datadog/Splunk-paired clusters).
+                        nullable: true
+                        type: string
+                    type: object
+                  driftReaction:
+                    description: Default drift reaction for every template under this workspace (overrides the gem default; can be overridden by a template-level policy).
+                    enum:
+                    - autoApply
+                    - requireApproval
+                    - refuse
+                    - alert
+                    nullable: true
+                    type: string
+                  reconcileInterval:
+                    description: How often the operator runs `tofu plan` to detect drift.
+                    nullable: true
+                    type: string
+                  settlingPolicy:
+                    description: Settling policy — see `architecture_gem.rs`.
+                    nullable: true
+                    properties:
+                      maxConsecutiveDriftCycles:
+                        default: 4
+                        description: After this many consecutive drift cycles, take `onExhaustion` action.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      onExhaustion:
+                        default: fail
+                        description: What to do when `maxConsecutiveDriftCycles` is hit.
+                        enum:
+                        - fail
+                        - alert
+                        - retry
+                        type: string
+                    type: object
+                type: object
+              requiredGems:
+                default: []
+                description: Architecture gems this workspace's templates need. Operator refuses to advance any template under this catalog past `Verified` until every listed gem has phase `Loaded` (every expected class loaded + every fixture passed).
+                items:
+                  type: string
+                type: array
+              source:
+                description: Where the workspace lives.
+                properties:
+                  gitRepository:
+                    description: Git repository (clone-and-watch). M3 supports gitRepository only.
+                    nullable: true
+                    properties:
+                      path:
+                        description: Path to the template file within the repository.
+                        type: string
+                      ref:
+                        default: main
+                        description: Git reference (branch, tag, or commit SHA).
+                        type: string
+                      secretRef:
+                        description: Reference to a Secret containing Git credentials.
+                        nullable: true
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      url:
+                        description: Git repository URL.
+                        type: string
+                    required:
+                    - path
+                    - url
+                    type: object
+                  path:
+                    description: 'Subdirectory within the repo containing the workspace. Example: `workspaces/cloudflare-pleme`.'
+                    nullable: true
+                    type: string
+                type: object
+              suspend:
+                default: false
+                description: Suspend reconciliation of every template under this catalog.
+                type: boolean
+            required:
+            - source
+            type: object
+          status:
+            nullable: true
+            properties:
+              conditions:
+                default: []
+                description: 'Conditions: `Reachable`, `GemsLoaded`, `Verified`.'
+                items:
+                  description: Standard kube condition shape.
+                  properties:
+                    lastTransitionTime:
+                      description: When the condition last transitioned.
+                      format: date-time
+                      type: string
+                    message:
+                      description: Human-readable message.
+                      type: string
+                    reason:
+                      description: Machine-readable reason.
+                      type: string
+                    status:
+                      description: '`True`, `False`, `Unknown`.'
+                      type: string
+                    type:
+                      description: Condition type — `Loaded`, `SmokeTested`, `Ready`.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              lastReconcileTime:
+                description: Last reconcile timestamp.
+                format: date-time
+                nullable: true
+                type: string
+              templateCount:
+                default: 0
+                description: Number of templates the operator has reconciled under this catalog.
+                format: uint32
+                minimum: 0.0
+                type: integer
+              verified:
+                default: false
+                description: Whether every required gem is `Loaded` AND the workspace itself is reachable.
+                type: boolean
+            type: object
+        required:
+        - spec
+        title: WorkspaceCatalog
         type: object
     served: true
     storage: true

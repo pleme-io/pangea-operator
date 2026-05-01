@@ -72,7 +72,9 @@ pub fn next_phase(current: Phase, success: bool) -> Phase {
     }
 
     match current {
-        Phase::Pending => Phase::Compiling,
+        Phase::Pending => Phase::Verifying,
+        Phase::Verifying => Phase::Verified,
+        Phase::Verified => Phase::Compiling,
         Phase::Compiling => Phase::Initializing,
         Phase::Initializing => Phase::Planning,
         Phase::Planning => Phase::Applying,
@@ -108,6 +110,11 @@ pub fn create_condition(
 pub fn conditions_for_phase(phase: Phase, error_msg: Option<&str>) -> Vec<crate::crd::Condition> {
     let (ready, reconciling, drift) = match phase {
         Phase::Pending => (false, false, false),
+        // M2 — Verifying = checking ArchitectureGem registry; Verified
+        // = registry green, ready to compile. Both report Reconciling=
+        // True so FluxCD knows progress is happening.
+        Phase::Verifying => (false, true, false),
+        Phase::Verified => (false, true, false),
         Phase::Compiling => (false, true, false),
         Phase::Initializing => (false, true, false),
         Phase::Planning => (false, true, false),
@@ -209,14 +216,19 @@ mod tests {
 
     #[test]
     fn test_next_phase() {
-        assert_eq!(next_phase(Phase::Pending, true), Phase::Compiling);
+        // M2 inserts Verifying + Verified between Pending and Compiling.
+        assert_eq!(next_phase(Phase::Pending, true), Phase::Verifying);
+        assert_eq!(next_phase(Phase::Verifying, true), Phase::Verified);
+        assert_eq!(next_phase(Phase::Verified, true), Phase::Compiling);
         assert_eq!(next_phase(Phase::Compiling, true), Phase::Initializing);
         assert_eq!(next_phase(Phase::Planning, false), Phase::Failed);
     }
 
     #[test]
     fn test_next_phase_full_success_chain() {
-        assert_eq!(next_phase(Phase::Pending, true), Phase::Compiling);
+        assert_eq!(next_phase(Phase::Pending, true), Phase::Verifying);
+        assert_eq!(next_phase(Phase::Verifying, true), Phase::Verified);
+        assert_eq!(next_phase(Phase::Verified, true), Phase::Compiling);
         assert_eq!(next_phase(Phase::Compiling, true), Phase::Initializing);
         assert_eq!(next_phase(Phase::Initializing, true), Phase::Planning);
         assert_eq!(next_phase(Phase::Planning, true), Phase::Applying);
@@ -227,7 +239,8 @@ mod tests {
     #[test]
     fn test_next_phase_failure_always_returns_failed() {
         for phase in [
-            Phase::Pending, Phase::Compiling, Phase::Initializing,
+            Phase::Pending, Phase::Verifying, Phase::Verified,
+            Phase::Compiling, Phase::Initializing,
             Phase::Planning, Phase::Applying, Phase::Ready,
             Phase::Drifted, Phase::Failed, Phase::Destroying,
         ] {

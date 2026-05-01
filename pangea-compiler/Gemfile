@@ -22,3 +22,12 @@ gem 'pangea-kubernetes',    path: 'vendor/pangea-kubernetes'
 gem 'pangea-porkbun',       path: 'vendor/pangea-porkbun'
 gem 'pangea-splunk',        path: 'vendor/pangea-splunk'
 gem 'pangea-spot',          path: 'vendor/pangea-spot'
+
+# pangea-architectures (composers) — added 2026-04-30 for M1 of
+# theory/PANGEA-WORKSPACE-RECONCILIATION.md. Bundling enables the new
+# /v1/architectures RPCs to introspect Pangea::Architectures.constants
+# at startup. Future M7 enhancement reverts this to per-CR
+# path-based loading via lib_path RPC argument so workspace SDLC
+# doesn't rebuild the image — tracked in
+# theory/PANGEA-WORKSPACE-RECONCILIATION.md "Open questions".
+gem 'pangea-architectures', path: 'vendor/pangea-architectures'
