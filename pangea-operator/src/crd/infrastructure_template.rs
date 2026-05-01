@@ -145,6 +145,35 @@ pub struct InfrastructureTemplateSpec {
     /// the address list of resources that keep re-drifting).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settling_policy: Option<SettlingPolicy>,
+
+    /// Hints used by the operator to import out-of-band cloud
+    /// resources into tofu state instead of creating duplicates.
+    ///
+    /// Keys are tofu resource addresses (e.g.
+    /// `cloudflare_dns_record.foo`), values are import IDs (the
+    /// provider-specific shape, e.g. `<zone_id>/<record_id>` for
+    /// cloudflare DNS, role name for `aws_iam_role`, etc.). Values
+    /// support `{{ .varName }}` substitution from `spec.variables` —
+    /// e.g. `"{{ .cloudflare_zone_id }}/foo"` resolves
+    /// `varName` against `spec.variables` (string-coerced) before
+    /// passing to `tofu import`.
+    ///
+    /// Operator behavior: before each `tofu apply`, for every plan
+    /// action with `action: create` whose resource address matches a
+    /// key here, the operator runs `tofu import <addr>
+    /// <substituted-id>`. After import the resource is in state, the
+    /// apply becomes a no-op or update, and the cycle receipt
+    /// records the resource as `Outcome::Imported` instead of
+    /// `Outcome::Created`. This is the typed answer to "auto-import
+    /// any state".
+    ///
+    /// Empty map (default) = no imports — every `create` action goes
+    /// straight to the apply and creates a fresh resource as before.
+    /// Hint values that fail substitution are skipped with a Warning
+    /// event; hint imports that fail (e.g. ID doesn't match) leave
+    /// the resource for the apply to handle.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub import_hints: BTreeMap<String, String>,
 }
 
 fn default_refresh_interval() -> String {

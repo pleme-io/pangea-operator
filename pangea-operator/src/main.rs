@@ -274,6 +274,17 @@ async fn main() -> Result<()> {
         error!("ArchitectureGem controller exited");
     });
 
+    // M1+ — WorkspaceCatalog reconciler. Watches WorkspaceCatalog CRs;
+    // populates status.{templateCount, verified, conditions} based on
+    // (a) the readiness of every required ArchitectureGem and (b) the
+    // count of InfrastructureTemplate CRs labeled with this catalog.
+    // The cascade root for workspace-level policy.
+    let wsc_client = state.client.clone();
+    let workspace_catalog_controller = tokio::spawn(async move {
+        pangea_operator::controller::workspace_catalog_controller::run(wsc_client).await;
+        error!("WorkspaceCatalog controller exited");
+    });
+
     info!("Controllers started");
 
     // Start GraphQL server
@@ -306,6 +317,7 @@ async fn main() -> Result<()> {
     compliance_schedule_controller.abort();
     compliance_binding_controller.abort();
     architecture_gem_controller.abort();
+    workspace_catalog_controller.abort();
 
     info!("Pangea Operator stopped");
     Ok(())

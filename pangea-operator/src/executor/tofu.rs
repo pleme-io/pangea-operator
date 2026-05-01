@@ -31,6 +31,7 @@ pub enum TofuCommand {
     Show,
     Output,
     Refresh,
+    Import,
 }
 
 impl TofuCommand {
@@ -43,6 +44,7 @@ impl TofuCommand {
             TofuCommand::Show => "show",
             TofuCommand::Output => "output",
             TofuCommand::Refresh => "refresh",
+            TofuCommand::Import => "import",
         }
     }
 }
@@ -156,6 +158,26 @@ impl TofuExecutor {
     pub async fn refresh(&self, work_dir: &Path) -> Result<TofuResult> {
         let args = vec!["-input=false", "-no-color"];
         self.execute(TofuCommand::Refresh, work_dir, &args, &HashMap::new()).await
+    }
+
+    /// Run `tofu import <address> <id>` — adopt an out-of-band cloud
+    /// resource into tofu state without recreating it. The next plan
+    /// will see the resource as already-managed; if attribute drift
+    /// exists the next apply settles it via update.
+    ///
+    /// Idempotent at the operator level: callers should check
+    /// drift-details for the address before importing — re-importing
+    /// an already-imported address fails with "resource already
+    /// managed", which is harmless but noisy.
+    pub async fn import(
+        &self,
+        work_dir: &Path,
+        address: &str,
+        id: &str,
+    ) -> Result<TofuResult> {
+        let args = vec!["-input=false", "-no-color", address, id];
+        self.execute(TofuCommand::Import, work_dir, &args, &HashMap::new())
+            .await
     }
 
     /// Execute a tofu command.

@@ -21,6 +21,7 @@ use kube::{
     },
     Resource, ResourceExt,
 };
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, instrument, warn};
@@ -142,9 +143,36 @@ async fn reconcile_template(
         return Ok(Action::requeue(Duration::from_secs(1)));
     }
 
-    // Check if suspended — emit conditions so FluxCD sees definitive state
-    if template.spec.suspend {
-        info!("Template is suspended, skipping reconciliation");
+    // Resolve the parent WorkspaceCatalog (if the template carries the
+    // pangea.pleme.io/workspace label) — used both for the
+    // suspend-cascade check immediately below and for the policy
+    // cascade in handle_planning. Treat lookup failures as "no parent"
+    // (best-effort cascade); we'd rather reconcile without the
+    // workspace-level overrides than refuse to reconcile.
+    let parent_wsc = match crate::controller::workspace_catalog_controller::parent_catalog_for_template(
+        &state.client,
+        &template,
+    )
+    .await
+    {
+        Ok(p) => p,
+        Err(e) => {
+            warn!(error = %e, "WorkspaceCatalog lookup failed; reconciling without workspace cascade");
+            None
+        }
+    };
+
+    // Check if suspended — emit conditions so FluxCD sees definitive state.
+    // Also honor the parent WorkspaceCatalog's suspend flag (cascade) —
+    // suspending a workspace stops every template under it without
+    // touching each template's spec.
+    let workspace_suspended = parent_wsc.as_ref().map(|w| w.spec.suspend).unwrap_or(false);
+    if template.spec.suspend || workspace_suspended {
+        info!(
+            workspace_suspended,
+            template_suspended = template.spec.suspend,
+            "Template is suspended, skipping reconciliation"
+        );
         let ns = template.namespace().unwrap_or_default();
         let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &ns);
         let patch = serde_json::json!({
@@ -672,6 +700,30 @@ async fn handle_planning(
 
     let has_changes = result.has_changes();
 
+    // Resolve the cascade root: if the template has its own
+    // `defaultDecision` set, it wins; otherwise inherit the parent
+    // WorkspaceCatalog's `policy.driftReaction`. This is the workspace
+    // level of the four-level cascade
+    // (gem → workspace → template → resource). Refuse >
+    // requireApproval > autoApply for safety precedence is enforced
+    // inside evaluate_policy when both layers contribute rules.
+    let effective_default = match template.spec.default_decision {
+        Some(d) => Some(d),
+        None => match crate::controller::workspace_catalog_controller::parent_catalog_for_template(
+            &state.client,
+            template,
+        )
+        .await
+        {
+            Ok(Some(wsc)) => wsc
+                .spec
+                .policy
+                .drift_reaction
+                .and_then(workspace_drift_reaction_to_policy_decision),
+            _ => None,
+        },
+    };
+
     // Run the per-resource policy engine. Empty rules + unset
     // defaultDecision = aggressive auto-apply on every change (the
     // documented default). The engine annotates each drift entry with
@@ -679,11 +731,11 @@ async fn handle_planning(
     // plan→apply gate below.
     let policy_outcome = evaluate_policy(
         &template.spec.policies,
-        template.spec.default_decision,
+        effective_default,
         &raw_drifts,
     );
     let policy_was_configured =
-        policy_is_configured(&template.spec.policies, template.spec.default_decision);
+        policy_is_configured(&template.spec.policies, effective_default);
 
     let resource_summary = summary.as_ref().map(|s| ResourceSummary {
         total: s.total,
@@ -855,18 +907,6 @@ async fn handle_applying(
     let workspace = state.workspace_manager.get_workspace(template).await?;
     let plan_path = workspace.plan_path();
 
-    // Use plan file if it exists, otherwise apply directly
-    let plan_file = if plan_path.exists() {
-        Some(plan_path.as_path())
-    } else {
-        None
-    };
-
-    let result = state
-        .executor
-        .apply(&workspace.path, plan_file, true)
-        .await?;
-
     // Snapshot the drift_details that handle_planning persisted on
     // status before the apply ran — this is the per-resource change
     // set the apply just consumed (or just failed against).
@@ -879,6 +919,29 @@ async fn handle_applying(
         .status
         .as_ref()
         .and_then(|s| s.plan_summary.clone());
+
+    // Import pre-pass: for every `create` action whose resource
+    // address has an importHint, run `tofu import <addr> <id>` to
+    // adopt the existing cloud resource into state instead of
+    // creating a duplicate. Imported addresses are tracked so the
+    // cycle receipt can mark them Outcome::Imported (instead of
+    // whatever the post-import plan would derive).
+    let imported_addresses =
+        run_import_prepass(template, state, &workspace.path, &prior_drifts).await;
+
+    // Use plan file if it exists, otherwise apply directly. If we
+    // imported anything, drop the cached plan file — the new state
+    // makes the cached plan stale; tofu apply will refresh.
+    let plan_file = if plan_path.exists() && imported_addresses.is_empty() {
+        Some(plan_path.as_path())
+    } else {
+        None
+    };
+
+    let result = state
+        .executor
+        .apply(&workspace.path, plan_file, true)
+        .await?;
 
     if result.success {
         info!(duration_secs = result.duration.as_secs_f64(), "tofu apply completed successfully");
@@ -898,7 +961,7 @@ async fn handle_applying(
             state,
             &prior_drifts,
             prior_plan_summary,
-            CycleResult::AppliedSuccess,
+            CycleResult::AppliedSuccess { imported_addresses: imported_addresses.clone() },
         )
         .await?;
         record_event(template, state, EventType::Normal, "Applied", "Infrastructure applied successfully").await;
@@ -918,6 +981,133 @@ async fn handle_applying(
     }
 
     Ok(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL))
+}
+
+/// Run the pre-apply import sweep. Returns the set of addresses
+/// successfully imported so the cycle receipt can mark them as
+/// `Outcome::Imported` instead of whatever the apply-time plan
+/// derives (the plan-after-import would say no-op or update — the
+/// USER-facing outcome is "we adopted this resource").
+///
+/// Failures are non-fatal: a hint with bad substitution is skipped
+/// with a Warning event; an import that fails (wrong ID, resource
+/// gone, already-managed) is logged but doesn't block the apply.
+async fn run_import_prepass(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+    workspace_path: &std::path::Path,
+    prior_drifts: &[DriftDetail],
+) -> Vec<String> {
+    if template.spec.import_hints.is_empty() {
+        return Vec::new();
+    }
+
+    let create_addresses: HashSet<&str> = prior_drifts
+        .iter()
+        .filter(|d| d.action == "create")
+        .map(|d| d.address.as_str())
+        .collect();
+
+    let variables = template.spec.variables.clone().unwrap_or_default();
+    let mut imported = Vec::new();
+
+    for (addr, id_template) in &template.spec.import_hints {
+        if !create_addresses.contains(addr.as_str()) {
+            continue;
+        }
+        let import_id = match substitute_import_id(id_template, &variables) {
+            Ok(id) => id,
+            Err(missing) => {
+                warn!(
+                    address = %addr,
+                    missing_var = %missing,
+                    "import hint substitution failed; skipping"
+                );
+                record_event(
+                    template,
+                    state,
+                    EventType::Warning,
+                    "ImportHintSkipped",
+                    &format!(
+                        "Import hint for {addr} references unset variable {{{{ .{missing} }}}}; skipping"
+                    ),
+                )
+                .await;
+                continue;
+            }
+        };
+        info!(address = %addr, import_id = %import_id, "Running tofu import for create-action with hint");
+        match state.executor.import(workspace_path, addr, &import_id).await {
+            Ok(r) if r.success => {
+                imported.push(addr.clone());
+                record_event(
+                    template,
+                    state,
+                    EventType::Normal,
+                    "Imported",
+                    &format!("Adopted out-of-band {addr} into state via import id {import_id}"),
+                )
+                .await;
+            }
+            Ok(r) => {
+                warn!(
+                    address = %addr,
+                    stderr = %r.stderr,
+                    "tofu import failed; falling through to apply"
+                );
+                record_event(
+                    template,
+                    state,
+                    EventType::Warning,
+                    "ImportFailed",
+                    &format!("tofu import {addr} failed: {}", truncate_for_status(&r.stderr)),
+                )
+                .await;
+            }
+            Err(e) => {
+                warn!(address = %addr, error = %e, "tofu import errored; falling through to apply");
+            }
+        }
+    }
+    imported
+}
+
+/// Replace `{{ .name }}` (with optional whitespace) tokens in
+/// `template` with string-coerced values from `variables`. Returns
+/// `Err(missing_var)` on the first unresolved token so the caller
+/// can surface it as a typed event.
+fn substitute_import_id(
+    template: &str,
+    variables: &std::collections::BTreeMap<String, serde_json::Value>,
+) -> std::result::Result<String, String> {
+    let mut out = String::with_capacity(template.len());
+    let bytes = template.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if i + 1 < bytes.len() && bytes[i] == b'{' && bytes[i + 1] == b'{' {
+            // Find closing }}
+            let close = match template[i + 2..].find("}}") {
+                Some(p) => i + 2 + p,
+                None => {
+                    out.push_str(&template[i..]);
+                    break;
+                }
+            };
+            let inner = template[i + 2..close].trim();
+            // Accept either `.name` or `name`.
+            let var_name = inner.strip_prefix('.').unwrap_or(inner).trim();
+            match variables.get(var_name) {
+                Some(serde_json::Value::String(s)) => out.push_str(s),
+                Some(v) => out.push_str(&v.to_string().trim_matches('"').to_string()),
+                None => return Err(var_name.to_string()),
+            }
+            i = close + 2;
+        } else {
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    Ok(out)
 }
 
 /// Handle Ready phase - periodic drift detection + state-settling tracking.
@@ -1580,6 +1770,25 @@ async fn update_pending_plan_hash(
     Ok(())
 }
 
+/// Map the WorkspaceCatalog's `DriftReaction` enum (gem-cascade
+/// shape) to the InfrastructureTemplate's `PolicyDecision` enum. The
+/// two enums describe the same intent at different cascade levels but
+/// have slightly different vocabularies — `Alert` exists at the
+/// workspace level (notify-but-don't-block) but maps to `AutoApply`
+/// at the template level because the alerting mechanism is separate
+/// from the apply gate.
+fn workspace_drift_reaction_to_policy_decision(
+    dr: crate::crd::architecture_gem::DriftReaction,
+) -> Option<PolicyDecision> {
+    use crate::crd::architecture_gem::DriftReaction as DR;
+    Some(match dr {
+        DR::AutoApply => PolicyDecision::AutoApply,
+        DR::RequireApproval => PolicyDecision::RequireApproval,
+        DR::Refuse => PolicyDecision::Refuse,
+        DR::Alert => PolicyDecision::AutoApply,
+    })
+}
+
 /// Hash plan content for deterministic approval identification.
 fn content_hash(input: &str) -> u64 {
     use std::hash::{Hash, Hasher};
@@ -1600,8 +1809,12 @@ pub(crate) enum CycleResult {
     /// declared state. Apply did not run.
     NoChanges,
     /// Apply ran successfully on every change in `drift_details`.
-    /// Each entry's terraform action becomes the per-resource outcome.
-    AppliedSuccess,
+    /// Each entry's terraform action becomes the per-resource outcome,
+    /// with the additional twist that any address in
+    /// `imported_addresses` overrides its action-derived outcome to
+    /// `Outcome::Imported` — the cycle adopted that resource into
+    /// state via `tofu import` before the apply ran.
+    AppliedSuccess { imported_addresses: Vec<String> },
     /// Apply errored. Every change in `drift_details` becomes
     /// `Failed`; the apply error is attached as `message`.
     AppliedFailure(String),
@@ -1629,6 +1842,13 @@ fn build_reconcile_cycle(
 ) -> ReconcileCycle {
     let mut summary = CycleSummary::default();
 
+    let imported_set: HashSet<&str> = match &result {
+        CycleResult::AppliedSuccess { imported_addresses } => {
+            imported_addresses.iter().map(String::as_str).collect()
+        }
+        _ => HashSet::new(),
+    };
+
     let outcomes: Vec<ResourceOutcome> = drifts
         .iter()
         .take(100)
@@ -1646,10 +1866,16 @@ fn build_reconcile_cycle(
                     // drifts. If we got here, treat as Matched.
                     (Outcome::Matched, None)
                 }
-                CycleResult::AppliedSuccess => match outcome_for_action(&d.action) {
-                    o @ Outcome::Matched => (o, None),
-                    o => (o, None),
-                },
+                CycleResult::AppliedSuccess { .. } => {
+                    if imported_set.contains(d.address.as_str()) {
+                        // Import pre-pass adopted this resource — the
+                        // user-facing outcome is "imported", not
+                        // whatever action the original plan had.
+                        (Outcome::Imported, Some("adopted via tofu import".to_string()))
+                    } else {
+                        (outcome_for_action(&d.action), None)
+                    }
+                }
             };
             match outcome {
                 Outcome::Matched => summary.matched = summary.matched.saturating_add(1),
@@ -2122,7 +2348,7 @@ mod cycle_tests {
             20,
             Some("+1 ~1 -1".to_string()),
             None,
-            CycleResult::AppliedSuccess,
+            CycleResult::AppliedSuccess { imported_addresses: vec![] },
         );
         assert_eq!(cycle.summary.matched, 17, "20 total - 3 touched = 17");
         assert_eq!(cycle.summary.updated, 1);
@@ -2132,6 +2358,34 @@ mod cycle_tests {
         assert_eq!(cycle.outcomes.len(), 3);
         assert_eq!(cycle.outcomes[0].outcome, Outcome::Updated);
         assert_eq!(cycle.outcomes[0].action.as_deref(), Some("update"));
+    }
+
+    #[test]
+    fn apply_success_with_imported_address_marks_outcome_imported() {
+        let drifts = vec![
+            d("cf_dns_record.foo", "create"),
+            d("cf_zone.bar", "create"),
+        ];
+        let cycle = build_reconcile_cycle(
+            6,
+            Utc::now(),
+            &drifts,
+            10,
+            Some("+2 ~0 -0".to_string()),
+            None,
+            CycleResult::AppliedSuccess {
+                imported_addresses: vec!["cf_dns_record.foo".to_string()],
+            },
+        );
+        // foo got imported, bar got created
+        assert_eq!(cycle.summary.imported, 1);
+        assert_eq!(cycle.summary.created, 1);
+        assert_eq!(cycle.summary.matched, 8);
+        let foo = cycle.outcomes.iter().find(|o| o.address == "cf_dns_record.foo").unwrap();
+        let bar = cycle.outcomes.iter().find(|o| o.address == "cf_zone.bar").unwrap();
+        assert_eq!(foo.outcome, Outcome::Imported);
+        assert_eq!(bar.outcome, Outcome::Created);
+        assert!(foo.message.as_ref().unwrap().contains("import"));
     }
 
     #[test]
@@ -2221,6 +2475,29 @@ mod cycle_tests {
     }
 
     #[test]
+    fn workspace_drift_reaction_maps_to_policy_decision() {
+        use crate::crd::architecture_gem::DriftReaction as DR;
+        assert_eq!(
+            workspace_drift_reaction_to_policy_decision(DR::AutoApply),
+            Some(PolicyDecision::AutoApply)
+        );
+        assert_eq!(
+            workspace_drift_reaction_to_policy_decision(DR::RequireApproval),
+            Some(PolicyDecision::RequireApproval)
+        );
+        assert_eq!(
+            workspace_drift_reaction_to_policy_decision(DR::Refuse),
+            Some(PolicyDecision::Refuse)
+        );
+        // Alert collapses to AutoApply at the template level — the
+        // alert mechanism is separate from the apply gate.
+        assert_eq!(
+            workspace_drift_reaction_to_policy_decision(DR::Alert),
+            Some(PolicyDecision::AutoApply)
+        );
+    }
+
+    #[test]
     fn outcomes_capped_at_100() {
         let drifts: Vec<DriftDetail> =
             (0..200).map(|i| d(&format!("cf_dns_record.r{i}"), "update")).collect();
@@ -2231,7 +2508,7 @@ mod cycle_tests {
             500,
             None,
             None,
-            CycleResult::AppliedSuccess,
+            CycleResult::AppliedSuccess { imported_addresses: vec![] },
         );
         assert_eq!(cycle.outcomes.len(), 100, "outcomes capped at 100");
         // Summary still counts the FULL touched-set in matched math:
@@ -2240,5 +2517,65 @@ mod cycle_tests {
         // So updated count = 100 (top of the cap).
         assert_eq!(cycle.summary.updated, 100);
         assert_eq!(cycle.summary.matched, 300);
+    }
+
+    #[test]
+    fn substitute_import_id_inserts_string_variables() {
+        let mut vars = std::collections::BTreeMap::new();
+        vars.insert("zone".into(), serde_json::Value::String("z123".into()));
+        vars.insert("rec".into(), serde_json::Value::String("r456".into()));
+        let out = substitute_import_id("{{ .zone }}/{{ .rec }}", &vars).unwrap();
+        assert_eq!(out, "z123/r456");
+    }
+
+    #[test]
+    fn substitute_import_id_handles_no_dot_prefix() {
+        let mut vars = std::collections::BTreeMap::new();
+        vars.insert("name".into(), serde_json::Value::String("foo".into()));
+        let out = substitute_import_id("{{ name }}", &vars).unwrap();
+        assert_eq!(out, "foo");
+    }
+
+    #[test]
+    fn substitute_import_id_string_coerces_numbers() {
+        let mut vars = std::collections::BTreeMap::new();
+        vars.insert(
+            "id".into(),
+            serde_json::Value::Number(serde_json::Number::from(42)),
+        );
+        let out = substitute_import_id("{{ .id }}", &vars).unwrap();
+        assert_eq!(out, "42");
+    }
+
+    #[test]
+    fn substitute_import_id_returns_missing_var() {
+        let vars = std::collections::BTreeMap::new();
+        let err = substitute_import_id("{{ .missing }}", &vars).unwrap_err();
+        assert_eq!(err, "missing");
+    }
+
+    #[test]
+    fn substitute_import_id_preserves_literal_text() {
+        let mut vars = std::collections::BTreeMap::new();
+        vars.insert("a".into(), serde_json::Value::String("x".into()));
+        let out = substitute_import_id("prefix-{{ .a }}-suffix", &vars).unwrap();
+        assert_eq!(out, "prefix-x-suffix");
+    }
+
+    #[test]
+    fn substitute_import_id_no_template_passes_through() {
+        let vars = std::collections::BTreeMap::new();
+        let out = substitute_import_id("plain-id-no-vars", &vars).unwrap();
+        assert_eq!(out, "plain-id-no-vars");
+    }
+
+    #[test]
+    fn substitute_import_id_unclosed_template_passes_through() {
+        // Defensive: malformed templates don't crash; remainder is
+        // copied verbatim so the caller's `tofu import` will fail
+        // visibly instead of receiving a corrupted ID.
+        let vars = std::collections::BTreeMap::new();
+        let out = substitute_import_id("{{ .unclosed", &vars).unwrap();
+        assert_eq!(out, "{{ .unclosed");
     }
 }
