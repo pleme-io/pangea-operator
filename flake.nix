@@ -220,9 +220,16 @@
           imagePkgs = import nixpkgs { system = imageSystem; };
           ruby = imagePkgs.ruby_3_4;
           libclang = imagePkgs.llvmPackages.libclang;
+          # bindgen needs libc headers (stdio.h, stddef.h, …) on its
+          # clang invocation. Nix sandboxes don't expose them on the
+          # default include path; the canonical fix is
+          # BINDGEN_EXTRA_CLANG_ARGS pointing at stdenv.cc's libc dev.
+          # rb-sys docs: https://oxidize-rb.github.io/rb-sys/
+          bindgenClangArgs = "-I${imagePkgs.stdenv.cc.libc.dev}/include";
           rubySharedEnv = {
             LIBCLANG_PATH = "${libclang.lib}/lib";
             PKG_CONFIG_PATH = "${ruby}/lib/pkgconfig";
+            BINDGEN_EXTRA_CLANG_ARGS = bindgenClangArgs;
           };
 
           builders = import "${substrate}/lib/build/rust/crate2nix-builders.nix" {
@@ -245,7 +252,7 @@
           crateOverrides = {
             rb-sys = oldAttrs: rubySharedEnv // {
               nativeBuildInputs = (oldAttrs.nativeBuildInputs or [])
-                ++ [ libclang imagePkgs.pkg-config ruby ];
+                ++ [ libclang imagePkgs.pkg-config ruby imagePkgs.stdenv.cc.libc.dev ];
               buildInputs = (oldAttrs.buildInputs or []) ++ [ ruby ];
             };
             magnus = oldAttrs: {
@@ -253,7 +260,7 @@
             };
             pangea-ruby-eval = oldAttrs: rubySharedEnv // {
               nativeBuildInputs = (oldAttrs.nativeBuildInputs or [])
-                ++ [ libclang imagePkgs.pkg-config ];
+                ++ [ libclang imagePkgs.pkg-config imagePkgs.stdenv.cc.libc.dev ];
               buildInputs = (oldAttrs.buildInputs or []) ++ [ ruby ];
             };
           };
