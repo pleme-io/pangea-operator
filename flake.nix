@@ -204,5 +204,46 @@
       extended = lib.foldl' (acc: sys: lib.recursiveUpdate acc (compilerExtension sys))
         base
         [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
-    in extended;
+
+      # ruby-eval devShell — for `cargo test -p pangea-ruby-eval` while
+      # M8.2.0 (the magnus viability proof) is in flight. Provides
+      # CRuby + libclang (rb-sys's bindgen needs both) on every
+      # supported system. Once the crate2nix wiring lands in M8.2.x,
+      # this shell becomes optional for routine builds.
+      rubyEvalShell = system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          ruby = pkgs.ruby_3_4;
+          # rb-sys's build script uses libclang via bindgen.
+          clang = pkgs.llvmPackages.libclang;
+        in {
+          devShells.${system}.ruby-eval = pkgs.mkShell {
+            name = "pangea-ruby-eval";
+            packages = [
+              ruby
+              pkgs.pkg-config
+              pkgs.cargo
+              pkgs.rustc
+              pkgs.rustfmt
+              pkgs.clippy
+              clang
+            ];
+            # rb-sys looks at RUBY_INCLUDE_DIR / RUBY_LIB_DIR or
+            # falls back to running `ruby -e 'puts RbConfig::CONFIG[...]'`.
+            # The latter works as long as `ruby` is on PATH; PKG_CONFIG_PATH
+            # gives bindgen an additional fallback.
+            shellHook = ''
+              export LIBCLANG_PATH="${clang.lib}/lib"
+              export PKG_CONFIG_PATH="${ruby}/lib/pkgconfig:''${PKG_CONFIG_PATH:-}"
+              echo "pangea-ruby-eval shell — ruby $(${ruby}/bin/ruby --version)"
+              echo "  cargo test -p pangea-ruby-eval --lib --tests -- --test-threads=1"
+            '';
+          };
+        };
+
+      withRubyEval = lib.foldl'
+        (acc: sys: lib.recursiveUpdate acc (rubyEvalShell sys))
+        extended
+        [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
+    in withRubyEval;
 }

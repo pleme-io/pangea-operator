@@ -1,0 +1,25 @@
+[package]
+name = "pangea-ruby-eval"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Embedded CRuby evaluator for Pangea DSL — magnus-backed replacement for the pangea-compiler sidecar"
+
+[dependencies]
+magnus = { version = "0.8", features = ["embed"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+serde_yaml = "0.9"
+
+[lib]
+# Tests in this crate boot a CRuby interpreter via magnus::embed::init().
+# CRuby's GVL allows only one interpreter per process, so all tests in the
+# crate must run sequentially in a single binary (test-threads=1 also helps,
+# but the bigger guarantee is that we only Init_ruby once per cargo test run).
+doctest = false
