@@ -218,7 +218,7 @@
       mkEmbeddedOperatorImage = imageSystem:
         let
           imagePkgs = import nixpkgs { system = imageSystem; };
-          ruby = imagePkgs.ruby_3_4;
+          ruby = imagePkgs.ruby_3_3;
           libclang = imagePkgs.llvmPackages.libclang;
           # bindgen needs libc headers (stdio.h, stddef.h, …) on its
           # clang invocation. Nix sandboxes don't expose them on the
@@ -295,7 +295,7 @@
           # foundational pangea-* + dry-* + terraform-synthesizer at
           # boot. Per-CR ArchitectureGem clones (M8.4.2) layer on top.
           extraContents = pkgs: with pkgs; [
-            ruby_3_4 opentofu packer git busybox
+            ruby_3_3 opentofu packer git busybox
             gemWs.env
           ];
           extraEnv = [
@@ -381,7 +381,10 @@
       rubyEvalShell = system:
         let
           pkgs = import nixpkgs { inherit system; };
-          ruby = pkgs.ruby_3_4;
+          # Aligned with the embedded image's ruby (3.3) to match
+          # the bundlerEnv's ABI — gem C-extensions compiled against
+          # 3.3 won't load under a 3.4 libruby.
+          ruby = pkgs.ruby_3_3;
           # rb-sys's build script uses libclang via bindgen.
           clang = pkgs.llvmPackages.libclang;
         in {
