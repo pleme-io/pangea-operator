@@ -21,7 +21,6 @@ require "terraform-synthesizer"
   pangea-porkbun
   pangea-splunk
   pangea-spot
-  pangea-architectures
 ].each do |gem_name|
   begin
     require gem_name

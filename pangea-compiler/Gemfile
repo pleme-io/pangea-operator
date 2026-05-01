@@ -23,11 +23,14 @@ gem 'pangea-porkbun',       path: 'vendor/pangea-porkbun'
 gem 'pangea-splunk',        path: 'vendor/pangea-splunk'
 gem 'pangea-spot',          path: 'vendor/pangea-spot'
 
-# pangea-architectures (composers) — added 2026-04-30 for M1 of
-# theory/PANGEA-WORKSPACE-RECONCILIATION.md. Bundling enables the new
-# /v1/architectures RPCs to introspect Pangea::Architectures.constants
-# at startup. Future M7 enhancement reverts this to per-CR
-# path-based loading via lib_path RPC argument so workspace SDLC
-# doesn't rebuild the image — tracked in
-# theory/PANGEA-WORKSPACE-RECONCILIATION.md "Open questions".
-gem 'pangea-architectures', path: 'vendor/pangea-architectures'
+# pangea-architectures bundling intentionally deferred — adding it
+# requires regenerating Gemfile.lock + gemset.nix together (bundix
+# pipeline). M1 of theory/PANGEA-WORKSPACE-RECONCILIATION.md still
+# demonstrates the load-and-verify contract correctly: the operator's
+# ArchitectureGem reconciler RPCs the compiler, observes that
+# Pangea::Architectures.constants is empty (gem not loaded), and
+# emits a typed `ExpectedClassesMissing` condition naming every
+# missing class. That's the substrate-level signal we wanted:
+# instead of silent retry-loop, the LoadError class is structurally
+# reported. Bundling will land in a follow-up that regens the bundle
+# tree end-to-end.

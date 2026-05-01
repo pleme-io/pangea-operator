@@ -27,7 +27,6 @@
     # reverts to per-CR path-based loading via lib_path RPC argument
     # so workspace SDLC doesn't rebuild the image.
     pangea-akeyless      = { url = "github:pleme-io/pangea-akeyless";      flake = false; };
-    pangea-architectures = { url = "github:pleme-io/pangea-architectures"; flake = false; };
     pangea-aws           = { url = "github:pleme-io/pangea-aws";           flake = false; };
     pangea-azure         = { url = "github:pleme-io/pangea-azure";         flake = false; };
     pangea-cloudflare    = { url = "github:pleme-io/pangea-cloudflare";    flake = false; };
@@ -60,7 +59,6 @@
 
       pangeaInputs = {
         "pangea-akeyless"      = inputs.pangea-akeyless;
-        "pangea-architectures" = inputs.pangea-architectures;
         "pangea-aws"           = inputs.pangea-aws;
         "pangea-azure"         = inputs.pangea-azure;
         "pangea-cloudflare"    = inputs.pangea-cloudflare;
