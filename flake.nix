@@ -205,6 +205,132 @@
         base
         [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
 
+      # M8.5.1 — embedded-ruby operator image.
+      #
+      # Builds the operator with `--features embedded_ruby` via crate2nix
+      # `rootFeatures` + per-crate overrides for rb-sys/magnus
+      # (libclang + libruby). The resulting binary links libruby; the
+      # docker image bundles ruby_3_4 in the runtime closure so the
+      # interpreter's stdlib is accessible.
+      #
+      # Used by chart 0.7.0 when useEmbeddedRuby=true.
+      # See helmworks@494533b chart values + theory M8.5.
+      mkEmbeddedOperatorImage = imageSystem:
+        let
+          imagePkgs = import nixpkgs { system = imageSystem; };
+          ruby = imagePkgs.ruby_3_4;
+          libclang = imagePkgs.llvmPackages.libclang;
+          rubySharedEnv = {
+            LIBCLANG_PATH = "${libclang.lib}/lib";
+            PKG_CONFIG_PATH = "${ruby}/lib/pkgconfig";
+            RUBY = "${ruby}/bin/ruby";
+          };
+
+          generatedCargoNix = ./Cargo.nix;
+          project = import generatedCargoNix {
+            pkgs = imagePkgs;
+            rootFeatures = [ "default" "embedded_ruby" ];
+            defaultCrateOverrides = imagePkgs.defaultCrateOverrides // {
+              # rb-sys: bindgen needs libclang + ruby headers.
+              rb-sys = oldAttrs: rubySharedEnv // {
+                nativeBuildInputs = (oldAttrs.nativeBuildInputs or [])
+                  ++ [ libclang imagePkgs.pkg-config ruby ];
+                buildInputs = (oldAttrs.buildInputs or []) ++ [ ruby ];
+              };
+              # magnus: links libruby.
+              magnus = oldAttrs: {
+                buildInputs = (oldAttrs.buildInputs or []) ++ [ ruby ];
+              };
+              # pangea-ruby-eval: pulls magnus + sha2 + serde_yaml.
+              pangea-ruby-eval = oldAttrs: rubySharedEnv // {
+                nativeBuildInputs = (oldAttrs.nativeBuildInputs or [])
+                  ++ [ libclang imagePkgs.pkg-config ];
+                buildInputs = (oldAttrs.buildInputs or []) ++ [ ruby ];
+              };
+              # pangea-operator: needs libruby at link time when the
+              # embedded_ruby feature is on; sqlx/openssl as before.
+              pangea-operator = oldAttrs: {
+                buildInputs = (oldAttrs.buildInputs or [])
+                  ++ [ ruby imagePkgs.openssl imagePkgs.postgresql imagePkgs.sqlite ];
+              };
+            };
+          };
+
+          operatorBin = project.workspaceMembers.pangea-operator.build;
+        in imagePkgs.dockerTools.buildLayeredImage {
+          name = "pangea-operator-embedded";
+          tag = "latest";
+          contents = [
+            operatorBin
+            ruby
+            imagePkgs.opentofu
+            imagePkgs.packer
+            imagePkgs.git
+            imagePkgs.busybox
+            imagePkgs.cacert
+          ];
+          config = {
+            Entrypoint = [ "${operatorBin}/bin/pangea-operator" ];
+            ExposedPorts = {
+              "8080/tcp" = { };  # health
+              "8081/tcp" = { };  # graphql
+              "9090/tcp" = { };  # metrics
+            };
+            Env = [
+              "PANGEA_COMPILER_BACKEND=embedded"
+              "PANGEA_GEM_CACHE_DIR=/var/pangea/gems"
+              "PATH=${operatorBin}/bin:${ruby}/bin:${imagePkgs.busybox}/bin:${imagePkgs.git}/bin:${imagePkgs.opentofu}/bin:${imagePkgs.packer}/bin"
+              "SSL_CERT_FILE=${imagePkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+            ];
+            Labels = {
+              "org.opencontainers.image.source" = "https://github.com/pleme-io/pangea-operator";
+              "org.opencontainers.image.description" = "Pangea operator with embedded magnus + CRuby evaluator (M8.4+)";
+              "org.opencontainers.image.licenses" = "Apache-2.0";
+            };
+            User = "65534:65534";
+            WorkingDir = "/";
+          };
+        };
+
+      embeddedOperatorExtension = system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          imageAmd64 = mkEmbeddedOperatorImage "x86_64-linux";
+          imageArm64 = mkEmbeddedOperatorImage "aarch64-linux";
+          mkPushApp = imagePath: archTag: pkgs.writeShellScript "pangea-operator-embedded-push-${archTag}" ''
+            set -euo pipefail
+            export GITHUB_TOKEN="''${GITHUB_TOKEN:-''${GHCR_TOKEN:-$(cat "$HOME/.config/github/token" 2>/dev/null || true)}}"
+            export GHCR_TOKEN="$GITHUB_TOKEN"
+            echo "📦 Pushing pangea-operator-embedded-${archTag} → ghcr.io/pleme-io/pangea-operator (suffix: -embedded)"
+            exec ${forge.packages.${system}.default}/bin/forge push \
+              --image-path "${imagePath}" \
+              --registry "ghcr.io/pleme-io/pangea-operator" \
+              --auto-tags \
+              --tag-suffix "-embedded" \
+              --retries 3
+          '';
+        in {
+          packages.${system} = {
+            dockerImage-operator-embedded-amd64 = imageAmd64;
+            dockerImage-operator-embedded-arm64 = imageArm64;
+          };
+          apps.${system} = {
+            push-image-operator-embedded-amd64 = {
+              type = "app";
+              program = toString (mkPushApp imageAmd64 "amd64");
+            };
+            push-image-operator-embedded-arm64 = {
+              type = "app";
+              program = toString (mkPushApp imageArm64 "arm64");
+            };
+          };
+        };
+
+      extendedWithEmbedded = lib.foldl'
+        (acc: sys: lib.recursiveUpdate acc (embeddedOperatorExtension sys))
+        extended
+        [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
+
       # ruby-eval devShell — for `cargo test -p pangea-ruby-eval` while
       # M8.2.0 (the magnus viability proof) is in flight. Provides
       # CRuby + libclang (rb-sys's bindgen needs both) on every
@@ -243,7 +369,7 @@
 
       withRubyEval = lib.foldl'
         (acc: sys: lib.recursiveUpdate acc (rubyEvalShell sys))
-        extended
+        extendedWithEmbedded
         [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
     in withRubyEval;
 }
