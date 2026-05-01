@@ -255,22 +255,20 @@
             gemsetPath = "/gemset.nix";
           };
 
-          # Enumerate every gem's lib/ directory in the bundlerEnv
-          # at Nix-build time. The bundlerEnv stores resolved gems at
-          # `${env}/lib/ruby/gems/<ruby-version>/gems/<name>-<version>/lib/`.
-          # Glob + colon-join. Plus the path-gems from gemWs.rubylib.
-          fullRubylibFile = imagePkgs.runCommand "pangea-full-rubylib" { } ''
-            paths=""
-            for d in ${gemWs.env}/lib/ruby/gems/*/gems/*/lib; do
-              if [ -d "$d" ]; then
-                if [ -z "$paths" ]; then
-                  paths="$d"
-                else
-                  paths="$paths:$d"
-                fi
-              fi
-            done
-            printf '%s' "$paths" > $out
+          # Compute the full $LOAD_PATH at Nix-build time by asking
+          # `bundle exec ruby` to print $LOAD_PATH. Bundler reads each
+          # gemspec's `require_paths` (which can be non-standard like
+          # concurrent-ruby's `["lib/concurrent-ruby"]`) and sets up
+          # the correct $LOAD_PATH. A naive `lib/` glob misses these
+          # gemspec-overridden paths.
+          fullRubylibFile = imagePkgs.runCommand "pangea-full-rubylib" {
+            buildInputs = [ gemWs.env gemWs.ruby ];
+          } ''
+            export PATH="${gemWs.env}/bin:${gemWs.ruby}/bin:$PATH"
+            export HOME=$TMPDIR
+            cd ${./pangea-compiler}
+            ${gemWs.env}/bin/bundle exec ${gemWs.ruby}/bin/ruby -e \
+              'puts $LOAD_PATH.uniq.reject { |p| p.start_with?("/build/") }.join(":")' > $out
           '';
           bundlerLibPaths = imagePkgs.lib.removeSuffix "\n" (builtins.readFile fullRubylibFile);
           fullRubylib = "${gemWs.rubylib}:${bundlerLibPaths}";
