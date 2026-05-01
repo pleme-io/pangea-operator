@@ -271,16 +271,19 @@
           pkgs = import nixpkgs { inherit system; };
           imageAmd64 = mkEmbeddedOperatorImage "x86_64-linux";
           imageArm64 = mkEmbeddedOperatorImage "aarch64-linux";
+          # Push to a distinct registry path (mirrors the existing
+          # pangea-compiler / pangea-operator split). Helm chart
+          # consumers set `image.repository: ghcr.io/pleme-io/pangea-operator-embedded`
+          # when useEmbeddedRuby=true.
           mkPushApp = imagePath: archTag: pkgs.writeShellScript "pangea-operator-embedded-push-${archTag}" ''
             set -euo pipefail
             export GITHUB_TOKEN="''${GITHUB_TOKEN:-''${GHCR_TOKEN:-$(cat "$HOME/.config/github/token" 2>/dev/null || true)}}"
             export GHCR_TOKEN="$GITHUB_TOKEN"
-            echo "📦 Pushing pangea-operator-embedded-${archTag} → ghcr.io/pleme-io/pangea-operator (suffix: -embedded)"
+            echo "📦 Pushing pangea-operator-embedded-${archTag} → ghcr.io/pleme-io/pangea-operator-embedded"
             exec ${forge.packages.${system}.default}/bin/forge push \
               --image-path "${imagePath}" \
-              --registry "ghcr.io/pleme-io/pangea-operator" \
+              --registry "ghcr.io/pleme-io/pangea-operator-embedded" \
               --auto-tags \
-              --tag-suffix "-embedded" \
               --retries 3
           '';
         in {
