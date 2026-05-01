@@ -1,0 +1,13 @@
+# M8.3 fixture for the embedded_backend smoke test. The Ruby evaluator
+# never sees this file's bytes — Rust reads it, SHA-256 hashes it,
+# and parses YAML. The Ruby side only sees the resulting Hash via
+# magnus value injection.
+:name: rio
+zone: quero.cloud
+ingress:
+  - hostname: auth.quero.cloud
+    service: http://authentik
+  - hostname: cracha.quero.cloud
+    service: http://cracha
+ttl: 300
+enabled: true
