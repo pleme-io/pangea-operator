@@ -237,9 +237,13 @@
           # …, plus terraform-synthesizer, dry-struct, dry-types, …)
           # into the operator image's runtime closure. Reuse the same
           # ws (Ruby workspace) the compiler image builds: both
-          # bundle the same Gemfile.lock + path-gem set. Setting
-          # RUBYLIB at process start makes the embedded CRuby
-          # interpreter find all of them via $LOAD_PATH on init.
+          # bundle the same Gemfile.lock + path-gem set.
+          #
+          # gemWs.rubylib only covers path-gems (lib/<gem>/lib);
+          # Bundler-resolved gems (dry-struct, terraform-synthesizer,
+          # …) live at ${gemWs.env}/lib/ruby/gems/<ruby>/gems/<name>-<v>/lib/.
+          # Compute the full $LOAD_PATH at image-build time so the
+          # embedded CRuby's RUBYLIB includes both sets.
           gemWs = (import "${substrate}/lib/build/ruby/workspace.nix" {
             nixpkgs = nixpkgs;
             system = imageSystem;
@@ -250,6 +254,26 @@
             pathGems = pangeaInputs;
             gemsetPath = "/gemset.nix";
           };
+
+          # Enumerate every gem's lib/ directory in the bundlerEnv
+          # at Nix-build time. The bundlerEnv stores resolved gems at
+          # `${env}/lib/ruby/gems/<ruby-version>/gems/<name>-<version>/lib/`.
+          # Glob + colon-join. Plus the path-gems from gemWs.rubylib.
+          fullRubylibFile = imagePkgs.runCommand "pangea-full-rubylib" { } ''
+            paths=""
+            for d in ${gemWs.env}/lib/ruby/gems/*/gems/*/lib; do
+              if [ -d "$d" ]; then
+                if [ -z "$paths" ]; then
+                  paths="$d"
+                else
+                  paths="$paths:$d"
+                fi
+              fi
+            done
+            printf '%s' "$paths" > $out
+          '';
+          bundlerLibPaths = imagePkgs.lib.removeSuffix "\n" (builtins.readFile fullRubylibFile);
+          fullRubylib = "${gemWs.rubylib}:${bundlerLibPaths}";
 
           builders = import "${substrate}/lib/build/rust/crate2nix-builders.nix" {
             pkgs = imagePkgs;
@@ -275,7 +299,7 @@
             gemWs.env
           ];
           extraEnv = [
-            "RUBYLIB=${gemWs.rubylib}"
+            "RUBYLIB=${fullRubylib}"
             "DRY_TYPES_WARNINGS=false"
           ];
           buildInputs = [ ruby imagePkgs.openssl imagePkgs.postgresql imagePkgs.sqlite ];
