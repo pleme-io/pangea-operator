@@ -271,19 +271,29 @@
           pkgs = import nixpkgs { inherit system; };
           imageAmd64 = mkEmbeddedOperatorImage "x86_64-linux";
           imageArm64 = mkEmbeddedOperatorImage "aarch64-linux";
-          # Push to a distinct registry path (mirrors the existing
-          # pangea-compiler / pangea-operator split). Helm chart
-          # consumers set `image.repository: ghcr.io/pleme-io/pangea-operator-embedded`
-          # when useEmbeddedRuby=true.
+          # Push to the EXISTING pangea-operator registry path with a
+          # `embedded-` tag prefix. Avoids the new-package permission
+          # gate on ghcr (creating a new package path requires extra
+          # token scopes). Tags: `embedded-amd64-<sha>` and
+          # `embedded-amd64-latest`.
+          #
+          # Helm chart consumers under useEmbeddedRuby=true set
+          # `image.tag: embedded-amd64-<sha>`.
           mkPushApp = imagePath: archTag: pkgs.writeShellScript "pangea-operator-embedded-push-${archTag}" ''
             set -euo pipefail
             export GITHUB_TOKEN="''${GITHUB_TOKEN:-''${GHCR_TOKEN:-$(cat "$HOME/.config/github/token" 2>/dev/null || true)}}"
             export GHCR_TOKEN="$GITHUB_TOKEN"
-            echo "📦 Pushing pangea-operator-embedded-${archTag} → ghcr.io/pleme-io/pangea-operator-embedded"
+            # Resolve the current git sha (forge --auto-tags would do
+            # this for us, but we want our own `embedded-` prefix).
+            GIT_SHA="$(${pkgs.git}/bin/git -C "''${PWD}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+            TAG_SHA="embedded-${archTag}-''${GIT_SHA}"
+            TAG_LATEST="embedded-${archTag}-latest"
+            echo "📦 Pushing pangea-operator-embedded-${archTag} → ghcr.io/pleme-io/pangea-operator (tags: ''${TAG_SHA}, ''${TAG_LATEST})"
             exec ${forge.packages.${system}.default}/bin/forge push \
               --image-path "${imagePath}" \
-              --registry "ghcr.io/pleme-io/pangea-operator-embedded" \
-              --auto-tags \
+              --registry "ghcr.io/pleme-io/pangea-operator" \
+              --tag "''${TAG_SHA}" \
+              --tag "''${TAG_LATEST}" \
               --retries 3
           '';
         in {
