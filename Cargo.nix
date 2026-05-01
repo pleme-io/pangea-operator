@@ -63,6 +63,16 @@ rec {
       # File a bug if you depend on any for non-debug work!
       debug = internal.debugCrate { inherit packageId; };
     };
+    "pangea-ruby-eval" = rec {
+      packageId = "pangea-ruby-eval";
+      build = internal.buildRustCrateWithFeatures {
+        packageId = "pangea-ruby-eval";
+      };
+
+      # Debug support which might change between releases.
+      # File a bug if you depend on any for non-debug work!
+      debug = internal.debugCrate { inherit packageId; };
+    };
     "pangea-types" = rec {
       packageId = "pangea-types";
       build = internal.buildRustCrateWithFeatures {
@@ -1555,6 +1565,77 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" ];
       };
+      "bindgen" = rec {
+        crateName = "bindgen";
+        version = "0.72.1";
+        edition = "2021";
+        sha256 = "15bq73y3wd3x3vxh3z3g72hy08zs8rxg1f0i1xsrrd6g16spcdwr";
+        libPath = "lib.rs";
+        authors = [
+          "Jyun-Yan You <jyyou.tw@gmail.com>"
+          "Emilio Cobos Álvarez <emilio@crisal.io>"
+          "Nick Fitzgerald <fitzgen@gmail.com>"
+          "The Servo project developers"
+        ];
+        dependencies = [
+          {
+            name = "bitflags";
+            packageId = "bitflags";
+          }
+          {
+            name = "cexpr";
+            packageId = "cexpr";
+          }
+          {
+            name = "clang-sys";
+            packageId = "clang-sys";
+            features = [ "clang_11_0" ];
+          }
+          {
+            name = "itertools";
+            packageId = "itertools 0.13.0";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "proc-macro2";
+            packageId = "proc-macro2";
+          }
+          {
+            name = "quote";
+            packageId = "quote";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "regex";
+            packageId = "regex";
+            usesDefaultFeatures = false;
+            features = [ "std" "unicode-perl" ];
+          }
+          {
+            name = "rustc-hash";
+            packageId = "rustc-hash";
+          }
+          {
+            name = "shlex";
+            packageId = "shlex";
+          }
+          {
+            name = "syn";
+            packageId = "syn 2.0.111";
+            features = [ "full" "extra-traits" "visit-mut" ];
+          }
+        ];
+        features = {
+          "__cli" = [ "dep:clap" "dep:clap_complete" ];
+          "default" = [ "logging" "prettyplease" "runtime" ];
+          "experimental" = [ "dep:annotate-snippets" ];
+          "logging" = [ "dep:log" ];
+          "prettyplease" = [ "dep:prettyplease" ];
+          "runtime" = [ "clang-sys/runtime" ];
+          "static" = [ "clang-sys/static" ];
+        };
+        resolvedDefaultFeatures = [ "runtime" ];
+      };
       "bitflags" = rec {
         crateName = "bitflags";
         version = "2.10.0";
@@ -1720,6 +1801,24 @@ rec {
           "parallel" = [ "dep:libc" "dep:jobserver" ];
         };
       };
+      "cexpr" = rec {
+        crateName = "cexpr";
+        version = "0.6.0";
+        edition = "2018";
+        sha256 = "0rl77bwhs5p979ih4r0202cn5jrfsrbgrksp40lkfz5vk1x3ib3g";
+        authors = [
+          "Jethro Beekman <jethro@jbeekman.nl>"
+        ];
+        dependencies = [
+          {
+            name = "nom";
+            packageId = "nom";
+            usesDefaultFeatures = false;
+            features = [ "std" ];
+          }
+        ];
+
+      };
       "cfg-if" = rec {
         crateName = "cfg-if";
         version = "1.0.4";
@@ -1797,6 +1896,69 @@ rec {
           "windows-link" = [ "dep:windows-link" ];
         };
         resolvedDefaultFeatures = [ "alloc" "clock" "iana-time-zone" "now" "serde" "std" "winapi" "windows-link" ];
+      };
+      "clang-sys" = rec {
+        crateName = "clang-sys";
+        version = "1.8.1";
+        edition = "2021";
+        links = "clang";
+        sha256 = "1x1r9yqss76z8xwpdanw313ss6fniwc1r7dzb5ycjn0ph53kj0hb";
+        libName = "clang_sys";
+        authors = [
+          "Kyle Mayes <kyle@mayeses.com>"
+        ];
+        dependencies = [
+          {
+            name = "glob";
+            packageId = "glob";
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "libloading";
+            packageId = "libloading";
+            optional = true;
+          }
+        ];
+        buildDependencies = [
+          {
+            name = "glob";
+            packageId = "glob";
+          }
+        ];
+        devDependencies = [
+          {
+            name = "glob";
+            packageId = "glob";
+          }
+        ];
+        features = {
+          "clang_10_0" = [ "clang_9_0" ];
+          "clang_11_0" = [ "clang_10_0" ];
+          "clang_12_0" = [ "clang_11_0" ];
+          "clang_13_0" = [ "clang_12_0" ];
+          "clang_14_0" = [ "clang_13_0" ];
+          "clang_15_0" = [ "clang_14_0" ];
+          "clang_16_0" = [ "clang_15_0" ];
+          "clang_17_0" = [ "clang_16_0" ];
+          "clang_18_0" = [ "clang_17_0" ];
+          "clang_3_6" = [ "clang_3_5" ];
+          "clang_3_7" = [ "clang_3_6" ];
+          "clang_3_8" = [ "clang_3_7" ];
+          "clang_3_9" = [ "clang_3_8" ];
+          "clang_4_0" = [ "clang_3_9" ];
+          "clang_5_0" = [ "clang_4_0" ];
+          "clang_6_0" = [ "clang_5_0" ];
+          "clang_7_0" = [ "clang_6_0" ];
+          "clang_8_0" = [ "clang_7_0" ];
+          "clang_9_0" = [ "clang_8_0" ];
+          "libloading" = [ "dep:libloading" ];
+          "runtime" = [ "libloading" ];
+        };
+        resolvedDefaultFeatures = [ "clang_10_0" "clang_11_0" "clang_3_5" "clang_3_6" "clang_3_7" "clang_3_8" "clang_3_9" "clang_4_0" "clang_5_0" "clang_6_0" "clang_7_0" "clang_8_0" "clang_9_0" "libloading" "runtime" ];
       };
       "clap" = rec {
         crateName = "clap";
@@ -2860,7 +3022,7 @@ rec {
           }
           {
             name = "windows-sys";
-            packageId = "windows-sys 0.59.0";
+            packageId = "windows-sys 0.61.2";
             target = { target, features }: (target."windows" or false);
             features = [ "Win32_UI_Shell" "Win32_Foundation" "Win32_Globalization" "Win32_System_Com" ];
           }
@@ -5518,7 +5680,27 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" ];
       };
-      "itertools" = rec {
+      "itertools 0.13.0" = rec {
+        crateName = "itertools";
+        version = "0.13.0";
+        edition = "2018";
+        sha256 = "11hiy3qzl643zcigknclh446qb9zlg4dpdzfkjaa9q9fqpgyfgj1";
+        authors = [
+          "bluss"
+        ];
+        dependencies = [
+          {
+            name = "either";
+            packageId = "either";
+            usesDefaultFeatures = false;
+          }
+        ];
+        features = {
+          "default" = [ "use_std" ];
+          "use_std" = [ "use_alloc" "either/use_std" ];
+        };
+      };
+      "itertools 0.14.0" = rec {
         crateName = "itertools";
         version = "0.14.0";
         edition = "2018";
@@ -6355,6 +6537,28 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" "std" ];
       };
+      "libloading" = rec {
+        crateName = "libloading";
+        version = "0.8.9";
+        edition = "2015";
+        sha256 = "0mfwxwjwi2cf0plxcd685yxzavlslz7xirss3b9cbrzyk4hv1i6p";
+        authors = [
+          "Simonas Kazlauskas <libloading@kazlauskas.me>"
+        ];
+        dependencies = [
+          {
+            name = "cfg-if";
+            packageId = "cfg-if";
+            target = { target, features }: (target."unix" or false);
+          }
+          {
+            name = "windows-link";
+            packageId = "windows-link";
+            target = { target, features }: (target."windows" or false);
+          }
+        ];
+
+      };
       "libm" = rec {
         crateName = "libm";
         version = "0.2.15";
@@ -6646,6 +6850,73 @@ rec {
         ];
 
       };
+      "magnus" = rec {
+        crateName = "magnus";
+        version = "0.8.2";
+        edition = "2021";
+        sha256 = "04lhgwxsh94qlhwn30gx35inq0r7ngzaq1rds2q7xsdv4sqsadiv";
+        dependencies = [
+          {
+            name = "magnus-macros";
+            packageId = "magnus-macros";
+          }
+          {
+            name = "rb-sys";
+            packageId = "rb-sys";
+            usesDefaultFeatures = false;
+            features = [ "bindgen-rbimpls" "bindgen-deprecated-types" "stable-api" ];
+          }
+          {
+            name = "seq-macro";
+            packageId = "seq-macro";
+          }
+        ];
+        buildDependencies = [
+          {
+            name = "rb-sys-env";
+            packageId = "rb-sys-env";
+          }
+        ];
+        devDependencies = [
+          {
+            name = "rb-sys";
+            packageId = "rb-sys";
+            usesDefaultFeatures = false;
+            features = [ "stable-api-compiled-fallback" ];
+          }
+        ];
+        features = {
+          "bytes" = [ "dep:bytes" ];
+          "chrono" = [ "dep:chrono" ];
+          "default" = [ "io" ];
+          "embed" = [ "rb-sys/link-ruby" ];
+        };
+        resolvedDefaultFeatures = [ "default" "embed" "io" ];
+      };
+      "magnus-macros" = rec {
+        crateName = "magnus-macros";
+        version = "0.8.0";
+        edition = "2021";
+        sha256 = "14hqfn9zb63kz65d0nx73qd94b89v2bw2xi09z5i65cfzmhp8q27";
+        procMacro = true;
+        libName = "magnus_macros";
+        dependencies = [
+          {
+            name = "proc-macro2";
+            packageId = "proc-macro2";
+          }
+          {
+            name = "quote";
+            packageId = "quote";
+          }
+          {
+            name = "syn";
+            packageId = "syn 2.0.111";
+            features = [ "full" ];
+          }
+        ];
+
+      };
       "matchers" = rec {
         crateName = "matchers";
         version = "0.2.0";
@@ -6752,6 +7023,20 @@ rec {
           "Sean McArthur <sean@seanmonstar.com>"
         ];
 
+      };
+      "minimal-lexical" = rec {
+        crateName = "minimal-lexical";
+        version = "0.2.1";
+        edition = "2018";
+        sha256 = "16ppc5g84aijpri4jzv14rvcnslvlpphbszc7zzp6vfkddf4qdb8";
+        libName = "minimal_lexical";
+        authors = [
+          "Alex Huszagh <ahuszagh@gmail.com>"
+        ];
+        features = {
+          "default" = [ "std" ];
+        };
+        resolvedDefaultFeatures = [ "std" ];
       };
       "mio" = rec {
         crateName = "mio";
@@ -6874,6 +7159,32 @@ rec {
           "serde" = [ "dep:serde" ];
           "serde_impl" = [ "serde" ];
         };
+      };
+      "nom" = rec {
+        crateName = "nom";
+        version = "7.1.3";
+        edition = "2018";
+        sha256 = "0jha9901wxam390jcf5pfa0qqfrgh8li787jx2ip0yk5b8y9hwyj";
+        authors = [
+          "contact@geoffroycouprie.com"
+        ];
+        dependencies = [
+          {
+            name = "memchr";
+            packageId = "memchr";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "minimal-lexical";
+            packageId = "minimal-lexical";
+            usesDefaultFeatures = false;
+          }
+        ];
+        features = {
+          "default" = [ "std" ];
+          "std" = [ "alloc" "memchr/std" "minimal-lexical/std" ];
+        };
+        resolvedDefaultFeatures = [ "alloc" "std" ];
       };
       "normalize-line-endings" = rec {
         crateName = "normalize-line-endings";
@@ -7909,6 +8220,11 @@ rec {
             features = [ "rt-tokio" ];
           }
           {
+            name = "pangea-ruby-eval";
+            packageId = "pangea-ruby-eval";
+            optional = true;
+          }
+          {
             name = "pangea-types";
             packageId = "pangea-types";
             features = [ "server" ];
@@ -8065,6 +8381,7 @@ rec {
           "async-graphql" = [ "dep:async-graphql" ];
           "async-graphql-axum" = [ "dep:async-graphql-axum" ];
           "default" = [ "graphql" "grpc" ];
+          "embedded_ruby" = [ "dep:pangea-ruby-eval" ];
           "graphql" = [ "async-graphql" "async-graphql-axum" ];
           "grpc" = [ "tonic" "prost" ];
           "prost" = [ "dep:prost" ];
@@ -8072,7 +8389,50 @@ rec {
           "tonic" = [ "dep:tonic" ];
           "tonic-build" = [ "dep:tonic-build" ];
         };
-        resolvedDefaultFeatures = [ "async-graphql" "async-graphql-axum" "default" "graphql" "grpc" "prost" "prost-build" "tonic" "tonic-build" ];
+        resolvedDefaultFeatures = [ "async-graphql" "async-graphql-axum" "default" "embedded_ruby" "graphql" "grpc" "prost" "prost-build" "tonic" "tonic-build" ];
+      };
+      "pangea-ruby-eval" = rec {
+        crateName = "pangea-ruby-eval";
+        version = "0.1.0";
+        edition = "2021";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./pangea-ruby-eval; };
+        libName = "pangea_ruby_eval";
+        authors = [
+          "Pleme <engineering@pleme.io>"
+        ];
+        dependencies = [
+          {
+            name = "magnus";
+            packageId = "magnus";
+            features = [ "embed" ];
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "serde_yaml";
+            packageId = "serde_yaml";
+          }
+          {
+            name = "sha2";
+            packageId = "sha2";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 2.0.17";
+          }
+          {
+            name = "tracing";
+            packageId = "tracing";
+          }
+        ];
+
       };
       "pangea-types" = rec {
         crateName = "pangea-types";
@@ -9052,7 +9412,7 @@ rec {
           }
           {
             name = "itertools";
-            packageId = "itertools";
+            packageId = "itertools 0.14.0";
             usesDefaultFeatures = false;
             features = [ "use_alloc" ];
           }
@@ -9133,7 +9493,7 @@ rec {
           }
           {
             name = "itertools";
-            packageId = "itertools";
+            packageId = "itertools 0.14.0";
           }
           {
             name = "proc-macro2";
@@ -9664,6 +10024,87 @@ rec {
           "std" = [ "getrandom?/std" ];
         };
         resolvedDefaultFeatures = [ "os_rng" "std" ];
+      };
+      "rb-sys" = rec {
+        crateName = "rb-sys";
+        version = "0.9.127";
+        edition = "2018";
+        links = "rb";
+        sha256 = "04jd2g17s2x95y573kwzx3f1g2pifm03jhb9azxcybg41xbckmyp";
+        build = "build/main.rs";
+        libName = "rb_sys";
+        buildDependencies = [
+          {
+            name = "rb-sys-build";
+            packageId = "rb-sys-build";
+          }
+        ];
+        features = {
+          "bindgen-deprecated-types" = [ "rb-sys-build/bindgen-deprecated-types" ];
+          "bindgen-enable-function-attribute-detection" = [ "rb-sys-build/bindgen-enable-function-attribute-detection" ];
+          "bindgen-impl-debug" = [ "rb-sys-build/bindgen-impl-debug" ];
+          "bindgen-layout-tests" = [ "rb-sys-build/bindgen-layout-tests" ];
+          "bindgen-rbimpls" = [ "rb-sys-build/bindgen-rbimpls" ];
+          "bindgen-return-const-encoding-pointers" = [ "rb-sys-build/bindgen-return-const-encoding-pointers" ];
+          "bindgen-sizet-is-usize" = [ "rb-sys-build/bindgen-sizet-is-usize" ];
+          "default" = [ "stable-api-compiled-fallback" ];
+          "gc-stress" = [ "rb-sys-build/gc-stress" ];
+          "ruby-macros" = [ "stable-api" ];
+          "stable-api-compiled-fallback" = [ "stable-api" ];
+          "stable-api-compiled-testing" = [ "stable-api-compiled-fallback" ];
+        };
+        resolvedDefaultFeatures = [ "bindgen-deprecated-types" "bindgen-rbimpls" "link-ruby" "stable-api" ];
+      };
+      "rb-sys-build" = rec {
+        crateName = "rb-sys-build";
+        version = "0.9.127";
+        edition = "2018";
+        sha256 = "1nd13h4zkifpqglpxz22ymsi143znn1s5pz4i66a8ywn6a7qws7i";
+        libName = "rb_sys_build";
+        dependencies = [
+          {
+            name = "bindgen";
+            packageId = "bindgen";
+            usesDefaultFeatures = false;
+            features = [ "runtime" ];
+          }
+          {
+            name = "lazy_static";
+            packageId = "lazy_static";
+          }
+          {
+            name = "proc-macro2";
+            packageId = "proc-macro2";
+          }
+          {
+            name = "quote";
+            packageId = "quote";
+          }
+          {
+            name = "regex";
+            packageId = "regex";
+          }
+          {
+            name = "shell-words";
+            packageId = "shell-words";
+          }
+          {
+            name = "syn";
+            packageId = "syn 2.0.111";
+            features = [ "parsing" "full" "extra-traits" ];
+          }
+        ];
+        features = {
+        };
+        resolvedDefaultFeatures = [ "bindgen-deprecated-types" "bindgen-rbimpls" "default" ];
+      };
+      "rb-sys-env" = rec {
+        crateName = "rb-sys-env";
+        version = "0.2.3";
+        edition = "2018";
+        sha256 = "0yhi13m7dxkyxr0srbf30ki70mlv4md4kqkgsm8j3rr1grmav9yc";
+        libName = "rb_sys_env";
+
       };
       "redox_syscall 0.5.18" = rec {
         crateName = "redox_syscall";
@@ -11151,6 +11592,18 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" "std" ];
       };
+      "seq-macro" = rec {
+        crateName = "seq-macro";
+        version = "0.3.6";
+        edition = "2018";
+        sha256 = "1k4sshn0x2i6a9g97sy5jl7ghlqgmmh3n76aj3rrjwxy1x0i3iqv";
+        procMacro = true;
+        libName = "seq_macro";
+        authors = [
+          "David Tolnay <dtolnay@gmail.com>"
+        ];
+
+      };
       "serde" = rec {
         crateName = "serde";
         version = "1.0.228";
@@ -11561,6 +12014,20 @@ rec {
         features = {
           "loom" = [ "dep:loom" ];
         };
+      };
+      "shell-words" = rec {
+        crateName = "shell-words";
+        version = "1.1.1";
+        edition = "2015";
+        sha256 = "0xzd5p53xl0ndnk63r0by52rhdrh6pd37szfxszkg73zb6ffcvyw";
+        libName = "shell_words";
+        authors = [
+          "Tomasz Miąsko <tomasz.miasko@gmail.com>"
+        ];
+        features = {
+          "default" = [ "std" ];
+        };
+        resolvedDefaultFeatures = [ "default" "std" ];
       };
       "shlex" = rec {
         crateName = "shlex";
@@ -17165,7 +17632,7 @@ rec {
           "Win32_Web" = [ "Win32" ];
           "Win32_Web_InternetExplorer" = [ "Win32_Web" ];
         };
-        resolvedDefaultFeatures = [ "Win32" "Win32_Foundation" "Win32_Globalization" "Win32_Storage" "Win32_Storage_FileSystem" "Win32_System" "Win32_System_Com" "Win32_System_Console" "Win32_UI" "Win32_UI_Input" "Win32_UI_Input_KeyboardAndMouse" "Win32_UI_Shell" "default" ];
+        resolvedDefaultFeatures = [ "Win32" "Win32_Foundation" "Win32_Storage" "Win32_Storage_FileSystem" "Win32_System" "Win32_System_Console" "Win32_UI" "Win32_UI_Input" "Win32_UI_Input_KeyboardAndMouse" "default" ];
       };
       "windows-sys 0.60.2" = rec {
         crateName = "windows-sys";
@@ -17692,7 +18159,7 @@ rec {
           "Win32_Web" = [ "Win32" ];
           "Win32_Web_InternetExplorer" = [ "Win32_Web" ];
         };
-        resolvedDefaultFeatures = [ "Wdk" "Wdk_Foundation" "Wdk_Storage" "Wdk_Storage_FileSystem" "Wdk_System" "Wdk_System_IO" "Win32" "Win32_Foundation" "Win32_Networking" "Win32_Networking_WinSock" "Win32_Security" "Win32_Security_Authentication" "Win32_Security_Authentication_Identity" "Win32_Security_Credentials" "Win32_Security_Cryptography" "Win32_Storage" "Win32_Storage_FileSystem" "Win32_System" "Win32_System_Com" "Win32_System_Console" "Win32_System_Diagnostics" "Win32_System_Diagnostics_Debug" "Win32_System_IO" "Win32_System_LibraryLoader" "Win32_System_Memory" "Win32_System_Pipes" "Win32_System_SystemInformation" "Win32_System_SystemServices" "Win32_System_Threading" "Win32_System_WindowsProgramming" "Win32_UI" "Win32_UI_Shell" "default" ];
+        resolvedDefaultFeatures = [ "Wdk" "Wdk_Foundation" "Wdk_Storage" "Wdk_Storage_FileSystem" "Wdk_System" "Wdk_System_IO" "Win32" "Win32_Foundation" "Win32_Globalization" "Win32_Networking" "Win32_Networking_WinSock" "Win32_Security" "Win32_Security_Authentication" "Win32_Security_Authentication_Identity" "Win32_Security_Credentials" "Win32_Security_Cryptography" "Win32_Storage" "Win32_Storage_FileSystem" "Win32_System" "Win32_System_Com" "Win32_System_Console" "Win32_System_Diagnostics" "Win32_System_Diagnostics_Debug" "Win32_System_IO" "Win32_System_LibraryLoader" "Win32_System_Memory" "Win32_System_Pipes" "Win32_System_SystemInformation" "Win32_System_SystemServices" "Win32_System_Threading" "Win32_System_WindowsProgramming" "Win32_UI" "Win32_UI_Shell" "default" ];
       };
       "windows-targets 0.48.5" = rec {
         crateName = "windows-targets";
