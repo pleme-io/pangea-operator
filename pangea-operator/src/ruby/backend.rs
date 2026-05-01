@@ -115,14 +115,33 @@ pub struct CompileAnyResult {
     pub format: String,
 }
 
-/// Where a gem's source code lives — passed to `prepare_gem` so the
-/// embedded backend can clone + register it. HTTP backends ignore
-/// this (sidecar bundles are image-baked).
+/// Where a gem's source code lives + which evaluator should run it.
+/// Passed to `prepare_gem` so the embedded backend can clone +
+/// register it with the right interpreter. HTTP backends ignore
+/// `kind` since the sidecar's bundle is image-baked.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GemSource {
     pub name: String,
     pub git_url: String,
     pub git_ref: String,
+    /// Which evaluator runs this gem's source files.
+    #[serde(default)]
+    pub kind: SourceKind,
+}
+
+/// Backend-side mirror of `crd::architecture_gem::SourceKind`. We
+/// keep them as separate enums (one for CRD schema, one for backend
+/// trait) so the trait stays free of kube-rs / schemars deps.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SourceKind {
+    /// Pangea Ruby DSL (Track A) — magnus-embedded CRuby.
+    #[default]
+    Ruby,
+    /// terreno tatara-lisp (Track B). Reserved; terreno-eval (M2)
+    /// wires the actual dispatch.
+    Lisp,
+    /// Typed WIT-shaped wasm component. Reserved for M2+.
+    Wasm,
 }
 
 #[async_trait]

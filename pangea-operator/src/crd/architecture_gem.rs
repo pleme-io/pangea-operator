@@ -85,15 +85,48 @@ pub struct ArchitectureGemSpec {
     pub suspend: bool,
 }
 
-/// Where to fetch a gem's source from.
+/// Where to fetch a gem's source from + which evaluator runs it.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GemSource {
-    /// Git repository — clone the gem at the given ref. Compiler
-    /// sidecar bundles + requires from this path.
+    /// Which evaluator runs this gem. `Ruby` is the default for
+    /// backward compatibility — every existing ArchitectureGem CR
+    /// continues to validate + reconcile unchanged.
+    ///
+    /// `Lisp` selects the terreno evaluator (theory/TERRENO.md M2);
+    /// `Wasm` selects a typed wasmtime component. Both are
+    /// reserved at the schema layer today; the operator's
+    /// prepare_gem returns a typed `NotImplemented` condition until
+    /// terreno-eval lands.
+    #[serde(default)]
+    pub kind: SourceKind,
+
+    /// Git repository — clone the gem at the given ref. Operator
+    /// (embedded mode) clones into the gem cache + prepends to
+    /// $LOAD_PATH (Ruby) or registers with the lisp/wasm evaluator
+    /// per `kind`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_repository: Option<GitRepositoryRef>,
     // TODO M7: oci_artifact (gem published as OCI), rubygems (registry).
+}
+
+/// Which evaluator interprets the gem's source files.
+///
+/// See `theory/TERRENO.md` for the design intent: both Pangea Ruby
+/// (Track A) and terreno (Track B) register `ArchitectureGem` CRs;
+/// the operator dispatches to the correct backend via this field.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum SourceKind {
+    /// Pangea Ruby DSL (Track A). The default — every pre-M2
+    /// ArchitectureGem CR has this implicitly.
+    #[default]
+    Ruby,
+    /// terreno tatara-lisp (Track B). Reserved at the schema layer;
+    /// terreno-eval crate (M2) wires the actual dispatch.
+    Lisp,
+    /// Typed WIT-shaped wasm component. Reserved for M2+ — wasmtime
+    /// integration via the embedded operator.
+    Wasm,
 }
 
 /// Smoke-test fixture for one architecture class. The compiler runs

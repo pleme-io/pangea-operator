@@ -103,12 +103,21 @@ async fn reconcile(gem: Arc<ArchitectureGem>, ctx: Arc<Context>) -> Result<Actio
     // reconcile cycles. Failure here is "CompilerUnreachable"-shaped
     // because the gem isn't usable until prepare succeeds.
     if let Some(gr) = gem.spec.source.git_repository.as_ref() {
+        // Translate the CRD-side SourceKind to the backend-side mirror.
+        // Default Ruby preserves backward compat: any pre-M2 CR
+        // without explicit kind continues to land on the magnus path.
+        let kind = match gem.spec.source.kind {
+            crate::crd::architecture_gem::SourceKind::Ruby => crate::ruby::SourceKind::Ruby,
+            crate::crd::architecture_gem::SourceKind::Lisp => crate::ruby::SourceKind::Lisp,
+            crate::crd::architecture_gem::SourceKind::Wasm => crate::ruby::SourceKind::Wasm,
+        };
         let prep = ctx
             .backend
             .prepare_gem(&crate::ruby::GemSource {
                 name: gem.spec.gem_name.clone(),
                 git_url: gr.url.clone(),
                 git_ref: gr.r#ref.clone(),
+                kind,
             })
             .await;
         if let Err(e) = prep {

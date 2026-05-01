@@ -10,7 +10,7 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 
 use super::backend::{
     ArchListing, BackendError, CompileAnyRequest, CompileAnyResult, CompileRequest,
-    CompileResult, CompilerBackend, FixtureOutcome, GemSource, SmokeRequest,
+    CompileResult, CompilerBackend, FixtureOutcome, GemSource, SmokeRequest, SourceKind,
 };
 use super::gem_cache::GemCache;
 use super::owner::RubyRequest;
@@ -54,6 +54,27 @@ impl EmbeddedCompilerBackend {
 #[async_trait]
 impl CompilerBackend for EmbeddedCompilerBackend {
     async fn prepare_gem(&self, source: &GemSource) -> Result<(), BackendError> {
+        // Dispatch on source.kind. Ruby is the existing M8.4.2 path;
+        // Lisp + Wasm are reserved for terreno (M2 of TERRENO.md) +
+        // the wasmtime backend respectively. Both return a typed
+        // NotImplemented condition until their evaluators land —
+        // the controller surfaces this as `GemPrepareFailed`.
+        match source.kind {
+            SourceKind::Ruby => {}
+            SourceKind::Lisp => {
+                return Err(BackendError::Ruby(
+                    "source.kind=Lisp not yet implemented (terreno M2; theory/TERRENO.md)"
+                        .into(),
+                ));
+            }
+            SourceKind::Wasm => {
+                return Err(BackendError::Ruby(
+                    "source.kind=Wasm not yet implemented (M2+; wasmtime integration pending)"
+                        .into(),
+                ));
+            }
+        }
+
         let cache = match &self.cache {
             Some(c) => c,
             None => return Ok(()), // no cache → caller's gems are pre-bundled.

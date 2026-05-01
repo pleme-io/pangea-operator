@@ -285,6 +285,7 @@ async fn embedded_backend_smoke() {
             name: "pangea-prepared-gem".to_string(),
             git_url: "https://example.invalid/pangea-prepared-gem.git".to_string(),
             git_ref: "stub".to_string(),
+            kind: pangea_operator::ruby::SourceKind::Ruby,
         })
         .await
         .expect("prepare_gem round-trip");
@@ -319,9 +320,46 @@ async fn embedded_backend_smoke() {
             name: "pangea-prepared-gem".to_string(),
             git_url: "https://example.invalid/pangea-prepared-gem.git".to_string(),
             git_ref: "stub".to_string(),
+            kind: pangea_operator::ruby::SourceKind::Ruby,
         })
         .await
         .expect("prepare_gem idempotent");
+
+    // Step 10 — terreno reservation: prepare_gem with kind=Lisp must
+    // return a typed NotImplemented error pointing at TERRENO.md M2.
+    // This is the parallel-track invariant from theory/TERRENO.md:
+    // the schema + dispatch surface exist NOW; terreno-eval (M2)
+    // wires the actual implementation later. Until then the
+    // controller surfaces this as `GemPrepareFailed` on the CR.
+    let terreno_err = backend_with_cache
+        .prepare_gem(&pangea_operator::ruby::GemSource {
+            name: "terreno-cloudflare".to_string(),
+            git_url: "https://example.invalid/terreno-cloudflare.git".to_string(),
+            git_ref: "main".to_string(),
+            kind: pangea_operator::ruby::SourceKind::Lisp,
+        })
+        .await
+        .expect_err("kind=Lisp must return typed NotImplemented");
+    let msg = format!("{terreno_err}");
+    assert!(
+        msg.contains("Lisp not yet implemented") || msg.contains("terreno"),
+        "Lisp reservation should surface terreno NotImplemented; got: {msg}"
+    );
+
+    let wasm_err = backend_with_cache
+        .prepare_gem(&pangea_operator::ruby::GemSource {
+            name: "wasm-fixture".to_string(),
+            git_url: "oci://example.invalid/wasm-fixture".to_string(),
+            git_ref: "v1".to_string(),
+            kind: pangea_operator::ruby::SourceKind::Wasm,
+        })
+        .await
+        .expect_err("kind=Wasm must return typed NotImplemented");
+    let msg = format!("{wasm_err}");
+    assert!(
+        msg.contains("Wasm not yet implemented") || msg.contains("wasmtime"),
+        "Wasm reservation should surface NotImplemented; got: {msg}"
+    );
 
     // Confirm the path is on $LOAD_PATH and require works.
     {
