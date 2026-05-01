@@ -37,6 +37,7 @@ pub mod controller;
 pub mod error;
 pub mod executor;
 pub mod observability;
+pub mod ruby;
 
 #[cfg(feature = "graphql")]
 pub mod api;

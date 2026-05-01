@@ -20,7 +20,6 @@ use kube::{
     runtime::controller::{Action, Controller},
     Client,
 };
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info, warn};
@@ -28,22 +27,25 @@ use tracing::{error, info, warn};
 use crate::crd::architecture_gem::{
     ArchitectureGem, ArchitectureGemStatus, Condition, FixtureResult, Phase, SmokeStatus,
 };
+use crate::ruby::{
+    BackendError, CompilerBackend, HttpCompilerBackend, SmokeRequest,
+};
 use futures::StreamExt;
 
 /// Wire ArchitectureGem reconciliation into the operator's runtime.
 ///
 /// Returns a future that owns the controller's run loop; spawn
 /// alongside the existing controllers in `main.rs`.
-pub fn run(client: Client, compiler_endpoint: String) -> impl std::future::Future<Output = ()> {
+///
+/// `backend` is dyn so callers can choose HTTP-to-sidecar or embedded
+/// magnus depending on `PANGEA_COMPILER_BACKEND` / helm flag (see M8.2
+/// design in `theory/PANGEA-WORKSPACE-RECONCILIATION.md`).
+pub fn run(
+    client: Client,
+    backend: Arc<dyn CompilerBackend>,
+) -> impl std::future::Future<Output = ()> {
     let api: Api<ArchitectureGem> = Api::all(client.clone());
-    let context = Arc::new(Context {
-        client,
-        compiler_endpoint,
-        http: reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .expect("reqwest client builds"),
-    });
+    let context = Arc::new(Context { client, backend });
 
     Controller::new(api, kube::runtime::watcher::Config::default())
         .run(reconcile, error_policy, context)
@@ -55,18 +57,27 @@ pub fn run(client: Client, compiler_endpoint: String) -> impl std::future::Futur
         })
 }
 
+/// Convenience constructor for the default HTTP-to-sidecar backend.
+/// Used by `main.rs` when `PANGEA_COMPILER_BACKEND` is unset/`http`.
+pub fn http_backend(compiler_endpoint: String) -> Arc<dyn CompilerBackend> {
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .expect("reqwest client builds");
+    Arc::new(HttpCompilerBackend::new(http, compiler_endpoint))
+}
+
 struct Context {
     client: Client,
-    compiler_endpoint: String,
-    http: reqwest::Client,
+    backend: Arc<dyn CompilerBackend>,
 }
 
 #[derive(Debug, thiserror::Error)]
 enum Error {
     #[error("kube API error: {0}")]
     Kube(#[from] kube::Error),
-    #[error("compiler RPC error: {0}")]
-    Rpc(#[from] reqwest::Error),
+    #[error("compiler backend: {0}")]
+    Backend(#[from] BackendError),
     #[error("missing metadata.name on ArchitectureGem")]
     MissingName,
 }
@@ -86,16 +97,18 @@ async fn reconcile(gem: Arc<ArchitectureGem>, ctx: Arc<Context>) -> Result<Actio
         "reconciling ArchitectureGem"
     );
 
-    // Phase 1 — Loading: ask compiler what's available.
-    let listing = match query_compiler_listing(&ctx, &gem.spec.gem_name).await {
+    // Phase 1 — Loading: ask compiler what's available. Backend
+    // dispatch is HTTP-to-sidecar or embedded-magnus depending on
+    // operator config (M8.2).
+    let listing = match ctx.backend.list_architectures(&gem.spec.gem_name).await {
         Ok(l) => l,
         Err(e) => {
-            warn!(gem = %name, error = %e, "compiler listing RPC failed");
+            warn!(gem = %name, error = %e, "compiler listing failed");
             patch_status_failed(
                 &ctx.client,
                 &name,
                 "CompilerUnreachable",
-                &format!("compiler listing RPC failed: {}", e),
+                &format!("compiler listing failed: {}", e),
             )
             .await?;
             return Ok(Action::requeue(parse_interval(&gem.spec.refresh_interval)));
@@ -141,23 +154,27 @@ async fn reconcile(gem: Arc<ArchitectureGem>, ctx: Arc<Context>) -> Result<Actio
         return Ok(Action::requeue(parse_interval(&gem.spec.refresh_interval)));
     }
 
-    // Phase 2 — SmokeTesting: run each fixture.
+    // Phase 2 — SmokeTesting: run each fixture via the backend.
     let mut fixture_results: Vec<FixtureResult> = Vec::with_capacity(gem.spec.fixtures.len());
     let mut all_passed = true;
     for fixture in &gem.spec.fixtures {
-        match run_smoke_fixture(
-            &ctx,
-            &gem.spec.gem_name,
-            &fixture.class_name,
-            &fixture.fixture_path,
-        )
-        .await
-        {
-            Ok(result) => {
-                if !result.passed {
+        let req = SmokeRequest {
+            gem: gem.spec.gem_name.clone(),
+            class_name: fixture.class_name.clone(),
+            fixture_path: fixture.fixture_path.clone(),
+        };
+        match ctx.backend.smoke_test(req).await {
+            Ok(outcome) => {
+                if !outcome.passed {
                     all_passed = false;
                 }
-                fixture_results.push(result);
+                fixture_results.push(FixtureResult {
+                    class_name: fixture.class_name.clone(),
+                    passed: outcome.passed,
+                    last_run: Utc::now(),
+                    error: outcome.error,
+                    input_hash: outcome.input_hash,
+                });
             }
             Err(e) => {
                 all_passed = false;
@@ -165,7 +182,7 @@ async fn reconcile(gem: Arc<ArchitectureGem>, ctx: Arc<Context>) -> Result<Actio
                     class_name: fixture.class_name.clone(),
                     passed: false,
                     last_run: Utc::now(),
-                    error: Some(format!("RPC error: {}", e)),
+                    error: Some(format!("backend error: {}", e)),
                     input_hash: None,
                 });
             }
@@ -250,65 +267,6 @@ async fn reconcile(gem: Arc<ArchitectureGem>, ctx: Arc<Context>) -> Result<Actio
     );
 
     Ok(Action::requeue(parse_interval(&gem.spec.refresh_interval)))
-}
-
-#[derive(Deserialize)]
-struct CompilerListing {
-    classes: Vec<String>,
-    #[serde(default)]
-    version: Option<String>,
-}
-
-async fn query_compiler_listing(ctx: &Context, gem_name: &str) -> Result<CompilerListing, Error> {
-    let url = format!("{}/v1/architectures?gem={}", ctx.compiler_endpoint, gem_name);
-    let resp = ctx.http.get(&url).send().await?.error_for_status()?;
-    let listing: CompilerListing = resp.json().await?;
-    Ok(listing)
-}
-
-#[derive(Serialize)]
-struct SmokeRequest<'a> {
-    gem: &'a str,
-    class_name: &'a str,
-    fixture_path: &'a str,
-}
-
-#[derive(Deserialize)]
-struct SmokeResponse {
-    passed: bool,
-    #[serde(default)]
-    error: Option<String>,
-    #[serde(default)]
-    input_hash: Option<String>,
-}
-
-async fn run_smoke_fixture(
-    ctx: &Context,
-    gem_name: &str,
-    class_name: &str,
-    fixture_path: &str,
-) -> Result<FixtureResult, Error> {
-    let url = format!("{}/v1/architectures/smoke-test", ctx.compiler_endpoint);
-    let body = SmokeRequest {
-        gem: gem_name,
-        class_name,
-        fixture_path,
-    };
-    let resp = ctx
-        .http
-        .post(&url)
-        .json(&body)
-        .send()
-        .await?
-        .error_for_status()?;
-    let parsed: SmokeResponse = resp.json().await?;
-    Ok(FixtureResult {
-        class_name: class_name.to_string(),
-        passed: parsed.passed,
-        last_run: Utc::now(),
-        error: parsed.error,
-        input_hash: parsed.input_hash,
-    })
 }
 
 async fn patch_status(

@@ -11,10 +11,21 @@ repository.workspace = true
 default = ["graphql", "grpc"]
 graphql = ["async-graphql", "async-graphql-axum"]
 grpc = ["tonic", "prost"]
+# In-process CRuby evaluator (M8.2 of the hollow-out plan). When OFF (the
+# default until M8.4 burn-in), the operator only dispatches to the
+# pangea-compiler sidecar over HTTP. When ON, the operator additionally
+# spawns a Ruby owner thread + can be configured (via PANGEA_COMPILER_BACKEND
+# env or helm useEmbeddedRuby flag) to evaluate templates in-process.
+# Pulls in pangea-ruby-eval which links libruby — only enable in builds
+# where CRuby is available (Linux container image, dev shell).
+embedded_ruby = ["dep:pangea-ruby-eval"]
 
 [dependencies]
 # Shared types
 pangea-types = { workspace = true, features = ["server"] }
+
+# In-process Ruby evaluator (feature-gated; see [features].embedded_ruby).
+pangea-ruby-eval = { path = "../pangea-ruby-eval", optional = true }
 
 # Kubernetes
 kube = { workspace = true, features = ["runtime", "client"] }

@@ -216,16 +216,20 @@ async fn main() -> Result<()> {
         }
     });
 
-    // M1 — ArchitectureGem reconciler. Talks to the compiler sidecar
-    // at COMPILER_ENDPOINT (default http://localhost:8082). See
-    // theory/PANGEA-WORKSPACE-RECONCILIATION.md.
+    // M1 — ArchitectureGem reconciler. Dispatches to either the
+    // compiler sidecar (HTTP) or the embedded magnus interpreter
+    // (`embedded_ruby` feature + PANGEA_COMPILER_BACKEND=embedded).
+    // See theory/PANGEA-WORKSPACE-RECONCILIATION.md § M8.2.
     let arch_gem_client = state.client.clone();
     let arch_gem_compiler_url = std::env::var("COMPILER_ENDPOINT")
         .unwrap_or_else(|_| "http://localhost:8082".to_string());
+    let arch_gem_backend = pangea_operator::controller::architecture_gem_controller::http_backend(
+        arch_gem_compiler_url,
+    );
     let architecture_gem_controller = tokio::spawn(async move {
         pangea_operator::controller::architecture_gem_controller::run(
             arch_gem_client,
-            arch_gem_compiler_url,
+            arch_gem_backend,
         )
         .await;
         error!("ArchitectureGem controller exited");
