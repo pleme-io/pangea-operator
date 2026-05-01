@@ -207,11 +207,11 @@
 
       # M8.5.1 — embedded-ruby operator image.
       #
-      # Builds the operator with `--features embedded_ruby` via crate2nix
-      # `rootFeatures` + per-crate overrides for rb-sys/magnus
-      # (libclang + libruby). The resulting binary links libruby; the
-      # docker image bundles ruby_3_4 in the runtime closure so the
-      # interpreter's stdlib is accessible.
+      # Built directly via substrate's mkCrate2nixDockerImage (M8.5.1.x +
+      # M8.5.1.y) with rootFeatures + crateOverrides + imageName +
+      # binaryName plumbed through. The factory handles dockerTools.buildLayeredImage,
+      # PATH composition, Entrypoint, exposed ports, and SSL — we just
+      # supply the Ruby-specific knobs.
       #
       # Used by chart 0.7.0 when useEmbeddedRuby=true.
       # See helmworks@494533b chart values + theory M8.5.
@@ -223,72 +223,39 @@
           rubySharedEnv = {
             LIBCLANG_PATH = "${libclang.lib}/lib";
             PKG_CONFIG_PATH = "${ruby}/lib/pkgconfig";
-            RUBY = "${ruby}/bin/ruby";
           };
 
-          generatedCargoNix = ./Cargo.nix;
-          project = import generatedCargoNix {
+          builders = import "${substrate}/lib/build/rust/crate2nix-builders.nix" {
             pkgs = imagePkgs;
-            rootFeatures = [ "default" "embedded_ruby" ];
-            defaultCrateOverrides = imagePkgs.defaultCrateOverrides // {
-              # rb-sys: bindgen needs libclang + ruby headers.
-              rb-sys = oldAttrs: rubySharedEnv // {
-                nativeBuildInputs = (oldAttrs.nativeBuildInputs or [])
-                  ++ [ libclang imagePkgs.pkg-config ruby ];
-                buildInputs = (oldAttrs.buildInputs or []) ++ [ ruby ];
-              };
-              # magnus: links libruby.
-              magnus = oldAttrs: {
-                buildInputs = (oldAttrs.buildInputs or []) ++ [ ruby ];
-              };
-              # pangea-ruby-eval: pulls magnus + sha2 + serde_yaml.
-              pangea-ruby-eval = oldAttrs: rubySharedEnv // {
-                nativeBuildInputs = (oldAttrs.nativeBuildInputs or [])
-                  ++ [ libclang imagePkgs.pkg-config ];
-                buildInputs = (oldAttrs.buildInputs or []) ++ [ ruby ];
-              };
-              # pangea-operator: needs libruby at link time when the
-              # embedded_ruby feature is on; sqlx/openssl as before.
-              pangea-operator = oldAttrs: {
-                buildInputs = (oldAttrs.buildInputs or [])
-                  ++ [ ruby imagePkgs.openssl imagePkgs.postgresql imagePkgs.sqlite ];
-              };
-            };
+            crate2nix = crate2nix.packages.${imageSystem}.default;
           };
-
-          operatorBin = project.workspaceMembers.pangea-operator.build;
-        in imagePkgs.dockerTools.buildLayeredImage {
-          name = "pangea-operator-embedded";
-          tag = "latest";
-          contents = [
-            operatorBin
-            ruby
-            imagePkgs.opentofu
-            imagePkgs.packer
-            imagePkgs.git
-            imagePkgs.busybox
-            imagePkgs.cacert
-          ];
-          config = {
-            Entrypoint = [ "${operatorBin}/bin/pangea-operator" ];
-            ExposedPorts = {
-              "8080/tcp" = { };  # health
-              "8081/tcp" = { };  # graphql
-              "9090/tcp" = { };  # metrics
+          arch = if imageSystem == "aarch64-linux" then "arm64" else "amd64";
+        in builders.mkCrate2nixDockerImage {
+          serviceName = "pangea-operator";
+          packageName = "pangea-operator";
+          imageName = "pangea-operator-embedded";
+          binaryName = "pangea-operator";
+          src = self;
+          architecture = arch;
+          serviceType = "graphql";
+          rootFeatures = [ "default" "embedded_ruby" ];
+          extraContents = pkgs: with pkgs; [ ruby_3_4 opentofu packer git busybox ];
+          buildInputs = [ ruby imagePkgs.openssl imagePkgs.postgresql imagePkgs.sqlite ];
+          nativeBuildInputs = [ libclang imagePkgs.pkg-config imagePkgs.cmake imagePkgs.perl ];
+          crateOverrides = {
+            rb-sys = oldAttrs: rubySharedEnv // {
+              nativeBuildInputs = (oldAttrs.nativeBuildInputs or [])
+                ++ [ libclang imagePkgs.pkg-config ruby ];
+              buildInputs = (oldAttrs.buildInputs or []) ++ [ ruby ];
             };
-            Env = [
-              "PANGEA_COMPILER_BACKEND=embedded"
-              "PANGEA_GEM_CACHE_DIR=/var/pangea/gems"
-              "PATH=${operatorBin}/bin:${ruby}/bin:${imagePkgs.busybox}/bin:${imagePkgs.git}/bin:${imagePkgs.opentofu}/bin:${imagePkgs.packer}/bin"
-              "SSL_CERT_FILE=${imagePkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
-            ];
-            Labels = {
-              "org.opencontainers.image.source" = "https://github.com/pleme-io/pangea-operator";
-              "org.opencontainers.image.description" = "Pangea operator with embedded magnus + CRuby evaluator (M8.4+)";
-              "org.opencontainers.image.licenses" = "Apache-2.0";
+            magnus = oldAttrs: {
+              buildInputs = (oldAttrs.buildInputs or []) ++ [ ruby ];
             };
-            User = "65534:65534";
-            WorkingDir = "/";
+            pangea-ruby-eval = oldAttrs: rubySharedEnv // {
+              nativeBuildInputs = (oldAttrs.nativeBuildInputs or [])
+                ++ [ libclang imagePkgs.pkg-config ];
+              buildInputs = (oldAttrs.buildInputs or []) ++ [ ruby ];
+            };
           };
         };
 
