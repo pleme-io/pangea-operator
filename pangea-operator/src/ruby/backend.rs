@@ -115,8 +115,35 @@ pub struct CompileAnyResult {
     pub format: String,
 }
 
+/// Where a gem's source code lives — passed to `prepare_gem` so the
+/// embedded backend can clone + register it. HTTP backends ignore
+/// this (sidecar bundles are image-baked).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GemSource {
+    pub name: String,
+    pub git_url: String,
+    pub git_ref: String,
+}
+
 #[async_trait]
 pub trait CompilerBackend: Send + Sync {
+    /// Make a gem available for subsequent `list_architectures` /
+    /// `smoke_test` / `compile` calls.
+    ///
+    /// HTTP backend → no-op success (sidecar's bundle is image-baked
+    /// at compiler-image build time).
+    ///
+    /// Embedded backend → idempotent `git clone` into the gem cache
+    /// at `$PANGEA_GEM_CACHE_DIR/{name}-{ref}/` and prepend
+    /// `<that>/lib` to the embedded interpreter's `$LOAD_PATH`. Once
+    /// returned Ok, the controller knows `require '{name}'` will
+    /// resolve.
+    ///
+    /// Default impl is no-op so HTTP backends don't have to opt in.
+    async fn prepare_gem(&self, _source: &GemSource) -> Result<(), BackendError> {
+        Ok(())
+    }
+
     /// Equivalent of `GET /v1/architectures?gem=<gem>`.
     async fn list_architectures(&self, gem: &str) -> Result<ArchListing, BackendError>;
 

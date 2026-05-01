@@ -116,16 +116,42 @@ async fn main() -> Result<()> {
         "Executor configuration loaded"
     );
 
-    // Construct the compiler backend (HTTP today, embedded magnus
-    // when feature `embedded_ruby` is on AND PANGEA_COMPILER_BACKEND=embedded
-    // — see theory/PANGEA-WORKSPACE-RECONCILIATION.md § M8.2). Since
-    // the embedded path is M8.4, this default is HTTP across the fleet.
+    // Construct the compiler backend. Selection:
+    //   PANGEA_COMPILER_BACKEND=http      (default)  → sidecar over HTTP
+    //   PANGEA_COMPILER_BACKEND=embedded             → magnus + GemCache
+    //                                                  (only when feature
+    //                                                  `embedded_ruby` is
+    //                                                  compiled in)
+    // See theory/PANGEA-WORKSPACE-RECONCILIATION.md § M8.2.
     let compiler_endpoint = std::env::var("COMPILER_ENDPOINT")
         .unwrap_or_else(|_| "http://localhost:8082".to_string());
+    let backend_kind = std::env::var("PANGEA_COMPILER_BACKEND")
+        .unwrap_or_else(|_| "http".to_string());
     let compiler_backend: std::sync::Arc<dyn pangea_operator::ruby::CompilerBackend> =
-        pangea_operator::controller::architecture_gem_controller::http_backend(
-            compiler_endpoint.clone(),
-        );
+        match backend_kind.as_str() {
+            #[cfg(feature = "embedded_ruby")]
+            "embedded" => {
+                info!("Compiler backend: embedded magnus + gem cache");
+                let cache = pangea_operator::ruby::GemCache::from_env();
+                let owner = pangea_operator::ruby::RubyOwner::spawn(vec![])
+                    .await
+                    .expect("spawn ruby owner thread");
+                let backend = pangea_operator::ruby::EmbeddedCompilerBackend::with_cache(
+                    owner.tx_handle(),
+                    cache,
+                );
+                // Leak the owner so it lives the lifetime of the
+                // process — Drop on shutdown is best-effort.
+                std::mem::forget(owner);
+                std::sync::Arc::new(backend)
+            }
+            _ => {
+                info!(endpoint = %compiler_endpoint, "Compiler backend: HTTP sidecar");
+                pangea_operator::controller::architecture_gem_controller::http_backend(
+                    compiler_endpoint.clone(),
+                )
+            }
+        };
 
     // Create controller state
     let state = ControllerState::new(

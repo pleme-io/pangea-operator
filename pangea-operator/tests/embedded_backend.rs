@@ -260,6 +260,69 @@ async fn embedded_backend_smoke() {
         .await
         .expect("prepend_load_path round-trip");
 
+    // M8.4.2 — exercise the higher-level prepare_gem path. We pre-seed
+    // an entry dir under the cache base; cache.ensure() should hit
+    // (no clone), and the backend's prepare_gem should prepend its
+    // lib path. Distinct gem name from the previous step so we can
+    // observe the "first call → prepend" behavior.
+    let prepared_gem_dir = tmp.join("pangea-prepared-gem-stub");
+    let prepared_lib_dir = prepared_gem_dir.join("lib");
+    std::fs::create_dir_all(&prepared_lib_dir).expect("mkdir -p prepared lib");
+    // The cache hit branch tolerates a missing .git as long as lib
+    // exists.
+    std::fs::write(
+        prepared_lib_dir.join("prepared_gem.rb"),
+        b"module PreparedGem; STAMP = \"42\".freeze; end\n",
+    )
+    .expect("write prepared_gem entrypoint");
+
+    let backend_with_cache = pangea_operator::ruby::EmbeddedCompilerBackend::with_cache(
+        owner.tx_handle(),
+        cache.clone(),
+    );
+    backend_with_cache
+        .prepare_gem(&pangea_operator::ruby::GemSource {
+            name: "pangea-prepared-gem".to_string(),
+            git_url: "https://example.invalid/pangea-prepared-gem.git".to_string(),
+            git_ref: "stub".to_string(),
+        })
+        .await
+        .expect("prepare_gem round-trip");
+
+    {
+        use pangea_operator::ruby::RubyRequest;
+        let (rtx, rrx) = tokio::sync::oneshot::channel();
+        owner
+            .tx_handle()
+            .send(RubyRequest::Eval {
+                source: r#"
+                require 'prepared_gem'
+                { "stamp" => PreparedGem::STAMP }
+                "#
+                .to_string(),
+                respond: rtx,
+            })
+            .await
+            .expect("send eval");
+        let result = rrx.await.expect("eval reply").expect("eval ok");
+        assert_eq!(
+            result["stamp"],
+            serde_json::json!("42"),
+            "prepare_gem should have made the gem requirable"
+        );
+    }
+
+    // Idempotency: second prepare_gem call with same (name, ref) is a
+    // fast-path no-op (cache hit; HashSet skip on the prepend send).
+    backend_with_cache
+        .prepare_gem(&pangea_operator::ruby::GemSource {
+            name: "pangea-prepared-gem".to_string(),
+            git_url: "https://example.invalid/pangea-prepared-gem.git".to_string(),
+            git_ref: "stub".to_string(),
+        })
+        .await
+        .expect("prepare_gem idempotent");
+
     // Confirm the path is on $LOAD_PATH and require works.
     {
         use pangea_operator::ruby::RubyRequest;

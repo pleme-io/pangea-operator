@@ -22,7 +22,7 @@ pub mod owner;
 
 pub use backend::{
     ArchListing, BackendError, CompileAnyRequest, CompileAnyResult, CompileRequest,
-    CompileResult, CompilerBackend, FixtureOutcome, SmokeRequest,
+    CompileResult, CompilerBackend, FixtureOutcome, GemSource, SmokeRequest,
 };
 pub use http_backend::HttpCompilerBackend;
 

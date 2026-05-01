@@ -97,6 +97,33 @@ async fn reconcile(gem: Arc<ArchitectureGem>, ctx: Arc<Context>) -> Result<Actio
         "reconciling ArchitectureGem"
     );
 
+    // Phase 0 — Prepare: if the CR has a gitRepository source, ask
+    // the backend to prepare it (HTTP no-op; embedded does
+    // gem-cache.ensure + $LOAD_PATH prepend). Idempotent across
+    // reconcile cycles. Failure here is "CompilerUnreachable"-shaped
+    // because the gem isn't usable until prepare succeeds.
+    if let Some(gr) = gem.spec.source.git_repository.as_ref() {
+        let prep = ctx
+            .backend
+            .prepare_gem(&crate::ruby::GemSource {
+                name: gem.spec.gem_name.clone(),
+                git_url: gr.url.clone(),
+                git_ref: gr.r#ref.clone(),
+            })
+            .await;
+        if let Err(e) = prep {
+            warn!(gem = %name, error = %e, "gem prepare failed");
+            patch_status_failed(
+                &ctx.client,
+                &name,
+                "GemPrepareFailed",
+                &format!("prepare_gem failed: {e}"),
+            )
+            .await?;
+            return Ok(Action::requeue(parse_interval(&gem.spec.refresh_interval)));
+        }
+    }
+
     // Phase 1 — Loading: ask compiler what's available. Backend
     // dispatch is HTTP-to-sidecar or embedded-magnus depending on
     // operator config (M8.2).
