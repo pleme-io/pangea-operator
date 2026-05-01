@@ -232,6 +232,25 @@
             BINDGEN_EXTRA_CLANG_ARGS = bindgenClangArgs;
           };
 
+          # M8.5.2.2 — bundle foundational pangea-* gems + their
+          # transitive deps (pangea-core, pangea-aws, pangea-cloudflare,
+          # …, plus terraform-synthesizer, dry-struct, dry-types, …)
+          # into the operator image's runtime closure. Reuse the same
+          # ws (Ruby workspace) the compiler image builds: both
+          # bundle the same Gemfile.lock + path-gem set. Setting
+          # RUBYLIB at process start makes the embedded CRuby
+          # interpreter find all of them via $LOAD_PATH on init.
+          gemWs = (import "${substrate}/lib/build/ruby/workspace.nix" {
+            nixpkgs = nixpkgs;
+            system = imageSystem;
+            inherit ruby-nix substrate forge;
+          }) {
+            name = "pangea-compiler";
+            self = ./pangea-compiler;
+            pathGems = pangeaInputs;
+            gemsetPath = "/gemset.nix";
+          };
+
           builders = import "${substrate}/lib/build/rust/crate2nix-builders.nix" {
             pkgs = imagePkgs;
             crate2nix = crate2nix.packages.${imageSystem}.default;
@@ -246,7 +265,19 @@
           architecture = arch;
           serviceType = "graphql";
           rootFeatures = [ "default" "embedded_ruby" ];
-          extraContents = pkgs: with pkgs; [ ruby_3_4 opentofu packer git busybox ];
+          # Pre-bundled gems live in the runtime closure via gemWs.env;
+          # operator's main.rs sees RUBYLIB at process start, embedded
+          # CRuby's ruby_init() reads it, $LOAD_PATH includes every
+          # foundational pangea-* + dry-* + terraform-synthesizer at
+          # boot. Per-CR ArchitectureGem clones (M8.4.2) layer on top.
+          extraContents = pkgs: with pkgs; [
+            ruby_3_4 opentofu packer git busybox
+            gemWs.env
+          ];
+          extraEnv = [
+            "RUBYLIB=${gemWs.rubylib}"
+            "DRY_TYPES_WARNINGS=false"
+          ];
           buildInputs = [ ruby imagePkgs.openssl imagePkgs.postgresql imagePkgs.sqlite ];
           nativeBuildInputs = [ libclang imagePkgs.pkg-config imagePkgs.cmake imagePkgs.perl ];
           crateOverrides = {
