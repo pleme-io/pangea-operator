@@ -249,21 +249,33 @@ fn list_architectures(
         .eval_string(&require_src)
         .map_err(|e| BackendError::Ruby(format!("require {gem}: {e}")))?;
 
-    // List Pangea::Architectures.constants — same logic as the sidecar.
+    // List Pangea::Architectures.constants. Each const_get triggers
+    // autoload which may transitively `require` files the gem ships
+    // with dangling references (e.g. pangea-architectures' main has
+    // several architecture .rb files that `require 'pangea/helpers/X'`
+    // without shipping X). Without per-constant LoadError handling,
+    // ANY broken autoload aborts the whole iteration and returns
+    // loaded=[]. Be tolerant: skip broken constants, return whichever
+    // ones load cleanly. The CR's expectedClasses comparison surfaces
+    // missing classes upstream from this layer.
     let listing_json = evaluator
         .eval_string(
             r#"
             classes = []
             if defined?(Pangea::Architectures)
-              classes = Pangea::Architectures.constants.map do |c|
-                full = "Pangea::Architectures::#{c}"
-                const = Pangea::Architectures.const_get(c)
-                if const.is_a?(Class) || const.is_a?(Module)
-                  full
-                else
-                  nil
+              Pangea::Architectures.constants.each do |c|
+                begin
+                  const = Pangea::Architectures.const_get(c)
+                  if const.is_a?(Class) || const.is_a?(Module)
+                    classes << "Pangea::Architectures::#{c}"
+                  end
+                rescue LoadError, NameError, StandardError
+                  # autoload chain hit a missing file or undefined const;
+                  # skip this constant and keep iterating
+                  next
                 end
-              end.compact.sort
+              end
+              classes.sort!
             end
             classes
             "#,
