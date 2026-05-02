@@ -494,6 +494,7 @@ async fn handle_compiling(
             let provider_secret_refs: Vec<&crate::crd::SecretRef> = [
                 provider_creds.aws.as_ref().map(|c| &c.secret_ref),
                 provider_creds.cloudflare.as_ref().map(|c| &c.secret_ref),
+                provider_creds.github.as_ref().map(|c| &c.secret_ref),
             ]
             .into_iter()
             .flatten()
