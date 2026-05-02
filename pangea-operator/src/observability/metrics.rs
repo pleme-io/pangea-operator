@@ -79,6 +79,26 @@ pub struct Metrics {
     /// dashboard show "5 high-risk deletes pending across the fleet"
     /// without parsing each driftDetail.
     pub template_drift_detail: IntGaugeVec,
+
+    /// Reconciles skipped by `policy_gate` because of OperatorPolicy.
+    /// Labels: `controller` (template/namespace/dashboard/...), `reason`
+    /// (globalSuspend|controllerSuspend). Increment on every skipped
+    /// reconcile so a dashboard can prove "operator paused for 4h".
+    /// Mirrors `OperatorPolicy.status.reconcilesSkipped` but with
+    /// per-controller labels for fairness diagnosis.
+    pub policy_skipped_total: IntCounterVec,
+
+    /// Compile failures by template, with the failure-mode reason as
+    /// a label. Used to alert on stuck-Compiling templates BEFORE
+    /// `consecutiveCompileFailures` crosses settlingPolicy threshold.
+    /// Labels: `namespace`, `name`. Reason is exposed via
+    /// `pangea_template_consecutive_compile_failures` (gauge below).
+    pub compile_failures_total: IntCounterVec,
+
+    /// Current `consecutiveCompileFailures` count per template. Lets
+    /// dashboards alert on "template X is stuck compiling" before
+    /// settling policy escalates to Failed (default 5 cycles).
+    pub consecutive_compile_failures: IntGaugeVec,
 }
 
 impl Metrics {
@@ -228,6 +248,33 @@ impl Metrics {
         )
         .expect("metric can be created");
 
+        let policy_skipped_total = IntCounterVec::new(
+            Opts::new(
+                "pangea_policy_skipped_total",
+                "Reconciles skipped by OperatorPolicy gate (Item J observability)",
+            ),
+            &["controller", "reason"],
+        )
+        .expect("metric can be created");
+
+        let compile_failures_total = IntCounterVec::new(
+            Opts::new(
+                "pangea_compile_failures_total",
+                "Template compile failures (Item J observability)",
+            ),
+            &["namespace", "name"],
+        )
+        .expect("metric can be created");
+
+        let consecutive_compile_failures = IntGaugeVec::new(
+            Opts::new(
+                "pangea_template_consecutive_compile_failures",
+                "Current consecutive compile failure count per template",
+            ),
+            &["namespace", "name"],
+        )
+        .expect("metric can be created");
+
         // Register all metrics
         registry
             .register(Box::new(reconciliations_total.clone()))
@@ -280,6 +327,15 @@ impl Metrics {
         registry
             .register(Box::new(template_drift_detail.clone()))
             .expect("metric can be registered");
+        registry
+            .register(Box::new(policy_skipped_total.clone()))
+            .expect("metric can be registered");
+        registry
+            .register(Box::new(compile_failures_total.clone()))
+            .expect("metric can be registered");
+        registry
+            .register(Box::new(consecutive_compile_failures.clone()))
+            .expect("metric can be registered");
 
         Self {
             registry,
@@ -300,6 +356,9 @@ impl Metrics {
             stuck_resources,
             settling_failures_total,
             template_drift_detail,
+            policy_skipped_total,
+            compile_failures_total,
+            consecutive_compile_failures,
         }
     }
 

@@ -664,6 +664,22 @@ async fn handle_compile_failure(
     let namespace = template.namespace().unwrap_or_default();
     let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
 
+    // Item J observability: bump rate counter + set current-count gauge
+    // so Grafana can alert on "stuck-Compiling" before the settling
+    // threshold trips. Prometheus path:
+    //   pangea_compile_failures_total{namespace,name}      (counter)
+    //   pangea_template_consecutive_compile_failures{...}   (gauge)
+    state
+        .metrics
+        .compile_failures_total
+        .with_label_values(&[&namespace, &name])
+        .inc();
+    state
+        .metrics
+        .consecutive_compile_failures
+        .with_label_values(&[&namespace, &name])
+        .set(next as i64);
+
     if escalate {
         // Threshold crossed — transition to Failed + emit Event.
         warn!(
@@ -730,11 +746,22 @@ async fn reset_compile_failure_counter(
         .as_ref()
         .map(|s| s.consecutive_compile_failures)
         .unwrap_or(0);
+    let name = template.name_any();
+    let namespace = template.namespace().unwrap_or_default();
+
+    // Always clear the Prometheus gauge to 0, even if the spec/status
+    // counter is already 0 — covers the case where the operator
+    // restarted after a compile-failure spike: the in-memory gauge
+    // could carry the stale value into a fresh process.
+    state
+        .metrics
+        .consecutive_compile_failures
+        .with_label_values(&[&namespace, &name])
+        .set(0);
+
     if prior == 0 {
         return Ok(());
     }
-    let name = template.name_any();
-    let namespace = template.namespace().unwrap_or_default();
     let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
     let patch = serde_json::json!({
         "status": { "consecutiveCompileFailures": 0 },

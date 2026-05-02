@@ -42,7 +42,24 @@ pub fn check_operator_policy(
     state: &ControllerState,
     controller: ControllerKind,
 ) -> Option<Action> {
-    evaluate_against_cache(&state.operator_policy, controller)
+    let result = evaluate_against_cache(&state.operator_policy, controller);
+    // When the gate fires, also bump the per-controller Prometheus
+    // counter so dashboards can show "operator paused for X duration"
+    // and "controller Y skipped N reconciles" without parsing logs.
+    if result.is_some() {
+        let spec = state.operator_policy.read();
+        let reason = if spec.global_suspend {
+            "globalSuspend"
+        } else {
+            "controllerSuspend"
+        };
+        state
+            .metrics
+            .policy_skipped_total
+            .with_label_values(&[controller.name(), reason])
+            .inc();
+    }
+    result
 }
 
 /// Cache-only variant for controllers whose context type is not
