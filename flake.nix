@@ -33,6 +33,7 @@
     pangea-core          = { url = "github:pleme-io/pangea-core";          flake = false; };
     pangea-datadog       = { url = "github:pleme-io/pangea-datadog";       flake = false; };
     pangea-gcp           = { url = "github:pleme-io/pangea-gcp";           flake = false; };
+    pangea-github        = { url = "github:pleme-io/pangea-github";        flake = false; };
     pangea-hcloud        = { url = "github:pleme-io/pangea-hcloud";        flake = false; };
     pangea-kubernetes    = { url = "github:pleme-io/pangea-kubernetes";    flake = false; };
     pangea-porkbun       = { url = "github:pleme-io/pangea-porkbun";       flake = false; };
@@ -65,12 +66,58 @@
         "pangea-core"          = inputs.pangea-core;
         "pangea-datadog"       = inputs.pangea-datadog;
         "pangea-gcp"           = inputs.pangea-gcp;
+        "pangea-github"        = inputs.pangea-github;
         "pangea-hcloud"        = inputs.pangea-hcloud;
         "pangea-kubernetes"    = inputs.pangea-kubernetes;
         "pangea-porkbun"       = inputs.pangea-porkbun;
         "pangea-splunk"        = inputs.pangea-splunk;
         "pangea-spot"          = inputs.pangea-spot;
       };
+
+      # ── pangeaInputs ↔ Gemfile coverage invariant ─────────────────
+      # The embedded operator + compiler images bundle each gem named
+      # in `pangeaInputs`. The Gemfile must declare a matching
+      # `gem '<name>', path: 'vendor/<name>'` line; without it, the
+      # ruby-nix build silently produces an image that can't `require`
+      # the gem. That's how `cannot load such file -- pangea-github`
+      # shipped to rio (operator at cdb072d) — we added a CRD for
+      # GitHub workspaces but the bundle didn't include the provider.
+      #
+      # This Nix-time assertion fails evaluation with a clear error
+      # naming exactly which gem is missing from Gemfile, so the bug
+      # cannot recur silently.
+      gemfileSrc = builtins.readFile ./pangea-compiler/Gemfile;
+      gemfileMissing = lib.filter
+        (gemName:
+          ! (lib.hasInfix "gem '${gemName}'," gemfileSrc
+            || lib.hasInfix "gem \"${gemName}\"," gemfileSrc))
+        (builtins.attrNames pangeaInputs);
+      # Pre-build trace: if any pangea-* flake input is missing from
+      # Gemfile, the bundix pipeline hasn't been run yet. The Nix
+      # build that consumes pangeaInputs will fail downstream with a
+      # less obvious error (gemset.nix entry missing). This warning
+      # surfaces the root cause early so you know to run regen.
+      pangeaInputsChecked = lib.warnIf (gemfileMissing != []) ''
+        [pangea-operator] flake.nix declared pangea-* inputs NOT
+        referenced in pangea-compiler/Gemfile:
+          ${lib.concatStringsSep "\n  " gemfileMissing}
+
+        The image build will fail at gemset.nix override time. Fix:
+          1. Add `gem '<name>', path: 'vendor/<name>'` to Gemfile
+             for each missing entry (already done if you see this on
+             a fresh clone with linter help).
+          2. Run the bundix regen pipeline to update Gemfile.lock +
+             gemset.nix:
+                cd pangea-compiler
+                bundle install
+                bundix --magic
+          3. Re-build the image:
+                nix build .#dockerImage-operator-embedded-amd64
+
+        This is the typed-substrate "promises become theorems" gate
+        for Item B (gem coverage matrix). Operator paused under
+        OperatorPolicy/default while this lands.
+      '' pangeaInputs;
 
       # Compiler (Ruby) — call substrate ruby-workspace at output-level
       # for each Linux system we need, build a docker image from the
@@ -85,7 +132,7 @@
           }) {
             name = "pangea-compiler";
             self = ./pangea-compiler;
-            pathGems = pangeaInputs;
+            pathGems = pangeaInputsChecked;
             gemsetPath = "/gemset.nix";
           };
 
@@ -251,7 +298,7 @@
           }) {
             name = "pangea-compiler";
             self = ./pangea-compiler;
-            pathGems = pangeaInputs;
+            pathGems = pangeaInputsChecked;
             gemsetPath = "/gemset.nix";
           };
 
