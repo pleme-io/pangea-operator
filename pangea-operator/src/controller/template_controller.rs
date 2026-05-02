@@ -1897,9 +1897,10 @@ async fn apply_reactive_policy(
                 false,
             ),
             Escalation::Triggered { action, reason, message, routing } => {
-                // Debounce: only emit event + log when the reason is
-                // new (or no prior). State-change-driven, not
-                // every-reconcile.
+                // Debounce: only emit event + log + routing-deliver
+                // when the reason is new (or no prior). State-change-
+                // driven, not every-reconcile — keeps ntfy from
+                // pinging every 5min while the bad state persists.
                 let is_new = prior_reason.as_deref() != Some(reason.as_str());
                 if is_new {
                     emit_escalation_log(
@@ -1910,19 +1911,33 @@ async fn apply_reactive_policy(
                         message,
                         routing.as_ref(),
                     );
+                    let action_label = match action {
+                        ReactiveAction::Alert => "Alert",
+                        ReactiveAction::Suspend => "Suspend",
+                        ReactiveAction::Page => "Page",
+                    };
+                    let event_msg =
+                        format!("[{action_label}] reason={reason}: {message}");
                     record_event(
                         template,
                         state,
                         EventType::Warning,
                         "ReactivePolicyTriggered",
-                        &format!("[{action}] reason={reason}: {message}",
-                            action = match action {
-                                ReactiveAction::Alert => "Alert",
-                                ReactiveAction::Suspend => "Suspend",
-                                ReactiveAction::Page => "Page",
-                            }),
+                        &event_msg,
                     )
                     .await;
+                    // Real routing delivery — ntfy now, Slack +
+                    // GitHub stubbed. Best-effort; failures log but
+                    // don't propagate.
+                    let title = format!(
+                        "[pangea] {action_label}: {namespace}/{name}",
+                        namespace = namespace,
+                        name = name
+                    );
+                    state
+                        .routing_client
+                        .deliver(*action, &title, &event_msg, routing.as_ref())
+                        .await;
                 }
                 (
                     "False",

@@ -6,6 +6,7 @@
 
 pub mod architecture_gem_controller;
 pub mod reactive;
+pub mod routing;
 pub mod workspace_catalog_controller;
 mod flow_controller;
 pub mod flow_scheduler;
@@ -66,6 +67,11 @@ pub struct ControllerState {
     /// `embedded_ruby` is feature-on + `PANGEA_COMPILER_BACKEND=embedded`.
     /// See `theory/PANGEA-WORKSPACE-RECONCILIATION.md` § M8.2.
     pub compiler_backend: Arc<dyn crate::ruby::CompilerBackend>,
+
+    /// Routing-delivery client — pings ntfy / Slack / GitHub when a
+    /// reactive policy fires. Configured via PANGEA_NTFY_BASE_URL
+    /// (defaults to https://ntfy.sh).
+    pub routing_client: Arc<routing::RoutingClient>,
 }
 
 impl ControllerState {
@@ -103,6 +109,7 @@ impl ControllerState {
             packer_executor,
             workspace_manager,
             compiler_backend,
+            routing_client: Arc::new(routing::RoutingClient::from_env()),
         })
     }
 
