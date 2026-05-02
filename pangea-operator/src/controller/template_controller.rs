@@ -96,6 +96,14 @@ async fn reconcile_template(
     info!("Reconciling InfrastructureTemplate");
     state.metrics.reconciliations_total.inc();
 
+    // Cluster-wide kill-switch — honor `OperatorPolicy/default`.
+    if let Some(action) = crate::controller::policy_gate::check_operator_policy(
+        &state,
+        crate::crd::ControllerKind::Template,
+    ) {
+        return Ok(action);
+    }
+
     // Handle deletion via finalizer
     if template.metadata.deletion_timestamp.is_some() {
         if has_finalizer(&template) {

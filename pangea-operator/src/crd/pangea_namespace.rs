@@ -41,6 +41,14 @@ pub struct PangeaNamespaceSpec {
     /// Default compliance profiles for templates in this namespace.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub default_compliance_profiles: Vec<String>,
+
+    /// When true, the namespace controller skips reconciliation entirely
+    /// — no schema provisioning, no backend health verification, no
+    /// status updates. Use to temporarily quiesce a single namespace
+    /// without affecting siblings. Compose with the cluster-scoped
+    /// `OperatorPolicy/default` for fleet-wide pause.
+    #[serde(default)]
+    pub suspend: bool,
 }
 
 /// State backend configuration.

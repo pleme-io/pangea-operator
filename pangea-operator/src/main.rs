@@ -4,7 +4,8 @@ use pangea_operator::{
     controller::{
         AmiTestController, ComplianceBindingController, ComplianceScheduleController,
         ControllerState, FlowController, ImagePipelineController, NamespaceController,
-        PackerBuildController, SynthesizerFormatController, TemplateController,
+        OperatorPolicyController, PackerBuildController, SynthesizerFormatController,
+        TemplateController,
     },
     crd::generate_crds,
     error::Result,
@@ -265,10 +266,12 @@ async fn main() -> Result<()> {
     // See theory/PANGEA-WORKSPACE-RECONCILIATION.md § M8.2.
     let arch_gem_client = state.client.clone();
     let arch_gem_backend = state.compiler_backend.clone();
+    let arch_gem_policy = state.operator_policy.clone();
     let architecture_gem_controller = tokio::spawn(async move {
         pangea_operator::controller::architecture_gem_controller::run(
             arch_gem_client,
             arch_gem_backend,
+            arch_gem_policy,
         )
         .await;
         error!("ArchitectureGem controller exited");
@@ -280,9 +283,26 @@ async fn main() -> Result<()> {
     // count of InfrastructureTemplate CRs labeled with this catalog.
     // The cascade root for workspace-level policy.
     let wsc_client = state.client.clone();
+    let wsc_policy = state.operator_policy.clone();
     let workspace_catalog_controller = tokio::spawn(async move {
-        pangea_operator::controller::workspace_catalog_controller::run(wsc_client).await;
+        pangea_operator::controller::workspace_catalog_controller::run(wsc_client, wsc_policy)
+            .await;
         error!("WorkspaceCatalog controller exited");
+    });
+
+    // OperatorPolicy controller — propagates `OperatorPolicy/default`
+    // spec into the in-memory cache that every other controller reads
+    // via `policy_gate`, and mirrors spec → status. Started before any
+    // other controller's first reconcile would benefit from a faster
+    // policy lookup, but order doesn't actually matter — the cache
+    // initializes to permissive so worst case is a few extra reconciles
+    // before the policy propagates.
+    let operator_policy_state = state.clone();
+    let operator_policy_controller = tokio::spawn(async move {
+        let controller = OperatorPolicyController::new(operator_policy_state);
+        if let Err(e) = controller.run().await {
+            error!(error = %e, "OperatorPolicy controller error");
+        }
     });
 
     info!("Controllers started");
@@ -318,6 +338,7 @@ async fn main() -> Result<()> {
     compliance_binding_controller.abort();
     architecture_gem_controller.abort();
     workspace_catalog_controller.abort();
+    operator_policy_controller.abort();
 
     info!("Pangea Operator stopped");
     Ok(())

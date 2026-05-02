@@ -91,6 +91,14 @@ async fn reconcile_image_pipeline(
 
     info!("Reconciling ImagePipeline");
 
+    // Cluster-wide kill-switch — honor `OperatorPolicy/default`.
+    if let Some(action) = crate::controller::policy_gate::check_operator_policy(
+        &state,
+        crate::crd::ControllerKind::ImagePipeline,
+    ) {
+        return Ok(action);
+    }
+
     // Handle deletion
     if pipeline.metadata.deletion_timestamp.is_some() {
         if has_finalizer(&pipeline) {

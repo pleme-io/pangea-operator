@@ -6,6 +6,9 @@
 
 pub mod architecture_gem_controller;
 pub mod import;
+pub mod operator_policy_cache;
+pub mod operator_policy_controller;
+pub mod policy_gate;
 pub mod reactive;
 pub mod routing;
 pub mod workspace_catalog_controller;
@@ -35,6 +38,7 @@ pub use synthesizer_format_controller::SynthesizerFormatController;
 pub use compliance_schedule_controller::ComplianceScheduleController;
 pub use compliance_binding_controller::ComplianceBindingController;
 pub use dashboard_controller::DashboardController;
+pub use operator_policy_controller::OperatorPolicyController;
 
 use crate::error::Result;
 use crate::executor::{ExecutorConfig, PackerExecutor, TofuExecutor, WorkspaceManager};
@@ -73,6 +77,12 @@ pub struct ControllerState {
     /// reactive policy fires. Configured via PANGEA_NTFY_BASE_URL
     /// (defaults to https://ntfy.sh).
     pub routing_client: Arc<routing::RoutingClient>,
+
+    /// In-memory snapshot of `OperatorPolicy/default`. Read by every
+    /// reconciler via `policy_gate::check_operator_policy` to honor
+    /// the fleet-wide kill-switch + per-controller suspends. Updated
+    /// by the `operator_policy_watcher` task.
+    pub operator_policy: Arc<operator_policy_cache::OperatorPolicyCache>,
 }
 
 impl ControllerState {
@@ -111,6 +121,7 @@ impl ControllerState {
             workspace_manager,
             compiler_backend,
             routing_client: Arc::new(routing::RoutingClient::from_env()),
+            operator_policy: Arc::new(operator_policy_cache::OperatorPolicyCache::new_permissive()),
         })
     }
 

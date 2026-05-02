@@ -44,9 +44,14 @@ use futures::StreamExt;
 pub fn run(
     client: Client,
     backend: Arc<dyn CompilerBackend>,
+    operator_policy: Arc<crate::controller::operator_policy_cache::OperatorPolicyCache>,
 ) -> impl std::future::Future<Output = ()> {
     let api: Api<ArchitectureGem> = Api::all(client.clone());
-    let context = Arc::new(Context { client, backend });
+    let context = Arc::new(Context {
+        client,
+        backend,
+        operator_policy,
+    });
 
     Controller::new(api, kube::runtime::watcher::Config::default())
         .run(reconcile, error_policy, context)
@@ -71,6 +76,7 @@ pub fn http_backend(compiler_endpoint: String) -> Arc<dyn CompilerBackend> {
 struct Context {
     client: Client,
     backend: Arc<dyn CompilerBackend>,
+    operator_policy: Arc<crate::controller::operator_policy_cache::OperatorPolicyCache>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -86,7 +92,15 @@ enum Error {
 async fn reconcile(gem: Arc<ArchitectureGem>, ctx: Arc<Context>) -> Result<Action, Error> {
     let name = gem.metadata.name.clone().ok_or(Error::MissingName)?;
 
-    // Suspended? Skip the whole loop; preserve last known status.
+    // Cluster-wide kill-switch — honor `OperatorPolicy/default`.
+    if let Some(action) = crate::controller::policy_gate::evaluate_against_cache(
+        &ctx.operator_policy,
+        crate::crd::ControllerKind::ArchitectureGem,
+    ) {
+        return Ok(action);
+    }
+
+    // Per-CR suspend? Skip the whole loop; preserve last known status.
     if gem.spec.suspend {
         info!(gem = %name, "ArchitectureGem suspended; skipping reconcile");
         return Ok(Action::requeue(Duration::from_secs(300)));

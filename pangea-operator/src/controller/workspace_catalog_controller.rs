@@ -45,9 +45,15 @@ use futures::StreamExt;
 pub const WORKSPACE_LABEL: &str = "pangea.pleme.io/workspace";
 
 /// Wire WorkspaceCatalog reconciliation into the operator's runtime.
-pub fn run(client: Client) -> impl std::future::Future<Output = ()> {
+pub fn run(
+    client: Client,
+    operator_policy: Arc<crate::controller::operator_policy_cache::OperatorPolicyCache>,
+) -> impl std::future::Future<Output = ()> {
     let api: Api<WorkspaceCatalog> = Api::all(client.clone());
-    let context = Arc::new(Context { client });
+    let context = Arc::new(Context {
+        client,
+        operator_policy,
+    });
 
     Controller::new(api, kube::runtime::watcher::Config::default())
         .run(reconcile, error_policy, context)
@@ -61,6 +67,7 @@ pub fn run(client: Client) -> impl std::future::Future<Output = ()> {
 
 struct Context {
     client: Client,
+    operator_policy: Arc<crate::controller::operator_policy_cache::OperatorPolicyCache>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -73,6 +80,14 @@ enum Error {
 
 async fn reconcile(wsc: Arc<WorkspaceCatalog>, ctx: Arc<Context>) -> Result<Action, Error> {
     let name = wsc.metadata.name.clone().ok_or(Error::MissingName)?;
+
+    // Cluster-wide kill-switch — honor `OperatorPolicy/default`.
+    if let Some(action) = crate::controller::policy_gate::evaluate_against_cache(
+        &ctx.operator_policy,
+        crate::crd::ControllerKind::WorkspaceCatalog,
+    ) {
+        return Ok(action);
+    }
 
     if wsc.spec.suspend {
         info!(workspace = %name, "WorkspaceCatalog suspended; skipping reconcile");

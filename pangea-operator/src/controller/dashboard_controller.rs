@@ -87,6 +87,20 @@ async fn reconcile(
 
     info!(%namespace, "Reconciling PangeaDashboard");
 
+    // Cluster-wide kill-switch — honor `OperatorPolicy/default`.
+    if let Some(action) = crate::controller::policy_gate::check_operator_policy(
+        &state,
+        crate::crd::ControllerKind::Dashboard,
+    ) {
+        return Ok(action);
+    }
+
+    // Per-CR suspend gate (the cluster-scoped policy is checked above).
+    if pd.spec.suspend {
+        info!(%name, %namespace, "PangeaDashboard suspended; skipping reconcile");
+        return Ok(Action::requeue(Duration::from_secs(30)));
+    }
+
     // Extract Ruby source
     let ruby_source = match &pd.spec.source {
         DashboardSource::Inline { ruby } => ruby.clone(),

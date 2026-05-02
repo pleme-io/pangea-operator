@@ -84,6 +84,14 @@ async fn reconcile_flow(
 
     info!("Reconciling InfrastructureFlow");
 
+    // Cluster-wide kill-switch — honor `OperatorPolicy/default`.
+    if let Some(action) = crate::controller::policy_gate::check_operator_policy(
+        &state,
+        crate::crd::ControllerKind::Flow,
+    ) {
+        return Ok(action);
+    }
+
     if flow.spec.suspend {
         let api: Api<InfrastructureFlow> = Api::namespaced(state.client.clone(), &namespace);
         let conditions = conditions_for_suspended();

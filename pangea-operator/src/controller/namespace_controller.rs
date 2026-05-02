@@ -74,6 +74,20 @@ async fn reconcile_namespace(
     info!("Reconciling PangeaNamespace");
     state.metrics.namespace_reconciliations_total.inc();
 
+    // Cluster-wide kill-switch — honor `OperatorPolicy/default`.
+    if let Some(action) = crate::controller::policy_gate::check_operator_policy(
+        &state,
+        crate::crd::ControllerKind::Namespace,
+    ) {
+        return Ok(action);
+    }
+
+    // Per-CR suspend gate (the cluster-scoped policy is checked above).
+    if namespace.spec.suspend {
+        info!(name = %name, "PangeaNamespace suspended; skipping reconcile");
+        return Ok(Action::requeue(DEFAULT_REQUEUE_INTERVAL));
+    }
+
     // Validate backend configuration
     validate_backend(&namespace)?;
 

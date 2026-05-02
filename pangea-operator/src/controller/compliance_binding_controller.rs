@@ -85,6 +85,14 @@ async fn reconcile(
 
     info!("Reconciling ComplianceBinding");
 
+    // Cluster-wide kill-switch — honor `OperatorPolicy/default`.
+    if let Some(action) = crate::controller::policy_gate::check_operator_policy(
+        &state,
+        crate::crd::ControllerKind::ComplianceBinding,
+    ) {
+        return Ok(action);
+    }
+
     if binding.spec.suspend {
         update_compliance_state(&binding, BindingComplianceState::Suspended, &state).await?;
         return Ok(Action::requeue(DEFAULT_REQUEUE_INTERVAL));

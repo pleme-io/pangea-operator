@@ -76,6 +76,14 @@ async fn reconcile(
 
     info!("Reconciling SynthesizerFormat");
 
+    // Cluster-wide kill-switch — honor `OperatorPolicy/default`.
+    if let Some(action) = crate::controller::policy_gate::check_operator_policy(
+        &state,
+        crate::crd::ControllerKind::SynthesizerFormat,
+    ) {
+        return Ok(action);
+    }
+
     let current_gen = format.metadata.generation.unwrap_or(0);
     let observed_gen = format
         .status

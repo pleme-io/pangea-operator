@@ -13,6 +13,7 @@ pub mod architecture_gem;
 mod infrastructure_flow;
 mod infrastructure_template;
 pub mod image_pipeline;
+pub mod operator_policy;
 mod packer_build;
 mod pangea_namespace;
 pub mod synthesizer_format;
@@ -96,6 +97,12 @@ pub use workspace_catalog::{
 pub use synthesizer_format::{
     ArraySectionSpec, KeyTransform, MapSectionSpec, SynthesizerFormat, SynthesizerFormatPhase,
     SynthesizerFormatSpec, SynthesizerFormatStatus,
+};
+
+// Re-export OperatorPolicy types — fleet-wide kill-switch primitive.
+pub use operator_policy::{
+    ControllerKind, ControllerSuspend, OperatorPolicy, OperatorPolicySpec,
+    OperatorPolicyStatus, OPERATOR_POLICY_SINGLETON,
 };
 
 // Re-export ImagePipeline types
@@ -197,6 +204,14 @@ pub fn generate_crds() -> String {
             .expect("Failed to serialize WorkspaceCatalog CRD"),
     );
 
+    // OperatorPolicy: cluster-scoped fleet-wide kill-switch. Composes
+    // with each CR's per-resource `spec.suspend`.
+    crds.push_str("---\n");
+    crds.push_str(
+        &serde_yaml::to_string(&OperatorPolicy::crd())
+            .expect("Failed to serialize OperatorPolicy CRD"),
+    );
+
     crds
 }
 
@@ -240,6 +255,7 @@ mod tests {
         assert!(crds.contains("PangeaDashboard"), "Missing PangeaDashboard CRD");
         assert!(crds.contains("ArchitectureGem"), "Missing ArchitectureGem CRD");
         assert!(crds.contains("WorkspaceCatalog"), "Missing WorkspaceCatalog CRD");
+        assert!(crds.contains("OperatorPolicy"), "Missing OperatorPolicy CRD");
     }
 
     #[test]
@@ -255,7 +271,7 @@ mod tests {
             assert!(parsed.is_ok(), "Invalid YAML in CRD document {}: {:?}", count, parsed.err());
             count += 1;
         }
-        assert_eq!(count, 12, "Expected 12 CRD documents");
+        assert_eq!(count, 13, "Expected 13 CRD documents");
     }
 
     #[test]

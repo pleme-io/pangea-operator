@@ -87,6 +87,14 @@ async fn reconcile_packer_build(
 
     info!("Reconciling PackerBuild");
 
+    // Cluster-wide kill-switch — honor `OperatorPolicy/default`.
+    if let Some(action) = crate::controller::policy_gate::check_operator_policy(
+        &state,
+        crate::crd::ControllerKind::PackerBuild,
+    ) {
+        return Ok(action);
+    }
+
     // Handle deletion
     if build.metadata.deletion_timestamp.is_some() {
         if has_finalizer(&build) {

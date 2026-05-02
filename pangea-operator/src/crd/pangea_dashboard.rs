@@ -52,6 +52,12 @@ pub struct PangeaDashboardSpec {
     /// Commit message for Grafana's built-in version tracking.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+
+    /// When true, the dashboard controller skips synthesis + Grafana
+    /// publish entirely. Compose with the cluster-scoped
+    /// `OperatorPolicy/default` for fleet-wide pause.
+    #[serde(default)]
+    pub suspend: bool,
 }
 
 fn default_true() -> bool {

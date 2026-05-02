@@ -89,6 +89,14 @@ async fn reconcile(
 
     info!("Reconciling ComplianceSchedule");
 
+    // Cluster-wide kill-switch — honor `OperatorPolicy/default`.
+    if let Some(action) = crate::controller::policy_gate::check_operator_policy(
+        &state,
+        crate::crd::ControllerKind::ComplianceSchedule,
+    ) {
+        return Ok(action);
+    }
+
     // Handle deletion
     if schedule.metadata.deletion_timestamp.is_some() {
         if has_finalizer(&schedule) {
