@@ -27,7 +27,7 @@ pub use architecture_gem::{
 };
 pub use infrastructure_template::{
     AwsCredentials, CloudflareCredentials, ComplianceStatus, Condition, ConfigMapRef, CycleSummary,
-    DriftDetail, GitHubCredentials, GitRepositoryRef, InfrastructureTemplate,
+    DriftDetail, GitHubCredentials, GitRepositoryRef, ImportPolicy, InfrastructureTemplate,
     InfrastructureTemplateSpec, InfrastructureTemplateStatus, Outcome, Phase, PolicyDecision,
     PolicyEvaluation, PolicyMatch, PolicyRule, ProfileResult, ProviderCredentials, ReconcileCycle,
     ResourceOutcome, ResourceSummary, RetryPolicy, SecretRef, SettlingExhaustionAction,

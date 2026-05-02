@@ -159,6 +159,28 @@ pub struct InfrastructureTemplateSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reactive_policy: Option<crate::crd::architecture_gem::ReactivePolicy>,
 
+    /// Automatic-import policy — when set with `autoOnConflict:
+    /// true`, the operator runs `tofu import` for EVERY plan
+    /// `create`-action whose resource-type has a natural-ID rule
+    /// (declared in `naturalIds`, fallback to operator-bundled
+    /// defaults), substituting against the planned attribute values
+    /// from `tofu show -json plan`. Resources that already exist in
+    /// the cloud provider get adopted into state instead of failing
+    /// the apply with "already exists".
+    ///
+    /// This is the typed answer to "fully consume existing
+    /// infrastructure into pangea-operator." `importHints`
+    /// (per-address) takes precedence; `importPolicy.naturalIds`
+    /// (per-resource-type) is the fallback; operator-bundled
+    /// defaults (in `controller/import.rs::bundled_natural_ids`)
+    /// fill the rest. Three layers — author-explicit, then
+    /// per-template type-rules, then sensible cluster-wide defaults.
+    ///
+    /// Default: unset (no auto-import; existing `importHints`
+    /// behaviour preserved).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import_policy: Option<ImportPolicy>,
+
     /// Hints used by the operator to import out-of-band cloud
     /// resources into tofu state instead of creating duplicates.
     ///
@@ -358,6 +380,42 @@ pub struct CloudflareCredentials {
 pub struct GitHubCredentials {
     /// Secret containing the GitHub PAT.
     pub secret_ref: SecretRef,
+}
+
+/// Automatic-import policy. Drives the operator's pre-apply
+/// `tofu import` sweep for `create`-actions whose target resources
+/// already exist in the cloud provider.
+///
+/// Three resolution layers, innermost wins:
+///  1. `spec.importHints` — per-address override (highest priority)
+///  2. `naturalIds` (this map) — per-resource-type templates with
+///     `{{ .planned.<attr> }}` substitution
+///  3. operator-bundled defaults (in `controller/import.rs`) for
+///     common providers (`github_repository`, `aws_iam_role`, …)
+///
+/// Substitution syntax (same as `importHints`): `{{ .planned.foo }}`
+/// reads `change.after.foo` from the parsed `tofu show -json plan`
+/// for the resource. `{{ var }}` (no `planned.` prefix) reads from
+/// `spec.variables` as in `importHints`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportPolicy {
+    /// Master switch. When `false` (default), no auto-import fires
+    /// regardless of `naturalIds` or bundled defaults — you stay on
+    /// today's per-address `importHints`-only behaviour. When
+    /// `true`, every `create`-action is a candidate for auto-import.
+    #[serde(default)]
+    pub auto_on_conflict: bool,
+
+    /// Per-resource-type natural-ID extraction templates. Keys are
+    /// terraform resource types (`github_repository`,
+    /// `aws_iam_role`, etc.); values are substitution templates
+    /// like `{{ .planned.name }}` or
+    /// `{{ .planned.zone_id }}/{{ .planned.id }}`.
+    ///
+    /// Empty map = fall through to operator-bundled defaults.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub natural_ids: BTreeMap<String, String>,
 }
 
 /// Status of an InfrastructureTemplate.

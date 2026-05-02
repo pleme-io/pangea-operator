@@ -949,8 +949,14 @@ async fn handle_applying(
     // creating a duplicate. Imported addresses are tracked so the
     // cycle receipt can mark them Outcome::Imported (instead of
     // whatever the post-import plan would derive).
-    let imported_addresses =
-        run_import_prepass(template, state, &workspace.path, &prior_drifts).await;
+    let imported_addresses = run_import_prepass(
+        template,
+        state,
+        &workspace.path,
+        &plan_path,
+        &prior_drifts,
+    )
+    .await;
 
     // Use plan file if it exists, otherwise apply directly. If we
     // imported anything, drop the cached plan file — the new state
@@ -1019,23 +1025,42 @@ async fn run_import_prepass(
     template: &InfrastructureTemplate,
     state: &ControllerState,
     workspace_path: &std::path::Path,
+    plan_path: &std::path::Path,
     prior_drifts: &[DriftDetail],
 ) -> Vec<String> {
-    if template.spec.import_hints.is_empty() {
+    use crate::controller::import::{
+        bundled_natural_ids, parse_planned_attrs, resolve_natural_id, substitute_with_planned,
+    };
+
+    let auto_import = template
+        .spec
+        .import_policy
+        .as_ref()
+        .map(|p| p.auto_on_conflict)
+        .unwrap_or(false);
+
+    // Short-circuit when neither auto-import nor declared hints fire.
+    if template.spec.import_hints.is_empty() && !auto_import {
         return Vec::new();
     }
 
-    let create_addresses: HashSet<&str> = prior_drifts
+    let create_addresses: Vec<&str> = prior_drifts
         .iter()
         .filter(|d| d.action == "create")
         .map(|d| d.address.as_str())
         .collect();
+    if create_addresses.is_empty() {
+        return Vec::new();
+    }
 
     let variables = template.spec.variables.clone().unwrap_or_default();
-    let mut imported = Vec::new();
+    let mut imported: Vec<String> = Vec::new();
+    let mut covered: HashSet<String> = HashSet::new();
 
+    // Layer 1: per-address importHints (existing behaviour, highest
+    // priority — the user explicitly named these resources).
     for (addr, id_template) in &template.spec.import_hints {
-        if !create_addresses.contains(addr.as_str()) {
+        if !create_addresses.contains(&addr.as_str()) {
             continue;
         }
         let import_id = match substitute_import_id(id_template, &variables) {
@@ -1059,40 +1084,128 @@ async fn run_import_prepass(
                 continue;
             }
         };
-        info!(address = %addr, import_id = %import_id, "Running tofu import for create-action with hint");
-        match state.executor.import(workspace_path, addr, &import_id).await {
-            Ok(r) if r.success => {
-                imported.push(addr.clone());
-                record_event(
-                    template,
-                    state,
-                    EventType::Normal,
-                    "Imported",
-                    &format!("Adopted out-of-band {addr} into state via import id {import_id}"),
-                )
-                .await;
+        if try_tofu_import(template, state, workspace_path, addr, &import_id, "hint").await {
+            imported.push(addr.clone());
+        }
+        covered.insert(addr.clone());
+    }
+
+    // Layer 2 + 3: auto-import via importPolicy.naturalIds (or
+    // bundled defaults) for every create-action not already covered
+    // by an explicit hint. Only fires when autoOnConflict is true.
+    if auto_import {
+        // Snapshot the plan once. parse_planned_attrs is best-effort —
+        // an empty map just means substitution will fail per-address
+        // and the address gets skipped (we fall back to the apply,
+        // which then fails in a debuggable way).
+        let plan_json = match state.executor.show_plan(workspace_path, plan_path).await {
+            Ok(r) if r.success => r.stdout,
+            _ => String::new(),
+        };
+        let planned_by_addr = parse_planned_attrs(&plan_json);
+
+        let user_natural_ids = template
+            .spec
+            .import_policy
+            .as_ref()
+            .map(|p| p.natural_ids.clone())
+            .unwrap_or_default();
+
+        for addr in &create_addresses {
+            if covered.contains(*addr) {
+                continue;
             }
-            Ok(r) => {
-                warn!(
-                    address = %addr,
-                    stderr = %r.stderr,
-                    "tofu import failed; falling through to apply"
-                );
-                record_event(
-                    template,
-                    state,
-                    EventType::Warning,
-                    "ImportFailed",
-                    &format!("tofu import {addr} failed: {}", truncate_for_status(&r.stderr)),
-                )
-                .await;
-            }
-            Err(e) => {
-                warn!(address = %addr, error = %e, "tofu import errored; falling through to apply");
+            let id_template = match resolve_natural_id(addr, &user_natural_ids) {
+                Some(t) => t,
+                None => {
+                    debug!(
+                        address = %addr,
+                        "auto-import: no naturalIds rule for resource type; skipping"
+                    );
+                    continue;
+                }
+            };
+            let planned_attrs = planned_by_addr
+                .get(*addr)
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let import_id = match substitute_with_planned(&id_template, &planned_attrs, &variables) {
+                Ok(id) => id,
+                Err(missing) => {
+                    warn!(
+                        address = %addr,
+                        template = %id_template,
+                        missing = %missing,
+                        "auto-import: substitution failed; skipping"
+                    );
+                    continue;
+                }
+            };
+            if try_tofu_import(template, state, workspace_path, addr, &import_id, "auto").await {
+                imported.push((*addr).to_string());
             }
         }
+        // Replace bundled_natural_ids fn-pointer warning with explicit use to avoid
+        // dead_code on the import. (The fn is invoked transitively via resolve_natural_id.)
+        let _ = bundled_natural_ids;
     }
+
     imported
+}
+
+/// Try a single `tofu import`. Returns true if the import succeeded.
+/// Failures are non-fatal — we log + emit a Warning event and let the
+/// apply path handle the resource (where it'll fail visibly with a
+/// real error message instead of a silently-skipped import).
+async fn try_tofu_import(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+    workspace_path: &std::path::Path,
+    addr: &str,
+    import_id: &str,
+    source_label: &str,
+) -> bool {
+    info!(
+        address = %addr,
+        import_id = %import_id,
+        source = %source_label,
+        "Running tofu import for create-action"
+    );
+    match state.executor.import(workspace_path, addr, import_id).await {
+        Ok(r) if r.success => {
+            record_event(
+                template,
+                state,
+                EventType::Normal,
+                "Imported",
+                &format!(
+                    "Adopted out-of-band {addr} into state via import id {import_id} ({source_label})"
+                ),
+            )
+            .await;
+            true
+        }
+        Ok(r) => {
+            warn!(
+                address = %addr,
+                stderr = %r.stderr,
+                "tofu import failed; falling through to apply"
+            );
+            record_event(
+                template,
+                state,
+                EventType::Warning,
+                "ImportFailed",
+                &format!("tofu import {addr} failed: {}", truncate_for_status(&r.stderr)),
+            )
+            .await;
+            false
+        }
+        Err(e) => {
+            warn!(address = %addr, error = %e, "tofu import errored; falling through to apply");
+            false
+        }
+    }
 }
 
 /// Replace `{{ .name }}` (with optional whitespace) tokens in
