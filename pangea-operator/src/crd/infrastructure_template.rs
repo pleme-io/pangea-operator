@@ -591,6 +591,24 @@ pub struct InfrastructureTemplateStatus {
     #[serde(default)]
     pub consecutive_drift_cycles: u32,
 
+    /// Number of consecutive Compiling-phase failures observed before
+    /// any successful compile. Resets to zero on the first successful
+    /// compile. Drives the same `SettlingPolicy.maxConsecutiveDrift
+    /// Cycles` escalation as drift cycles — so a template that can't
+    /// compile (missing gem, syntax error, broken DSL) eventually
+    /// transitions to `phase=Failed` instead of looping in
+    /// `phase=Compiling, cycleCount=0` forever.
+    ///
+    /// Why a separate counter: pre-2026-05, compile failures didn't
+    /// increment `consecutive_drift_cycles` (because no cycle ever
+    /// completes — cycle_count stays at 0), so settling policy never
+    /// fired. Templates like `pleme-io-opensource` sat in Compiling
+    /// for hours with `cannot load such file -- pangea-github`. This
+    /// counter closes that gap by escalating compile failures
+    /// independently of the drift-cycle path.
+    #[serde(default)]
+    pub consecutive_compile_failures: u32,
+
     /// Resource addresses that keep showing up in successive drift
     /// cycles — the "stuck" set. Computed as the intersection of
     /// drift-detail addresses across the last N cycles. Capped at 20

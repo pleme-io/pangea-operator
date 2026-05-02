@@ -564,11 +564,20 @@ async fn handle_compiling(
             }
         };
 
-        let compile_result = state
-            .compiler_backend
-            .compile(compile_request)
-            .await
-            .map_err(|e| Error::Compilation(format!("Compile failed: {e}")))?;
+        let compile_result = match state.compiler_backend.compile(compile_request).await {
+            Ok(r) => r,
+            Err(e) => {
+                // Compile failure path — increment the per-template
+                // consecutive-failure counter and escalate to Failed
+                // if we hit the settling threshold. Without this,
+                // templates like `pleme-io-opensource` (missing gem)
+                // sit in Compiling cycleCount=0 indefinitely because
+                // the cycle counter only advances after a complete
+                // plan→apply, which never reaches.
+                handle_compile_failure(template, state, &e.to_string()).await?;
+                return Err(Error::Compilation(format!("Compile failed: {e}")));
+            }
+        };
 
         compile_result.terraform_json
     };
@@ -577,10 +586,158 @@ async fn handle_compiling(
     workspace.write_file("main.tf.json", &terraform_json).await?;
     info!("Template content written to workspace");
 
+    // Compile succeeded — reset the failure counter so a subsequent
+    // failure starts fresh. The template can recover from a
+    // transient error (gem cache miss, network blip) without staying
+    // forever-elevated.
+    reset_compile_failure_counter(template, state).await?;
+
     update_phase(template, Phase::Initializing, state).await?;
     record_event(template, state, EventType::Normal, "Compiled", "Template source resolved and written to workspace").await;
 
     Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
+}
+
+/// Default 5 matches `crd::infrastructure_template::default_max_drift_cycles`.
+/// We don't import that fn (private to the CRD module); the constant is
+/// inlined here. Keep in sync if the CRD default ever moves.
+const DEFAULT_MAX_DRIFT_CYCLES: u32 = 5;
+
+/// Pure helper: given the prior count + max threshold, return the
+/// next count + whether to escalate. Extracted from
+/// `handle_compile_failure` so tests can exercise the logic without
+/// a live kube::Api client.
+///
+/// Contract:
+///   * `next = prior + 1` (saturating at u32::MAX)
+///   * `escalate = next >= max`
+///   * `max == 0` is treated as "never escalate" — a defensive
+///     interpretation, since 0 would otherwise escalate on the first
+///     failure which is almost certainly user error.
+pub(crate) fn evaluate_compile_failure_escalation(
+    prior: u32,
+    max: u32,
+) -> (u32, bool) {
+    let next = prior.saturating_add(1);
+    let escalate = max > 0 && next >= max;
+    (next, escalate)
+}
+
+/// Bump `status.consecutiveCompileFailures` and, if it crosses
+/// `settlingPolicy.maxConsecutiveDriftCycles`, transition the
+/// template to `phase=Failed` with a typed `lastError` and an Event
+/// naming the underlying compile error.
+///
+/// Returns `Ok(())` whether or not escalation happened — the caller
+/// re-raises the original error to honor the existing retry semantics.
+/// Escalation is purely additive: the next reconcile cycle will see
+/// `phase=Failed` and skip past Compiling.
+async fn handle_compile_failure(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+    err_msg: &str,
+) -> Result<()> {
+    let prior = template
+        .status
+        .as_ref()
+        .map(|s| s.consecutive_compile_failures)
+        .unwrap_or(0);
+
+    let max = template
+        .spec
+        .settling_policy
+        .as_ref()
+        .map(|p| p.max_consecutive_drift_cycles)
+        .unwrap_or(DEFAULT_MAX_DRIFT_CYCLES);
+
+    let (next, escalate) = evaluate_compile_failure_escalation(prior, max);
+
+    let name = template.name_any();
+    let namespace = template.namespace().unwrap_or_default();
+    let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
+
+    if escalate {
+        // Threshold crossed — transition to Failed + emit Event.
+        warn!(
+            template = %name,
+            consecutive = next,
+            max = max,
+            "Compile failure threshold reached; transitioning to Failed"
+        );
+        let escalation_msg = format!(
+            "Compile has failed {} consecutive times (settlingPolicy.maxConsecutiveDriftCycles={}). \
+             Last error: {}. Resolve the underlying compile issue (missing gem, syntax error, \
+             unresolved provider, etc.) and the next reconcile will resume.",
+            next, max, err_msg
+        );
+        let patch = serde_json::json!({
+            "status": {
+                "phase": "Failed",
+                "consecutiveCompileFailures": next,
+                "lastError": escalation_msg.clone(),
+            },
+        });
+        if let Err(e) = api
+            .patch_status(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+            .await
+        {
+            warn!(error = %e, "Failed to patch template status during compile-failure escalation");
+        }
+        record_event(
+            template,
+            state,
+            EventType::Warning,
+            "CompileFailureEscalated",
+            &escalation_msg,
+        )
+        .await;
+    } else {
+        // Below threshold — bump counter, stay in Compiling, retry.
+        let patch = serde_json::json!({
+            "status": {
+                "consecutiveCompileFailures": next,
+                "lastError": format!("Compile failed (attempt {}/{}): {}", next, max, err_msg),
+            },
+        });
+        if let Err(e) = api
+            .patch_status(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+            .await
+        {
+            warn!(error = %e, "Failed to patch template status on compile failure");
+        }
+    }
+    Ok(())
+}
+
+/// Reset `status.consecutiveCompileFailures` to 0 after a successful
+/// compile. Idempotent — patches the field to 0 unconditionally.
+/// No-op cost when the counter is already 0; the K8s server-side
+/// merge resolves to no change.
+async fn reset_compile_failure_counter(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+) -> Result<()> {
+    let prior = template
+        .status
+        .as_ref()
+        .map(|s| s.consecutive_compile_failures)
+        .unwrap_or(0);
+    if prior == 0 {
+        return Ok(());
+    }
+    let name = template.name_any();
+    let namespace = template.namespace().unwrap_or_default();
+    let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
+    let patch = serde_json::json!({
+        "status": { "consecutiveCompileFailures": 0 },
+    });
+    if let Err(e) = api
+        .patch_status(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+        .await
+    {
+        warn!(error = %e, "Failed to reset consecutiveCompileFailures");
+    }
+    Ok(())
 }
 
 /// Handle Initializing phase - configure backend and run `tofu init`.
@@ -2651,6 +2808,66 @@ mod cycle_tests {
             policy_decision: None,
             matched_policy: None,
         }
+    }
+
+    // ── Item D — compile-failure escalation tests ───────────────
+    //
+    // Reproducer for the rio incident: pleme-io-opensource sat in
+    // phase=Compiling, cycleCount=0 for hours after the gem-load
+    // failure; settling policy never fired because the cycle counter
+    // never advanced. The fix introduces consecutiveCompileFailures
+    // as an independent escalation counter; these tests lock in its
+    // semantics.
+
+    #[test]
+    fn compile_failure_increments_below_threshold() {
+        // Below threshold: counter advances, no escalation.
+        let (next, escalate) = evaluate_compile_failure_escalation(0, 5);
+        assert_eq!(next, 1);
+        assert!(!escalate);
+
+        let (next, escalate) = evaluate_compile_failure_escalation(3, 5);
+        assert_eq!(next, 4);
+        assert!(!escalate);
+    }
+
+    #[test]
+    fn compile_failure_escalates_at_threshold() {
+        // At threshold: escalate.
+        let (next, escalate) = evaluate_compile_failure_escalation(4, 5);
+        assert_eq!(next, 5);
+        assert!(escalate, "next == max should escalate");
+    }
+
+    #[test]
+    fn compile_failure_escalates_past_threshold() {
+        // Past threshold (e.g., status patch failed once and we're
+        // re-reconciling with a stale prior count): still escalate.
+        let (next, escalate) = evaluate_compile_failure_escalation(10, 5);
+        assert_eq!(next, 11);
+        assert!(escalate);
+    }
+
+    #[test]
+    fn compile_failure_zero_max_never_escalates() {
+        // Defensive: if a user sets maxConsecutiveDriftCycles=0
+        // (intentionally or otherwise), don't escalate on every
+        // failure — that's almost certainly not what they meant.
+        let (next, escalate) = evaluate_compile_failure_escalation(0, 0);
+        assert_eq!(next, 1);
+        assert!(!escalate);
+
+        let (next, escalate) = evaluate_compile_failure_escalation(100, 0);
+        assert_eq!(next, 101);
+        assert!(!escalate);
+    }
+
+    #[test]
+    fn compile_failure_saturates_at_u32_max() {
+        // No panic on overflow — saturating add.
+        let (next, escalate) = evaluate_compile_failure_escalation(u32::MAX, 5);
+        assert_eq!(next, u32::MAX, "must saturate, not panic");
+        assert!(escalate, "any non-zero max with saturated count escalates");
     }
 
     #[test]
