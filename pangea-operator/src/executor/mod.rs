@@ -3,6 +3,8 @@
 //! Manages the execution of OpenTofu commands (init, plan, apply, destroy)
 //! in isolated workspaces with proper credential and state handling.
 
+pub mod iac_executor;
+pub mod recording;
 mod tofu;
 mod workspace;
 mod plan;
@@ -10,6 +12,8 @@ pub mod packer;
 pub mod policy;
 pub mod variable_resolver;
 
+pub use iac_executor::IacExecutor;
+pub use recording::{RecordedCall, RecordingExecutor};
 pub use tofu::{TofuExecutor, TofuCommand, TofuResult};
 pub use workspace::{Workspace, WorkspaceManager};
 pub use plan::{Plan, PlanSummary, ResourceChange, ChangeType};

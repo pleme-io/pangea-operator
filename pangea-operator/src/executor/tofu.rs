@@ -1,6 +1,8 @@
 //! OpenTofu command execution.
 
 use crate::error::{Error, Result};
+use crate::executor::iac_executor::IacExecutor;
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Stdio;
@@ -291,5 +293,65 @@ impl TofuExecutor {
             success,
             duration,
         })
+    }
+}
+
+/// `IacExecutor` implementation that delegates to the inherent
+/// `TofuExecutor` methods. The trait is the public interface used by
+/// `ControllerState`; the inherent methods are kept for backward
+/// compatibility with code that holds a concrete `TofuExecutor` (e.g.
+/// helper functions that take `&TofuExecutor` directly).
+///
+/// New tofu subcommands should be added to BOTH the trait (for
+/// testability) and the inherent impl (for direct callers) — or
+/// alternatively, add only to the trait once all callers migrate to
+/// `&dyn IacExecutor`.
+#[async_trait]
+impl IacExecutor for TofuExecutor {
+    async fn init(&self, work_dir: &Path, extra_args: &[&str]) -> Result<TofuResult> {
+        TofuExecutor::init(self, work_dir, extra_args).await
+    }
+
+    async fn plan(
+        &self,
+        work_dir: &Path,
+        plan_file: Option<&Path>,
+        extra_args: &[&str],
+    ) -> Result<TofuResult> {
+        TofuExecutor::plan(self, work_dir, plan_file, extra_args).await
+    }
+
+    async fn apply(
+        &self,
+        work_dir: &Path,
+        plan_file: Option<&Path>,
+        auto_approve: bool,
+    ) -> Result<TofuResult> {
+        TofuExecutor::apply(self, work_dir, plan_file, auto_approve).await
+    }
+
+    async fn destroy(&self, work_dir: &Path, auto_approve: bool) -> Result<TofuResult> {
+        TofuExecutor::destroy(self, work_dir, auto_approve).await
+    }
+
+    async fn show_plan(&self, work_dir: &Path, plan_file: &Path) -> Result<TofuResult> {
+        TofuExecutor::show_plan(self, work_dir, plan_file).await
+    }
+
+    async fn output(&self, work_dir: &Path) -> Result<TofuResult> {
+        TofuExecutor::output(self, work_dir).await
+    }
+
+    async fn refresh(&self, work_dir: &Path) -> Result<TofuResult> {
+        TofuExecutor::refresh(self, work_dir).await
+    }
+
+    async fn import(
+        &self,
+        work_dir: &Path,
+        address: &str,
+        id: &str,
+    ) -> Result<TofuResult> {
+        TofuExecutor::import(self, work_dir, address, id).await
     }
 }
