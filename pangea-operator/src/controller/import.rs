@@ -25,6 +25,30 @@ use std::collections::BTreeMap;
 /// templates over `{{ .planned.<attr> }}` (and optionally
 /// `{{ var }}` from `spec.variables`).
 ///
+/// **Contract**: the only attributes available for substitution are
+/// those present in the plan's `change.after` block — i.e. attributes
+/// the user (or workspace DSL) declares. Attributes that are
+/// **server-assigned** by the cloud provider (e.g. cloudflare's
+/// `record.id`, AWS IAM policy `arn`, GCP `self_link`, etc.) are NOT
+/// available on a `create`-action plan because the resource doesn't
+/// exist yet. Templates that reference such attributes are
+/// fundamentally unworkable as bundled defaults; they need explicit
+/// `spec.importHints` per-address with the actually-known ID, OR a
+/// future API-lookup mechanism.
+///
+/// What MUST NOT go in this map:
+///   - `{{ .planned.id }}` — server-assigned for most providers
+///   - `{{ .planned.arn }}` — server-assigned for AWS resources
+///   - any attribute the provider creates on POST
+///
+/// What CAN go in this map:
+///   - User-declared natural keys: `name`, `slug`, `bucket`, etc.
+///   - Composite keys built from user-declared attributes:
+///     `{{ .planned.repository }}:{{ .planned.name }}`
+///   - Attributes that are upstream-known via `spec.variables` (e.g.
+///     the user passes a known zone_id; combine via importHints
+///     rather than bundled defaults).
+///
 /// Sources (verified against each provider's `terraform import` docs):
 ///   - github: <https://registry.terraform.io/providers/integrations/github/latest/docs>
 ///   - aws:    <https://registry.terraform.io/providers/hashicorp/aws/latest/docs>
@@ -34,12 +58,16 @@ use std::collections::BTreeMap;
 /// pleme-io-opensource workspace exercises today
 /// (github_repository, github_branch_protection, github_issue_label).
 /// Extend by appending here when a new provider's resources need
-/// auto-import support across multiple templates; one-off cases
-/// should use `spec.importPolicy.naturalIds` per-template instead.
+/// auto-import support across multiple templates AND have a
+/// user-declared natural key. One-off cases should use
+/// `spec.importPolicy.naturalIds` per-template, or `spec.importHints`
+/// per-address with the known cloud-side ID.
 pub fn bundled_natural_ids() -> BTreeMap<&'static str, &'static str> {
     let mut m = BTreeMap::new();
 
-    // GitHub provider
+    // GitHub provider — every entry below uses user-declared keys
+    // (name, slug, repository, etc.) that ARE present on the plan's
+    // change.after block.
     m.insert("github_repository", "{{ .planned.name }}");
     m.insert(
         "github_branch_protection",
@@ -70,21 +98,39 @@ pub fn bundled_natural_ids() -> BTreeMap<&'static str, &'static str> {
         "{{ .planned.repository }}:{{ .planned.environment }}",
     );
 
-    // AWS provider — a starter selection
+    // AWS provider — name/bucket are user-declared. aws_iam_policy
+    // intentionally omitted: import requires the ARN, which is
+    // server-assigned. Use `spec.importHints` with the known ARN.
     m.insert("aws_iam_role", "{{ .planned.name }}");
-    m.insert("aws_iam_policy", "{{ .planned.arn }}");
     m.insert("aws_iam_user", "{{ .planned.name }}");
     m.insert("aws_s3_bucket", "{{ .planned.bucket }}");
 
-    // Cloudflare provider
-    m.insert(
-        "cloudflare_dns_record",
-        "{{ .planned.zone_id }}/{{ .planned.id }}",
-    );
-    m.insert(
-        "cloudflare_zero_trust_tunnel_cloudflared",
-        "{{ .planned.account_id }}/{{ .planned.id }}",
-    );
+    // Cloudflare provider — intentionally has zero entries today.
+    //
+    // Every cloudflare resource that is import-shaped uses
+    // `<account_id>/<resource_id>` or `<zone_id>/<resource_id>` where
+    // the resource_id is **server-assigned**. There's no way to
+    // recover that ID from the plan's change.after block — the value
+    // is null until the cloud-side resource is created.
+    //
+    // Workaround for cloudflare resources that already exist in the
+    // cloud and need adopting: declare per-address importHints with
+    // the actual ID, e.g.
+    //
+    //   spec:
+    //     importHints:
+    //       cloudflare_dns_record.foo: "{{ zone_id }}/abc123def456"
+    //       cloudflare_zero_trust_tunnel_cloudflared.rio:
+    //         "{{ account_id }}/9876fedcba00"
+    //
+    // where the resource_id portion is looked up via the cloudflare
+    // API or `tofu import` once and recorded.
+    //
+    // This was the source of the cycle-166 fail=20 incident on rio
+    // (2026-05-02): the bundled defaults claimed cloudflare auto-
+    // import worked, but every substitution failed at runtime
+    // because planned.id was always null on create-actions. The
+    // entries are removed; the contract is now honest.
 
     m
 }
@@ -331,5 +377,160 @@ mod tests {
         let vars = BTreeMap::new();
         let out = substitute_with_planned("{{ .planned.id }}", &planned, &vars).unwrap();
         assert_eq!(out, "42");
+    }
+
+    // ── 2026-05 contract tests for the bundled_natural_ids surface ──
+    //
+    // These assertions encode the rule "no bundled default may
+    // reference a server-assigned attribute". They lock in the fix
+    // for the cycle-166 fail=20 incident on rio (cloudflare entries
+    // referenced planned.id, which is null on create-actions, so
+    // every substitution failed at runtime).
+
+    #[test]
+    fn bundled_excludes_server_assigned_cloudflare_resources() {
+        // Cloudflare resources whose import requires `<scope>/<id>`
+        // where `id` is server-assigned. The ONLY way to import them
+        // is via spec.importHints with the known cloud-side ID.
+        let b = bundled_natural_ids();
+        assert!(
+            !b.contains_key("cloudflare_dns_record"),
+            "cloudflare_dns_record must NOT be in bundled_natural_ids — \
+             planned.id is null on create-actions. Use spec.importHints."
+        );
+        assert!(
+            !b.contains_key("cloudflare_zero_trust_tunnel_cloudflared"),
+            "cloudflare_zero_trust_tunnel_cloudflared must NOT be in \
+             bundled_natural_ids — planned.id is null on create-actions. \
+             Use spec.importHints."
+        );
+    }
+
+    #[test]
+    fn bundled_excludes_server_assigned_aws_resources() {
+        let b = bundled_natural_ids();
+        assert!(
+            !b.contains_key("aws_iam_policy"),
+            "aws_iam_policy must NOT be in bundled_natural_ids — \
+             planned.arn is null on create-actions. Use spec.importHints."
+        );
+    }
+
+    /// No bundled default may textually reference `.planned.id`,
+    /// `.planned.arn`, or `.planned.self_link` — those are the canonical
+    /// server-assigned attributes that are ALWAYS null on create-action
+    /// plans. Adding such a template is a substrate-level error.
+    #[test]
+    fn bundled_natural_ids_have_no_server_assigned_references() {
+        let forbidden_tokens = [".planned.id", ".planned.arn", ".planned.self_link"];
+        for (resource_type, template) in bundled_natural_ids().iter() {
+            for forbidden in &forbidden_tokens {
+                assert!(
+                    !template.contains(forbidden),
+                    "bundled_natural_ids[{}] = {:?} references server-assigned \
+                     attribute {:?}. This is unworkable for auto-import: \
+                     server-assigned attrs are null on create-action plans. \
+                     Either pick a user-declared natural key, or remove the \
+                     entry and document spec.importHints as the workaround.",
+                    resource_type,
+                    template,
+                    forbidden,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn substitute_returns_planned_id_marker_for_server_assigned() {
+        // Reproducer for the cycle-166 incident shape: a bundled
+        // template references planned.id, the plan's change.after
+        // doesn't have an id field (because it's a create-action),
+        // substitute returns Err("planned.id"). Caller (template_
+        // controller) reads that string and produces the
+        // server-assigned-attribute warning.
+        let planned = serde_json::json!({"account_id": "acct-1"});
+        let vars = BTreeMap::new();
+        let err = substitute_with_planned(
+            "{{ .planned.account_id }}/{{ .planned.id }}",
+            &planned,
+            &vars,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err, "planned.id",
+            "expected the substitution failure to name 'planned.id' so \
+             the controller can detect it as server-assigned"
+        );
+    }
+
+    #[test]
+    fn user_natural_id_overrides_for_cloudflare_resource() {
+        // Even though cloudflare resources are NOT in bundled, a
+        // user can still supply a per-template naturalIds entry
+        // that uses `{{ .var }}` from spec.variables — which CAN
+        // resolve at plan-time because variables are upstream-known.
+        let mut user = BTreeMap::new();
+        user.insert(
+            "cloudflare_dns_record".to_string(),
+            "{{ .zone_id }}/{{ .record_id }}".to_string(),
+        );
+        let resolved = resolve_natural_id("cloudflare_dns_record.foo", &user);
+        assert_eq!(
+            resolved.as_deref(),
+            Some("{{ .zone_id }}/{{ .record_id }}"),
+            "user naturalIds must override the (now-missing) bundled default"
+        );
+
+        // And the substitution succeeds when both vars are provided.
+        let planned = serde_json::json!({});
+        let mut vars = BTreeMap::new();
+        vars.insert("zone_id".to_string(), serde_json::Value::String("zone1".into()));
+        vars.insert("record_id".to_string(), serde_json::Value::String("rec123".into()));
+        let id = substitute_with_planned(
+            &resolved.unwrap(),
+            &planned,
+            &vars,
+        )
+        .unwrap();
+        assert_eq!(id, "zone1/rec123");
+    }
+
+    #[test]
+    fn parse_planned_attrs_omits_server_assigned_id_on_create_action() {
+        // Reproducer of the actual rio plan shape: cloudflare resource
+        // create-action with id=null in change.after.
+        let plan_json = r#"{
+            "resource_changes": [
+                {
+                    "address": "cloudflare_zero_trust_tunnel_cloudflared.rio-tunnel",
+                    "change": {
+                        "actions": ["create"],
+                        "after": {
+                            "account_id": "acct-1",
+                            "name": "rio-tunnel",
+                            "id": null
+                        }
+                    }
+                }
+            ]
+        }"#;
+        let m = parse_planned_attrs(plan_json);
+        let attrs = &m["cloudflare_zero_trust_tunnel_cloudflared.rio-tunnel"];
+
+        // The ID field IS present in JSON but holds null. substitute_with_planned
+        // returns Err for null values (treats them as missing). Verify this
+        // is the actual observed behavior.
+        let vars = BTreeMap::new();
+        let err = substitute_with_planned(
+            "{{ .planned.account_id }}/{{ .planned.id }}",
+            attrs,
+            &vars,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err, "planned.id",
+            "null value in plan must be treated identically to missing \
+             attribute — both indicate server-assigned-ness on create"
+        );
     }
 }

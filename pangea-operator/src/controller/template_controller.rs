@@ -1145,10 +1145,26 @@ async fn run_import_prepass(
             let import_id = match substitute_with_planned(&id_template, &planned_attrs, &variables) {
                 Ok(id) => id,
                 Err(missing) => {
+                    // Common cause: the template references a
+                    // server-assigned attribute (e.g. `planned.id`,
+                    // `planned.arn`) that's null on create-action
+                    // plans. The fix is per-address `spec.importHints`
+                    // with the cloud-side ID, looked up out-of-band.
+                    let server_assigned_hint = matches!(
+                        missing.as_str(),
+                        "planned.id" | "planned.arn" | "planned.self_link"
+                    );
                     warn!(
                         address = %addr,
                         template = %id_template,
                         missing = %missing,
+                        suggestion = if server_assigned_hint {
+                            "Server-assigned attribute is null on create-action plans. \
+                             Add `spec.importHints[<address>] = \"<known-cloud-id>\"` and re-reconcile."
+                        } else {
+                            "Required attribute not in plan. Either declare it on the workspace \
+                             DSL resource block, or add a per-address `spec.importHints` entry."
+                        },
                         "auto-import: substitution failed; skipping"
                     );
                     continue;
