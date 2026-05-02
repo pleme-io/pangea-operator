@@ -162,6 +162,29 @@ async fn reconcile_template(
         }
     };
 
+    // ReactivePolicy auto-suspend gate: a prior reconcile triggered a
+    // Suspend escalation (e.g. 5+ consecutive failures) and patched
+    // status.autoSuspended=true. Halt every reconcile until the
+    // operator-human clears the flag (e.g. `kubectl patch ... -p
+    // '{"status":{"autoSuspended":false}}' --subresource status`).
+    // This is the typed circuit breaker.
+    let auto_suspended = template
+        .status
+        .as_ref()
+        .map(|s| s.auto_suspended)
+        .unwrap_or(false);
+    if auto_suspended {
+        info!(
+            "Template auto-suspended by ReactivePolicy (status.autoSuspended=true); \
+             clear it manually to resume. lastEscalationReason: {:?}",
+            template
+                .status
+                .as_ref()
+                .and_then(|s| s.last_escalation_reason.as_deref())
+        );
+        return Ok(Action::requeue(DEFAULT_REQUEUE_INTERVAL));
+    }
+
     // Check if suspended — emit conditions so FluxCD sees definitive state.
     // Also honor the parent WorkspaceCatalog's suspend flag (cascade) —
     // suspending a workspace stops every template under it without
@@ -1504,10 +1527,16 @@ async fn update_phase(
     let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
 
     let mut status = template.status.clone().unwrap_or_default();
+    let phase_changed = status.phase != Some(phase);
     status.phase = Some(phase);
     status.observed_generation = template.metadata.generation.unwrap_or(0);
     // Always set conditions so FluxCD healthChecks see current state
     status.conditions = conditions_for_phase(phase, None);
+    // ReactivePolicy: bump phase_entered_at only on real transitions
+    // — that's what phaseTimeout escalation measures against.
+    if phase_changed {
+        status.phase_entered_at = Some(Utc::now());
+    }
 
     // Clear error on non-Failed transitions
     if phase != Phase::Failed {
@@ -1547,11 +1576,15 @@ async fn update_phase_with_error(
     let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
 
     let mut status = template.status.clone().unwrap_or_default();
+    let phase_changed = status.phase != Some(phase);
     status.phase = Some(phase);
     status.observed_generation = template.metadata.generation.unwrap_or(0);
     status.last_error = Some(error_msg.to_string());
     status.failure_count = status.failure_count.saturating_add(1);
     status.conditions = conditions_for_phase(phase, Some(error_msg));
+    if phase_changed {
+        status.phase_entered_at = Some(Utc::now());
+    }
 
     let patch = serde_json::json!({ "status": status });
 
@@ -1561,6 +1594,14 @@ async fn update_phase_with_error(
         &Patch::Merge(&patch),
     )
     .await?;
+
+    // ReactivePolicy hook — failure count just bumped, escalation
+    // may now fire. Best-effort: lookup parent WSC + evaluate +
+    // apply. Logged-only failures (the lookup itself failing) don't
+    // block the phase transition.
+    if let Err(e) = apply_reactive_policy(template, state).await {
+        warn!(error = %e, "ReactivePolicy evaluation failed (non-fatal)");
+    }
 
     Ok(())
 }
@@ -1787,6 +1828,156 @@ fn workspace_drift_reaction_to_policy_decision(
         DR::Refuse => PolicyDecision::Refuse,
         DR::Alert => PolicyDecision::AutoApply,
     })
+}
+
+// ---------------------------------------------------------------------------
+// ReactivePolicy application
+// ---------------------------------------------------------------------------
+
+/// Resolve the cascade, evaluate, and apply the worst escalation if
+/// any reactive policy fires. Patches `status.lastEscalatedAt`,
+/// `status.lastEscalationReason`, the `Healthy` condition, and (for
+/// Suspend actions) `status.autoSuspended`. Emits a Warning event +
+/// a routing-formatted log line.
+///
+/// Idempotent across reconciles: when the same reason is already on
+/// `status.lastEscalationReason`, we suppress re-emitting the event
+/// (debounce). Once the bad state clears, future entries re-emit.
+async fn apply_reactive_policy(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+) -> Result<()> {
+    use crate::controller::reactive::{
+        emit_escalation_log, evaluate, track_verified_blocked, EffectiveReactivePolicy,
+        Escalation, workspace_reactive_policy,
+    };
+    use crate::crd::ReactiveAction;
+
+    let workspace_policy = workspace_reactive_policy(&state.client, template).await;
+    let effective = EffectiveReactivePolicy::resolve(
+        template.spec.reactive_policy.as_ref(),
+        workspace_policy.as_ref(),
+    );
+
+    // Track verified-blocked clock (start/preserve/clear) — must run
+    // every reconcile so the clock is current before evaluate fires.
+    let now = Utc::now();
+    let new_blocked_since = template
+        .status
+        .as_ref()
+        .and_then(|s| track_verified_blocked(s, now));
+
+    // Compose a synthetic template with verified_blocked_since set,
+    // so evaluate sees the freshest clock without us needing to
+    // patch first. (We patch after evaluate decides.)
+    let mut tmpl_for_eval = template.clone();
+    if let Some(s) = tmpl_for_eval.status.as_mut() {
+        s.verified_blocked_since = new_blocked_since;
+    }
+
+    let escalation = evaluate(&tmpl_for_eval, &effective, now);
+
+    let name = template.name_any();
+    let namespace = template.namespace().unwrap_or_default();
+
+    // Healthy condition + tracking field deltas — patched even when
+    // not triggered, so the verified-blocked clock + Healthy=True
+    // stays current.
+    let prior_status = template.status.clone().unwrap_or_default();
+    let prior_reason = prior_status.last_escalation_reason.clone();
+
+    let (healthy_status, healthy_reason, healthy_message, escalated_at, escalation_reason, suspend_now) =
+        match &escalation {
+            Escalation::Healthy => (
+                "True",
+                "NoEscalations".to_string(),
+                "no reactive policies have fired".to_string(),
+                prior_status.last_escalated_at,
+                None::<String>,
+                false,
+            ),
+            Escalation::Triggered { action, reason, message, routing } => {
+                // Debounce: only emit event + log when the reason is
+                // new (or no prior). State-change-driven, not
+                // every-reconcile.
+                let is_new = prior_reason.as_deref() != Some(reason.as_str());
+                if is_new {
+                    emit_escalation_log(
+                        &name,
+                        &namespace,
+                        *action,
+                        reason,
+                        message,
+                        routing.as_ref(),
+                    );
+                    record_event(
+                        template,
+                        state,
+                        EventType::Warning,
+                        "ReactivePolicyTriggered",
+                        &format!("[{action}] reason={reason}: {message}",
+                            action = match action {
+                                ReactiveAction::Alert => "Alert",
+                                ReactiveAction::Suspend => "Suspend",
+                                ReactiveAction::Page => "Page",
+                            }),
+                    )
+                    .await;
+                }
+                (
+                    "False",
+                    reason.clone(),
+                    message.clone(),
+                    Some(now),
+                    Some(reason.clone()),
+                    matches!(action, ReactiveAction::Suspend),
+                )
+            }
+        };
+
+    // Patch only the fields that may have changed.
+    let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
+    let mut conditions = prior_status.conditions.clone();
+    // Drop any prior `Healthy` condition; emit a fresh one (preserve
+    // transition time when status+reason+message all match).
+    let prior_healthy = conditions
+        .iter()
+        .find(|c| c.r#type == "Healthy")
+        .cloned();
+    conditions.retain(|c| c.r#type != "Healthy");
+    let healthy_transition = match prior_healthy {
+        Some(p) if p.status == healthy_status
+            && p.reason == healthy_reason
+            && p.message == healthy_message =>
+        {
+            p.last_transition_time
+        }
+        _ => now,
+    };
+    conditions.push(crate::crd::Condition {
+        r#type: "Healthy".to_string(),
+        status: healthy_status.to_string(),
+        last_transition_time: healthy_transition,
+        reason: healthy_reason,
+        message: healthy_message,
+    });
+
+    let patch = serde_json::json!({
+        "status": {
+            "conditions": conditions,
+            "verifiedBlockedSince": new_blocked_since,
+            "autoSuspended": suspend_now || prior_status.auto_suspended,
+            "lastEscalatedAt": escalated_at,
+            "lastEscalationReason": escalation_reason,
+        }
+    });
+    api.patch_status(
+        &name,
+        &PatchParams::apply("pangea-operator"),
+        &Patch::Merge(&patch),
+    )
+    .await?;
+    Ok(())
 }
 
 /// Hash plan content for deterministic approval identification.

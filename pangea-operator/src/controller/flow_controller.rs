@@ -208,6 +208,7 @@ async fn reconcile_flow(
                             policies: vec![],
                             default_decision: None,
                             settling_policy: None,
+                            reactive_policy: None,
                             import_hints: Default::default(),
                         },
                     );

@@ -5,6 +5,7 @@
 //! AmiTest, and ImagePipeline.
 
 pub mod architecture_gem_controller;
+pub mod reactive;
 pub mod workspace_catalog_controller;
 mod flow_controller;
 pub mod flow_scheduler;

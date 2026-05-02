@@ -174,6 +174,12 @@ pub struct GemPolicy {
     /// Approval routing for `requireApproval` reactions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval_routing: Option<ApprovalRouting>,
+
+    /// Reactive policy — declarative responses to "things didn't go
+    /// to a good state". Cascade root for downstream workspaces +
+    /// templates. See `ReactivePolicy` for the shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reactive: Option<ReactivePolicy>,
 }
 
 /// What the operator does when it detects drift on a managed resource.
@@ -220,6 +226,149 @@ pub enum SettlingExhaustionAction {
     /// Continue retrying with increasing backoff (eventually-consistent
     /// shape).
     Retry,
+}
+
+/// Reactive policy — declarative responses to "things didn't go to a
+/// good state". Three escalation paths:
+///
+/// * `failureEscalation` — fires when consecutive Failed reconciles
+///   exceed `maxConsecutiveFailures`. Default: 5 → Alert.
+/// * `phaseTimeout` — fires when the template stays in a non-terminal
+///   phase (Compiling / Planning / Applying) past the per-phase
+///   threshold. Defaults: 5m / 10m / 30m → Alert.
+/// * `verifiedBlocked` — fires when the `Verified` gate stays False
+///   past `timeout` (parent gem not Loaded, fixture failing, etc.).
+///   Default: 10m → Alert.
+///
+/// Each escalation has an `onExhaustion` action: `Alert` (event +
+/// `Healthy=False` + routing-formatted log line, reconcile continues),
+/// `Suspend` (set `status.autoSuspended=true`, halt reconcile until
+/// operator-human resumes), or `Page` (urgent routing notify, no
+/// other state change).
+///
+/// ReactivePolicy lives at every cascade level (gem → workspace →
+/// template → resource). Innermost-set wins per field; defaults
+/// apply when nothing is set.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ReactivePolicy {
+    /// What to do when consecutive Failed reconciles exceed threshold.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_escalation: Option<FailureEscalation>,
+
+    /// What to do when stuck in a non-terminal phase too long.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase_timeout: Option<PhaseTimeoutPolicy>,
+
+    /// What to do when `Verified=False` persists past timeout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verified_blocked: Option<VerifiedBlockedPolicy>,
+}
+
+/// Escalate after N consecutive failed reconciles.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FailureEscalation {
+    /// Threshold. Default 5.
+    #[serde(default = "default_max_consecutive_failures")]
+    pub max_consecutive_failures: u32,
+
+    /// What to do when threshold is reached.
+    #[serde(default)]
+    pub on_exhaustion: ReactiveAction,
+
+    /// Where to route the notification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing: Option<ApprovalRouting>,
+}
+
+/// Escalate when stuck in a non-terminal phase past per-phase
+/// threshold.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PhaseTimeoutPolicy {
+    /// How long can `Compiling` last before escalating. Format same
+    /// as refreshInterval (`5m`, `30s`, `1h`). Default `5m`.
+    #[serde(default = "default_compiling_timeout")]
+    pub compiling: String,
+
+    /// `Planning` threshold. Default `10m`.
+    #[serde(default = "default_planning_timeout")]
+    pub planning: String,
+
+    /// `Applying` threshold. Default `30m`.
+    #[serde(default = "default_applying_timeout")]
+    pub applying: String,
+
+    /// What to do when the threshold is exceeded.
+    #[serde(default)]
+    pub on_timeout: ReactiveAction,
+
+    /// Where to route the notification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing: Option<ApprovalRouting>,
+}
+
+/// Escalate when the `Verified` condition stays False for too long
+/// (gem not loaded, fixture failing, expected class missing).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifiedBlockedPolicy {
+    /// How long can `Verified=False` persist. Default `10m`.
+    #[serde(default = "default_verified_blocked_timeout")]
+    pub timeout: String,
+
+    /// What to do when the threshold is exceeded.
+    #[serde(default)]
+    pub on_blocked: ReactiveAction,
+
+    /// Where to route the notification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing: Option<ApprovalRouting>,
+}
+
+/// What to do when a reactive policy is triggered.
+#[derive(Debug, Clone, Copy, Default, Display, EnumString, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+#[strum(serialize_all = "camelCase")]
+pub enum ReactiveAction {
+    /// Emit a Warning event + flip `Healthy=False` condition + log a
+    /// routing-formatted line. Reconcile loop continues unchanged.
+    /// **Default.** The lightest-touch escalation — observers see
+    /// the unhealthy signal, but the operator keeps trying.
+    #[default]
+    Alert,
+    /// Set `status.autoSuspended=true` and halt the reconcile loop
+    /// for this template. Operator-human must explicitly clear by
+    /// patching status.autoSuspended=false (or deleting + recreating
+    /// the CR). Use when the template is hot-spinning in a bad state
+    /// and you want it stopped — like a circuit breaker.
+    Suspend,
+    /// Highest-urgency routing notify (e.g. Slack ping with @here,
+    /// ntfy with priority=high, GitHub issue with `urgent` label).
+    /// No operator-side state change beyond `Healthy=False`. Use
+    /// when humans must respond but the operator should keep trying.
+    Page,
+}
+
+fn default_max_consecutive_failures() -> u32 {
+    5
+}
+
+fn default_compiling_timeout() -> String {
+    "5m".to_string()
+}
+
+fn default_planning_timeout() -> String {
+    "10m".to_string()
+}
+
+fn default_applying_timeout() -> String {
+    "30m".to_string()
+}
+
+fn default_verified_blocked_timeout() -> String {
+    "10m".to_string()
 }
 
 /// Where approval requests get routed when a resource enters

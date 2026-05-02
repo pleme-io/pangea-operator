@@ -14,7 +14,7 @@ use kube::CustomResource;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::architecture_gem::{ApprovalRouting, DriftReaction, SettlingPolicy};
+use super::architecture_gem::{ApprovalRouting, DriftReaction, ReactivePolicy, SettlingPolicy};
 use super::infrastructure_template::GitRepositoryRef;
 
 #[derive(CustomResource, Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -90,6 +90,13 @@ pub struct WorkspacePolicy {
     /// Approval routing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval_routing: Option<ApprovalRouting>,
+
+    /// Reactive policy — declarative responses for templates under
+    /// this workspace when they don't reach a good state. Inherits
+    /// from gem-level; overrides per-field for templates that don't
+    /// declare their own. See `ReactivePolicy`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reactive: Option<ReactivePolicy>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]

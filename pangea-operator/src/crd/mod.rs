@@ -22,6 +22,9 @@ pub mod pangea_dashboard;
 pub mod workspace_catalog;
 
 // Re-export InfrastructureTemplate types
+pub use architecture_gem::{
+    FailureEscalation, PhaseTimeoutPolicy, ReactiveAction, ReactivePolicy, VerifiedBlockedPolicy,
+};
 pub use infrastructure_template::{
     AwsCredentials, CloudflareCredentials, ComplianceStatus, Condition, ConfigMapRef, CycleSummary,
     DriftDetail, GitHubCredentials, GitRepositoryRef, InfrastructureTemplate,

@@ -29,6 +29,8 @@ use strum::{Display, EnumString};
     printcolumn = r#"{"name":"Matched","type":"integer","jsonPath":".status.lastCycle.summary.matched"}"#,
     printcolumn = r#"{"name":"Updated","type":"integer","jsonPath":".status.lastCycle.summary.updated"}"#,
     printcolumn = r#"{"name":"Drifted","type":"integer","jsonPath":".status.lastCycle.summary.driftedUncorrected"}"#,
+    printcolumn = r#"{"name":"Healthy","type":"string","jsonPath":".status.conditions[?(@.type=='Healthy')].status"}"#,
+    printcolumn = r#"{"name":"Suspended","type":"boolean","jsonPath":".status.autoSuspended"}"#,
     printcolumn = r#"{"name":"Protected","type":"boolean","jsonPath":".spec.destroyProtection"}"#,
     printcolumn = r#"{"name":"Age","type":"date","jsonPath":".metadata.creationTimestamp"}"#
 )]
@@ -145,6 +147,17 @@ pub struct InfrastructureTemplateSpec {
     /// the address list of resources that keep re-drifting).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settling_policy: Option<SettlingPolicy>,
+
+    /// Reactive policy — declarative responses to "things didn't go
+    /// to a good state". Innermost level of the cascade
+    /// (gem → workspace → template). When unset at every cascade
+    /// level, the operator applies sensible defaults: 5 consecutive
+    /// failures → Alert, phase timeouts of 5m / 10m / 30m for
+    /// Compiling / Planning / Applying → Alert, Verified=False for
+    /// 10m → Alert. See the `ReactivePolicy` type in the shared
+    /// `architecture_gem` module.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reactive_policy: Option<crate::crd::architecture_gem::ReactivePolicy>,
 
     /// Hints used by the operator to import out-of-band cloud
     /// resources into tofu state instead of creating duplicates.
@@ -468,6 +481,42 @@ pub struct InfrastructureTemplateStatus {
     /// reads to answer "what did the operator just do, and to what?"
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_cycle: Option<ReconcileCycle>,
+
+    /// When the current `phase` was entered. Reset on every phase
+    /// transition. Used by ReactivePolicy.phaseTimeout to detect
+    /// templates stuck in a non-terminal phase.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase_entered_at: Option<DateTime<Utc>>,
+
+    /// First time the `Verified` condition flipped to False. Used by
+    /// ReactivePolicy.verifiedBlocked to detect templates whose gate
+    /// has been blocked too long. Cleared when Verified flips back
+    /// to True.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verified_blocked_since: Option<DateTime<Utc>>,
+
+    /// Set to true by a ReactivePolicy `Suspend` action. The operator
+    /// halts reconcile for this template until cleared. Cleared
+    /// manually via `kubectl patch ... --subresource status -p
+    /// '{"status":{"autoSuspended":false}}'` (or by deleting the CR
+    /// and recreating it). See `lastEscalationReason` for why the
+    /// auto-suspend triggered.
+    #[serde(default)]
+    pub auto_suspended: bool,
+
+    /// When the operator last emitted an escalation event for this
+    /// template. Debounce signal — escalation actions don't re-fire
+    /// every reconcile while the bad state persists; they fire once
+    /// per entry into the bad state and then stay quiet until the
+    /// state clears + re-enters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_escalated_at: Option<DateTime<Utc>>,
+
+    /// Machine-readable reason for the last escalation. One of
+    /// `FailureEscalation`, `PhaseTimeout:<phase>`,
+    /// `VerifiedBlocked`. Empty when no escalation has fired.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_escalation_reason: Option<String>,
 }
 
 /// Receipt for one reconcile cycle. Surfaces the answer to "what did
