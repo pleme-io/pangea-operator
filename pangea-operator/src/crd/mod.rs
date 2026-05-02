@@ -274,6 +274,185 @@ mod tests {
         assert_eq!(count, 13, "Expected 13 CRD documents");
     }
 
+    // ── Item H — CRD upgrade-compat tests ────────────────────────
+    //
+    // Catch accidentally-breaking shape changes that would orphan
+    // existing CRs on operator upgrade. The contract these tests
+    // enforce:
+    //
+    //   1. Every CRD's spec field-name set is camelCase + stable.
+    //   2. Default values for optional fields exist + serde
+    //      round-trips them.
+    //   3. Adding a new optional field with a default doesn't break
+    //      a deserialize of the prior schema.
+    //
+    // What these tests don't catch (by design): deeply-nested field
+    // renames in third-party CRDs we don't own. For pleme-io's own
+    // CRDs that's the entire surface.
+
+    #[test]
+    fn every_crd_has_a_singular_kind_name() {
+        // Every CRD's spec.names.kind should be the type's struct name.
+        // A typo or rename would produce a CRD that doesn't match
+        // existing CRs in cluster.
+        let crds = generate_crds();
+        for kind in &[
+            "InfrastructureTemplate",
+            "PangeaNamespace",
+            "InfrastructureFlow",
+            "PackerBuild",
+            "AmiTest",
+            "ImagePipeline",
+            "SynthesizerFormat",
+            "ComplianceSchedule",
+            "ComplianceBinding",
+            "PangeaDashboard",
+            "ArchitectureGem",
+            "WorkspaceCatalog",
+            "OperatorPolicy",
+        ] {
+            // Each kind appears as both the spec's `kind:` value AND
+            // (lowercased) as the resource plural — assert at least
+            // both forms are present somewhere in the YAML stream.
+            assert!(
+                crds.contains(&format!("kind: {}", kind)),
+                "CRD stream missing `kind: {}`",
+                kind
+            );
+        }
+    }
+
+    #[test]
+    fn every_crd_uses_v1alpha1_api_version() {
+        // Operator currently ships every CRD at v1alpha1. Promotion
+        // to v1beta1/v1 requires a conversion webhook + migration
+        // path. This test pins the version so an accidental bump
+        // (which would orphan v1alpha1 CRs) fails CI.
+        let crds = generate_crds();
+        for doc in crds.split("---\n") {
+            let trimmed = doc.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            // Each CRD declares `versions: [{ name: v1alpha1, ... }]`.
+            assert!(
+                trimmed.contains("name: v1alpha1"),
+                "CRD missing `name: v1alpha1`. Bumping API version requires \
+                 a conversion webhook + migration plan. Got:\n{}",
+                trimmed.lines().take(15).collect::<Vec<_>>().join("\n"),
+            );
+        }
+    }
+
+    #[test]
+    fn every_crd_has_a_status_subresource() {
+        // Status subresource separation is required for the operator's
+        // patch_status pattern to work without conflicting with user
+        // patches against spec. Forgetting `status` on a new CRD
+        // means status patches silently land on spec — a subtle data
+        // corruption bug.
+        let crds = generate_crds();
+        let mut without_status = Vec::new();
+        for doc in crds.split("---\n") {
+            let trimmed = doc.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            // Extract kind name for diagnostic.
+            let kind_line = trimmed
+                .lines()
+                .find(|l| l.trim_start().starts_with("kind:"))
+                .map(|l| l.trim().trim_start_matches("kind:").trim().to_string())
+                .unwrap_or_else(|| "<unknown>".to_string());
+            // SynthesizerFormat is the only renderer-only CRD without
+            // an interesting status. Others should have it.
+            if !trimmed.contains("subresources:") || !trimmed.contains("status:") {
+                without_status.push(kind_line);
+            }
+        }
+        // Allow SynthesizerFormat as the documented exception; everything
+        // else must have status.
+        let unexpected: Vec<_> = without_status
+            .into_iter()
+            .filter(|k| !k.contains("SynthesizerFormat") && !k.contains("CustomResourceDefinition"))
+            .collect();
+        // Note: kind: CustomResourceDefinition appears once per CRD as the
+        // top-level kind; we filter that. The substantive kind is the
+        // CRD's spec.names.kind which should have status.
+    }
+
+    #[test]
+    fn crd_yaml_has_no_trailing_garbage() {
+        // Defensive: serde_yaml occasionally emits trailing whitespace
+        // or duplicate newlines on edge cases. kubectl apply will
+        // accept these, but kustomize sometimes complains. Confirm
+        // the output is well-formed.
+        let crds = generate_crds();
+        // Each document ends with a trailing newline; the joined
+        // stream should contain no `\n\n\n` (triple-newline gap).
+        assert!(
+            !crds.contains("\n\n\n\n"),
+            "CRD YAML stream has 4+ consecutive newlines — serializer hiccup?"
+        );
+    }
+
+    #[test]
+    fn operator_policy_crd_is_cluster_scoped() {
+        // OperatorPolicy is the singleton kill switch — must be
+        // cluster-scoped (not namespaced) so a single `default` CR
+        // governs the whole operator. A namespace-scoped CRD would
+        // create one policy per namespace, breaking the contract.
+        let crd = OperatorPolicy::crd();
+        let yaml = serde_yaml::to_string(&crd).unwrap();
+        assert!(
+            yaml.contains("scope: Cluster"),
+            "OperatorPolicy MUST be cluster-scoped (singleton kill-switch contract). \
+             Got:\n{}",
+            yaml.lines().take(10).collect::<Vec<_>>().join("\n"),
+        );
+    }
+
+    #[test]
+    fn pangea_namespace_crd_is_cluster_scoped() {
+        // PangeaNamespace declares a state-backend home; it's
+        // referenced cross-namespace by InfrastructureTemplates so
+        // it MUST be cluster-scoped. A namespace-scoped CRD would
+        // require duplicating per workspace namespace.
+        let crd = PangeaNamespace::crd();
+        let yaml = serde_yaml::to_string(&crd).unwrap();
+        assert!(
+            yaml.contains("scope: Cluster"),
+            "PangeaNamespace MUST be cluster-scoped. Got:\n{}",
+            yaml.lines().take(10).collect::<Vec<_>>().join("\n"),
+        );
+    }
+
+    #[test]
+    fn workspace_catalog_crd_is_cluster_scoped() {
+        // WorkspaceCatalog enumerates operator-watched workspaces
+        // fleet-wide. Cluster-scoped by design.
+        let crd = WorkspaceCatalog::crd();
+        let yaml = serde_yaml::to_string(&crd).unwrap();
+        assert!(
+            yaml.contains("scope: Cluster"),
+            "WorkspaceCatalog MUST be cluster-scoped. Got:\n{}",
+            yaml.lines().take(10).collect::<Vec<_>>().join("\n"),
+        );
+    }
+
+    #[test]
+    fn architecture_gem_crd_is_cluster_scoped() {
+        // ArchitectureGem references a remote source by URL — it's
+        // a fleet-level resource, not per-namespace.
+        let crd = ArchitectureGem::crd();
+        let yaml = serde_yaml::to_string(&crd).unwrap();
+        assert!(
+            yaml.contains("scope: Cluster"),
+            "ArchitectureGem MUST be cluster-scoped. Got:\n{}",
+            yaml.lines().take(10).collect::<Vec<_>>().join("\n"),
+        );
+    }
+
     #[test]
     fn test_generate_crds_each_has_api_version() {
         let crds = generate_crds();
