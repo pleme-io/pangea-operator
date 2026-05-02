@@ -30,9 +30,9 @@ pub use infrastructure_template::{
     AwsCredentials, CloudflareCredentials, ComplianceStatus, Condition, ConfigMapRef, CycleSummary,
     DriftDetail, GitHubCredentials, GitRepositoryRef, ImportPolicy, InfrastructureTemplate,
     InfrastructureTemplateSpec, InfrastructureTemplateStatus, Outcome, Phase, PolicyDecision,
-    PolicyEvaluation, PolicyMatch, PolicyRule, ProfileResult, ProviderCredentials, ReconcileCycle,
-    ResourceOutcome, ResourceSummary, RetryPolicy, SecretRef, SettlingExhaustionAction,
-    SettlingPolicy, TemplateObjectRef, TemplateSource, VariableRef,
+    PolicyEvaluation, PolicyMatch, PolicyRule, ProfileResult, ProviderCredentials, ProviderKind,
+    ReconcileCycle, ResourceOutcome, ResourceSummary, RetryPolicy, SecretRef,
+    SettlingExhaustionAction, SettlingPolicy, TemplateObjectRef, TemplateSource, VariableRef,
 };
 
 // Re-export InfrastructureFlow types

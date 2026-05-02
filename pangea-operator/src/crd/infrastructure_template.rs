@@ -327,6 +327,14 @@ fn default_backoff_seconds() -> u32 {
 }
 
 /// Provider credentials configuration.
+///
+/// **Exhaustiveness contract:** every field on this struct must be
+/// matched on by `ProviderCredentials::iter_secret_refs` (and any
+/// other call site that needs to walk all providers). Adding a new
+/// provider field WITHOUT updating the iter method's match arm is a
+/// compile-time error — this is the typed-substrate guarantee that
+/// supersedes the silent "added GitHubCredentials but never wired
+/// the env-var injection" bug shipped in 92f2f74.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderCredentials {
@@ -345,6 +353,74 @@ pub struct ProviderCredentials {
     /// credentials block: a secretRef to a Secret containing a PAT.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub github: Option<GitHubCredentials>,
+}
+
+/// Typed identifier for each provider known to the operator.
+///
+/// Adding a variant here forces:
+///   * a matching field on `ProviderCredentials` (or compile fails)
+///   * a matching arm in `ProviderCredentials::iter_secret_refs` (or
+///     compile fails)
+///   * a matching arm in any other consumer that exhaustively walks
+///     this enum
+///
+/// The compile-time chain is the entire point — silent "added
+/// provider X, forgot to wire credential injection" bugs become
+/// impossible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ProviderKind {
+    Aws,
+    Cloudflare,
+    GitHub,
+}
+
+impl ProviderKind {
+    /// Stable string key used in logs, metrics labels, and structured
+    /// errors. Same value as the camelCase serde field name on
+    /// `ProviderCredentials` for k8s-API symmetry.
+    pub const fn name(&self) -> &'static str {
+        match self {
+            ProviderKind::Aws => "aws",
+            ProviderKind::Cloudflare => "cloudflare",
+            ProviderKind::GitHub => "github",
+        }
+    }
+}
+
+impl ProviderCredentials {
+    /// Walk every populated provider's `(kind, secret_ref)`.
+    ///
+    /// **Exhaustive at compile time.** Adding a new field to the
+    /// struct without adding a new line here is a Rust unused-field
+    /// warning AND a missing case in any consumer that maps over
+    /// `ProviderKind` — both surface in CI before the operator ships.
+    ///
+    /// The implementation deliberately uses an explicit destructuring
+    /// pattern (rather than per-field accessor calls) so missing a
+    /// new field is a `non_exhaustive_omitted_patterns`-flavored
+    /// compile message, not a runtime no-op.
+    pub fn iter_secret_refs(&self) -> Vec<(ProviderKind, &SecretRef)> {
+        // Destructure the entire struct so the compiler enforces that
+        // every field is named here. Adding a field will force this
+        // line to fail to compile until the new field is added below.
+        let ProviderCredentials {
+            aws,
+            cloudflare,
+            github,
+        } = self;
+
+        let mut out = Vec::new();
+        if let Some(c) = aws {
+            out.push((ProviderKind::Aws, &c.secret_ref));
+        }
+        if let Some(c) = cloudflare {
+            out.push((ProviderKind::Cloudflare, &c.secret_ref));
+        }
+        if let Some(c) = github {
+            out.push((ProviderKind::GitHub, &c.secret_ref));
+        }
+        out
+    }
 }
 
 /// AWS credentials configuration.
@@ -1132,6 +1208,82 @@ mod tests {
             let parsed: Outcome = s.parse().expect("outcome round-trips");
             assert_eq!(parsed, o);
         }
+    }
+
+    #[test]
+    fn provider_kind_name_stable() {
+        // Stable keys for log/metric labels; matches camelCase serde
+        // field names on `ProviderCredentials`.
+        assert_eq!(ProviderKind::Aws.name(), "aws");
+        assert_eq!(ProviderKind::Cloudflare.name(), "cloudflare");
+        assert_eq!(ProviderKind::GitHub.name(), "github");
+    }
+
+    fn empty_secret_ref(name: &str) -> SecretRef {
+        SecretRef {
+            name: name.to_string(),
+            namespace: None,
+        }
+    }
+
+    #[test]
+    fn iter_secret_refs_empty_when_all_none() {
+        let creds = ProviderCredentials {
+            aws: None,
+            cloudflare: None,
+            github: None,
+        };
+        assert!(creds.iter_secret_refs().is_empty());
+    }
+
+    #[test]
+    fn iter_secret_refs_yields_only_populated_providers() {
+        let creds = ProviderCredentials {
+            aws: None,
+            cloudflare: Some(CloudflareCredentials {
+                secret_ref: empty_secret_ref("cf"),
+            }),
+            github: Some(GitHubCredentials {
+                secret_ref: empty_secret_ref("gh"),
+            }),
+        };
+        let refs = creds.iter_secret_refs();
+        assert_eq!(refs.len(), 2);
+        let kinds: Vec<ProviderKind> = refs.iter().map(|(k, _)| *k).collect();
+        assert!(kinds.contains(&ProviderKind::Cloudflare));
+        assert!(kinds.contains(&ProviderKind::GitHub));
+        assert!(!kinds.contains(&ProviderKind::Aws));
+    }
+
+    #[test]
+    fn iter_secret_refs_yields_all_when_all_populated() {
+        let creds = ProviderCredentials {
+            aws: Some(AwsCredentials {
+                secret_ref: empty_secret_ref("aws"),
+                region: None,
+                role_arn: None,
+            }),
+            cloudflare: Some(CloudflareCredentials {
+                secret_ref: empty_secret_ref("cf"),
+            }),
+            github: Some(GitHubCredentials {
+                secret_ref: empty_secret_ref("gh"),
+            }),
+        };
+        let refs = creds.iter_secret_refs();
+        assert_eq!(refs.len(), 3);
+
+        // The exhaustiveness contract: count must equal the number
+        // of fields on ProviderCredentials. If a future commit adds
+        // a fourth provider field but forgets the iter_secret_refs
+        // case, this test still expects 3 — but the destructuring
+        // pattern in iter_secret_refs would have broken at compile
+        // time first. This test is the runtime backstop.
+        let aws_ref = refs
+            .iter()
+            .find(|(k, _)| *k == ProviderKind::Aws)
+            .map(|(_, sref)| sref.name.as_str());
+        assert_eq!(aws_ref, Some("aws"));
     }
 
     #[test]

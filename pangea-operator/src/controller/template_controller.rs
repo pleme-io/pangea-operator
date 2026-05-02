@@ -498,17 +498,15 @@ async fn handle_compiling(
         // `CF_ACCOUNT_ID`, … verbatim). Operator-side naming
         // transforms would re-introduce the kind of brittle wiring
         // we just stripped out elsewhere.
+        //
+        // Iteration is exhaustive over `ProviderCredentials` via
+        // `iter_secret_refs()` — adding a new provider field to the
+        // CRD without updating the iterator's destructuring pattern
+        // is a Rust compile error. This typed contract supersedes
+        // the silent failure mode that shipped GitHubCredentials in
+        // 92f2f74 without env-var injection.
         if let Some(provider_creds) = template.spec.provider_credentials.as_ref() {
-            let provider_secret_refs: Vec<&crate::crd::SecretRef> = [
-                provider_creds.aws.as_ref().map(|c| &c.secret_ref),
-                provider_creds.cloudflare.as_ref().map(|c| &c.secret_ref),
-                provider_creds.github.as_ref().map(|c| &c.secret_ref),
-            ]
-            .into_iter()
-            .flatten()
-            .collect();
-
-            for sref in provider_secret_refs {
+            for (provider_kind, sref) in provider_creds.iter_secret_refs() {
                 let ns = sref
                     .namespace
                     .clone()
@@ -521,6 +519,12 @@ async fn handle_compiling(
                         name: sref.name.clone(),
                     }
                 })?;
+                debug!(
+                    provider = provider_kind.name(),
+                    secret_namespace = %ns,
+                    secret_name = %sref.name,
+                    "Loaded provider credentials secret"
+                );
                 if let Some(data) = &secret.data {
                     for (k, v) in data.iter() {
                         let val = String::from_utf8_lossy(&v.0).to_string();
