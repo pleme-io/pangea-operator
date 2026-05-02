@@ -54,6 +54,14 @@ impl TemplateController {
 
         info!("Starting InfrastructureTemplate controller");
 
+        // 2026-05: switched from `for_each` (serial) to
+        // `for_each_concurrent` with PANGEA_RECONCILE_WORKERS-tunable
+        // parallelism. Without this, a fast-cycling template could
+        // starve siblings — observed on rio when cloudflare-pleme's
+        // 7s tofu apply loop blocked pleme-io-opensource entirely.
+        let workers = crate::controller::reconciler::reconcile_workers_from_env();
+        info!(workers, "InfrastructureTemplate controller concurrency");
+
         Controller::new(api, Config::default())
             .run(
                 move |template, ctx| {
@@ -63,7 +71,7 @@ impl TemplateController {
                 error_policy,
                 state,
             )
-            .for_each(|result| async move {
+            .for_each_concurrent(workers, |result| async move {
                 match result {
                     Ok((obj, action)) => {
                         debug!(

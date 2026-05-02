@@ -13,6 +13,32 @@ pub const SHORT_REQUEUE_INTERVAL: Duration = Duration::from_secs(30);
 /// Error requeue interval with backoff.
 pub const ERROR_REQUEUE_INTERVAL: Duration = Duration::from_secs(60);
 
+/// Default reconcile concurrency for a single controller (kube-rs's
+/// `Controller::run` returns a stream; this is the parallelism we
+/// feed it via `for_each_concurrent`). Pre-2026-05 the operator used
+/// `for_each` (effectively serial), which meant a fast-cycling
+/// template like `cloudflare-pleme` (apply ~2s, requeue 30s) could
+/// monopolize the queue and starve siblings like `pleme-io-opensource`.
+///
+/// 4 is a balance: enough parallelism that one tight loop doesn't
+/// dominate, low enough that we don't slam tofu/PG with N parallel
+/// applies that fight for the same workspace dir or state lock.
+/// Raise via `PANGEA_RECONCILE_WORKERS` env var when the fleet has
+/// more than ~10 active templates per controller.
+pub const DEFAULT_RECONCILE_WORKERS: usize = 4;
+
+/// Read `PANGEA_RECONCILE_WORKERS` from the environment, falling back
+/// to `DEFAULT_RECONCILE_WORKERS`. Clamps the value to the inclusive
+/// range [1, 32] — 0 would deadlock the stream and >32 is unlikely
+/// to be desired (would need significant infra-side rework first).
+pub fn reconcile_workers_from_env() -> usize {
+    let v = std::env::var("PANGEA_RECONCILE_WORKERS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_RECONCILE_WORKERS);
+    v.clamp(1, 32)
+}
+
 /// Action to take after reconciliation.
 #[derive(Debug, Clone)]
 pub enum ReconcileAction {
@@ -387,5 +413,59 @@ mod tests {
         assert!(SHORT_REQUEUE_INTERVAL < DEFAULT_REQUEUE_INTERVAL);
         assert!(ERROR_REQUEUE_INTERVAL < DEFAULT_REQUEUE_INTERVAL);
         assert!(SHORT_REQUEUE_INTERVAL < ERROR_REQUEUE_INTERVAL);
+    }
+
+    // ── Item C — workqueue concurrency tests ──────────────────────
+    //
+    // Reproducer of the rio incident: cloudflare-pleme's tight cycle
+    // (apply ~2s, requeue 30s) ran on the only worker, starving
+    // pleme-io-opensource for hours. Switching to
+    // for_each_concurrent with PANGEA_RECONCILE_WORKERS controls the
+    // parallelism. These tests exercise the env-var parsing layer.
+
+    #[test]
+    fn workers_default_when_env_unset() {
+        std::env::remove_var("PANGEA_RECONCILE_WORKERS");
+        assert_eq!(reconcile_workers_from_env(), DEFAULT_RECONCILE_WORKERS);
+    }
+
+    #[test]
+    fn workers_clamped_to_min_one() {
+        // 0 would deadlock for_each_concurrent (it would never make
+        // progress) — clamp to at least 1 to keep the operator alive.
+        std::env::set_var("PANGEA_RECONCILE_WORKERS", "0");
+        assert_eq!(reconcile_workers_from_env(), 1);
+        std::env::remove_var("PANGEA_RECONCILE_WORKERS");
+    }
+
+    #[test]
+    fn workers_clamped_to_max_thirty_two() {
+        // 32 is the upper guard. Larger values would need infra-side
+        // rework (PG pool sizing, tofu workspace dir contention).
+        std::env::set_var("PANGEA_RECONCILE_WORKERS", "1000");
+        assert_eq!(reconcile_workers_from_env(), 32);
+        std::env::remove_var("PANGEA_RECONCILE_WORKERS");
+    }
+
+    #[test]
+    fn workers_honors_valid_value() {
+        std::env::set_var("PANGEA_RECONCILE_WORKERS", "8");
+        assert_eq!(reconcile_workers_from_env(), 8);
+        std::env::remove_var("PANGEA_RECONCILE_WORKERS");
+    }
+
+    #[test]
+    fn workers_falls_back_on_garbage() {
+        std::env::set_var("PANGEA_RECONCILE_WORKERS", "not-a-number");
+        assert_eq!(reconcile_workers_from_env(), DEFAULT_RECONCILE_WORKERS);
+        std::env::remove_var("PANGEA_RECONCILE_WORKERS");
+    }
+
+    #[test]
+    fn default_workers_is_safe_starting_point() {
+        // 4 chosen as a balance: enough parallelism that a tight loop
+        // doesn't dominate, low enough not to slam tofu/PG. Pin the
+        // value so a future change is intentional.
+        assert_eq!(DEFAULT_RECONCILE_WORKERS, 4);
     }
 }
