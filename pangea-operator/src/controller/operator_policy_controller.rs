@@ -128,9 +128,12 @@ async fn reconcile(
     let patch = serde_json::json!({
         "status": status,
     });
-    let pp = PatchParams::apply("pangea-operator").force();
+    let pp = PatchParams::apply("pangea-operator");
 
-    if let Err(e) = api.patch_status(&name, &pp, &Patch::Apply(&patch)).await {
+    // Use Merge (RFC 7396): no apiVersion/kind required, no field
+    // ownership conflicts with kubectl-driven user patches against
+    // spec. Status is exclusively operator-owned so merge is fine.
+    if let Err(e) = api.patch_status(&name, &pp, &Patch::Merge(&patch)).await {
         error!(error = %e, "Failed to patch OperatorPolicy status");
         return Ok(Action::requeue(ERROR_REQUEUE_INTERVAL));
     }
