@@ -51,6 +51,7 @@ Gem::Specification.new do |spec|
     pangea-cloudflare
     pangea-datadog
     pangea-gcp
+    pangea-github
     pangea-hcloud
     pangea-kubernetes
     pangea-porkbun

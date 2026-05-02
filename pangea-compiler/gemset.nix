@@ -223,6 +223,16 @@
     };
     version = "0.1.0";
   };
+  pangea-github = {
+    dependencies = ["dry-types" "pangea-core" "terraform-synthesizer"];
+    groups = ["default"];
+    platforms = [];
+    source = {
+      path = vendor/pangea-github;
+      type = "path";
+    };
+    version = "0.1.0";
+  };
   pangea-hcloud = {
     dependencies = ["dry-struct" "dry-types" "pangea-core" "terraform-synthesizer"];
     groups = ["default"];

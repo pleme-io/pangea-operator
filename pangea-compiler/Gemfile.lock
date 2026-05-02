@@ -10,6 +10,7 @@ PATH
       pangea-core
       pangea-datadog
       pangea-gcp
+      pangea-github
       pangea-hcloud
       pangea-kubernetes
       pangea-porkbun
@@ -78,6 +79,14 @@ PATH
   specs:
     pangea-gcp (0.1.0)
       dry-struct (~> 1.6)
+      dry-types (~> 1.7)
+      pangea-core (~> 0.2)
+      terraform-synthesizer (~> 0.0.28)
+
+PATH
+  remote: vendor/pangea-github
+  specs:
+    pangea-github (0.1.0)
       dry-types (~> 1.7)
       pangea-core (~> 0.2)
       terraform-synthesizer (~> 0.0.28)
@@ -195,6 +204,7 @@ DEPENDENCIES
   pangea-core!
   pangea-datadog!
   pangea-gcp!
+  pangea-github!
   pangea-hcloud!
   pangea-kubernetes!
   pangea-porkbun!
