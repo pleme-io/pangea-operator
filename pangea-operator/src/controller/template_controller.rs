@@ -335,6 +335,8 @@ async fn handle_compiling(
     state: &ControllerState,
 ) -> Result<ReconcileAction> {
     info!("Template in Compiling phase");
+    let _phase_timer = state.metrics.record_phase_duration("compiling");
+    let _compile_timer = state.metrics.record_compile_duration();
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
     let source = &template.spec.source;
@@ -811,6 +813,7 @@ async fn handle_initializing(
     state: &ControllerState,
 ) -> Result<ReconcileAction> {
     info!("Template in Initializing phase");
+    let _phase_timer = state.metrics.record_phase_duration("initializing");
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
 
@@ -896,6 +899,7 @@ async fn handle_planning(
     state: &ControllerState,
 ) -> Result<ReconcileAction> {
     info!("Template in Planning phase");
+    let _phase_timer = state.metrics.record_phase_duration("planning");
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
     let plan_path = workspace.plan_path();
@@ -1161,6 +1165,7 @@ async fn handle_applying(
     state: &ControllerState,
 ) -> Result<ReconcileAction> {
     info!("Template in Applying phase");
+    let _phase_timer = state.metrics.record_phase_duration("applying");
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
     let plan_path = workspace.plan_path();

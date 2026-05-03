@@ -436,6 +436,38 @@ impl Metrics {
             .inc();
     }
 
+    /// Start a phase-duration timer for `reconciliation_duration_seconds{phase}`.
+    /// The returned `HistogramTimer` records the elapsed wall-clock on drop,
+    /// so call sites can simply hold it for the duration of a phase handler:
+    ///
+    /// ```ignore
+    /// let _timer = state.metrics.record_phase_duration("compiling");
+    /// // ... phase work ...
+    /// // timer auto-records on scope exit
+    /// ```
+    ///
+    /// Convention: phase strings should mirror `Phase` enum variants
+    /// in lowercase ("compiling", "initializing", "planning",
+    /// "applying", "destroying", "import"). Stable label values
+    /// keep dashboards / alerts queries consistent.
+    pub fn record_phase_duration(
+        &self,
+        phase: &str,
+    ) -> prometheus::HistogramTimer {
+        self.reconciliation_duration_seconds
+            .with_label_values(&[phase])
+            .start_timer()
+    }
+
+    /// Compile-specific timer. Distinct from `record_phase_duration("compiling")`
+    /// because compile latency has a wider distribution (gem download +
+    /// Ruby load + Rhai/Lisp eval) than other phases — its histogram has
+    /// finer-grained buckets at the long tail. Both metrics fire when the
+    /// compile phase runs; dashboards can pick whichever is more useful.
+    pub fn record_compile_duration(&self) -> prometheus::HistogramTimer {
+        self.compilation_duration_seconds.start_timer()
+    }
+
     /// Gather metrics in Prometheus text format.
     pub fn gather(&self) -> String {
         use prometheus::Encoder;
