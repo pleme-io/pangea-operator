@@ -80,6 +80,9 @@ async fn reconcile(
     binding: Arc<ComplianceBinding>,
     state: Arc<ControllerState>,
 ) -> std::result::Result<Action, Error> {
+    state
+        .metrics
+        .record_reconcile(crate::crd::ControllerKind::ComplianceBinding, "ok");
     let name = binding.name_any();
     let namespace = binding.namespace().unwrap_or_default();
 
@@ -371,6 +374,9 @@ fn error_policy(
     error: &Error,
     _ctx: Arc<ControllerState>,
 ) -> Action {
+    _ctx
+        .metrics
+        .record_reconcile(crate::crd::ControllerKind::ComplianceBinding, "error");
     warn!(error = %error, "ComplianceBinding error policy triggered");
     Action::requeue(ERROR_REQUEUE_INTERVAL)
 }

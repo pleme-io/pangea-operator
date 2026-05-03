@@ -45,12 +45,14 @@ pub fn run(
     client: Client,
     backend: Arc<dyn CompilerBackend>,
     operator_policy: Arc<crate::controller::operator_policy_cache::OperatorPolicyCache>,
+    metrics: Arc<crate::observability::Metrics>,
 ) -> impl std::future::Future<Output = ()> {
     let api: Api<ArchitectureGem> = Api::all(client.clone());
     let context = Arc::new(Context {
         client,
         backend,
         operator_policy,
+        metrics,
     });
 
     Controller::new(api, kube::runtime::watcher::Config::default())
@@ -77,6 +79,7 @@ struct Context {
     client: Client,
     backend: Arc<dyn CompilerBackend>,
     operator_policy: Arc<crate::controller::operator_policy_cache::OperatorPolicyCache>,
+    metrics: Arc<crate::observability::Metrics>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -91,6 +94,9 @@ enum Error {
 
 async fn reconcile(gem: Arc<ArchitectureGem>, ctx: Arc<Context>) -> Result<Action, Error> {
     let name = gem.metadata.name.clone().ok_or(Error::MissingName)?;
+
+    ctx.metrics
+        .record_reconcile(crate::crd::ControllerKind::ArchitectureGem, "ok");
 
     // Cluster-wide kill-switch — honor `OperatorPolicy/default`.
     if let Some(action) = crate::controller::policy_gate::evaluate_against_cache(
@@ -451,7 +457,9 @@ async fn patch_status_failed(
     patch_status_if_changed(client, name, prev.as_ref(), status).await
 }
 
-fn error_policy(_obj: Arc<ArchitectureGem>, err: &Error, _ctx: Arc<Context>) -> Action {
+fn error_policy(_obj: Arc<ArchitectureGem>, err: &Error, ctx: Arc<Context>) -> Action {
+    ctx.metrics
+        .record_reconcile(crate::crd::ControllerKind::ArchitectureGem, "error");
     error!("ArchitectureGem error policy: {}", err);
     Action::requeue(Duration::from_secs(60))
 }

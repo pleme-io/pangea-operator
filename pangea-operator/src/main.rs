@@ -267,11 +267,13 @@ async fn main() -> Result<()> {
     let arch_gem_client = state.client.clone();
     let arch_gem_backend = state.compiler_backend.clone();
     let arch_gem_policy = state.operator_policy.clone();
+    let arch_gem_metrics = state.metrics.clone();
     let architecture_gem_controller = tokio::spawn(async move {
         pangea_operator::controller::architecture_gem_controller::run(
             arch_gem_client,
             arch_gem_backend,
             arch_gem_policy,
+            arch_gem_metrics,
         )
         .await;
         error!("ArchitectureGem controller exited");
@@ -284,9 +286,12 @@ async fn main() -> Result<()> {
     // The cascade root for workspace-level policy.
     let wsc_client = state.client.clone();
     let wsc_policy = state.operator_policy.clone();
+    let wsc_metrics = state.metrics.clone();
     let workspace_catalog_controller = tokio::spawn(async move {
-        pangea_operator::controller::workspace_catalog_controller::run(wsc_client, wsc_policy)
-            .await;
+        pangea_operator::controller::workspace_catalog_controller::run(
+            wsc_client, wsc_policy, wsc_metrics,
+        )
+        .await;
         error!("WorkspaceCatalog controller exited");
     });
 

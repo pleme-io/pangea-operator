@@ -79,6 +79,9 @@ async fn reconcile_flow(
     flow: Arc<InfrastructureFlow>,
     state: Arc<ControllerState>,
 ) -> std::result::Result<Action, Error> {
+    state
+        .metrics
+        .record_reconcile(crate::crd::ControllerKind::Flow, "ok");
     let name = flow.name_any();
     let namespace = flow.namespace().unwrap_or_default();
 
@@ -402,6 +405,9 @@ fn error_policy(
     error: &Error,
     _ctx: Arc<ControllerState>,
 ) -> Action {
+    _ctx
+        .metrics
+        .record_reconcile(crate::crd::ControllerKind::Flow, "error");
     error!(%error, "Flow reconciliation error");
     Action::requeue(Duration::from_secs(60))
 }

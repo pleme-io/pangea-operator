@@ -72,6 +72,9 @@ async fn reconcile(
     format: Arc<SynthesizerFormat>,
     state: Arc<ControllerState>,
 ) -> std::result::Result<Action, Error> {
+    state
+        .metrics
+        .record_reconcile(crate::crd::ControllerKind::SynthesizerFormat, "ok");
     let name = format.name_any();
 
     info!("Reconciling SynthesizerFormat");
@@ -279,6 +282,9 @@ fn error_policy(
     error: &Error,
     _ctx: Arc<ControllerState>,
 ) -> Action {
+    _ctx
+        .metrics
+        .record_reconcile(crate::crd::ControllerKind::SynthesizerFormat, "error");
     warn!(error = %error, "SynthesizerFormat error policy triggered");
     Action::requeue(Duration::from_secs(60))
 }

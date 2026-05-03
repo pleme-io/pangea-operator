@@ -48,11 +48,13 @@ pub const WORKSPACE_LABEL: &str = "pangea.pleme.io/workspace";
 pub fn run(
     client: Client,
     operator_policy: Arc<crate::controller::operator_policy_cache::OperatorPolicyCache>,
+    metrics: Arc<crate::observability::Metrics>,
 ) -> impl std::future::Future<Output = ()> {
     let api: Api<WorkspaceCatalog> = Api::all(client.clone());
     let context = Arc::new(Context {
         client,
         operator_policy,
+        metrics,
     });
 
     Controller::new(api, kube::runtime::watcher::Config::default())
@@ -68,6 +70,7 @@ pub fn run(
 struct Context {
     client: Client,
     operator_policy: Arc<crate::controller::operator_policy_cache::OperatorPolicyCache>,
+    metrics: Arc<crate::observability::Metrics>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -80,6 +83,9 @@ enum Error {
 
 async fn reconcile(wsc: Arc<WorkspaceCatalog>, ctx: Arc<Context>) -> Result<Action, Error> {
     let name = wsc.metadata.name.clone().ok_or(Error::MissingName)?;
+
+    ctx.metrics
+        .record_reconcile(crate::crd::ControllerKind::WorkspaceCatalog, "ok");
 
     // Cluster-wide kill-switch — honor `OperatorPolicy/default`.
     if let Some(action) = crate::controller::policy_gate::evaluate_against_cache(
@@ -298,7 +304,9 @@ fn status_content_equal(a: &WorkspaceCatalogStatus, b: &WorkspaceCatalogStatus) 
     true
 }
 
-fn error_policy(_obj: Arc<WorkspaceCatalog>, err: &Error, _ctx: Arc<Context>) -> Action {
+fn error_policy(_obj: Arc<WorkspaceCatalog>, err: &Error, ctx: Arc<Context>) -> Action {
+    ctx.metrics
+        .record_reconcile(crate::crd::ControllerKind::WorkspaceCatalog, "error");
     error!("WorkspaceCatalog error policy: {}", err);
     Action::requeue(Duration::from_secs(60))
 }

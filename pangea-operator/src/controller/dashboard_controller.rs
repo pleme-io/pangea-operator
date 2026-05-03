@@ -74,6 +74,9 @@ fn error_policy(
     _error: &Error,
     _ctx: Arc<ControllerState>,
 ) -> Action {
+    _ctx
+        .metrics
+        .record_reconcile(crate::crd::ControllerKind::Dashboard, "error");
     Action::requeue(Duration::from_secs(30))
 }
 
@@ -82,6 +85,9 @@ async fn reconcile(
     pd: Arc<PangeaDashboard>,
     state: Arc<ControllerState>,
 ) -> Result<Action, Error> {
+    state
+        .metrics
+        .record_reconcile(crate::crd::ControllerKind::Dashboard, "ok");
     let name = pd.name_any();
     let namespace = pd.namespace().unwrap_or_else(|| "default".to_string());
 

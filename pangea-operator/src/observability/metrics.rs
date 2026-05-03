@@ -114,6 +114,19 @@ pub struct Metrics {
     ///   * source    — which precedence layer produced the Active
     ///                 ("workspace" = direct entry, "catalog" = cascade)
     pub workspace_active_override: IntGaugeVec,
+
+    /// Per-controller reconcile throughput + error rate.
+    /// Labels:
+    ///   * controller — `ControllerKind::name()` value (template,
+    ///                  namespace, workspaceCatalog, …)
+    ///   * result     — "ok" | "error" | "skip"
+    /// Bumped at the entry/exit of every controller's reconcile
+    /// function. Fills the gap previously covered only by the
+    /// template-specific `reconciliations_total` and
+    /// `namespace_reconciliations_total` counters; lets dashboards
+    /// pivot reconcile rate by controller-class and surface
+    /// per-controller error rates without forking metrics.
+    pub controller_reconciliations_total: IntCounterVec,
 }
 
 impl Metrics {
@@ -310,6 +323,15 @@ impl Metrics {
         )
         .expect("metric can be created");
 
+        let controller_reconciliations_total = IntCounterVec::new(
+            Opts::new(
+                "pangea_controller_reconciliations_total",
+                "Reconciles by controller and result (ok|error|skip)",
+            ),
+            &["controller", "result"],
+        )
+        .expect("metric can be created");
+
         // Register all metrics
         registry
             .register(Box::new(reconciliations_total.clone()))
@@ -374,6 +396,9 @@ impl Metrics {
         registry
             .register(Box::new(workspace_active_override.clone()))
             .expect("metric can be registered");
+        registry
+            .register(Box::new(controller_reconciliations_total.clone()))
+            .expect("metric can be registered");
 
         Self {
             registry,
@@ -398,7 +423,17 @@ impl Metrics {
             compile_failures_total,
             consecutive_compile_failures,
             workspace_active_override,
+            controller_reconciliations_total,
         }
+    }
+
+    /// Convenience: bump the per-controller reconcile counter.
+    /// Wraps the with_label_values+inc dance so controllers don't
+    /// have to spell out the label set.
+    pub fn record_reconcile(&self, controller: crate::crd::ControllerKind, result: &str) {
+        self.controller_reconciliations_total
+            .with_label_values(&[controller.name(), result])
+            .inc();
     }
 
     /// Gather metrics in Prometheus text format.

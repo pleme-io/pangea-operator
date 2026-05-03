@@ -86,6 +86,9 @@ async fn reconcile_image_pipeline(
     pipeline: Arc<ImagePipeline>,
     state: Arc<ControllerState>,
 ) -> std::result::Result<Action, Error> {
+    state
+        .metrics
+        .record_reconcile(crate::crd::ControllerKind::ImagePipeline, "ok");
     let name = pipeline.name_any();
     let namespace = pipeline.namespace().unwrap_or_default();
 
@@ -1036,6 +1039,9 @@ fn error_policy(
     error: &Error,
     _ctx: Arc<ControllerState>,
 ) -> Action {
+    _ctx
+        .metrics
+        .record_reconcile(crate::crd::ControllerKind::ImagePipeline, "error");
     warn!(error = %error, "ImagePipeline error policy triggered");
     if error.is_retryable() {
         Action::requeue(ERROR_REQUEUE_INTERVAL)

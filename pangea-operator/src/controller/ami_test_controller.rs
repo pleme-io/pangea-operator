@@ -84,6 +84,9 @@ async fn reconcile_ami_test(
     test: Arc<AmiTest>,
     state: Arc<ControllerState>,
 ) -> std::result::Result<Action, Error> {
+    state
+        .metrics
+        .record_reconcile(crate::crd::ControllerKind::AmiTest, "ok");
     let name = test.name_any();
     let namespace = test.namespace().unwrap_or_default();
 
@@ -814,6 +817,9 @@ fn error_policy(
     error: &Error,
     _ctx: Arc<ControllerState>,
 ) -> Action {
+    _ctx
+        .metrics
+        .record_reconcile(crate::crd::ControllerKind::AmiTest, "error");
     warn!(error = %error, "AmiTest error policy triggered");
     if error.is_retryable() {
         Action::requeue(ERROR_REQUEUE_INTERVAL)

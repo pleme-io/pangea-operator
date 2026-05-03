@@ -82,6 +82,9 @@ async fn reconcile_packer_build(
     build: Arc<PackerBuild>,
     state: Arc<ControllerState>,
 ) -> std::result::Result<Action, Error> {
+    state
+        .metrics
+        .record_reconcile(crate::crd::ControllerKind::PackerBuild, "ok");
     let name = build.name_any();
     let namespace = build.namespace().unwrap_or_default();
 
@@ -687,6 +690,9 @@ fn error_policy(
     error: &Error,
     _ctx: Arc<ControllerState>,
 ) -> Action {
+    _ctx
+        .metrics
+        .record_reconcile(crate::crd::ControllerKind::PackerBuild, "error");
     warn!(error = %error, "PackerBuild error policy triggered");
     if error.is_retryable() {
         Action::requeue(ERROR_REQUEUE_INTERVAL)

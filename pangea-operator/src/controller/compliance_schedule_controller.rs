@@ -84,6 +84,9 @@ async fn reconcile(
     schedule: Arc<ComplianceSchedule>,
     state: Arc<ControllerState>,
 ) -> std::result::Result<Action, Error> {
+    state
+        .metrics
+        .record_reconcile(crate::crd::ControllerKind::ComplianceSchedule, "ok");
     let name = schedule.name_any();
     let namespace = schedule.namespace().unwrap_or_default();
 
@@ -509,6 +512,9 @@ fn error_policy(
     error: &Error,
     _ctx: Arc<ControllerState>,
 ) -> Action {
+    _ctx
+        .metrics
+        .record_reconcile(crate::crd::ControllerKind::ComplianceSchedule, "error");
     warn!(error = %error, "ComplianceSchedule error policy triggered");
     Action::requeue(ERROR_REQUEUE_INTERVAL)
 }
