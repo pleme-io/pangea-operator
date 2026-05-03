@@ -90,6 +90,19 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Handle values.schema.json generation. Use:
+    //
+    //   cargo run --bin pangea-operator -- --generate-values-schema \
+    //     > helmworks/charts/pangea-operator/values.schema.json
+    //
+    // The schema is sourced from `chart_values::ChartValues` (typed
+    // mirror of values.yaml) via schemars + a hand-spliced
+    // useEmbeddedRuby/gemAuth conditional.
+    if env::args().any(|arg| arg == "--generate-values-schema") {
+        print!("{}", pangea_operator::chart_values::generate_values_schema_json());
+        return Ok(());
+    }
+
     // Initialize tracing
     init_tracing()?;
 

@@ -32,6 +32,7 @@
 //! ```
 
 pub mod backend;
+pub mod chart_values;
 pub mod crd;
 pub mod controller;
 pub mod error;
