@@ -896,6 +896,14 @@ async fn update_phase(
         .await
         .map_err(Error::Kube)?;
 
+    // Emit pangea_image_pipelines_by_phase{phase=…} so the
+    // ImagePipelineStuck alert in the chart can actually fire.
+    state.metrics.set_image_pipeline_phase(
+        &pipeline.namespace().unwrap_or_default(),
+        &pipeline.name_any(),
+        &phase,
+    );
+
     info!(%phase, "ImagePipeline phase updated");
     Ok(())
 }

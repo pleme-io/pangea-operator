@@ -518,6 +518,15 @@ async fn update_phase(
         .await
         .map_err(Error::Kube)?;
 
+    // Emit pangea_packer_builds_by_phase{phase=…} so the
+    // PackerBuildFailed alert in the chart actually has data to
+    // alert on (was silently inert pre-U3).
+    state.metrics.set_packer_build_phase(
+        &build.namespace().unwrap_or_default(),
+        &build.name_any(),
+        &phase,
+    );
+
     info!(%phase, "PackerBuild phase updated");
     Ok(())
 }

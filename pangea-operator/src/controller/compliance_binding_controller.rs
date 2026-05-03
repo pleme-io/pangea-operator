@@ -360,6 +360,17 @@ async fn update_full_status(
         .await
         .map_err(Error::Kube)?;
 
+    // Emit pangea_compliance_bindings_gated_targets so the
+    // ComplianceBindingGating alert can fire (was silently inert
+    // pre-U3). Counts the number of targets currently gated due to
+    // non-compliance.
+    let gated_count = targets.iter().filter(|t| t.gated).count() as i64;
+    state.metrics.set_compliance_binding_gated_targets(
+        &binding.namespace().unwrap_or_default(),
+        &binding.name_any(),
+        gated_count,
+    );
+
     Ok(())
 }
 

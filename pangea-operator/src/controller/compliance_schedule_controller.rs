@@ -406,6 +406,15 @@ async fn update_phase(
         .await
         .map_err(Error::Kube)?;
 
+    // Emit pangea_compliance_schedules_by_phase{phase=…} so the
+    // ComplianceNonCompliant alert can fire (was silently inert
+    // pre-U3).
+    state.metrics.set_compliance_schedule_phase(
+        &schedule.namespace().unwrap_or_default(),
+        &schedule.name_any(),
+        &phase,
+    );
+
     Ok(())
 }
 

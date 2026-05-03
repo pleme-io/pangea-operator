@@ -127,6 +127,48 @@ pub struct Metrics {
     /// pivot reconcile rate by controller-class and surface
     /// per-controller error rates without forking metrics.
     pub controller_reconciliations_total: IntCounterVec,
+
+    // -----------------------------------------------------------------
+    // Per-CRD-class phase gauges (added during U3 audit).
+    //
+    // The chart's PrometheusRule referenced these gauges in alert
+    // expressions, but they were never defined in the operator. The
+    // alerts therefore SILENTLY DID NOT FIRE — Prometheus accepts a
+    // PromQL query against a non-existent metric and just returns no
+    // data, which `> 0` evaluates as false. Adding the metric
+    // definitions here closes the drift; controllers record on phase
+    // transitions to keep the gauge current.
+    //
+    // Cardinality: each metric is keyed by (namespace, name, phase).
+    // For ~hundreds of CRs per cluster and ~5-10 phases each, total
+    // series stays under ~5k per metric — comfortable for a single
+    // Prometheus shard.
+    // -----------------------------------------------------------------
+
+    /// Number of PackerBuild CRs by phase.
+    /// Labels: namespace, name, phase
+    /// Used by alert: PackerBuildFailed.
+    pub packer_builds_by_phase: IntGaugeVec,
+
+    /// Number of ImagePipeline CRs by phase.
+    /// Labels: namespace, name, phase
+    /// Used by alert: ImagePipelineStuck.
+    pub image_pipelines_by_phase: IntGaugeVec,
+
+    /// Number of AmiTest CRs by phase.
+    /// Labels: namespace, name, phase
+    /// Used by alert: AmiTestFailed.
+    pub ami_tests_by_phase: IntGaugeVec,
+
+    /// Number of ComplianceSchedule CRs by phase.
+    /// Labels: namespace, name, phase
+    /// Used by alert: ComplianceNonCompliant.
+    pub compliance_schedules_by_phase: IntGaugeVec,
+
+    /// Number of targets gated by a ComplianceBinding due to non-
+    /// compliance. Labels: namespace, name (of binding).
+    /// Used by alert: ComplianceBindingGating.
+    pub compliance_bindings_gated_targets: IntGaugeVec,
 }
 
 impl Metrics {
@@ -332,6 +374,51 @@ impl Metrics {
         )
         .expect("metric can be created");
 
+        let packer_builds_by_phase = IntGaugeVec::new(
+            Opts::new(
+                "pangea_packer_builds_by_phase",
+                "PackerBuild CRs by phase",
+            ),
+            &["namespace", "name", "phase"],
+        )
+        .expect("metric can be created");
+
+        let image_pipelines_by_phase = IntGaugeVec::new(
+            Opts::new(
+                "pangea_image_pipelines_by_phase",
+                "ImagePipeline CRs by phase",
+            ),
+            &["namespace", "name", "phase"],
+        )
+        .expect("metric can be created");
+
+        let ami_tests_by_phase = IntGaugeVec::new(
+            Opts::new(
+                "pangea_ami_tests_by_phase",
+                "AmiTest CRs by phase",
+            ),
+            &["namespace", "name", "phase"],
+        )
+        .expect("metric can be created");
+
+        let compliance_schedules_by_phase = IntGaugeVec::new(
+            Opts::new(
+                "pangea_compliance_schedules_by_phase",
+                "ComplianceSchedule CRs by phase",
+            ),
+            &["namespace", "name", "phase"],
+        )
+        .expect("metric can be created");
+
+        let compliance_bindings_gated_targets = IntGaugeVec::new(
+            Opts::new(
+                "pangea_compliance_bindings_gated_targets",
+                "Number of targets currently gated by a ComplianceBinding due to non-compliance",
+            ),
+            &["namespace", "name"],
+        )
+        .expect("metric can be created");
+
         // Register all metrics
         registry
             .register(Box::new(reconciliations_total.clone()))
@@ -399,6 +486,21 @@ impl Metrics {
         registry
             .register(Box::new(controller_reconciliations_total.clone()))
             .expect("metric can be registered");
+        registry
+            .register(Box::new(packer_builds_by_phase.clone()))
+            .expect("metric can be registered");
+        registry
+            .register(Box::new(image_pipelines_by_phase.clone()))
+            .expect("metric can be registered");
+        registry
+            .register(Box::new(ami_tests_by_phase.clone()))
+            .expect("metric can be registered");
+        registry
+            .register(Box::new(compliance_schedules_by_phase.clone()))
+            .expect("metric can be registered");
+        registry
+            .register(Box::new(compliance_bindings_gated_targets.clone()))
+            .expect("metric can be registered");
 
         Self {
             registry,
@@ -424,6 +526,11 @@ impl Metrics {
             consecutive_compile_failures,
             workspace_active_override,
             controller_reconciliations_total,
+            packer_builds_by_phase,
+            image_pipelines_by_phase,
+            ami_tests_by_phase,
+            compliance_schedules_by_phase,
+            compliance_bindings_gated_targets,
         }
     }
 
@@ -466,6 +573,71 @@ impl Metrics {
     /// compile phase runs; dashboards can pick whichever is more useful.
     pub fn record_compile_duration(&self) -> prometheus::HistogramTimer {
         self.compilation_duration_seconds.start_timer()
+    }
+
+    /// Set a per-CR phase gauge to 1 for the current phase and 0 for
+    /// every other phase value. The reset-then-set shape means the
+    /// gauge is exactly truthful: each (namespace, name) tuple has at
+    /// most one phase=1 series at any moment.
+    ///
+    /// Generic over the phase enum's `Display` impl so each
+    /// per-CRD recorder reuses the same shape. Wrapper helpers below
+    /// hand the right gauge in for each CRD class.
+    fn set_phase_gauge<P: std::fmt::Display>(
+        gauge: &IntGaugeVec,
+        namespace: &str,
+        name: &str,
+        phase: &P,
+        all_phases: &[&str],
+    ) {
+        let cur = format!("{phase}");
+        for p in all_phases {
+            let v = if *p == cur { 1 } else { 0 };
+            gauge.with_label_values(&[namespace, name, p]).set(v);
+        }
+    }
+
+    /// Bump the PackerBuild phase gauge.
+    pub fn set_packer_build_phase(&self, namespace: &str, name: &str, phase: &crate::crd::PackerBuildPhase) {
+        Self::set_phase_gauge(
+            &self.packer_builds_by_phase,
+            namespace, name, phase,
+            &["Pending","Compiling","Validating","Building","Extracting","Ready","Failed"],
+        );
+    }
+
+    /// Bump the ImagePipeline phase gauge.
+    pub fn set_image_pipeline_phase(&self, namespace: &str, name: &str, phase: &crate::crd::ImagePipelinePhase) {
+        Self::set_phase_gauge(
+            &self.image_pipelines_by_phase,
+            namespace, name, phase,
+            &["Pending","Building","Testing","Planning","AwaitingApproval","Applying","Verifying","Completed","Failed","RollingBack"],
+        );
+    }
+
+    /// Bump the AmiTest phase gauge.
+    pub fn set_ami_test_phase(&self, namespace: &str, name: &str, phase: &crate::crd::AmiTestPhase) {
+        Self::set_phase_gauge(
+            &self.ami_tests_by_phase,
+            namespace, name, phase,
+            &["Pending","Resolving","Running","Passed","Failed","Cleaning"],
+        );
+    }
+
+    /// Bump the ComplianceSchedule phase gauge.
+    pub fn set_compliance_schedule_phase(&self, namespace: &str, name: &str, phase: &crate::crd::ComplianceSchedulePhase) {
+        Self::set_phase_gauge(
+            &self.compliance_schedules_by_phase,
+            namespace, name, phase,
+            &["Idle","Running","Compliant","NonCompliant","Error"],
+        );
+    }
+
+    /// Set the gated-targets count for a ComplianceBinding.
+    pub fn set_compliance_binding_gated_targets(&self, namespace: &str, name: &str, count: i64) {
+        self.compliance_bindings_gated_targets
+            .with_label_values(&[namespace, name])
+            .set(count);
     }
 
     /// Gather metrics in Prometheus text format.
@@ -675,5 +847,90 @@ mod tests {
         let metrics = Metrics::new();
         metrics.stuck_resources.with_label_values(&["t1", "ns"]).set(7);
         assert_eq!(metrics.stuck_resources.with_label_values(&["t1", "ns"]).get(), 7);
+    }
+
+    // ── U3: phase-gauge helper coverage ──
+
+    #[test]
+    fn set_packer_build_phase_emits_one_active_label() {
+        // The reset-then-set shape means the gauge tells the truth:
+        // exactly one phase=1 series per (namespace,name) tuple.
+        // Drift here would let an old phase keep =1 while the new
+        // phase also =1, so the alert PromQL would double-count.
+        use crate::crd::PackerBuildPhase;
+        let metrics = Metrics::new();
+        metrics.set_packer_build_phase("ns", "build1", &PackerBuildPhase::Building);
+
+        let g = &metrics.packer_builds_by_phase;
+        assert_eq!(g.with_label_values(&["ns", "build1", "Building"]).get(), 1);
+        assert_eq!(g.with_label_values(&["ns", "build1", "Failed"]).get(), 0);
+        assert_eq!(g.with_label_values(&["ns", "build1", "Ready"]).get(), 0);
+
+        // Transition: only the new phase should be 1.
+        metrics.set_packer_build_phase("ns", "build1", &PackerBuildPhase::Ready);
+        assert_eq!(g.with_label_values(&["ns", "build1", "Building"]).get(), 0);
+        assert_eq!(g.with_label_values(&["ns", "build1", "Ready"]).get(), 1);
+    }
+
+    #[test]
+    fn set_image_pipeline_phase_covers_all_phases() {
+        use crate::crd::ImagePipelinePhase;
+        let metrics = Metrics::new();
+        metrics.set_image_pipeline_phase("ns", "pipe1", &ImagePipelinePhase::AwaitingApproval);
+        let g = &metrics.image_pipelines_by_phase;
+        assert_eq!(
+            g.with_label_values(&["ns", "pipe1", "AwaitingApproval"]).get(),
+            1
+        );
+        assert_eq!(g.with_label_values(&["ns", "pipe1", "Completed"]).get(), 0);
+    }
+
+    #[test]
+    fn set_compliance_binding_gated_targets_records_count() {
+        let metrics = Metrics::new();
+        metrics.set_compliance_binding_gated_targets("ns", "binding1", 5);
+        assert_eq!(
+            metrics
+                .compliance_bindings_gated_targets
+                .with_label_values(&["ns", "binding1"])
+                .get(),
+            5
+        );
+        // Reset to zero on next reconcile is supported by direct
+        // re-set.
+        metrics.set_compliance_binding_gated_targets("ns", "binding1", 0);
+        assert_eq!(
+            metrics
+                .compliance_bindings_gated_targets
+                .with_label_values(&["ns", "binding1"])
+                .get(),
+            0
+        );
+    }
+
+    #[test]
+    fn new_metrics_register_all_u3_phase_gauges() {
+        // Smoke test that the registry actually contains every newly-
+        // added metric. A missing register() call would silently emit
+        // nothing — exactly the bug U3 was designed to catch
+        // upstream of this commit. Prometheus only emits metrics that
+        // have at least one observed sample, so we record a sentinel
+        // before gathering.
+        use crate::crd::{
+            AmiTestPhase, ComplianceSchedulePhase, ImagePipelinePhase, PackerBuildPhase,
+        };
+        let metrics = Metrics::new();
+        metrics.set_packer_build_phase("u3", "x", &PackerBuildPhase::Pending);
+        metrics.set_image_pipeline_phase("u3", "x", &ImagePipelinePhase::Pending);
+        metrics.set_ami_test_phase("u3", "x", &AmiTestPhase::Pending);
+        metrics.set_compliance_schedule_phase("u3", "x", &ComplianceSchedulePhase::Idle);
+        metrics.set_compliance_binding_gated_targets("u3", "x", 0);
+
+        let text = metrics.gather();
+        assert!(text.contains("pangea_packer_builds_by_phase"));
+        assert!(text.contains("pangea_image_pipelines_by_phase"));
+        assert!(text.contains("pangea_ami_tests_by_phase"));
+        assert!(text.contains("pangea_compliance_schedules_by_phase"));
+        assert!(text.contains("pangea_compliance_bindings_gated_targets"));
     }
 }

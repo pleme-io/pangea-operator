@@ -685,6 +685,14 @@ async fn update_phase(
         .await
         .map_err(Error::Kube)?;
 
+    // Emit pangea_ami_tests_by_phase{phase=…} so the AmiTestFailed
+    // alert can fire (was silently inert pre-U3).
+    state.metrics.set_ami_test_phase(
+        &test.namespace().unwrap_or_default(),
+        &test.name_any(),
+        &phase,
+    );
+
     Ok(())
 }
 
