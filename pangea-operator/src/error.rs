@@ -121,18 +121,28 @@ impl Error {
     /// Real source errors will be retried too, but the controller's
     /// failure_count keeps accumulating so the template eventually moves
     /// to Failed if the user's source is genuinely broken.
+    ///
+    /// `WithContext` recurses into the inner error so `.context(...)`
+    /// preserves retryability. Without this, wrapping a retryable
+    /// error with operator context (a common pattern at every
+    /// reconcile boundary) silently flipped it to non-retryable and
+    /// the controller would back off ~5x longer than intended.
     pub fn is_retryable(&self) -> bool {
-        matches!(
-            self,
+        match self {
             Error::Kube(_)
-                | Error::Database(_)
-                | Error::Timeout(_)
-                | Error::LockFailed(_)
-                | Error::Io(_)
-                | Error::PackerExecution(_)
-                | Error::AmiTestFailed(_)
-                | Error::Compilation(_)
-        )
+            | Error::Database(_)
+            | Error::Timeout(_)
+            | Error::LockFailed(_)
+            | Error::Io(_)
+            | Error::PackerExecution(_)
+            | Error::AmiTestFailed(_)
+            | Error::Compilation(_) => true,
+            // Preserve retryability through context wrappers — the
+            // wrapper's job is to add information, not change the
+            // error classification.
+            Error::WithContext { source, .. } => source.is_retryable(),
+            _ => false,
+        }
     }
 }
 
@@ -273,5 +283,50 @@ mod tests {
         let wrapped = inner.context("applying step vpc");
         let display = format!("{}", wrapped);
         assert_eq!(display, "applying step vpc: Reconciliation timeout after 30 seconds");
+    }
+
+    // ── T4: retryability classification audit ──
+
+    #[test]
+    fn with_context_preserves_retryability_of_inner_error() {
+        // Reproducer for the pre-T4 bug: wrapping a retryable error
+        // with `.context(...)` flipped it to non-retryable because
+        // is_retryable() didn't recurse into WithContext::source.
+        // Real-world consequence: the operator backed off the
+        // tiered_backoff non-retryable path (300s) instead of
+        // retryable (60s) for any error that passed through a
+        // `.context(...)` wrapper — every reconcile error message
+        // used `.context()` to add operator-level context, so this
+        // affected basically every retryable error in practice.
+        let retryable = Error::Timeout(60);
+        assert!(retryable.is_retryable(), "Timeout is retryable");
+        let wrapped = retryable.context("during apply phase");
+        assert!(
+            wrapped.is_retryable(),
+            "WithContext must preserve inner retryability"
+        );
+    }
+
+    #[test]
+    fn with_context_preserves_non_retryability_of_inner_error() {
+        // Symmetry: non-retryable stays non-retryable through
+        // wrapping. Otherwise WithContext would hide config errors
+        // behind a retry storm.
+        let perm = Error::Config("bad config".into());
+        assert!(!perm.is_retryable());
+        let wrapped = perm.context("loading config");
+        assert!(!wrapped.is_retryable());
+    }
+
+    #[test]
+    fn nested_with_context_recurses_through_layers() {
+        // Multi-level wrapping must still find the original
+        // retryable underneath — common in fleet code where each
+        // boundary adds its own context.
+        let inner = Error::LockFailed("state lock".into());
+        let one = inner.context("during plan");
+        let two = one.context("reconciling template foo");
+        let three = two.context("worker tick");
+        assert!(three.is_retryable());
     }
 }
