@@ -88,10 +88,14 @@ async fn reconcile(wsc: Arc<WorkspaceCatalog>, ctx: Arc<Context>) -> Result<Acti
         .record_reconcile(crate::crd::ControllerKind::WorkspaceCatalog, "ok");
 
     // Cluster-wide kill-switch — honor `OperatorPolicy/default`.
-    if let Some(action) = crate::controller::policy_gate::evaluate_against_cache(
+    // Routed through policy_pipeline (cache-only variant) so future
+    // fleet-wide gates added to the pipeline apply uniformly.
+    if let Some(action) = crate::controller::policy_pipeline::run_for_controller_with_cache(
         &ctx.operator_policy,
         crate::crd::ControllerKind::WorkspaceCatalog,
-    ) {
+    )
+    .into_skip_action()
+    {
         return Ok(action);
     }
 
@@ -100,10 +104,12 @@ async fn reconcile(wsc: Arc<WorkspaceCatalog>, ctx: Arc<Context>) -> Result<Acti
     // → globalSuspend) — `Active` carves this catalog out of a more-
     // general pause; `Paused` freezes it regardless. Cache-only
     // variant (no metrics handle in this context).
-    if let Some(action) = crate::controller::policy_gate::evaluate_catalog_against_cache(
+    if let Some(action) = crate::controller::policy_pipeline::run_for_catalog_with_cache(
         &ctx.operator_policy,
         &name,
-    ) {
+    )
+    .into_skip_action()
+    {
         return Ok(action);
     }
 

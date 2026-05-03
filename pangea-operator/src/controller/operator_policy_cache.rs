@@ -23,7 +23,7 @@ use std::sync::Arc;
 /// Cheap to clone (Arc-wrapped); pass into every controller via
 /// `ControllerState`. Reads are atomic-pointer-load fast-path
 /// (sub-100ns) — important because every reconcile of every CR
-/// hits this cache via `policy_gate::evaluate_against_cache`,
+/// hits this cache via `policy_pipeline::run_for_controller`,
 /// so contention on a `RwLock` would ripple under fleet load.
 /// Writes (policy CR mutation) are rare; the ArcSwap shape gives
 /// readers a wait-free path with the existing copy-on-write Arc.

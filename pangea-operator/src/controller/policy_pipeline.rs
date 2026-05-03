@@ -19,7 +19,22 @@
 //! The `reactive` and `policy_cascade` modules stay separate (those
 //! fire AT or AFTER reconcile, not before) — those would consolidate
 //! into a `post_reconcile_pipeline` module if scattering re-emerges.
+//!
+//! ## Three "policy" modules — what each one does
+//!
+//! Naming is overloaded; here is the precise carve-out:
+//!
+//! | module | when it fires | takes | purpose |
+//! |---|---|---|---|
+//! | `policy_pipeline` (this file) | **before** reconcile | a `ControllerState` or `OperatorPolicyCache` | single ordered entry point for every gate (kill-switch, per-workspace pause). Returns `Proceed` or `SkipWith(Action)`. |
+//! | `policy_gate` | called by `policy_pipeline` | the same | decision primitives: `check_operator_policy`, `evaluate_against_cache`, `check_template_workspace_policy`. Pure, no-side-effect functions. |
+//! | `policy_cascade` | **at apply-time** (after reconcile decided to proceed) | typed CRD specs | resolves the four-level Gem → Catalog → Template → Resource policy walk into a single `ResolvedPolicy`. Used by the apply path + admission webhook + `kubectl pangea policy explain`. |
+//!
+//! Rule of thumb: if you're answering "should we even reconcile?" use
+//! `policy_pipeline`. If you're answering "given we're reconciling,
+//! what policies apply?" use `policy_cascade`.
 
+use crate::controller::operator_policy_cache::OperatorPolicyCache;
 use crate::controller::{ControllerState, policy_gate};
 use crate::crd::ControllerKind;
 use kube::runtime::controller::Action;
@@ -104,9 +119,45 @@ pub fn run_for_controller(
     PreReconcileDecision::Proceed
 }
 
+/// Cache-only variant of `run_for_controller` for controllers whose
+/// context type is not `ControllerState` (`architecture_gem_controller`,
+/// `workspace_catalog_controller`). Behaves identically; takes only
+/// the cache. Front door for those two controllers' kill-switch check —
+/// keeping them on the same entry point as the rest of the fleet so
+/// that future pipeline gates apply uniformly.
+pub fn run_for_controller_with_cache(
+    cache: &OperatorPolicyCache,
+    controller: ControllerKind,
+) -> PreReconcileDecision {
+    if let Some(action) = policy_gate::evaluate_against_cache(cache, controller) {
+        return PreReconcileDecision::SkipWith(action);
+    }
+    PreReconcileDecision::Proceed
+}
+
+/// Cache-only variant of the workspace-catalog gate. Resolves the
+/// per-catalog tri-state pause directive from `OperatorPolicy.spec
+/// .workspaceSuspend.catalogs[<name>]`. Used exclusively by
+/// `workspace_catalog_controller` (the catalog level of the
+/// hierarchical pause cascade); other controllers bottom out at
+/// `run_for_controller_with_cache`.
+pub fn run_for_catalog_with_cache(
+    cache: &OperatorPolicyCache,
+    catalog_name: &str,
+) -> PreReconcileDecision {
+    // Front door consolidation — same shape as run_for_controller_with_cache,
+    // but for the catalog tier. The kill-switch itself runs first; this
+    // function only resolves the catalog-level override.
+    if let Some(action) = policy_gate::evaluate_catalog_against_cache(cache, catalog_name) {
+        return PreReconcileDecision::SkipWith(action);
+    }
+    PreReconcileDecision::Proceed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crd::OperatorPolicySpec;
     use kube::runtime::controller::Action;
 
     #[test]
@@ -120,5 +171,41 @@ mod tests {
         let d = PreReconcileDecision::SkipWith(Action::requeue(std::time::Duration::from_secs(30)));
         let a = d.into_skip_action();
         assert!(a.is_some());
+    }
+
+    // ── Cache-only entry point coverage (R4) ──
+
+    #[test]
+    fn cache_pipeline_proceeds_when_policy_is_permissive() {
+        // Default-allow cache + arbitrary controller → no skip.
+        let cache = OperatorPolicyCache::new_permissive();
+        let decision =
+            run_for_controller_with_cache(&cache, ControllerKind::ArchitectureGem);
+        assert!(matches!(decision, PreReconcileDecision::Proceed));
+    }
+
+    #[test]
+    fn cache_pipeline_skips_when_global_suspend_is_on() {
+        let cache = OperatorPolicyCache::new_permissive();
+        cache.store(OperatorPolicySpec {
+            global_suspend: true,
+            global_suspend_reason: Some("review pass".into()),
+            ..Default::default()
+        });
+        let decision =
+            run_for_controller_with_cache(&cache, ControllerKind::WorkspaceCatalog);
+        assert!(
+            matches!(decision, PreReconcileDecision::SkipWith(_)),
+            "expected SkipWith when globalSuspend=true"
+        );
+    }
+
+    #[test]
+    fn catalog_cache_pipeline_proceeds_when_no_entry_for_catalog() {
+        // Empty workspaceSuspend.catalogs → catalog falls through to
+        // Inherit (not paused at the catalog tier).
+        let cache = OperatorPolicyCache::new_permissive();
+        let decision = run_for_catalog_with_cache(&cache, "any-catalog");
+        assert!(matches!(decision, PreReconcileDecision::Proceed));
     }
 }

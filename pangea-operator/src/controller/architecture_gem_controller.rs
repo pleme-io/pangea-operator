@@ -99,10 +99,14 @@ async fn reconcile(gem: Arc<ArchitectureGem>, ctx: Arc<Context>) -> Result<Actio
         .record_reconcile(crate::crd::ControllerKind::ArchitectureGem, "ok");
 
     // Cluster-wide kill-switch — honor `OperatorPolicy/default`.
-    if let Some(action) = crate::controller::policy_gate::evaluate_against_cache(
+    // Routed through policy_pipeline (cache-only variant) so future
+    // fleet-wide gates added to the pipeline apply uniformly.
+    if let Some(action) = crate::controller::policy_pipeline::run_for_controller_with_cache(
         &ctx.operator_policy,
         crate::crd::ControllerKind::ArchitectureGem,
-    ) {
+    )
+    .into_skip_action()
+    {
         return Ok(action);
     }
 
