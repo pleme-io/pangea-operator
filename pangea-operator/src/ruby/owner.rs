@@ -655,32 +655,10 @@ fn run_capture_and_synthesize(
     Ok(result)
 }
 
-/// Render a Rust string as a Ruby double-quoted string literal,
-/// escaping the bare minimum for eval-safety. Used to embed an
-/// arbitrary workspace template body inside the wrapper Ruby code.
-fn ruby_string_literal(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for ch in s.chars() {
-        match ch {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\0' => out.push_str("\\0"),
-            // `#` is escaped to defeat Ruby's `#{}` interpolation.
-            '#' => out.push_str("\\#"),
-            c if (c as u32) < 0x20 => {
-                use std::fmt::Write;
-                let _ = write!(out, "\\x{:02x}", c as u32);
-            }
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
-}
+// `ruby_string_literal` was lifted to `super::escape::ruby_string_literal`
+// during U1 so its eval-safety tests can run without the
+// `embedded_ruby` feature (which requires system Ruby for build).
+use super::escape::ruby_string_literal;
 
 /// Resolve a fixture path. Absolute paths pass through; relative
 /// paths require the gem to be loaded so we can look up its
@@ -729,3 +707,4 @@ impl Drop for RubyOwner {
         }
     }
 }
+

@@ -125,3 +125,56 @@ impl CompilerBackend for HttpCompilerBackend {
             .map_err(|e| BackendError::Compiler(format!("decode smoke result: {e}")))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_stores_base_url_verbatim() {
+        // base_url is concatenated with endpoint paths in every
+        // method — drift here (e.g. trimming a trailing slash) would
+        // break URL construction across all four endpoints.
+        let client = reqwest::Client::new();
+        let backend = HttpCompilerBackend::new(client.clone(), "http://compiler:3000");
+        assert_eq!(backend.base_url, "http://compiler:3000");
+
+        // Trailing slash NOT trimmed — the format!() call paths each
+        // start with their own slash, so a trailing-slash base_url
+        // produces a double-slash URL. The contract is "no trailing
+        // slash"; this test locks that in.
+        let backend2 =
+            HttpCompilerBackend::new(client, "http://compiler:3000/");
+        assert!(
+            backend2.base_url.ends_with('/'),
+            "constructor preserves caller-provided trailing slash"
+        );
+    }
+
+    #[test]
+    fn new_accepts_string_or_str() {
+        // The Into<String> bound is convenient at call sites — verify
+        // both common shapes work without compile-time errors.
+        let client = reqwest::Client::new();
+        let _ = HttpCompilerBackend::new(client.clone(), "http://x");
+        let _ = HttpCompilerBackend::new(client, String::from("http://x"));
+    }
+
+    #[tokio::test]
+    async fn list_architectures_against_unreachable_returns_transport_error() {
+        // Hit a port no one is listening on; the reqwest layer must
+        // bubble up as BackendError::Transport (not Compiler — that's
+        // reserved for non-2xx HTTP responses, not network failures).
+        // Using port 1 to guarantee connection refused.
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let backend = HttpCompilerBackend::new(client, "http://127.0.0.1:1");
+        let err = backend.list_architectures("any").await.unwrap_err();
+        assert!(
+            matches!(err, BackendError::Transport(_)),
+            "expected Transport, got {err:?}"
+        );
+    }
+}
