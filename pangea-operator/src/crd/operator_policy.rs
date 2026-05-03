@@ -20,9 +20,10 @@
 use kube::CustomResource;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Cluster-scoped fleet-wide kill-switch for the operator's controllers.
-#[derive(CustomResource, Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(CustomResource, Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[kube(
     group = "pangea.pleme.io",
     version = "v1alpha1",
@@ -33,6 +34,7 @@ use serde::{Deserialize, Serialize};
     printcolumn = r#"{"name":"GlobalSuspend","type":"boolean","jsonPath":".spec.globalSuspend"}"#,
     printcolumn = r#"{"name":"Reason","type":"string","jsonPath":".spec.globalSuspendReason"}"#,
     printcolumn = r#"{"name":"Skipped","type":"integer","jsonPath":".status.reconcilesSkipped"}"#,
+    printcolumn = r#"{"name":"WorkspaceOverrides","type":"integer","jsonPath":".status.workspaceOverrides"}"#,
     printcolumn = r#"{"name":"Age","type":"date","jsonPath":".metadata.creationTimestamp"}"#
 )]
 #[serde(rename_all = "camelCase")]
@@ -57,6 +59,25 @@ pub struct OperatorPolicySpec {
     /// not consulted.
     #[serde(default)]
     pub controller_suspend: ControllerSuspend,
+
+    /// Per-workspace tri-state suspend. Specific overrides general:
+    /// the resolution ladder for a single template is
+    ///
+    ///   1. `workspaceSuspend.templates["<ns>/<name>"].state`
+    ///   2. `workspaceSuspend.catalogs["<owner-catalog>"].state`
+    ///      (cascade — catalog Active carves the entire catalog out
+    ///      of a global pause, catalog Paused freezes everything
+    ///      under it)
+    ///   3. `controllerSuspend.template`
+    ///   4. `globalSuspend`
+    ///
+    /// stopping at the first non-`Inherit` decision. `Active` at any
+    /// of layers 1–2 means "specifically configured to reconcile
+    /// during a global pause" — a surgical carve-out. `Paused` at
+    /// any of layers 1–2 freezes that workspace regardless of more
+    /// general state.
+    #[serde(default)]
+    pub workspace_suspend: WorkspaceSuspend,
 }
 
 /// Per-controller suspend flags. Each field corresponds 1:1 with a
@@ -111,6 +132,159 @@ pub struct ControllerSuspend {
     /// Pause `synthesizer_format_controller`.
     #[serde(default)]
     pub synthesizer_format: bool,
+}
+
+/// Per-workspace tri-state pause. Each entry's `state` decides what
+/// happens for a single workspace; missing entries default to
+/// `Inherit` — fall through to controller/global layers.
+///
+/// Two key spaces:
+///
+///   * `templates` — keyed `"<namespace>/<name>"` of an
+///     `InfrastructureTemplate`. Most-specific layer.
+///   * `catalogs` — keyed by `WorkspaceCatalog` name. Cascades to
+///     every template owned by that catalog unless the template
+///     overrides.
+///
+/// Both maps default to empty (no per-workspace override = inherit
+/// the layer above). Backwards-compatible: deployments without
+/// these fields deserialize unchanged.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceSuspend {
+    /// Per-template overrides keyed `"<namespace>/<name>"`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub templates: BTreeMap<String, WorkspaceSuspendEntry>,
+
+    /// Per-catalog overrides keyed by `WorkspaceCatalog` name.
+    /// Cascades to children unless a child template overrides.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub catalogs: BTreeMap<String, WorkspaceSuspendEntry>,
+}
+
+/// A single per-workspace decision: what state, optionally why.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceSuspendEntry {
+    /// Tri-state decision. Defaults to `Inherit`, which is
+    /// equivalent to omitting the entry entirely.
+    #[serde(default)]
+    pub state: WorkspaceState,
+
+    /// Optional human-readable note, surfaced in skip logs and the
+    /// `policy_skipped_total{reason=...}` metric label. Optional
+    /// throughout the surface — pausing without a reason is
+    /// allowed, dashboards display "(no reason given)".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Tri-state per-workspace pause directive.
+///
+///   * `Inherit` (default) — fall through to the next layer.
+///   * `Paused` — explicit pause regardless of more-general state.
+///   * `Active` — explicit run even when `globalSuspend=true`. The
+///     "surgical carve-out" — use sparingly, audit reasons in git.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkspaceState {
+    /// Default. Effective state is whatever the next layer decides.
+    #[default]
+    Inherit,
+    /// Explicit pause. Wins over global, controller, and catalog.
+    Paused,
+    /// Explicit run during a global/controller/catalog pause. Used
+    /// for the one or two workspaces that must keep reconciling
+    /// while everything else is frozen.
+    Active,
+}
+
+/// Resolved per-workspace decision after running the precedence
+/// ladder. Returned by `resolve_template_state` /
+/// `resolve_catalog_state`. Controllers map this to a kube
+/// `Action`: `Paused` → `requeue`, others → continue reconciling.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SuspensionDecision {
+    /// No pause applies — controller proceeds normally.
+    NotSuspended,
+    /// Workspace is paused. Optional reason flows from the
+    /// matching entry's `reason` field, or from the layer that
+    /// fired (e.g. `globalSuspendReason` when the global gate
+    /// dominated).
+    Paused {
+        reason: Option<String>,
+        source: SuspensionSource,
+    },
+    /// Workspace has an explicit `Active` carve-out. Controller
+    /// proceeds, but observability surfaces this as an override so
+    /// dashboards can show "what's still running under a global
+    /// pause."
+    Active {
+        reason: Option<String>,
+        source: SuspensionSource,
+    },
+}
+
+impl SuspensionDecision {
+    /// True iff the decision skips the reconcile body.
+    pub const fn is_paused(&self) -> bool {
+        matches!(self, SuspensionDecision::Paused { .. })
+    }
+
+    /// True iff the decision is an explicit Active carve-out.
+    pub const fn is_active_override(&self) -> bool {
+        matches!(self, SuspensionDecision::Active { .. })
+    }
+
+    /// Returns the resolution layer that produced this decision,
+    /// for metric labels + structured logs. Returns `None` for
+    /// `NotSuspended`.
+    pub const fn source(&self) -> Option<SuspensionSource> {
+        match self {
+            SuspensionDecision::NotSuspended => None,
+            SuspensionDecision::Paused { source, .. } => Some(*source),
+            SuspensionDecision::Active { source, .. } => Some(*source),
+        }
+    }
+
+    /// Returns the optional reason associated with the decision.
+    pub fn reason(&self) -> Option<&str> {
+        match self {
+            SuspensionDecision::NotSuspended => None,
+            SuspensionDecision::Paused { reason, .. } => reason.as_deref(),
+            SuspensionDecision::Active { reason, .. } => reason.as_deref(),
+        }
+    }
+}
+
+/// The layer of the precedence ladder that produced a
+/// `SuspensionDecision`. Used for `policy_skipped_total{source=...}`
+/// label values + structured log fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SuspensionSource {
+    /// `OperatorPolicy.spec.globalSuspend` (binary, dominates when
+    /// nothing more specific overrides).
+    Global,
+    /// `OperatorPolicy.spec.controllerSuspend.<kind>`.
+    Controller,
+    /// `OperatorPolicy.spec.workspaceSuspend.catalogs["<name>"]`
+    /// — cascades to children.
+    Catalog,
+    /// `OperatorPolicy.spec.workspaceSuspend.templates["<ns>/<name>"]`
+    /// — most specific.
+    Workspace,
+}
+
+impl SuspensionSource {
+    /// Stable string used in metric label values + log fields.
+    pub const fn name(&self) -> &'static str {
+        match self {
+            SuspensionSource::Global => "global",
+            SuspensionSource::Controller => "controller",
+            SuspensionSource::Catalog => "catalog",
+            SuspensionSource::Workspace => "workspace",
+        }
+    }
 }
 
 /// Typed identifier for each operator controller. Used by the policy
@@ -204,6 +378,54 @@ pub struct OperatorPolicyStatus {
     ///   `kubectl get operatorpolicy default -o jsonpath='{.status.reconcilesSkipped}'`
     #[serde(default)]
     pub reconciles_skipped: u64,
+
+    /// Number of `Active` workspace carve-outs currently in effect
+    /// (templates + catalogs combined). Surfaced as a printer column
+    /// so `kubectl get oppol` shows at a glance how many surgical
+    /// exemptions exist while a global pause is in place. Counted
+    /// directly from `spec.workspaceSuspend`; not a runtime gauge.
+    #[serde(default)]
+    pub workspace_overrides: u64,
+}
+
+impl WorkspaceSuspend {
+    /// Count entries with `state == Active` across both maps. Used to
+    /// populate `OperatorPolicyStatus.workspace_overrides` and the
+    /// matching printer column.
+    pub fn count_active_overrides(&self) -> u64 {
+        let templates = self
+            .templates
+            .values()
+            .filter(|e| e.state == WorkspaceState::Active)
+            .count();
+        let catalogs = self
+            .catalogs
+            .values()
+            .filter(|e| e.state == WorkspaceState::Active)
+            .count();
+        (templates + catalogs) as u64
+    }
+
+    /// Compose the canonical key for a per-template entry from a
+    /// (namespace, name) pair. Centralized so callers and tests can't
+    /// drift in formatting.
+    pub fn template_key(namespace: &str, name: &str) -> String {
+        format!("{}/{}", namespace, name)
+    }
+
+    /// Lookup helper: returns the entry for a template if present.
+    pub fn template_entry(
+        &self,
+        namespace: &str,
+        name: &str,
+    ) -> Option<&WorkspaceSuspendEntry> {
+        self.templates.get(&Self::template_key(namespace, name))
+    }
+
+    /// Lookup helper: returns the entry for a catalog if present.
+    pub fn catalog_entry(&self, name: &str) -> Option<&WorkspaceSuspendEntry> {
+        self.catalogs.get(name)
+    }
 }
 
 /// The canonical name of the singleton OperatorPolicy. Other names are
@@ -216,11 +438,7 @@ mod tests {
 
     #[test]
     fn default_spec_is_fully_permissive() {
-        let spec = OperatorPolicySpec {
-            global_suspend: false,
-            global_suspend_reason: None,
-            controller_suspend: ControllerSuspend::default(),
-        };
+        let spec = OperatorPolicySpec::default();
         // No suspends = every controller proceeds.
         for kind in [
             ControllerKind::Template,
@@ -239,6 +457,10 @@ mod tests {
             assert!(!spec.global_suspend);
             assert!(!spec.controller_suspend.is_set(kind));
         }
+        // Workspace maps default to empty.
+        assert!(spec.workspace_suspend.templates.is_empty());
+        assert!(spec.workspace_suspend.catalogs.is_empty());
+        assert_eq!(spec.workspace_suspend.count_active_overrides(), 0);
     }
 
     #[test]
@@ -276,6 +498,7 @@ mod tests {
                 template: true,
                 ..Default::default()
             },
+            ..Default::default()
         };
         let json = serde_json::to_string(&spec).unwrap();
         let back: OperatorPolicySpec = serde_json::from_str(&json).unwrap();
@@ -291,6 +514,7 @@ mod tests {
                 workspace_catalog: true,
                 ..Default::default()
             },
+            ..Default::default()
         };
         let json = serde_json::to_value(&spec).unwrap();
         // Ensure k8s-idiomatic camelCase, not Rust's snake_case.
@@ -308,5 +532,198 @@ mod tests {
     fn singleton_name_is_default() {
         // Hard-coded contract: only "default" is reconciled.
         assert_eq!(OPERATOR_POLICY_SINGLETON, "default");
+    }
+
+    // ── WorkspaceSuspend tri-state ─────────────────────────────────
+
+    #[test]
+    fn workspace_state_default_is_inherit() {
+        // The default of the enum must be `Inherit` so an entry
+        // declared without an explicit state is a no-op (i.e. omitting
+        // the entry == declaring `state: inherit`).
+        assert_eq!(WorkspaceState::default(), WorkspaceState::Inherit);
+    }
+
+    #[test]
+    fn workspace_state_serializes_lowercase() {
+        // YAML idiom: `state: paused`, `state: active`, `state: inherit`.
+        // This is what users will type in OperatorPolicy YAML.
+        assert_eq!(
+            serde_json::to_value(WorkspaceState::Paused).unwrap(),
+            serde_json::Value::String("paused".into())
+        );
+        assert_eq!(
+            serde_json::to_value(WorkspaceState::Active).unwrap(),
+            serde_json::Value::String("active".into())
+        );
+        assert_eq!(
+            serde_json::to_value(WorkspaceState::Inherit).unwrap(),
+            serde_json::Value::String("inherit".into())
+        );
+    }
+
+    #[test]
+    fn workspace_suspend_template_key_format() {
+        // Centralized key formatter — guards against drift between
+        // callers and the cache lookup.
+        assert_eq!(
+            WorkspaceSuspend::template_key("pangea-system", "cloudflare-pleme"),
+            "pangea-system/cloudflare-pleme"
+        );
+    }
+
+    #[test]
+    fn workspace_suspend_lookup_helpers() {
+        let mut ws = WorkspaceSuspend::default();
+        ws.templates.insert(
+            "ns/foo".into(),
+            WorkspaceSuspendEntry {
+                state: WorkspaceState::Paused,
+                reason: Some("debugging".into()),
+            },
+        );
+        ws.catalogs.insert(
+            "opensource".into(),
+            WorkspaceSuspendEntry {
+                state: WorkspaceState::Active,
+                reason: None,
+            },
+        );
+
+        assert!(ws.template_entry("ns", "foo").is_some());
+        assert!(ws.template_entry("ns", "bar").is_none());
+        assert_eq!(
+            ws.catalog_entry("opensource").map(|e| e.state),
+            Some(WorkspaceState::Active)
+        );
+        assert!(ws.catalog_entry("missing").is_none());
+    }
+
+    #[test]
+    fn count_active_overrides_combines_templates_and_catalogs() {
+        let mut ws = WorkspaceSuspend::default();
+        ws.templates.insert(
+            "ns/a".into(),
+            WorkspaceSuspendEntry {
+                state: WorkspaceState::Active,
+                reason: None,
+            },
+        );
+        ws.templates.insert(
+            "ns/b".into(),
+            WorkspaceSuspendEntry {
+                state: WorkspaceState::Paused,
+                reason: None,
+            },
+        );
+        ws.catalogs.insert(
+            "opensource".into(),
+            WorkspaceSuspendEntry {
+                state: WorkspaceState::Active,
+                reason: None,
+            },
+        );
+        ws.catalogs.insert(
+            "core".into(),
+            WorkspaceSuspendEntry {
+                state: WorkspaceState::Inherit,
+                reason: None,
+            },
+        );
+        // Paused entries don't count; only Active.
+        assert_eq!(ws.count_active_overrides(), 2);
+    }
+
+    #[test]
+    fn workspace_suspend_serde_roundtrip() {
+        let spec = OperatorPolicySpec {
+            global_suspend: true,
+            global_suspend_reason: Some("rewrite".into()),
+            workspace_suspend: WorkspaceSuspend {
+                templates: BTreeMap::from([(
+                    "pangea-system/cloudflare-pleme".into(),
+                    WorkspaceSuspendEntry {
+                        state: WorkspaceState::Active,
+                        reason: Some("monitoring github org".into()),
+                    },
+                )]),
+                catalogs: BTreeMap::from([(
+                    "opensource".into(),
+                    WorkspaceSuspendEntry {
+                        state: WorkspaceState::Paused,
+                        reason: None,
+                    },
+                )]),
+            },
+            ..Default::default()
+        };
+        let yaml = serde_yaml::to_string(&spec).unwrap();
+        // YAML must look like what users type:
+        assert!(yaml.contains("workspaceSuspend:"));
+        assert!(yaml.contains("state: active"));
+        assert!(yaml.contains("state: paused"));
+        // Round-trip preserves equality.
+        let back: OperatorPolicySpec = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(spec, back);
+    }
+
+    #[test]
+    fn empty_workspace_suspend_omitted_in_serialized_output() {
+        // When no per-workspace overrides are set, the maps should be
+        // skipped in serialization (skip_serializing_if). Old
+        // OperatorPolicy/default deployments stay byte-stable.
+        let spec = OperatorPolicySpec {
+            global_suspend: true,
+            global_suspend_reason: Some("rewrite".into()),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&spec).unwrap();
+        // workspaceSuspend is present but its inner maps are empty +
+        // omitted via skip_serializing_if.
+        let ws = json.get("workspaceSuspend").expect("ws field present");
+        assert!(
+            ws.get("templates").is_none(),
+            "empty templates map must be omitted"
+        );
+        assert!(
+            ws.get("catalogs").is_none(),
+            "empty catalogs map must be omitted"
+        );
+    }
+
+    #[test]
+    fn suspension_decision_helpers() {
+        let p = SuspensionDecision::Paused {
+            reason: Some("debugging".into()),
+            source: SuspensionSource::Workspace,
+        };
+        assert!(p.is_paused());
+        assert!(!p.is_active_override());
+        assert_eq!(p.source(), Some(SuspensionSource::Workspace));
+        assert_eq!(p.reason(), Some("debugging"));
+
+        let a = SuspensionDecision::Active {
+            reason: None,
+            source: SuspensionSource::Catalog,
+        };
+        assert!(!a.is_paused());
+        assert!(a.is_active_override());
+        assert_eq!(a.source(), Some(SuspensionSource::Catalog));
+        assert_eq!(a.reason(), None);
+
+        let n = SuspensionDecision::NotSuspended;
+        assert!(!n.is_paused());
+        assert!(!n.is_active_override());
+        assert_eq!(n.source(), None);
+        assert_eq!(n.reason(), None);
+    }
+
+    #[test]
+    fn suspension_source_names_are_stable() {
+        // Stable strings used in metric labels — guard against rename.
+        assert_eq!(SuspensionSource::Global.name(), "global");
+        assert_eq!(SuspensionSource::Controller.name(), "controller");
+        assert_eq!(SuspensionSource::Catalog.name(), "catalog");
+        assert_eq!(SuspensionSource::Workspace.name(), "workspace");
     }
 }

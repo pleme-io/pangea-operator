@@ -99,6 +99,21 @@ pub struct Metrics {
     /// dashboards alert on "template X is stuck compiling" before
     /// settling policy escalates to Failed (default 5 cycles).
     pub consecutive_compile_failures: IntGaugeVec,
+
+    /// Per-workspace `Active` carve-out gauge. Set to 1 for each
+    /// workspace whose effective `SuspensionDecision` is
+    /// `Active { .. }` after running the precedence ladder; 0
+    /// otherwise. Lets dashboards answer "what's still reconciling
+    /// under a global pause?" — the canonical use case is monitoring
+    /// the one or two workspaces explicitly carved out during a
+    /// fleet-wide rewrite or freeze.
+    /// Labels:
+    ///   * kind      — "template" or "catalog"
+    ///   * namespace — empty for catalogs
+    ///   * name      — workspace name (template name or catalog name)
+    ///   * source    — which precedence layer produced the Active
+    ///                 ("workspace" = direct entry, "catalog" = cascade)
+    pub workspace_active_override: IntGaugeVec,
 }
 
 impl Metrics {
@@ -248,12 +263,22 @@ impl Metrics {
         )
         .expect("metric can be created");
 
+        // policy_skipped_total carries three labels:
+        //   * controller — which reconciler skipped (e.g. "template")
+        //   * source     — which precedence layer fired
+        //                  ("global", "controller", "catalog", "workspace")
+        //   * target     — for per-workspace skips, the "<ns>/<name>" key
+        //                  for templates or "<catalog>" for catalogs;
+        //                  empty for global/controller skips
+        // The third label keeps cardinality bounded by the number of
+        // workspaces (typically <100) — well below Prometheus's
+        // recommended ~10k cardinality limit for a single counter.
         let policy_skipped_total = IntCounterVec::new(
             Opts::new(
                 "pangea_policy_skipped_total",
                 "Reconciles skipped by OperatorPolicy gate (Item J observability)",
             ),
-            &["controller", "reason"],
+            &["controller", "source", "target"],
         )
         .expect("metric can be created");
 
@@ -272,6 +297,16 @@ impl Metrics {
                 "Current consecutive compile failure count per template",
             ),
             &["namespace", "name"],
+        )
+        .expect("metric can be created");
+
+        let workspace_active_override = IntGaugeVec::new(
+            Opts::new(
+                "pangea_workspace_active_override",
+                "1 for each workspace whose effective state is Active during a more-general pause; \
+                 lets dashboards answer 'what's still reconciling under a global pause?'",
+            ),
+            &["kind", "namespace", "name", "source"],
         )
         .expect("metric can be created");
 
@@ -336,6 +371,9 @@ impl Metrics {
         registry
             .register(Box::new(consecutive_compile_failures.clone()))
             .expect("metric can be registered");
+        registry
+            .register(Box::new(workspace_active_override.clone()))
+            .expect("metric can be registered");
 
         Self {
             registry,
@@ -359,6 +397,7 @@ impl Metrics {
             policy_skipped_total,
             compile_failures_total,
             consecutive_compile_failures,
+            workspace_active_override,
         }
     }
 

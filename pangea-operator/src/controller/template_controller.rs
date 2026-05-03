@@ -112,6 +112,36 @@ async fn reconcile_template(
         return Ok(action);
     }
 
+    // Per-workspace pause — honor
+    // `OperatorPolicy/default.spec.workspaceSuspend`. Resolves the
+    // tri-state precedence ladder (template → catalog cascade →
+    // controller → global) and:
+    //
+    //   * `Paused` → skip reconcile (return Action::requeue), regardless
+    //     of why the more-general layers said pause/run.
+    //   * `Active` → proceed even if a more-general layer said pause.
+    //     This is the surgical carve-out for "global paused, but THIS
+    //     template / its parent catalog must keep reconciling."
+    //   * `NotSuspended` → proceed normally.
+    //
+    // Parent-catalog name is read directly from the
+    // `pangea.pleme.io/workspace` label — no API call required, so
+    // the gate stays cheap on every reconcile.
+    let parent_catalog_name = template
+        .metadata
+        .labels
+        .as_ref()
+        .and_then(|l| l.get(crate::controller::workspace_catalog_controller::WORKSPACE_LABEL))
+        .map(String::as_str);
+    if let Some(action) = crate::controller::policy_gate::check_template_workspace_policy(
+        &state,
+        &namespace,
+        &name,
+        parent_catalog_name,
+    ) {
+        return Ok(action);
+    }
+
     // Handle deletion via finalizer
     if template.metadata.deletion_timestamp.is_some() {
         if has_finalizer(&template) {

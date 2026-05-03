@@ -20,7 +20,10 @@
 
 use crate::controller::operator_policy_cache::OperatorPolicyCache;
 use crate::controller::ControllerState;
-use crate::crd::ControllerKind;
+use crate::crd::{
+    ControllerKind, OperatorPolicySpec, SuspensionDecision, SuspensionSource, WorkspaceState,
+    WorkspaceSuspend,
+};
 
 use kube::runtime::controller::Action;
 use std::time::Duration;
@@ -48,15 +51,20 @@ pub fn check_operator_policy(
     // and "controller Y skipped N reconciles" without parsing logs.
     if result.is_some() {
         let spec = state.operator_policy.read();
-        let reason = if spec.global_suspend {
-            "globalSuspend"
+        // Map binary global/controller flags to canonical
+        // SuspensionSource label values so dashboards can pivot a
+        // single sum across global/controller/workspace/catalog skips.
+        let source = if spec.global_suspend {
+            SuspensionSource::Global
         } else {
-            "controllerSuspend"
+            SuspensionSource::Controller
         };
+        // The cluster-wide gate has no per-workspace target; use empty
+        // string so Prometheus emits a stable 3-label series.
         state
             .metrics
             .policy_skipped_total
-            .with_label_values(&[controller.name(), reason])
+            .with_label_values(&[controller.name(), source.name(), ""])
             .inc();
     }
     result
@@ -96,6 +104,273 @@ pub fn evaluate_against_cache(
     }
 
     None
+}
+
+// ── Per-workspace tri-state precedence resolution ──────────────────
+//
+// Layered ladder (most specific wins, stop at first non-Inherit):
+//
+//   1. workspaceSuspend.templates["<ns>/<name>"]   (templates only)
+//   2. workspaceSuspend.catalogs["<owner-catalog>"] (cascade for templates)
+//   3. controllerSuspend.<kind>
+//   4. globalSuspend
+//
+// Active at layers 1–2 means "specifically configured to reconcile
+// during a more-general pause." Paused at layers 1–2 means "frozen
+// regardless of more-general state." Layers 3–4 are binary; they only
+// produce Paused or NotSuspended.
+//
+// All three resolve_*_state functions are pure: no I/O, no metric
+// side effects, no logging. The metrics + log side effects live in the
+// gate wrappers below. This keeps the precedence matrix unit-testable
+// in isolation and makes the gate functions composable.
+
+/// Resolve the effective suspension state for a single
+/// `InfrastructureTemplate`, given the current `OperatorPolicy.spec`
+/// and the template's parent catalog (if any).
+///
+/// `parent_catalog`:
+///   * `Some(name)` when the template declares an owning
+///     `WorkspaceCatalog` — the cascade layer applies.
+///   * `None` for orphan templates (e.g. authored before
+///     WorkspaceCatalog existed) — the cascade layer is skipped.
+pub fn resolve_template_state(
+    spec: &OperatorPolicySpec,
+    namespace: &str,
+    template_name: &str,
+    parent_catalog: Option<&str>,
+) -> SuspensionDecision {
+    // Layer 1: most-specific per-template entry.
+    if let Some(entry) = spec
+        .workspace_suspend
+        .template_entry(namespace, template_name)
+    {
+        if let Some(d) = decision_from_entry(entry, SuspensionSource::Workspace) {
+            return d;
+        }
+    }
+
+    // Layer 2: cascade from the parent catalog, if any.
+    if let Some(catalog_name) = parent_catalog {
+        if let Some(entry) = spec.workspace_suspend.catalog_entry(catalog_name) {
+            if let Some(d) = decision_from_entry(entry, SuspensionSource::Catalog) {
+                return d;
+            }
+        }
+    }
+
+    // Layer 3: controller-class binary suspend.
+    if spec.controller_suspend.is_set(ControllerKind::Template) {
+        return SuspensionDecision::Paused {
+            reason: Some(format!("controllerSuspend.{}", ControllerKind::Template.name())),
+            source: SuspensionSource::Controller,
+        };
+    }
+
+    // Layer 4: global binary suspend.
+    if spec.global_suspend {
+        return SuspensionDecision::Paused {
+            reason: spec.global_suspend_reason.clone(),
+            source: SuspensionSource::Global,
+        };
+    }
+
+    SuspensionDecision::NotSuspended
+}
+
+/// Resolve the effective suspension state for a `WorkspaceCatalog`
+/// itself (not its child templates — those use `resolve_template_state`).
+/// Skips the cascade layer (no parent above catalogs).
+pub fn resolve_catalog_state(
+    spec: &OperatorPolicySpec,
+    catalog_name: &str,
+) -> SuspensionDecision {
+    // Layer 1: most-specific per-catalog entry.
+    if let Some(entry) = spec.workspace_suspend.catalog_entry(catalog_name) {
+        if let Some(d) = decision_from_entry(entry, SuspensionSource::Workspace) {
+            return d;
+        }
+    }
+
+    // Layer 3: controller-class binary suspend.
+    if spec
+        .controller_suspend
+        .is_set(ControllerKind::WorkspaceCatalog)
+    {
+        return SuspensionDecision::Paused {
+            reason: Some(format!(
+                "controllerSuspend.{}",
+                ControllerKind::WorkspaceCatalog.name()
+            )),
+            source: SuspensionSource::Controller,
+        };
+    }
+
+    // Layer 4: global binary suspend.
+    if spec.global_suspend {
+        return SuspensionDecision::Paused {
+            reason: spec.global_suspend_reason.clone(),
+            source: SuspensionSource::Global,
+        };
+    }
+
+    SuspensionDecision::NotSuspended
+}
+
+/// Map a `WorkspaceSuspendEntry` to a `SuspensionDecision`. Returns
+/// `None` when the entry's state is `Inherit` (caller should fall
+/// through to the next layer). Helper kept private to avoid leaking
+/// an under-constrained shape into the public API.
+fn decision_from_entry(
+    entry: &crate::crd::WorkspaceSuspendEntry,
+    source: SuspensionSource,
+) -> Option<SuspensionDecision> {
+    match entry.state {
+        WorkspaceState::Inherit => None,
+        WorkspaceState::Paused => Some(SuspensionDecision::Paused {
+            reason: entry.reason.clone(),
+            source,
+        }),
+        WorkspaceState::Active => Some(SuspensionDecision::Active {
+            reason: entry.reason.clone(),
+            source,
+        }),
+    }
+}
+
+/// Per-template gate. Wraps `resolve_template_state` with the side
+/// effects (metric bump + log line) and translates the pure
+/// `SuspensionDecision` to a kube `Action::requeue` when paused.
+///
+/// Returns `Some(Action)` to short-circuit the reconcile when paused;
+/// `None` to proceed (covering both `NotSuspended` and `Active`).
+pub fn check_template_workspace_policy(
+    state: &ControllerState,
+    namespace: &str,
+    template_name: &str,
+    parent_catalog: Option<&str>,
+) -> Option<Action> {
+    let spec = state.operator_policy.read();
+    let decision = resolve_template_state(&spec, namespace, template_name, parent_catalog);
+
+    match decision {
+        SuspensionDecision::NotSuspended => None,
+        SuspensionDecision::Active { reason, source } => {
+            // Active carve-outs do NOT pause; they exempt the
+            // workspace from a more-general pause. Surface this to
+            // observability so dashboards can show "what's still
+            // reconciling under a global pause".
+            info!(
+                namespace = %namespace,
+                template = %template_name,
+                source = source.name(),
+                reason = reason.as_deref().unwrap_or("(none)"),
+                "Workspace Active override — proceeding despite more-general pause"
+            );
+            None
+        }
+        SuspensionDecision::Paused { reason, source } => {
+            let key = WorkspaceSuspend::template_key(namespace, template_name);
+            info!(
+                workspace = %key,
+                source = source.name(),
+                reason = reason.as_deref().unwrap_or("(no reason given)"),
+                "Skipping reconcile: workspace paused"
+            );
+            state.operator_policy.bump_skipped();
+            state
+                .metrics
+                .policy_skipped_total
+                .with_label_values(&[
+                    ControllerKind::Template.name(),
+                    source.name(),
+                    &key,
+                ])
+                .inc();
+            Some(Action::requeue(POLICY_RECHECK_INTERVAL))
+        }
+    }
+}
+
+/// Per-catalog gate. Same shape as `check_template_workspace_policy`
+/// but for `WorkspaceCatalog` reconciles. Skips the cascade layer.
+pub fn check_catalog_workspace_policy(
+    state: &ControllerState,
+    catalog_name: &str,
+) -> Option<Action> {
+    let spec = state.operator_policy.read();
+    let decision = resolve_catalog_state(&spec, catalog_name);
+
+    match decision {
+        SuspensionDecision::NotSuspended => None,
+        SuspensionDecision::Active { reason, source } => {
+            info!(
+                catalog = %catalog_name,
+                source = source.name(),
+                reason = reason.as_deref().unwrap_or("(none)"),
+                "Catalog Active override — proceeding despite more-general pause"
+            );
+            None
+        }
+        SuspensionDecision::Paused { reason, source } => {
+            info!(
+                catalog = %catalog_name,
+                source = source.name(),
+                reason = reason.as_deref().unwrap_or("(no reason given)"),
+                "Skipping reconcile: catalog paused"
+            );
+            state.operator_policy.bump_skipped();
+            state
+                .metrics
+                .policy_skipped_total
+                .with_label_values(&[
+                    ControllerKind::WorkspaceCatalog.name(),
+                    source.name(),
+                    catalog_name,
+                ])
+                .inc();
+            Some(Action::requeue(POLICY_RECHECK_INTERVAL))
+        }
+    }
+}
+
+/// Cache-only catalog gate for controllers whose context type does
+/// not carry the metrics handle (workspace_catalog_controller uses a
+/// slim `Context` with `client + operator_policy` only). Mirrors
+/// `evaluate_against_cache`'s role for the global/controller layers.
+///
+/// Skips the metric bump (no metrics handle available). The cache
+/// `bump_skipped` is still called so `OperatorPolicyStatus.reconcilesSkipped`
+/// stays accurate.
+pub fn evaluate_catalog_against_cache(
+    cache: &OperatorPolicyCache,
+    catalog_name: &str,
+) -> Option<Action> {
+    let spec = cache.read();
+    let decision = resolve_catalog_state(&spec, catalog_name);
+
+    match decision {
+        SuspensionDecision::NotSuspended => None,
+        SuspensionDecision::Active { reason, source } => {
+            info!(
+                catalog = %catalog_name,
+                source = source.name(),
+                reason = reason.as_deref().unwrap_or("(none)"),
+                "Catalog Active override — proceeding despite more-general pause"
+            );
+            None
+        }
+        SuspensionDecision::Paused { reason, source } => {
+            info!(
+                catalog = %catalog_name,
+                source = source.name(),
+                reason = reason.as_deref().unwrap_or("(no reason given)"),
+                "Skipping reconcile: catalog paused"
+            );
+            cache.bump_skipped();
+            Some(Action::requeue(POLICY_RECHECK_INTERVAL))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -156,7 +431,7 @@ mod tests {
         let cache = cache_with(OperatorPolicySpec {
             global_suspend: true,
             global_suspend_reason: Some("rewrite-in-progress".into()),
-            controller_suspend: ControllerSuspend::default(),
+            ..Default::default()
         });
         let mut bumped = 0u64;
         for k in [
@@ -179,9 +454,8 @@ mod tests {
         cs.template = true;
         cs.dashboard = true;
         let cache = cache_with(OperatorPolicySpec {
-            global_suspend: false,
-            global_suspend_reason: None,
             controller_suspend: cs,
+            ..Default::default()
         });
 
         // Suspended controllers report skipped.
@@ -207,8 +481,409 @@ mod tests {
             global_suspend: true,
             global_suspend_reason: Some("emergency".into()),
             controller_suspend: cs,
+            ..Default::default()
         });
         // Even though template is not in controllerSuspend, global wins.
         assert!(evaluate(&cache, ControllerKind::Template).0);
+    }
+
+    // ── Per-workspace precedence ladder ───────────────────────────
+    //
+    // Pure-function tests against `resolve_template_state` and
+    // `resolve_catalog_state`. No cache, no metrics, no ControllerState.
+    // Every cell of the catalog × template × controller × global matrix
+    // documented in CLAUDE.md is exercised.
+
+    use crate::crd::{
+        SuspensionDecision, SuspensionSource, WorkspaceState, WorkspaceSuspend,
+        WorkspaceSuspendEntry,
+    };
+    use std::collections::BTreeMap;
+
+    /// Helper: build a spec with optional template + catalog entries.
+    /// `(catalog_state, template_state)` choose what to insert; `None`
+    /// means "no entry" (which serializes as the entry being absent =
+    /// `Inherit` semantics).
+    fn spec_with(
+        global: bool,
+        controller_template: bool,
+        catalog_entry: Option<WorkspaceState>,
+        template_entry: Option<WorkspaceState>,
+    ) -> OperatorPolicySpec {
+        let mut cs = ControllerSuspend::default();
+        cs.template = controller_template;
+
+        let mut ws = WorkspaceSuspend::default();
+        if let Some(state) = catalog_entry {
+            ws.catalogs.insert(
+                "opensource".into(),
+                WorkspaceSuspendEntry {
+                    state,
+                    reason: Some(format!("catalog={:?}", state)),
+                },
+            );
+        }
+        if let Some(state) = template_entry {
+            ws.templates.insert(
+                "ns/foo".into(),
+                WorkspaceSuspendEntry {
+                    state,
+                    reason: Some(format!("template={:?}", state)),
+                },
+            );
+        }
+
+        OperatorPolicySpec {
+            global_suspend: global,
+            global_suspend_reason: if global {
+                Some("global-test".into())
+            } else {
+                None
+            },
+            controller_suspend: cs,
+            workspace_suspend: ws,
+        }
+    }
+
+    fn resolve(spec: &OperatorPolicySpec) -> SuspensionDecision {
+        resolve_template_state(spec, "ns", "foo", Some("opensource"))
+    }
+
+    // Precedence matrix from CLAUDE.md:
+    // | Catalog state | Template state | Effective | Why |
+    // | Inherit       | Inherit        | NotSusp.  | nothing applies |
+    // | Inherit       | Paused         | Paused    | template-specific |
+    // | Inherit       | Active         | Active    | template-specific |
+    // | Paused        | Inherit        | Paused    | catalog cascade |
+    // | Paused        | Active         | Active    | template overrides |
+    // | Paused        | Paused         | Paused    | both agree |
+    // | Active        | Inherit        | Active    | catalog carve-out |
+    // | Active        | Paused         | Paused    | template overrides |
+    // | Active        | Active         | Active    | both agree |
+
+    #[test]
+    fn precedence_inherit_inherit_no_pause() {
+        let spec = spec_with(false, false, None, None);
+        assert_eq!(resolve(&spec), SuspensionDecision::NotSuspended);
+    }
+
+    #[test]
+    fn precedence_template_paused_wins_over_inherit_catalog() {
+        let spec = spec_with(false, false, None, Some(WorkspaceState::Paused));
+        let d = resolve(&spec);
+        assert!(d.is_paused());
+        assert_eq!(d.source(), Some(SuspensionSource::Workspace));
+    }
+
+    #[test]
+    fn precedence_template_active_during_inherit_catalog() {
+        // Just template Active, nothing else applies — same as
+        // NotSuspended in observable behavior, but the source is
+        // tracked so the metric label and gauge stay accurate.
+        let spec = spec_with(false, false, None, Some(WorkspaceState::Active));
+        let d = resolve(&spec);
+        assert!(d.is_active_override());
+        assert_eq!(d.source(), Some(SuspensionSource::Workspace));
+    }
+
+    #[test]
+    fn precedence_catalog_paused_cascades_when_template_inherits() {
+        let spec = spec_with(false, false, Some(WorkspaceState::Paused), None);
+        let d = resolve(&spec);
+        assert!(d.is_paused());
+        assert_eq!(d.source(), Some(SuspensionSource::Catalog));
+    }
+
+    #[test]
+    fn precedence_catalog_paused_template_active_template_wins() {
+        let spec = spec_with(
+            false,
+            false,
+            Some(WorkspaceState::Paused),
+            Some(WorkspaceState::Active),
+        );
+        let d = resolve(&spec);
+        assert!(d.is_active_override(), "template Active overrides catalog Paused");
+        assert_eq!(d.source(), Some(SuspensionSource::Workspace));
+    }
+
+    #[test]
+    fn precedence_catalog_paused_template_paused_pauses() {
+        let spec = spec_with(
+            false,
+            false,
+            Some(WorkspaceState::Paused),
+            Some(WorkspaceState::Paused),
+        );
+        let d = resolve(&spec);
+        assert!(d.is_paused());
+        // Template wins because it's more specific and resolution
+        // stops at first non-Inherit.
+        assert_eq!(d.source(), Some(SuspensionSource::Workspace));
+    }
+
+    #[test]
+    fn precedence_catalog_active_cascades_carveout() {
+        // The user's killer use case: "monitoring github org during a
+        // global pause". Catalog Active = whole catalog runs.
+        let spec = spec_with(true, false, Some(WorkspaceState::Active), None);
+        let d = resolve(&spec);
+        assert!(d.is_active_override());
+        assert_eq!(d.source(), Some(SuspensionSource::Catalog));
+    }
+
+    #[test]
+    fn precedence_catalog_active_template_paused_template_wins() {
+        let spec = spec_with(
+            true,
+            false,
+            Some(WorkspaceState::Active),
+            Some(WorkspaceState::Paused),
+        );
+        let d = resolve(&spec);
+        assert!(d.is_paused(), "template Paused overrides catalog Active");
+        assert_eq!(d.source(), Some(SuspensionSource::Workspace));
+    }
+
+    #[test]
+    fn precedence_catalog_active_template_active() {
+        let spec = spec_with(
+            true,
+            false,
+            Some(WorkspaceState::Active),
+            Some(WorkspaceState::Active),
+        );
+        let d = resolve(&spec);
+        assert!(d.is_active_override());
+        // Most specific wins for source attribution.
+        assert_eq!(d.source(), Some(SuspensionSource::Workspace));
+    }
+
+    #[test]
+    fn global_pause_with_no_overrides_pauses_template() {
+        // Default behavior: no per-workspace override, global=paused →
+        // template paused, attributed to global layer.
+        let spec = spec_with(true, false, None, None);
+        let d = resolve(&spec);
+        assert!(d.is_paused());
+        assert_eq!(d.source(), Some(SuspensionSource::Global));
+        assert_eq!(d.reason(), Some("global-test"));
+    }
+
+    #[test]
+    fn global_pause_with_template_active_carves_out() {
+        // The other killer use case: global=paused but ONE template
+        // is configured to keep running.
+        let spec = spec_with(true, false, None, Some(WorkspaceState::Active));
+        let d = resolve(&spec);
+        assert!(d.is_active_override());
+        assert_eq!(d.source(), Some(SuspensionSource::Workspace));
+    }
+
+    #[test]
+    fn global_pause_with_catalog_active_carves_out_whole_catalog() {
+        let spec = spec_with(true, false, Some(WorkspaceState::Active), None);
+        let d = resolve(&spec);
+        assert!(d.is_active_override());
+        assert_eq!(d.source(), Some(SuspensionSource::Catalog));
+    }
+
+    #[test]
+    fn controller_suspend_pauses_when_no_workspace_override() {
+        let spec = spec_with(false, true, None, None);
+        let d = resolve(&spec);
+        assert!(d.is_paused());
+        assert_eq!(d.source(), Some(SuspensionSource::Controller));
+    }
+
+    #[test]
+    fn controller_suspend_yields_to_template_active() {
+        let spec = spec_with(false, true, None, Some(WorkspaceState::Active));
+        let d = resolve(&spec);
+        assert!(d.is_active_override());
+        assert_eq!(d.source(), Some(SuspensionSource::Workspace));
+    }
+
+    #[test]
+    fn orphan_template_skips_catalog_layer() {
+        // Template with no parent_catalog: cascade layer doesn't fire
+        // even when catalogs map has entries.
+        let mut ws = WorkspaceSuspend::default();
+        ws.catalogs.insert(
+            "opensource".into(),
+            WorkspaceSuspendEntry {
+                state: WorkspaceState::Paused,
+                reason: None,
+            },
+        );
+        let spec = OperatorPolicySpec {
+            workspace_suspend: ws,
+            ..Default::default()
+        };
+        let d = resolve_template_state(&spec, "ns", "orphan", None);
+        // Catalog Paused must not apply; falls through to NotSuspended.
+        assert_eq!(d, SuspensionDecision::NotSuspended);
+    }
+
+    #[test]
+    fn reason_propagates_from_template_entry() {
+        let mut ws = WorkspaceSuspend::default();
+        ws.templates.insert(
+            "ns/foo".into(),
+            WorkspaceSuspendEntry {
+                state: WorkspaceState::Paused,
+                reason: Some("debugging compile error".into()),
+            },
+        );
+        let spec = OperatorPolicySpec {
+            workspace_suspend: ws,
+            ..Default::default()
+        };
+        let d = resolve_template_state(&spec, "ns", "foo", None);
+        assert_eq!(d.reason(), Some("debugging compile error"));
+    }
+
+    #[test]
+    fn resolve_catalog_state_skips_cascade_layer() {
+        // Catalog resolution must NOT consult template-level entries.
+        let mut ws = WorkspaceSuspend::default();
+        ws.templates.insert(
+            "ns/foo".into(),
+            WorkspaceSuspendEntry {
+                state: WorkspaceState::Paused,
+                reason: None,
+            },
+        );
+        let spec = OperatorPolicySpec {
+            workspace_suspend: ws,
+            ..Default::default()
+        };
+        // Template entry does NOT pause the catalog itself.
+        let d = resolve_catalog_state(&spec, "opensource");
+        assert_eq!(d, SuspensionDecision::NotSuspended);
+    }
+
+    #[test]
+    fn resolve_catalog_state_honors_own_entry() {
+        let mut ws = WorkspaceSuspend::default();
+        ws.catalogs.insert(
+            "opensource".into(),
+            WorkspaceSuspendEntry {
+                state: WorkspaceState::Active,
+                reason: Some("rebuilding manifest".into()),
+            },
+        );
+        let spec = OperatorPolicySpec {
+            global_suspend: true,
+            global_suspend_reason: Some("rewrite".into()),
+            workspace_suspend: ws,
+            ..Default::default()
+        };
+        let d = resolve_catalog_state(&spec, "opensource");
+        assert!(d.is_active_override());
+        assert_eq!(d.source(), Some(SuspensionSource::Workspace));
+        assert_eq!(d.reason(), Some("rebuilding manifest"));
+    }
+
+    #[test]
+    fn resolve_catalog_state_honors_workspace_catalog_controller_suspend() {
+        let mut cs = ControllerSuspend::default();
+        cs.workspace_catalog = true;
+        let spec = OperatorPolicySpec {
+            controller_suspend: cs,
+            ..Default::default()
+        };
+        let d = resolve_catalog_state(&spec, "opensource");
+        assert!(d.is_paused());
+        assert_eq!(d.source(), Some(SuspensionSource::Controller));
+    }
+
+    #[test]
+    fn unrelated_template_still_inherits_cascade() {
+        // Catalog Active applies to *every* template under that
+        // catalog, not just specific ones.
+        let mut ws = WorkspaceSuspend::default();
+        ws.catalogs.insert(
+            "opensource".into(),
+            WorkspaceSuspendEntry {
+                state: WorkspaceState::Active,
+                reason: None,
+            },
+        );
+        let spec = OperatorPolicySpec {
+            global_suspend: true,
+            workspace_suspend: ws,
+            ..Default::default()
+        };
+        let d_a = resolve_template_state(&spec, "ns", "tmpl-a", Some("opensource"));
+        let d_b = resolve_template_state(&spec, "ns", "tmpl-b", Some("opensource"));
+        assert!(d_a.is_active_override());
+        assert!(d_b.is_active_override());
+        assert_eq!(d_a.source(), Some(SuspensionSource::Catalog));
+        assert_eq!(d_b.source(), Some(SuspensionSource::Catalog));
+    }
+
+    #[test]
+    fn pause_count_under_global_pause_carveout_pattern() {
+        // Realistic scenario: globalSuspend=true with one catalog
+        // carved out (Active) and one template inside that catalog
+        // overridden back to Paused.
+        let mut ws = WorkspaceSuspend::default();
+        ws.catalogs.insert(
+            "opensource".into(),
+            WorkspaceSuspendEntry {
+                state: WorkspaceState::Active,
+                reason: Some("monitoring".into()),
+            },
+        );
+        ws.templates.insert(
+            "ns/broken".into(),
+            WorkspaceSuspendEntry {
+                state: WorkspaceState::Paused,
+                reason: Some("compile error".into()),
+            },
+        );
+        let spec = OperatorPolicySpec {
+            global_suspend: true,
+            global_suspend_reason: Some("rewrite".into()),
+            workspace_suspend: ws,
+            ..Default::default()
+        };
+
+        // tmpl-healthy (no per-template override) inherits catalog Active.
+        let d_healthy =
+            resolve_template_state(&spec, "ns", "tmpl-healthy", Some("opensource"));
+        assert!(d_healthy.is_active_override());
+
+        // tmpl-broken has explicit Paused — overrides catalog Active.
+        let d_broken = resolve_template_state(&spec, "ns", "broken", Some("opensource"));
+        assert!(d_broken.is_paused());
+        assert_eq!(d_broken.reason(), Some("compile error"));
+
+        // Template not under any catalog inherits global pause.
+        let d_orphan = resolve_template_state(&spec, "ns", "orphan", None);
+        assert!(d_orphan.is_paused());
+        assert_eq!(d_orphan.source(), Some(SuspensionSource::Global));
+    }
+
+    #[test]
+    fn count_active_overrides_one_carveout() {
+        let mut ws = WorkspaceSuspend::default();
+        ws.catalogs.insert(
+            "opensource".into(),
+            WorkspaceSuspendEntry {
+                state: WorkspaceState::Active,
+                reason: None,
+            },
+        );
+        ws.templates.insert(
+            "ns/foo".into(),
+            WorkspaceSuspendEntry {
+                state: WorkspaceState::Paused,
+                reason: None,
+            },
+        );
+        // 1 Active entry across both maps (catalogs.opensource).
+        assert_eq!(ws.count_active_overrides(), 1);
     }
 }

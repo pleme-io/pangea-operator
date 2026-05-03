@@ -102,7 +102,8 @@ pub use synthesizer_format::{
 // Re-export OperatorPolicy types — fleet-wide kill-switch primitive.
 pub use operator_policy::{
     ControllerKind, ControllerSuspend, OperatorPolicy, OperatorPolicySpec,
-    OperatorPolicyStatus, OPERATOR_POLICY_SINGLETON,
+    OperatorPolicyStatus, SuspensionDecision, SuspensionSource, WorkspaceState,
+    WorkspaceSuspend, WorkspaceSuspendEntry, OPERATOR_POLICY_SINGLETON,
 };
 
 // Re-export ImagePipeline types

@@ -89,6 +89,18 @@ async fn reconcile(wsc: Arc<WorkspaceCatalog>, ctx: Arc<Context>) -> Result<Acti
         return Ok(action);
     }
 
+    // Per-workspace pause: `OperatorPolicy.spec.workspaceSuspend.catalogs[<name>]`.
+    // Tri-state precedence ladder (catalog entry → controllerSuspend
+    // → globalSuspend) — `Active` carves this catalog out of a more-
+    // general pause; `Paused` freezes it regardless. Cache-only
+    // variant (no metrics handle in this context).
+    if let Some(action) = crate::controller::policy_gate::evaluate_catalog_against_cache(
+        &ctx.operator_policy,
+        &name,
+    ) {
+        return Ok(action);
+    }
+
     if wsc.spec.suspend {
         info!(workspace = %name, "WorkspaceCatalog suspended; skipping reconcile");
         return Ok(Action::requeue(Duration::from_secs(300)));

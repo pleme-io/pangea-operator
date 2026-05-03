@@ -32,11 +32,7 @@ impl OperatorPolicyCache {
     /// non-default `OperatorPolicy/default`.
     pub fn new_permissive() -> Self {
         Self {
-            snapshot: RwLock::new(Arc::new(OperatorPolicySpec {
-                global_suspend: false,
-                global_suspend_reason: None,
-                controller_suspend: Default::default(),
-            })),
+            snapshot: RwLock::new(Arc::new(OperatorPolicySpec::default())),
             skipped: AtomicU64::new(0),
         }
     }
@@ -108,7 +104,7 @@ mod tests {
         cache.store(OperatorPolicySpec {
             global_suspend: true,
             global_suspend_reason: Some("test".into()),
-            controller_suspend: ControllerSuspend::default(),
+            ..Default::default()
         });
         let spec = cache.read();
         assert!(spec.global_suspend);
@@ -146,7 +142,7 @@ mod tests {
                     cache.store(OperatorPolicySpec {
                         global_suspend: i % 2 == 0,
                         global_suspend_reason: Some(format!("writer-{}", i)),
-                        controller_suspend: ControllerSuspend::default(),
+                        ..Default::default()
                     });
                 })
             })

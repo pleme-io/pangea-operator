@@ -20,7 +20,9 @@
 //! be invisible. The kill switch is one-way reversible by intent.
 
 use crate::controller::{operator_policy_cache::OperatorPolicyCache, ControllerState};
-use crate::crd::{OperatorPolicy, OperatorPolicyStatus, OPERATOR_POLICY_SINGLETON};
+use crate::crd::{
+    OperatorPolicy, OperatorPolicySpec, OperatorPolicyStatus, OPERATOR_POLICY_SINGLETON,
+};
 use crate::error::{Error, Result};
 
 use futures::StreamExt;
@@ -107,6 +109,12 @@ async fn reconcile(
     // controller's `policy_gate` sees the new value on its next read.
     state.operator_policy.store(policy.spec.clone());
 
+    // Update the workspace_active_override gauge from the spec.
+    // Single-writer pattern: this controller owns the gauge, every
+    // policy reconcile rebuilds the snapshot. No per-template or
+    // per-catalog tracking required elsewhere.
+    publish_active_override_gauges(&state, &policy.spec);
+
     if policy.spec.global_suspend {
         let reason = policy
             .spec
@@ -117,11 +125,16 @@ async fn reconcile(
     }
 
     // Layer 2: surface the resolved view + counter into status.
+    // workspace_overrides is computed directly from spec — it's a
+    // count of `Active` carve-outs across both the templates and
+    // catalogs maps, surfaced via printer column for at-a-glance
+    // operator visibility.
     let status = OperatorPolicyStatus {
         observed_generation: policy.metadata.generation.unwrap_or(0),
         last_changed_at: Some(chrono::Utc::now()),
         effective: Some(policy.spec.clone()),
         reconciles_skipped: state.operator_policy.skipped(),
+        workspace_overrides: policy.spec.workspace_suspend.count_active_overrides(),
     };
 
     let api: Api<OperatorPolicy> = Api::all(state.client.clone());
@@ -150,6 +163,55 @@ fn error_policy(
     Action::requeue(ERROR_REQUEUE_INTERVAL)
 }
 
+/// Publish per-workspace `Active` carve-out gauges from the resolved
+/// spec. Reset-on-each-reconcile semantics: drop every previous
+/// label-set value to 0, then set the active ones to 1. Cheap because
+/// the spec map is the source of truth and Prometheus retains zero
+/// samples through the next scrape (gauge reset is idempotent).
+///
+/// Note: the cascade behavior (a template inheriting Active from its
+/// parent catalog) is NOT reflected here — only direct entries with
+/// `state == Active` get a gauge sample. The catalog itself emits
+/// the carve-out signal; child templates running during a global
+/// pause are inferred from `policy_skipped_total` staying flat for
+/// templates under that catalog's selector. Keeps cardinality
+/// bounded and the source-of-truth single.
+fn publish_active_override_gauges(state: &ControllerState, spec: &OperatorPolicySpec) {
+    use crate::crd::WorkspaceState;
+
+    // Reset: clear every label-set we might have previously written.
+    // `with_label_values` does NOT remove a series, so we explicitly
+    // set existing template/catalog entries to 0 first, then set
+    // the Actives to 1. Prometheus scrape sees the consistent view.
+    state.metrics.workspace_active_override.reset();
+
+    for (key, entry) in &spec.workspace_suspend.templates {
+        if entry.state != WorkspaceState::Active {
+            continue;
+        }
+        // key is "<namespace>/<name>" — split for the gauge labels so
+        // dashboards can group by namespace.
+        let (namespace, name) = key.split_once('/').unwrap_or(("", key.as_str()));
+        state
+            .metrics
+            .workspace_active_override
+            .with_label_values(&["template", namespace, name, "workspace"])
+            .set(1);
+    }
+
+    for (name, entry) in &spec.workspace_suspend.catalogs {
+        if entry.state != WorkspaceState::Active {
+            continue;
+        }
+        // Catalogs are cluster-scoped (no namespace).
+        state
+            .metrics
+            .workspace_active_override
+            .with_label_values(&["catalog", "", name, "workspace"])
+            .set(1);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,9 +231,8 @@ mod tests {
         let mut cs = ControllerSuspend::default();
         cs.dashboard = true;
         let spec = OperatorPolicySpec {
-            global_suspend: false,
-            global_suspend_reason: None,
             controller_suspend: cs,
+            ..Default::default()
         };
         cache.store(spec.clone());
         let read = cache.read();
@@ -182,9 +243,8 @@ mod tests {
     fn status_struct_serializes_with_camelcase() {
         let status = OperatorPolicyStatus {
             observed_generation: 5,
-            last_changed_at: None,
-            effective: None,
             reconciles_skipped: 42,
+            ..Default::default()
         };
         let json = serde_json::to_value(&status).unwrap();
         assert!(json.get("observedGeneration").is_some());
