@@ -14,15 +14,21 @@
 
 use crate::crd::{OperatorPolicySpec, OPERATOR_POLICY_SINGLETON};
 
+use arc_swap::ArcSwap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
-/// Lock-protected snapshot + skipped-count counter.
+/// Lock-free snapshot + skipped-count counter.
 ///
 /// Cheap to clone (Arc-wrapped); pass into every controller via
-/// `ControllerState`.
+/// `ControllerState`. Reads are atomic-pointer-load fast-path
+/// (sub-100ns) — important because every reconcile of every CR
+/// hits this cache via `policy_gate::evaluate_against_cache`,
+/// so contention on a `RwLock` would ripple under fleet load.
+/// Writes (policy CR mutation) are rare; the ArcSwap shape gives
+/// readers a wait-free path with the existing copy-on-write Arc.
 pub struct OperatorPolicyCache {
-    snapshot: RwLock<Arc<OperatorPolicySpec>>,
+    snapshot: ArcSwap<OperatorPolicySpec>,
     skipped: AtomicU64,
 }
 
@@ -32,29 +38,25 @@ impl OperatorPolicyCache {
     /// non-default `OperatorPolicy/default`.
     pub fn new_permissive() -> Self {
         Self {
-            snapshot: RwLock::new(Arc::new(OperatorPolicySpec::default())),
+            snapshot: ArcSwap::from_pointee(OperatorPolicySpec::default()),
             skipped: AtomicU64::new(0),
         }
     }
 
-    /// Cheap read of the current spec. Holds the read lock only long
-    /// enough to clone the `Arc`. Returns an `Arc` so callers can
-    /// inspect fields without holding the lock.
+    /// Cheap read of the current spec. Wait-free atomic-pointer
+    /// load + Arc clone — does not block any other reader or writer.
+    /// Returns an `Arc` so callers can inspect fields without
+    /// holding any cache state.
     pub fn read(&self) -> Arc<OperatorPolicySpec> {
-        self.snapshot
-            .read()
-            .expect("operator-policy snapshot lock poisoned")
-            .clone()
+        self.snapshot.load_full()
     }
 
     /// Replace the snapshot. Called by the watcher loop on
-    /// `OperatorPolicy/default` Apply / Delete events.
+    /// `OperatorPolicy/default` Apply / Delete events. Atomic
+    /// pointer swap; readers in flight observe either the old or
+    /// new snapshot — never a torn or partial value.
     pub fn store(&self, spec: OperatorPolicySpec) {
-        let mut guard = self
-            .snapshot
-            .write()
-            .expect("operator-policy snapshot lock poisoned");
-        *guard = Arc::new(spec);
+        self.snapshot.store(Arc::new(spec));
     }
 
     /// Increment the skipped-reconcile counter. The

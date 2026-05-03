@@ -392,6 +392,25 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" "std" ];
       };
+      "arc-swap" = rec {
+        crateName = "arc-swap";
+        version = "1.9.1";
+        edition = "2018";
+        sha256 = "01xjlahcya8igdalxmda375lnlhjqwjz0cdqhy0bc1jkyzb1yfka";
+        libName = "arc_swap";
+        authors = [
+          "Michal 'vorner' Vaner <vorner@vorner.cz>"
+        ];
+        dependencies = [
+          {
+            name = "rustversion";
+            packageId = "rustversion";
+          }
+        ];
+        features = {
+          "serde" = [ "dep:serde" ];
+        };
+      };
       "ascii_utils" = rec {
         crateName = "ascii_utils";
         version = "0.9.3";
@@ -8155,6 +8174,10 @@ rec {
           {
             name = "anyhow";
             packageId = "anyhow";
+          }
+          {
+            name = "arc-swap";
+            packageId = "arc-swap";
           }
           {
             name = "async-graphql";

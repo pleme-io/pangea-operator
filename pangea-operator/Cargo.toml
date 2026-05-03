@@ -95,6 +95,7 @@ async-trait = "0.1"
 
 # JSON Schema for CRDs
 schemars.workspace = true
+arc-swap = "1.9.1"
 
 [build-dependencies]
 tonic-build = { version = "0.12", optional = true }
