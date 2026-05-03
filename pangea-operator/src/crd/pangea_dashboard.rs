@@ -19,6 +19,7 @@ use super::Condition;
     group = "pangea.pleme.io",
     version = "v1alpha1",
     kind = "PangeaDashboard",
+    namespaced,
     status = "PangeaDashboardStatus",
     shortname = "pd",
     category = "pangea",
