@@ -1,39 +1,24 @@
-//! Finalizer helpers for `InfrastructureTemplate` reconciliation.
+//! Finalizer plumbing for `InfrastructureTemplate`.
 //!
-//! Lifted from `template_controller.rs` during the 2026-05-03 review
-//! pass (R6). The 3329-line monolith was a barrier to navigation;
-//! splitting cleanly-separable helper groups into sibling modules
-//! under `controller/template/` reduces the main file to its actual
-//! responsibility (the reconcile state machine).
+//! Lifted from `template_controller.rs` during R6, then collapsed to
+//! a thin wrapper over `crate::controller::finalizer::*` during T5
+//! when the same shape was identified across 4 other controllers.
 //!
-//! Shape mirrors the per-CRD finalizer helpers in image_pipeline,
-//! packer_build, ami_test, compliance_schedule. If a fourth controller
-//! ever needs the exact same `add` / `remove` / `has` triple, lift
-//! again into a generic `finalizer<T>(client, name, ns, finalizer_str)`
-//! helper. Until then, the duplication is honest — each controller's
-//! Finalizer string is different and the API surface is tiny.
-
-use crate::crd::InfrastructureTemplate;
-use crate::error::Result;
-use kube::api::{Api, Patch, PatchParams};
-use kube::ResourceExt;
-use tracing::{debug, info};
+//! The thin per-CRD wrappers exist only to bind the canonical
+//! finalizer string to the type. The body of has/add/remove is the
+//! generic helper.
 
 use crate::controller::ControllerState;
+use crate::crd::InfrastructureTemplate;
+use crate::error::Result;
 
-/// Canonical finalizer string for `InfrastructureTemplate`. Re-exported
-/// at module-public scope so the reconciler + helpers share one
-/// constant — drift here would orphan templates on delete.
+/// Canonical finalizer string for `InfrastructureTemplate`. Drift
+/// here would orphan templates on delete.
 pub const FINALIZER_NAME: &str = "pangea.pleme.io/cleanup";
 
 /// Returns true iff the canonical finalizer is currently attached.
 pub fn has_finalizer(template: &InfrastructureTemplate) -> bool {
-    template
-        .metadata
-        .finalizers
-        .as_ref()
-        .map(|f| f.contains(&FINALIZER_NAME.to_string()))
-        .unwrap_or(false)
+    crate::controller::finalizer::has(template, FINALIZER_NAME)
 }
 
 /// Add the canonical finalizer via a server-side merge patch.
@@ -41,56 +26,19 @@ pub async fn add_finalizer(
     template: &InfrastructureTemplate,
     state: &ControllerState,
 ) -> Result<()> {
-    let name = template.name_any();
-    let namespace = template.namespace().unwrap_or_default();
-    let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
-
-    let patch = serde_json::json!({
-        "metadata": { "finalizers": [FINALIZER_NAME] }
-    });
-
-    api.patch(
-        &name,
-        &PatchParams::apply("pangea-operator"),
-        &Patch::Merge(&patch),
-    )
-    .await?;
-
-    debug!("Finalizer added");
-    Ok(())
+    crate::controller::finalizer::add(template, FINALIZER_NAME, &state.client)
+        .await
+        .map_err(Into::into)
 }
 
 /// Remove the canonical finalizer via a server-side merge patch.
-/// The new finalizers list is the previous list minus our entry —
-/// other operators' finalizers are preserved.
 pub async fn remove_finalizer(
     template: &InfrastructureTemplate,
     state: &ControllerState,
 ) -> Result<()> {
-    let name = template.name_any();
-    let namespace = template.namespace().unwrap_or_default();
-    let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
-
-    let finalizers: Vec<String> = template
-        .metadata
-        .finalizers
-        .as_ref()
-        .map(|f| f.iter().filter(|s| s.as_str() != FINALIZER_NAME).cloned().collect())
-        .unwrap_or_default();
-
-    let patch = serde_json::json!({
-        "metadata": { "finalizers": finalizers }
-    });
-
-    api.patch(
-        &name,
-        &PatchParams::apply("pangea-operator"),
-        &Patch::Merge(&patch),
-    )
-    .await?;
-
-    info!("Finalizer removed");
-    Ok(())
+    crate::controller::finalizer::remove(template, FINALIZER_NAME, &state.client)
+        .await
+        .map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -116,15 +64,5 @@ mod tests {
         assert!(!has_finalizer(&fake(None)));
         assert!(has_finalizer(&fake(Some(vec![FINALIZER_NAME.to_string()]))));
         assert!(!has_finalizer(&fake(Some(vec!["other.io/finalizer".to_string()]))));
-    }
-
-    #[test]
-    fn has_finalizer_handles_finalizer_among_several() {
-        let mixed = vec![
-            "other.io/cleanup".to_string(),
-            FINALIZER_NAME.to_string(),
-            "yet-another/finalizer".to_string(),
-        ];
-        assert!(has_finalizer(&fake(Some(mixed))));
     }
 }

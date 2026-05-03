@@ -465,46 +465,25 @@ async fn cleanup_jobs(
 // ---------------------------------------------------------------------------
 
 fn has_finalizer(schedule: &ComplianceSchedule) -> bool {
-    schedule
-        .metadata
-        .finalizers
-        .as_ref()
-        .map(|f| f.contains(&FINALIZER_NAME.to_string()))
-        .unwrap_or(false)
+    crate::controller::finalizer::has(schedule, FINALIZER_NAME)
 }
 
 async fn add_finalizer(
     schedule: &ComplianceSchedule,
     state: &ControllerState,
 ) -> std::result::Result<(), Error> {
-    let namespace = schedule.namespace().unwrap_or_default();
-    let name = schedule.name_any();
-    let api: Api<ComplianceSchedule> = Api::namespaced(state.client.clone(), &namespace);
-    let patch = serde_json::json!({ "metadata": { "finalizers": [FINALIZER_NAME] } });
-    api.patch(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+    crate::controller::finalizer::add(schedule, FINALIZER_NAME, &state.client)
         .await
-        .map_err(Error::Kube)?;
-    Ok(())
+        .map_err(Error::Kube)
 }
 
 async fn remove_finalizer(
     schedule: &ComplianceSchedule,
     state: &ControllerState,
 ) -> std::result::Result<(), Error> {
-    let namespace = schedule.namespace().unwrap_or_default();
-    let name = schedule.name_any();
-    let api: Api<ComplianceSchedule> = Api::namespaced(state.client.clone(), &namespace);
-    let finalizers: Vec<String> = schedule
-        .metadata
-        .finalizers
-        .as_ref()
-        .map(|f| f.iter().filter(|s| s.as_str() != FINALIZER_NAME).cloned().collect())
-        .unwrap_or_default();
-    let patch = serde_json::json!({ "metadata": { "finalizers": finalizers } });
-    api.patch(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+    crate::controller::finalizer::remove(schedule, FINALIZER_NAME, &state.client)
         .await
-        .map_err(Error::Kube)?;
-    Ok(())
+        .map_err(Error::Kube)
 }
 
 fn error_policy(

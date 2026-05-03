@@ -620,66 +620,29 @@ async fn update_status_with_ami(
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Finalizer helpers
-// ---------------------------------------------------------------------------
+// Finalizer helpers — generic plumbing lives in
+// `crate::controller::finalizer`. Wrappers preserve the pre-T5 names.
 
 fn has_finalizer(build: &PackerBuild) -> bool {
-    build
-        .metadata
-        .finalizers
-        .as_ref()
-        .map(|f| f.contains(&FINALIZER_NAME.to_string()))
-        .unwrap_or(false)
+    crate::controller::finalizer::has(build, FINALIZER_NAME)
 }
 
 async fn add_finalizer(
     build: &PackerBuild,
     state: &ControllerState,
 ) -> std::result::Result<(), Error> {
-    let namespace = build.namespace().unwrap_or_default();
-    let name = build.name_any();
-    let api: Api<PackerBuild> = Api::namespaced(state.client.clone(), &namespace);
-
-    let patch = serde_json::json!({
-        "metadata": {
-            "finalizers": [FINALIZER_NAME]
-        }
-    });
-
-    api.patch(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+    crate::controller::finalizer::add(build, FINALIZER_NAME, &state.client)
         .await
-        .map_err(Error::Kube)?;
-
-    Ok(())
+        .map_err(Error::Kube)
 }
 
 async fn remove_finalizer(
     build: &PackerBuild,
     state: &ControllerState,
 ) -> std::result::Result<(), Error> {
-    let namespace = build.namespace().unwrap_or_default();
-    let name = build.name_any();
-    let api: Api<PackerBuild> = Api::namespaced(state.client.clone(), &namespace);
-
-    let finalizers: Vec<String> = build
-        .metadata
-        .finalizers
-        .as_ref()
-        .map(|f| f.iter().filter(|s| s.as_str() != FINALIZER_NAME).cloned().collect())
-        .unwrap_or_default();
-
-    let patch = serde_json::json!({
-        "metadata": {
-            "finalizers": finalizers
-        }
-    });
-
-    api.patch(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+    crate::controller::finalizer::remove(build, FINALIZER_NAME, &state.client)
         .await
-        .map_err(Error::Kube)?;
-
-    Ok(())
+        .map_err(Error::Kube)
 }
 
 // ---------------------------------------------------------------------------

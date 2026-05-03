@@ -756,61 +756,25 @@ async fn update_suites(
 // ---------------------------------------------------------------------------
 
 fn has_finalizer(test: &AmiTest) -> bool {
-    test.metadata
-        .finalizers
-        .as_ref()
-        .map(|f| f.contains(&FINALIZER_NAME.to_string()))
-        .unwrap_or(false)
+    crate::controller::finalizer::has(test, FINALIZER_NAME)
 }
 
 async fn add_finalizer(
     test: &AmiTest,
     state: &ControllerState,
 ) -> std::result::Result<(), Error> {
-    let namespace = test.namespace().unwrap_or_default();
-    let name = test.name_any();
-    let api: Api<AmiTest> = Api::namespaced(state.client.clone(), &namespace);
-
-    let patch = serde_json::json!({
-        "metadata": { "finalizers": [FINALIZER_NAME] }
-    });
-
-    api.patch(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+    crate::controller::finalizer::add(test, FINALIZER_NAME, &state.client)
         .await
-        .map_err(Error::Kube)?;
-
-    Ok(())
+        .map_err(Error::Kube)
 }
 
 async fn remove_finalizer(
     test: &AmiTest,
     state: &ControllerState,
 ) -> std::result::Result<(), Error> {
-    let namespace = test.namespace().unwrap_or_default();
-    let name = test.name_any();
-    let api: Api<AmiTest> = Api::namespaced(state.client.clone(), &namespace);
-
-    let finalizers: Vec<String> = test
-        .metadata
-        .finalizers
-        .as_ref()
-        .map(|f| {
-            f.iter()
-                .filter(|s| s.as_str() != FINALIZER_NAME)
-                .cloned()
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let patch = serde_json::json!({
-        "metadata": { "finalizers": finalizers }
-    });
-
-    api.patch(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+    crate::controller::finalizer::remove(test, FINALIZER_NAME, &state.client)
         .await
-        .map_err(Error::Kube)?;
-
-    Ok(())
+        .map_err(Error::Kube)
 }
 
 fn error_policy(

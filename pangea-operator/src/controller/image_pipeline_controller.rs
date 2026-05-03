@@ -972,67 +972,30 @@ async fn update_verification_status(
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Finalizer helpers
-// ---------------------------------------------------------------------------
+// Finalizer helpers — generic plumbing lives in
+// `crate::controller::finalizer`. The wrappers below preserve the
+// pre-T5 names so the rest of this file's call sites stay unchanged.
 
 fn has_finalizer(pipeline: &ImagePipeline) -> bool {
-    pipeline
-        .metadata
-        .finalizers
-        .as_ref()
-        .map(|f| f.contains(&FINALIZER_NAME.to_string()))
-        .unwrap_or(false)
+    crate::controller::finalizer::has(pipeline, FINALIZER_NAME)
 }
 
 async fn add_finalizer(
     pipeline: &ImagePipeline,
     state: &ControllerState,
 ) -> std::result::Result<(), Error> {
-    let namespace = pipeline.namespace().unwrap_or_default();
-    let name = pipeline.name_any();
-    let api: Api<ImagePipeline> = Api::namespaced(state.client.clone(), &namespace);
-
-    let patch = serde_json::json!({
-        "metadata": { "finalizers": [FINALIZER_NAME] }
-    });
-
-    api.patch(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+    crate::controller::finalizer::add(pipeline, FINALIZER_NAME, &state.client)
         .await
-        .map_err(Error::Kube)?;
-
-    Ok(())
+        .map_err(Error::Kube)
 }
 
 async fn remove_finalizer(
     pipeline: &ImagePipeline,
     state: &ControllerState,
 ) -> std::result::Result<(), Error> {
-    let namespace = pipeline.namespace().unwrap_or_default();
-    let name = pipeline.name_any();
-    let api: Api<ImagePipeline> = Api::namespaced(state.client.clone(), &namespace);
-
-    let finalizers: Vec<String> = pipeline
-        .metadata
-        .finalizers
-        .as_ref()
-        .map(|f| {
-            f.iter()
-                .filter(|s| s.as_str() != FINALIZER_NAME)
-                .cloned()
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let patch = serde_json::json!({
-        "metadata": { "finalizers": finalizers }
-    });
-
-    api.patch(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+    crate::controller::finalizer::remove(pipeline, FINALIZER_NAME, &state.client)
         .await
-        .map_err(Error::Kube)?;
-
-    Ok(())
+        .map_err(Error::Kube)
 }
 
 fn error_policy(
