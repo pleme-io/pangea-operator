@@ -2957,16 +2957,15 @@ async fn resolve_provider_config(
 fn error_policy(
     _obj: Arc<InfrastructureTemplate>,
     error: &Error,
-    _ctx: Arc<ControllerState>,
+    ctx: Arc<ControllerState>,
 ) -> Action {
-    error!(%error, "Reconciliation error");
-
-    if error.is_retryable() {
-        Action::requeue(ERROR_REQUEUE_INTERVAL)
-    } else {
-        // Non-retryable errors get longer backoff
-        Action::requeue(Duration::from_secs(300))
-    }
+    use crate::controller::error_policy::{run_error_policy, tiered_backoff};
+    run_error_policy(
+        &ctx.metrics,
+        crate::crd::ControllerKind::Template,
+        error,
+        tiered_backoff(error.is_retryable()),
+    )
 }
 
 impl From<ReconcileAction> for Action {

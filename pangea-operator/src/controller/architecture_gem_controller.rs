@@ -438,10 +438,12 @@ async fn patch_status_failed(
 }
 
 fn error_policy(_obj: Arc<ArchitectureGem>, err: &Error, ctx: Arc<Context>) -> Action {
-    ctx.metrics
-        .record_reconcile(crate::crd::ControllerKind::ArchitectureGem, "error");
-    error!("ArchitectureGem error policy: {}", err);
-    Action::requeue(Duration::from_secs(60))
+    crate::controller::error_policy::run_error_policy(
+        &ctx.metrics,
+        crate::crd::ControllerKind::ArchitectureGem,
+        err,
+        Duration::from_secs(60),
+    )
 }
 
 fn parse_interval(s: &str) -> Duration {

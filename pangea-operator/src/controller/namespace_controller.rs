@@ -270,10 +270,14 @@ async fn update_status(
 fn error_policy(
     _obj: Arc<PangeaNamespace>,
     error: &Error,
-    _ctx: Arc<ControllerState>,
+    ctx: Arc<ControllerState>,
 ) -> Action {
-    error!(%error, "Namespace reconciliation error");
-    Action::requeue(ERROR_REQUEUE_INTERVAL)
+    crate::controller::error_policy::run_error_policy(
+        &ctx.metrics,
+        crate::crd::ControllerKind::Namespace,
+        error,
+        ERROR_REQUEUE_INTERVAL,
+    )
 }
 
 #[cfg(test)]

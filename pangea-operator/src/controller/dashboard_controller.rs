@@ -71,13 +71,15 @@ impl DashboardController {
 
 fn error_policy(
     _pd: Arc<PangeaDashboard>,
-    _error: &Error,
-    _ctx: Arc<ControllerState>,
+    error: &Error,
+    ctx: Arc<ControllerState>,
 ) -> Action {
-    _ctx
-        .metrics
-        .record_reconcile(crate::crd::ControllerKind::Dashboard, "error");
-    Action::requeue(Duration::from_secs(30))
+    crate::controller::error_policy::run_error_policy(
+        &ctx.metrics,
+        crate::crd::ControllerKind::Dashboard,
+        error,
+        Duration::from_secs(30),
+    )
 }
 
 #[instrument(skip(state), fields(name = %pd.name_any()))]

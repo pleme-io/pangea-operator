@@ -405,13 +405,14 @@ async fn record_flow_event(
 fn error_policy(
     _obj: Arc<InfrastructureFlow>,
     error: &Error,
-    _ctx: Arc<ControllerState>,
+    ctx: Arc<ControllerState>,
 ) -> Action {
-    _ctx
-        .metrics
-        .record_reconcile(crate::crd::ControllerKind::Flow, "error");
-    error!(%error, "Flow reconciliation error");
-    Action::requeue(Duration::from_secs(60))
+    crate::controller::error_policy::run_error_policy(
+        &ctx.metrics,
+        crate::crd::ControllerKind::Flow,
+        error,
+        Duration::from_secs(60),
+    )
 }
 
 #[cfg(test)]

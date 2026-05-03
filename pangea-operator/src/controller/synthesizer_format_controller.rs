@@ -282,13 +282,14 @@ fn singularize(word: &str) -> String {
 fn error_policy(
     _format: Arc<SynthesizerFormat>,
     error: &Error,
-    _ctx: Arc<ControllerState>,
+    ctx: Arc<ControllerState>,
 ) -> Action {
-    _ctx
-        .metrics
-        .record_reconcile(crate::crd::ControllerKind::SynthesizerFormat, "error");
-    warn!(error = %error, "SynthesizerFormat error policy triggered");
-    Action::requeue(Duration::from_secs(60))
+    crate::controller::error_policy::run_error_policy(
+        &ctx.metrics,
+        crate::crd::ControllerKind::SynthesizerFormat,
+        error,
+        Duration::from_secs(60),
+    )
 }
 
 #[cfg(test)]

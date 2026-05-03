@@ -690,17 +690,15 @@ async fn remove_finalizer(
 fn error_policy(
     _build: Arc<PackerBuild>,
     error: &Error,
-    _ctx: Arc<ControllerState>,
+    ctx: Arc<ControllerState>,
 ) -> Action {
-    _ctx
-        .metrics
-        .record_reconcile(crate::crd::ControllerKind::PackerBuild, "error");
-    warn!(error = %error, "PackerBuild error policy triggered");
-    if error.is_retryable() {
-        Action::requeue(ERROR_REQUEUE_INTERVAL)
-    } else {
-        Action::requeue(Duration::from_secs(300))
-    }
+    use crate::controller::error_policy::{run_error_policy, tiered_backoff};
+    run_error_policy(
+        &ctx.metrics,
+        crate::crd::ControllerKind::PackerBuild,
+        error,
+        tiered_backoff(error.is_retryable()),
+    )
 }
 
 #[cfg(test)]

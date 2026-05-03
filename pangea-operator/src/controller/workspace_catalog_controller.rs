@@ -289,10 +289,12 @@ fn status_content_equal(a: &WorkspaceCatalogStatus, b: &WorkspaceCatalogStatus) 
 }
 
 fn error_policy(_obj: Arc<WorkspaceCatalog>, err: &Error, ctx: Arc<Context>) -> Action {
-    ctx.metrics
-        .record_reconcile(crate::crd::ControllerKind::WorkspaceCatalog, "error");
-    error!("WorkspaceCatalog error policy: {}", err);
-    Action::requeue(Duration::from_secs(60))
+    crate::controller::error_policy::run_error_policy(
+        &ctx.metrics,
+        crate::crd::ControllerKind::WorkspaceCatalog,
+        err,
+        Duration::from_secs(60),
+    )
 }
 
 /// Look up the parent `WorkspaceCatalog` for an
