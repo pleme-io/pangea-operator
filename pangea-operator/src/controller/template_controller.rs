@@ -304,30 +304,36 @@ async fn dispatch_template_phase(
     template: &InfrastructureTemplate,
     state: &ControllerState,
 ) -> Result<ReconcileAction> {
-    Ok(match current_phase {
-        Phase::Pending => handle_pending(template, state).await?,
-        // M2 — Verifying / Verified phases. Skeleton: drop straight to
-        // Compiling. Once M1's ArchitectureGem registry lookup is
-        // wired into the operator's runtime context, `Verifying`
-        // queries the registry and only advances to `Verified` when
-        // every required gem is `Loaded`. Until then, fall through.
-        // See theory/PANGEA-WORKSPACE-RECONCILIATION.md M2.
-        Phase::Verifying | Phase::Verified => {
-            update_phase(template, Phase::Compiling, state).await?;
-            ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL)
-        }
-        Phase::Compiling => handle_compiling(template, state).await?,
-        Phase::Initializing => handle_initializing(template, state).await?,
-        Phase::Planning => handle_planning(template, state).await?,
-        Phase::Applying => handle_applying(template, state).await?,
-        Phase::Ready => handle_ready(template, state).await?,
-        Phase::Drifted => handle_drifted(template, state).await?,
-        Phase::Failed => handle_failed(template, state).await?,
-        Phase::Destroying => handle_destroying(template, state).await?,
-    })
+    // Verifying / Verified are synthetic forward-stub phases — handled
+    // inline rather than via the trait dispatch. See M2 in
+    // theory/PANGEA-WORKSPACE-RECONCILIATION.md for the planned
+    // ArchitectureGem readiness check that makes them load-bearing.
+    if matches!(current_phase, Phase::Verifying | Phase::Verified) {
+        update_phase(template, Phase::Compiling, state).await?;
+        return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
+    }
+
+    // Per-phase trait dispatch (D2). Each Phase variant has a typed
+    // ReconcilePhase impl in `controller::template_phase`; the impl is
+    // a thin wrapper around the corresponding handle_<phase> body in
+    // this file. for_phase returns None only for Verifying/Verified
+    // (which we already handled inline above).
+    let handler = crate::controller::template_phase::for_phase(current_phase)
+        .expect("every concrete Phase has a ReconcilePhase impl");
+    handler.handle(template, state).await
 }
 
 /// Handle Pending phase - prepare for compilation.
+/// Public wrapper for `handle_pending` so trait impls in
+/// `controller::template_phase` can dispatch to it. The body lives
+/// here; the trait impl is the thin shim.
+pub(crate) async fn handle_pending_internal(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+) -> Result<ReconcileAction> {
+    handle_pending(template, state).await
+}
+
 async fn handle_pending(
     template: &InfrastructureTemplate,
     state: &ControllerState,
@@ -347,6 +353,16 @@ async fn handle_pending(
 ///
 /// For MVP, supports inline Terraform JSON and ConfigMap sources.
 /// Ruby DSL compilation via sidecar is deferred to a future phase.
+/// Public wrapper for `handle_compiling` so trait impls in
+/// `controller::template_phase` can dispatch to it. The body lives
+/// here; the trait impl is the thin shim.
+pub(crate) async fn handle_compiling_internal(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+) -> Result<ReconcileAction> {
+    handle_compiling(template, state).await
+}
+
 async fn handle_compiling(
     template: &InfrastructureTemplate,
     state: &ControllerState,
@@ -825,6 +841,16 @@ async fn reset_compile_failure_counter(
 }
 
 /// Handle Initializing phase - configure backend and run `tofu init`.
+/// Public wrapper for `handle_initializing` so trait impls in
+/// `controller::template_phase` can dispatch to it. The body lives
+/// here; the trait impl is the thin shim.
+pub(crate) async fn handle_initializing_internal(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+) -> Result<ReconcileAction> {
+    handle_initializing(template, state).await
+}
+
 async fn handle_initializing(
     template: &InfrastructureTemplate,
     state: &ControllerState,
@@ -911,6 +937,16 @@ async fn handle_initializing(
 }
 
 /// Handle Planning phase - run `tofu plan` and analyze changes.
+/// Public wrapper for `handle_planning` so trait impls in
+/// `controller::template_phase` can dispatch to it. The body lives
+/// here; the trait impl is the thin shim.
+pub(crate) async fn handle_planning_internal(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+) -> Result<ReconcileAction> {
+    handle_planning(template, state).await
+}
+
 async fn handle_planning(
     template: &InfrastructureTemplate,
     state: &ControllerState,
@@ -1177,6 +1213,16 @@ async fn handle_planning(
 }
 
 /// Handle Applying phase - run `tofu apply`.
+/// Public wrapper for `handle_applying` so trait impls in
+/// `controller::template_phase` can dispatch to it. The body lives
+/// here; the trait impl is the thin shim.
+pub(crate) async fn handle_applying_internal(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+) -> Result<ReconcileAction> {
+    handle_applying(template, state).await
+}
+
 async fn handle_applying(
     template: &InfrastructureTemplate,
     state: &ControllerState,
@@ -1531,6 +1577,16 @@ fn substitute_import_id(
 /// On stuck, the configured `SettlingPolicy.on_exhaustion` decides:
 /// fail (transition to Failed, default), alert (emit Warning + flip
 /// `Settled=False` condition but keep trying), or continue (silent).
+/// Public wrapper for `handle_ready` so trait impls in
+/// `controller::template_phase` can dispatch to it. The body lives
+/// here; the trait impl is the thin shim.
+pub(crate) async fn handle_ready_internal(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+) -> Result<ReconcileAction> {
+    handle_ready(template, state).await
+}
+
 async fn handle_ready(
     template: &InfrastructureTemplate,
     state: &ControllerState,
@@ -1755,6 +1811,16 @@ fn stuck_summary(outcome: &crate::controller::settling::SettlingOutcome) -> (u32
 }
 
 /// Handle Drifted phase - auto-correct or wait for approval.
+/// Public wrapper for `handle_drifted` so trait impls in
+/// `controller::template_phase` can dispatch to it. The body lives
+/// here; the trait impl is the thin shim.
+pub(crate) async fn handle_drifted_internal(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+) -> Result<ReconcileAction> {
+    handle_drifted(template, state).await
+}
+
 async fn handle_drifted(
     template: &InfrastructureTemplate,
     state: &ControllerState,
@@ -1794,6 +1860,16 @@ async fn handle_drifted(
 }
 
 /// Handle Failed phase - retry with backoff.
+/// Public wrapper for `handle_failed` so trait impls in
+/// `controller::template_phase` can dispatch to it. The body lives
+/// here; the trait impl is the thin shim.
+pub(crate) async fn handle_failed_internal(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+) -> Result<ReconcileAction> {
+    handle_failed(template, state).await
+}
+
 async fn handle_failed(
     template: &InfrastructureTemplate,
     state: &ControllerState,
@@ -1828,6 +1904,16 @@ async fn handle_failed(
 }
 
 /// Handle Destroying phase - run `tofu destroy` and clean up.
+/// Public wrapper for `handle_destroying` so trait impls in
+/// `controller::template_phase` can dispatch to it. The body lives
+/// here; the trait impl is the thin shim.
+pub(crate) async fn handle_destroying_internal(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+) -> Result<ReconcileAction> {
+    handle_destroying(template, state).await
+}
+
 async fn handle_destroying(
     template: &InfrastructureTemplate,
     state: &ControllerState,

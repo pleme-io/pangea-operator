@@ -14,6 +14,7 @@ pub mod post_reconcile_pipeline;
 pub mod reactive;
 pub mod routing;
 pub mod status;
+pub mod template_phase;
 pub mod workspace_catalog_controller;
 mod flow_controller;
 pub mod flow_scheduler;
