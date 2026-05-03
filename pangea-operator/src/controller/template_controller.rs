@@ -2,9 +2,7 @@
 
 use crate::backend::{BackendConfigGenerator, Credentials};
 use crate::crd::{
-    CycleSummary, DriftDetail, InfrastructureTemplate, Outcome,
-    PangeaNamespace, Phase, PolicyDecision, ReconcileCycle, ResourceOutcome,
-    ResourceSummary,
+    DriftDetail, InfrastructureTemplate, PangeaNamespace, Phase, PolicyDecision, ResourceSummary,
 };
 use crate::error::{Error, Result};
 use crate::executor::{evaluate_policy, policy_is_configured, Plan};
@@ -42,6 +40,7 @@ use super::template::status::{
     update_phase_with_error, update_plan_status, update_settling_status,
     workspace_drift_reaction_to_policy_decision,
 };
+use super::template::cycle_receipts::{record_reconcile_cycle, truncate_for_status, CycleResult};
 
 /// Controller for InfrastructureTemplate resources.
 pub struct TemplateController {
@@ -2008,265 +2007,10 @@ fn content_hash(input: &str) -> u64 {
     hasher.finish()
 }
 
-// ---------------------------------------------------------------------------
-// Reconcile cycle receipts
-// ---------------------------------------------------------------------------
-
-/// What triggered the cycle emission — drives outcome derivation when
-/// translating drift_details into per-resource ResourceOutcome entries.
-#[derive(Debug, Clone)]
-pub(crate) enum CycleResult {
-    /// Plan reported no changes — every managed resource matched
-    /// declared state. Apply did not run.
-    NoChanges,
-    /// Apply ran successfully on every change in `drift_details`.
-    /// Each entry's terraform action becomes the per-resource outcome,
-    /// with the additional twist that any address in
-    /// `imported_addresses` overrides its action-derived outcome to
-    /// `Outcome::Imported` — the cycle adopted that resource into
-    /// state via `tofu import` before the apply ran.
-    AppliedSuccess { imported_addresses: Vec<String> },
-    /// Apply errored. Every change in `drift_details` becomes
-    /// `Failed`; the apply error is attached as `message`.
-    AppliedFailure(String),
-    /// Policy gated this cycle (refuse / requireApproval). Apply did
-    /// NOT run; every change is `Drifted` (uncorrected) with the
-    /// policy decision as `message`.
-    PolicyGated(PolicyDecision),
-}
-
-/// Build a typed receipt summarizing one reconcile cycle.
-///
-/// `drifts` is the set of resources the plan reported a change on
-/// (already annotated with policy decisions when relevant).
-/// `total` is the total managed-resource count; `total - drifts.len()`
-/// becomes `summary.matched`. `next_cycle` is the cycle number for
-/// THIS cycle (caller has already incremented `status.cycle_count`).
-fn build_reconcile_cycle(
-    next_cycle: u64,
-    started_at: chrono::DateTime<Utc>,
-    drifts: &[DriftDetail],
-    total: u32,
-    plan_summary: Option<String>,
-    source_revision: Option<String>,
-    result: CycleResult,
-) -> ReconcileCycle {
-    let mut summary = CycleSummary::default();
-
-    let imported_set: HashSet<&str> = match &result {
-        CycleResult::AppliedSuccess { imported_addresses } => {
-            imported_addresses.iter().map(String::as_str).collect()
-        }
-        _ => HashSet::new(),
-    };
-
-    let outcomes: Vec<ResourceOutcome> = drifts
-        .iter()
-        .take(100)
-        .map(|d| {
-            let (outcome, message) = match result {
-                CycleResult::AppliedFailure(ref err) => {
-                    (Outcome::Failed, Some(truncate_for_status(err)))
-                }
-                CycleResult::PolicyGated(decision) => (
-                    Outcome::Drifted,
-                    Some(format!("policy decision: {}", decision.as_str())),
-                ),
-                CycleResult::NoChanges => {
-                    // Defensive: a NoChanges cycle should have empty
-                    // drifts. If we got here, treat as Matched.
-                    (Outcome::Matched, None)
-                }
-                CycleResult::AppliedSuccess { .. } => {
-                    if imported_set.contains(d.address.as_str()) {
-                        // Import pre-pass adopted this resource — the
-                        // user-facing outcome is "imported", not
-                        // whatever action the original plan had.
-                        (Outcome::Imported, Some("adopted via tofu import".to_string()))
-                    } else {
-                        (outcome_for_action(&d.action), None)
-                    }
-                }
-            };
-            match outcome {
-                Outcome::Matched => summary.matched = summary.matched.saturating_add(1),
-                Outcome::Updated => summary.updated = summary.updated.saturating_add(1),
-                Outcome::Created => summary.created = summary.created.saturating_add(1),
-                Outcome::Destroyed => summary.destroyed = summary.destroyed.saturating_add(1),
-                Outcome::Imported => summary.imported = summary.imported.saturating_add(1),
-                Outcome::Drifted => {
-                    summary.drifted_uncorrected = summary.drifted_uncorrected.saturating_add(1)
-                }
-                Outcome::Failed => summary.failed = summary.failed.saturating_add(1),
-            }
-            ResourceOutcome {
-                address: d.address.clone(),
-                outcome,
-                action: Some(d.action.clone()),
-                message,
-            }
-        })
-        .collect();
-
-    // matched aggregate = (total - touched). For NoChanges cycles
-    // drifts is empty so this equals `total`.
-    let touched_count = drifts.len() as u32;
-    let untouched = total.saturating_sub(touched_count);
-    summary.matched = summary.matched.saturating_add(untouched);
-
-    ReconcileCycle {
-        cycle: next_cycle,
-        started_at,
-        completed_at: Utc::now(),
-        source_revision,
-        plan_summary,
-        summary,
-        outcomes,
-    }
-}
-
-/// Map the terraform action vocabulary to the typed `Outcome` the
-/// operator surfaces. The mapping is deliberately conservative:
-/// replaces collapse to `Updated` (net effect = matches declared);
-/// unknown actions land on `Updated` so we never silently lose a
-/// signal.
-fn outcome_for_action(action: &str) -> Outcome {
-    match action {
-        "no-op" | "noop" => Outcome::Matched,
-        "create" => Outcome::Created,
-        "update" => Outcome::Updated,
-        "delete" => Outcome::Destroyed,
-        "replace" => Outcome::Updated,
-        "import" => Outcome::Imported,
-        _ => Outcome::Updated,
-    }
-}
-
-fn truncate_for_status(s: &str) -> String {
-    const MAX: usize = 256;
-    if s.len() <= MAX {
-        s.to_string()
-    } else {
-        let mut t = s[..MAX].to_string();
-        t.push('…');
-        t
-    }
-}
-
-/// Patch `status.lastCycle` + bump `status.cycleCount`. Skips the
-/// patch entirely if the receipt is content-equal to the prior one
-/// (only the timestamps differ) — keeps reconcile-loop chatter off
-/// etcd for steady-state Ready→Ready flows.
-async fn record_reconcile_cycle(
-    template: &InfrastructureTemplate,
-    state: &ControllerState,
-    drifts: &[DriftDetail],
-    plan_summary: Option<String>,
-    result: CycleResult,
-) -> Result<()> {
-    let name = template.name_any();
-    let namespace = template.namespace().unwrap_or_default();
-    let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
-
-    let prior_status = template.status.clone().unwrap_or_default();
-    let prior_cycle_count = prior_status.cycle_count;
-    let next_cycle = prior_cycle_count.saturating_add(1);
-
-    let total = prior_status
-        .resources
-        .as_ref()
-        .map(|r| r.total)
-        .unwrap_or(0);
-    let started_at = prior_status
-        .last_planned_at
-        .unwrap_or_else(Utc::now);
-    let source_revision = prior_status.last_applied_revision.clone();
-
-    let new_cycle = build_reconcile_cycle(
-        next_cycle,
-        started_at,
-        drifts,
-        total,
-        plan_summary,
-        source_revision,
-        result,
-    );
-
-    if let Some(prev) = prior_status.last_cycle.as_ref() {
-        if cycle_content_equal(prev, &new_cycle) {
-            debug!(
-                template = %name,
-                cycle = prior_cycle_count,
-                "Reconcile cycle content unchanged; skipping status patch"
-            );
-            return Ok(());
-        }
-    }
-
-    let mut new_status = prior_status;
-    new_status.cycle_count = next_cycle;
-    new_status.last_cycle = Some(new_cycle.clone());
-
-    let patch = serde_json::json!({
-        "status": {
-            "cycleCount": new_status.cycle_count,
-            "lastCycle": new_status.last_cycle,
-        }
-    });
-    api.patch_status(
-        &name,
-        &PatchParams::apply("pangea-operator"),
-        &Patch::Merge(&patch),
-    )
-    .await?;
-
-    info!(
-        template = %name,
-        cycle = next_cycle,
-        matched = new_cycle.summary.matched,
-        updated = new_cycle.summary.updated,
-        created = new_cycle.summary.created,
-        destroyed = new_cycle.summary.destroyed,
-        drifted_uncorrected = new_cycle.summary.drifted_uncorrected,
-        failed = new_cycle.summary.failed,
-        "ReconcileCycle recorded"
-    );
-    Ok(())
-}
-
-/// Two cycles are content-equal when summary, source_revision,
-/// plan_summary, and outcomes match. Cycle number and timestamps are
-/// deliberately ignored — they always differ between successive
-/// reconciles, and skipping the patch when nothing else changed is
-/// the whole point (no etcd churn for Matched-only steady state).
-fn cycle_content_equal(a: &ReconcileCycle, b: &ReconcileCycle) -> bool {
-    if a.summary.matched != b.summary.matched
-        || a.summary.updated != b.summary.updated
-        || a.summary.created != b.summary.created
-        || a.summary.destroyed != b.summary.destroyed
-        || a.summary.imported != b.summary.imported
-        || a.summary.drifted_uncorrected != b.summary.drifted_uncorrected
-        || a.summary.failed != b.summary.failed
-    {
-        return false;
-    }
-    if a.source_revision != b.source_revision || a.plan_summary != b.plan_summary {
-        return false;
-    }
-    if a.outcomes.len() != b.outcomes.len() {
-        return false;
-    }
-    for (ao, bo) in a.outcomes.iter().zip(b.outcomes.iter()) {
-        if ao.address != bo.address
-            || ao.outcome != bo.outcome
-            || ao.action != bo.action
-            || ao.message != bo.message
-        {
-            return false;
-        }
-    }
-    true
-}
+// Reconcile cycle receipts were lifted to
+// `controller/template/cycle_receipts.rs` during T3 (continuation
+// of R6/T1/T2). Internal callers reference them via
+// `super::template::cycle_receipts::*` paths.
 
 // Finalizer helpers, Event recording, and Provider credential resolution
 // were lifted to `controller/template/{finalizer,events,provider_creds}.rs`
@@ -2300,6 +2044,14 @@ impl From<ReconcileAction> for Action {
 #[cfg(test)]
 mod cycle_tests {
     use super::*;
+    // The cycle_receipts module's pure helpers are referenced by name
+    // throughout this test mod. Re-import them under the names the
+    // pre-T3 tests already use so the test bodies stay unchanged.
+    use super::super::template::cycle_receipts::{
+        build_reconcile_cycle, cycle_content_equal, outcome_for_action, truncate_for_status,
+        CycleResult,
+    };
+    use crate::crd::{CycleSummary, Outcome, ReconcileCycle};
 
     fn d(addr: &str, action: &str) -> DriftDetail {
         DriftDetail {

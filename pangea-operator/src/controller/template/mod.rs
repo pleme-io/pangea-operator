@@ -8,6 +8,7 @@
 //! `template_controller.rs` (status helpers, reactive policy, reconcile-
 //! cycle receipts) by following the same shape.
 
+pub mod cycle_receipts;
 pub mod events;
 pub mod finalizer;
 pub mod provider_creds;
