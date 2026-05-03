@@ -1981,13 +1981,12 @@ async fn update_phase_with_error(
     )
     .await?;
 
-    // ReactivePolicy hook — failure count just bumped, escalation
-    // may now fire. Best-effort: lookup parent WSC + evaluate +
-    // apply. Logged-only failures (the lookup itself failing) don't
-    // block the phase transition.
-    if let Err(e) = apply_reactive_policy(template, state).await {
-        warn!(error = %e, "ReactivePolicy evaluation failed (non-fatal)");
-    }
+    // Post-reconcile pipeline — single ordered entry point for hooks
+    // that fire AFTER status is patched. Today's pipeline runs the
+    // ReactivePolicy stage (failure escalation / phase timeout /
+    // verified-blocked); future hooks (audit emission, notification
+    // routing) land in `controller::post_reconcile_pipeline`.
+    crate::controller::post_reconcile_pipeline::run_for_template(template, state).await;
 
     Ok(())
 }
@@ -2229,6 +2228,17 @@ fn workspace_drift_reaction_to_policy_decision(
 /// Idempotent across reconciles: when the same reason is already on
 /// `status.lastEscalationReason`, we suppress re-emitting the event
 /// (debounce). Once the bad state clears, future entries re-emit.
+/// Public wrapper for the reactive-policy stage of the post-reconcile
+/// pipeline. The pipeline calls into this; phase handlers should call
+/// `controller::post_reconcile_pipeline::run_for_template(...)` to
+/// invoke the full pipeline rather than this function directly.
+pub(crate) async fn apply_reactive_policy_internal(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+) -> Result<()> {
+    apply_reactive_policy(template, state).await
+}
+
 async fn apply_reactive_policy(
     template: &InfrastructureTemplate,
     state: &ControllerState,

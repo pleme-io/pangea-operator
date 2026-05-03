@@ -10,6 +10,7 @@ pub mod operator_policy_cache;
 pub mod operator_policy_controller;
 pub mod policy_gate;
 pub mod policy_pipeline;
+pub mod post_reconcile_pipeline;
 pub mod reactive;
 pub mod routing;
 pub mod status;
