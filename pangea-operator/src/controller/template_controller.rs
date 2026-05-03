@@ -270,8 +270,42 @@ async fn reconcile_template(
         return Ok(Action::requeue(SHORT_REQUEUE_INTERVAL));
     }
 
-    let action = match current_phase {
-        Phase::Pending => handle_pending(&template, &state).await?,
+    // Dispatch to the per-phase handler. The state machine is documented
+    // at `dispatch_template_phase` below; reconcile_template stays focused
+    // on the surrounding lifecycle (deletion, finalizers, gen-tracking,
+    // gating) and delegates the body work to phase handlers.
+    let action = dispatch_template_phase(current_phase, &template, &state).await?;
+
+    Ok(action.into())
+}
+
+/// State-machine dispatch for `InfrastructureTemplate` reconcile phases.
+///
+/// Phase transition graph (canonical happy path; deviations land in
+/// `Failed` or `Drifted`):
+///
+/// ```text
+///   Pending → Verifying → Verified → Compiling → Initializing →
+///   Planning → Applying → Ready
+///   Ready ↔ Drifted  (drift-detect cycle)
+///   * → Failed       (escalation; manual reset)
+///   * → Destroying   (deletion; finalizer cleanup)
+/// ```
+///
+/// `Verifying` and `Verified` currently no-op forward to `Compiling` —
+/// the M1 ArchitectureGem registry lookup that makes them load-bearing
+/// is in `theory/PANGEA-WORKSPACE-RECONCILIATION.md` M2.
+///
+/// Every individual handler bumps `reconciliation_duration_seconds{phase}`
+/// via `state.metrics.record_phase_duration(...)` (wired in C3) so
+/// dashboards can compute per-phase p50/p99.
+async fn dispatch_template_phase(
+    current_phase: Phase,
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+) -> Result<ReconcileAction> {
+    Ok(match current_phase {
+        Phase::Pending => handle_pending(template, state).await?,
         // M2 — Verifying / Verified phases. Skeleton: drop straight to
         // Compiling. Once M1's ArchitectureGem registry lookup is
         // wired into the operator's runtime context, `Verifying`
@@ -279,20 +313,18 @@ async fn reconcile_template(
         // every required gem is `Loaded`. Until then, fall through.
         // See theory/PANGEA-WORKSPACE-RECONCILIATION.md M2.
         Phase::Verifying | Phase::Verified => {
-            update_phase(&template, Phase::Compiling, &state).await?;
+            update_phase(template, Phase::Compiling, state).await?;
             ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL)
         }
-        Phase::Compiling => handle_compiling(&template, &state).await?,
-        Phase::Initializing => handle_initializing(&template, &state).await?,
-        Phase::Planning => handle_planning(&template, &state).await?,
-        Phase::Applying => handle_applying(&template, &state).await?,
-        Phase::Ready => handle_ready(&template, &state).await?,
-        Phase::Drifted => handle_drifted(&template, &state).await?,
-        Phase::Failed => handle_failed(&template, &state).await?,
-        Phase::Destroying => handle_destroying(&template, &state).await?,
-    };
-
-    Ok(action.into())
+        Phase::Compiling => handle_compiling(template, state).await?,
+        Phase::Initializing => handle_initializing(template, state).await?,
+        Phase::Planning => handle_planning(template, state).await?,
+        Phase::Applying => handle_applying(template, state).await?,
+        Phase::Ready => handle_ready(template, state).await?,
+        Phase::Drifted => handle_drifted(template, state).await?,
+        Phase::Failed => handle_failed(template, state).await?,
+        Phase::Destroying => handle_destroying(template, state).await?,
+    })
 }
 
 /// Handle Pending phase - prepare for compilation.
