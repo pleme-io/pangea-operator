@@ -2,9 +2,9 @@
 
 use crate::backend::{BackendConfigGenerator, Credentials};
 use crate::crd::{
-    CycleSummary, DriftDetail, InfrastructureTemplate, InfrastructureTemplateStatus, Outcome,
+    CycleSummary, DriftDetail, InfrastructureTemplate, Outcome,
     PangeaNamespace, Phase, PolicyDecision, PolicyEvaluation, ReconcileCycle, ResourceOutcome,
-    ResourceSummary, SettlingExhaustionAction, SettlingPolicy,
+    ResourceSummary,
 };
 use crate::error::{Error, Result};
 use crate::executor::{evaluate_policy, policy_is_configured, Plan};

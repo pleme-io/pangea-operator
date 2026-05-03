@@ -427,7 +427,7 @@ mod tests {
     }
 
     #[test]
-    fn break_glass_is_NOT_handled_by_resolver() {
+    fn break_glass_is_not_handled_by_resolver() {
         // The resolver always honors `Refuse`. breakGlass is webhook
         // territory — the webhook may strip a `Refuse` if a special
         // annotation is present BEFORE feeding into the resolver.

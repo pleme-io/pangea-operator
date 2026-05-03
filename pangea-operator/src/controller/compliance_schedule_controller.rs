@@ -11,17 +11,15 @@ use crate::error::Error;
 
 use chrono::Utc;
 use futures::StreamExt;
-use k8s_openapi::api::batch::v1::{Job, JobSpec, JobStatus};
+use k8s_openapi::api::batch::v1::{Job, JobSpec};
 use k8s_openapi::api::core::v1::{Container, EnvVar, PodSpec, PodTemplateSpec};
 use kube::{
     api::{Api, ListParams, ObjectMeta, Patch, PatchParams},
     runtime::{
         controller::{Action, Controller},
         watcher::Config,
-    },
-    Resource, ResourceExt,
+    }, ResourceExt,
 };
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, instrument, warn};
@@ -250,8 +248,8 @@ async fn handle_running(
 }
 
 async fn handle_scheduled(
-    schedule: &ComplianceSchedule,
-    state: &ControllerState,
+    _schedule: &ComplianceSchedule,
+    _state: &ControllerState,
 ) -> std::result::Result<Action, Error> {
     // Check if it's time for the next run based on cron schedule
     // For now, just requeue at the default interval

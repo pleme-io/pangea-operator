@@ -17,7 +17,6 @@ use chrono::{DateTime, Utc};
 use kube::CustomResource;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use strum::{Display, EnumString};
 
 use super::infrastructure_template::GitRepositoryRef;

@@ -38,7 +38,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::Display;
 
-use super::{Condition, TemplateObjectRef};
+use super::Condition;
 
 /// ComplianceBinding connects a ComplianceSchedule to infrastructure targets
 /// and defines enforcement behavior when compliance state changes.

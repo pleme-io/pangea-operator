@@ -18,7 +18,7 @@ use kube::{
         controller::{Action, Controller},
         watcher::Config,
     },
-    Resource, ResourceExt,
+    ResourceExt,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -83,7 +83,7 @@ async fn reconcile(
     state
         .metrics
         .record_reconcile(crate::crd::ControllerKind::ComplianceBinding, "ok");
-    let name = binding.name_any();
+    let _name = binding.name_any();
     let namespace = binding.namespace().unwrap_or_default();
 
     info!("Reconciling ComplianceBinding");
@@ -259,7 +259,7 @@ async fn enforce_on_targets(
 async fn execute_reaction(
     binding: &ComplianceBinding,
     reaction: &crate::crd::Reaction,
-    state: &ControllerState,
+    _state: &ControllerState,
 ) -> std::result::Result<(), Error> {
     match reaction.action {
         ReactionAction::Webhook => {

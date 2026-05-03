@@ -6,7 +6,7 @@
 
 use crate::crd::InfrastructureTemplate;
 use crate::error::{Error, Result};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tokio::fs;
 use tracing::{debug, info};
 

@@ -6,7 +6,6 @@ use super::Credentials;
 
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
 use sqlx::PgPool;
-use std::str::FromStr;
 use std::time::Duration;
 use tracing::{debug, info};
 

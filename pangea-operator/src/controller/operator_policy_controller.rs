@@ -31,8 +31,7 @@ use kube::{
     runtime::{
         controller::{Action, Controller},
         watcher::Config,
-    },
-    Client, ResourceExt,
+    }, ResourceExt,
 };
 use std::sync::Arc;
 use std::time::Duration;

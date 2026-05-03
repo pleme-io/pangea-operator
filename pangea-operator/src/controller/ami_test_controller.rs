@@ -18,8 +18,7 @@ use kube::{
     runtime::{
         controller::{Action, Controller},
         watcher::Config,
-    },
-    Resource, ResourceExt,
+    }, ResourceExt,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -870,7 +869,6 @@ mod deep_tests {
     use super::{is_job_failed, is_job_succeeded, validate_suite_dag};
     use crate::crd::TestSuite;
     use k8s_openapi::api::batch::v1::JobStatus;
-    use k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition;
 
     #[test]
     fn job_succeeded_when_succeeded_ge_1() {

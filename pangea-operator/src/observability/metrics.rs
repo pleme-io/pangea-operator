@@ -1,7 +1,7 @@
 //! Prometheus metrics for the Pangea Operator.
 
 use prometheus::{
-    Counter, CounterVec, Gauge, GaugeVec, Histogram, HistogramOpts, HistogramVec,
+    Histogram, HistogramOpts, HistogramVec,
     IntCounter, IntCounterVec, IntGauge, IntGaugeVec, Opts, Registry,
 };
 

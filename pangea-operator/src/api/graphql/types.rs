@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::crd::{
-    self, InfrastructureTemplate as CrdTemplate, InfrastructureTemplateStatus,
+    self, InfrastructureTemplate as CrdTemplate,
     PangeaNamespace as CrdNamespace, Phase as CrdPhase,
 };
 

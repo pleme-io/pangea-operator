@@ -185,8 +185,10 @@ impl MutationRoot {
         let context = ctx.data::<GraphQLContext>()?;
         let api: Api<CrdTemplate> = Api::namespaced(context.client.clone(), &input.namespace);
 
-        // Get the template and update annotation to trigger reconciliation
-        let template = api.get(&input.name).await?;
+        // Existence check — fail-fast if the template doesn't exist
+        // before issuing the annotation patch. The fetched object isn't
+        // used; the patch is unconditional.
+        let _ = api.get(&input.name).await?;
 
         let patch = serde_json::json!({
             "metadata": {

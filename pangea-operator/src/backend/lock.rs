@@ -16,6 +16,11 @@ pub struct StateLock {
 }
 
 /// Lock information for tracking.
+///
+/// Reserved for an upcoming admin/inspect API surface that lists
+/// currently-held state locks fleet-wide. Suppress the dead-code
+/// warning until the consumer lands.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct LockInfo {
     pub lock_id: i64,

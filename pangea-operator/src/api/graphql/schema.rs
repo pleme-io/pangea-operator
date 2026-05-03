@@ -1,7 +1,7 @@
 //! GraphQL schema definition and server setup.
 
 use async_graphql::Schema;
-use async_graphql_axum::{GraphQLRequest, GraphQLResponse, GraphQLSubscription};
+use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
     body::Body,
     extract::State,
@@ -182,7 +182,6 @@ pub async fn run_graphql_server(addr: SocketAddr, client: Client) -> Result<()> 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[tokio::test]
     async fn test_schema_builds() {

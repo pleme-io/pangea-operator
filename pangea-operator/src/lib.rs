@@ -1,3 +1,9 @@
+// Drift floor: every previous review pass cleaned a wave of unused imports
+// (R2 of the 2026-05-03 review took 45 → 0). Promote the warnings to hard
+// errors so the next 45 don't accumulate silently. New unused imports
+// become a build break — fix them at the keystroke that introduced them.
+#![deny(unused_imports)]
+
 //! Pangea Operator - Rust-based Kubernetes operator for infrastructure management.
 //!
 //! This crate provides a Kubernetes operator that manages infrastructure templates

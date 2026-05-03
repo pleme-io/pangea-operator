@@ -498,7 +498,6 @@ mod tests {
         SuspensionDecision, SuspensionSource, WorkspaceState, WorkspaceSuspend,
         WorkspaceSuspendEntry,
     };
-    use std::collections::BTreeMap;
 
     /// Helper: build a spec with optional template + catalog entries.
     /// `(catalog_state, template_state)` choose what to insert; `None`

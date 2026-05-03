@@ -6,7 +6,7 @@
 //! by name and block until it reaches Ready.
 
 use crate::crd::synthesizer_format::{
-    SynthesizerFormat, SynthesizerFormatPhase, SynthesizerFormatStatus,
+    SynthesizerFormat, SynthesizerFormatPhase,
 };
 use crate::error::Error;
 
@@ -24,7 +24,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, instrument, warn};
 
-use super::{create_condition, ControllerState, DEFAULT_REQUEUE_INTERVAL, SHORT_REQUEUE_INTERVAL};
+use super::{create_condition, ControllerState, DEFAULT_REQUEUE_INTERVAL};
 
 pub struct SynthesizerFormatController {
     state: ControllerState,
@@ -75,7 +75,7 @@ async fn reconcile(
     state
         .metrics
         .record_reconcile(crate::crd::ControllerKind::SynthesizerFormat, "ok");
-    let name = format.name_any();
+    let _name = format.name_any();
 
     info!("Reconciling SynthesizerFormat");
 

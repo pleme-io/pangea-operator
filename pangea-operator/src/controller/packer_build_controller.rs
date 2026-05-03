@@ -9,14 +9,13 @@ use crate::executor::packer;
 
 use chrono::Utc;
 use futures::StreamExt;
-use k8s_openapi::api::core::v1::{ConfigMap, Secret};
+use k8s_openapi::api::core::v1::ConfigMap;
 use kube::{
     api::{Api, Patch, PatchParams},
     runtime::{
         controller::{Action, Controller},
         watcher::Config,
-    },
-    Resource, ResourceExt,
+    }, ResourceExt,
 };
 use std::collections::HashMap;
 use std::sync::Arc;

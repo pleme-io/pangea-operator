@@ -2,7 +2,6 @@
 
 use crate::crd::{BackendType, PangeaNamespace, PangeaNamespaceStatus};
 use crate::error::{Error, Result};
-use crate::observability::Metrics;
 
 use futures::StreamExt;
 use kube::{
@@ -10,12 +9,10 @@ use kube::{
     runtime::{
         controller::{Action, Controller},
         watcher::Config,
-    },
-    Client, ResourceExt,
+    }, ResourceExt,
 };
 use std::sync::Arc;
-use std::time::Duration;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, error, info, instrument};
 
 use super::{ControllerState, DEFAULT_REQUEUE_INTERVAL, ERROR_REQUEUE_INTERVAL};
 
@@ -147,7 +144,7 @@ fn validate_backend(namespace: &PangeaNamespace) -> Result<()> {
 /// Verify PostgreSQL backend connectivity.
 async fn verify_postgres_backend(
     namespace: &PangeaNamespace,
-    state: &ControllerState,
+    _state: &ControllerState,
 ) -> Result<bool> {
     let pg = namespace
         .spec
@@ -190,7 +187,7 @@ async fn verify_s3_backend(namespace: &PangeaNamespace) -> Result<bool> {
 }
 
 /// Ensure PostgreSQL schema exists for this namespace.
-async fn ensure_schema(namespace: &PangeaNamespace, state: &ControllerState) -> Result<()> {
+async fn ensure_schema(namespace: &PangeaNamespace, _state: &ControllerState) -> Result<()> {
     let schema_name = namespace.schema_name();
 
     debug!(schema_name = %schema_name, "Ensuring PostgreSQL schema exists");

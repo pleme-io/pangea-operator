@@ -20,8 +20,6 @@ pub use plan::{Plan, PlanSummary, ResourceChange, ChangeType};
 pub use packer::{PackerExecutor, PackerCommand, PackerResult, parse_packer_manifest, parse_packer_manifest_region};
 pub use policy::{evaluate as evaluate_policy, is_configured as policy_is_configured, PolicyOutcome};
 
-use crate::crd::InfrastructureTemplate;
-use crate::error::Result;
 use std::path::PathBuf;
 
 /// Configuration for the executor.

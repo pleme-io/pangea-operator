@@ -17,12 +17,11 @@ use crate::error::Error;
 use chrono::Utc;
 use futures::StreamExt;
 use kube::{
-    api::{Api, ObjectMeta, Patch, PatchParams},
+    api::{Api, Patch, PatchParams},
     runtime::{
         controller::{Action, Controller},
         watcher::Config,
-    },
-    Resource, ResourceExt,
+    }, ResourceExt,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -89,8 +88,8 @@ async fn reconcile_image_pipeline(
     state
         .metrics
         .record_reconcile(crate::crd::ControllerKind::ImagePipeline, "ok");
-    let name = pipeline.name_any();
-    let namespace = pipeline.namespace().unwrap_or_default();
+    let _name = pipeline.name_any();
+    let _namespace = pipeline.namespace().unwrap_or_default();
 
     info!("Reconciling ImagePipeline");
 

@@ -16,7 +16,7 @@
 
 use chrono::Utc;
 use kube::{
-    api::{Api, Patch, PatchParams},
+    api::Api,
     runtime::controller::{Action, Controller},
     Client,
 };

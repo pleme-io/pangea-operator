@@ -6,12 +6,11 @@
 
 use crate::crd::{
     FlowPhase, FlowStepStatus, InfrastructureFlow, InfrastructureFlowStatus,
-    InfrastructureTemplate, InfrastructureTemplateSpec, Phase, TemplateSource,
+    InfrastructureTemplate, InfrastructureTemplateSpec, Phase,
 };
 use crate::error::{Error, Result};
 use crate::executor::variable_resolver;
 
-use chrono::Utc;
 use futures::StreamExt;
 use kube::{
     api::{Api, Patch, PatchParams, PostParams},
@@ -122,7 +121,8 @@ async fn reconcile_flow(
     let mut step_outputs: BTreeMap<String, BTreeMap<String, serde_json::Value>> = BTreeMap::new();
     let mut ready_count = 0u32;
     let mut any_failed = false;
-    let mut any_progressing = false;
+    // The flow phase is "Progressing" iff `ready_count != total_steps && !any_failed`,
+    // which is computed at the end without needing a per-step accumulator.
 
     for step_name in &order {
         let template_name = flow.template_name_for_step(step_name);
@@ -155,9 +155,9 @@ async fn reconcile_flow(
                     }
                 } else if phase == Phase::Failed {
                     any_failed = true;
-                } else {
-                    any_progressing = true;
                 }
+                // Progressing is the default — derived from the final
+                // ready_count + any_failed at the bottom of this fn.
 
                 step_statuses.insert(step_name.clone(), FlowStepStatus {
                     phase: Some(phase.to_string()),
@@ -187,7 +187,6 @@ async fn reconcile_flow(
                                     state: None,
                                     warmed_up: false,
                                 });
-                                any_progressing = true;
                                 continue;
                             }
                         }
@@ -236,8 +235,6 @@ async fn reconcile_flow(
                             warn!(step = step_name, error = %e, "Failed to create template");
                         }
                     }
-
-                    any_progressing = true;
                 }
 
                 step_statuses.insert(step_name.clone(), FlowStepStatus {

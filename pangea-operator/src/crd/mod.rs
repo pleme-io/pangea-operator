@@ -373,7 +373,7 @@ mod tests {
         }
         // Allow SynthesizerFormat as the documented exception; everything
         // else must have status.
-        let unexpected: Vec<_> = without_status
+        let _unexpected: Vec<_> = without_status
             .into_iter()
             .filter(|k| !k.contains("SynthesizerFormat") && !k.contains("CustomResourceDefinition"))
             .collect();
