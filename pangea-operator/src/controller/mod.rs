@@ -11,6 +11,7 @@ pub mod operator_policy_controller;
 pub mod policy_gate;
 pub mod reactive;
 pub mod routing;
+pub mod status;
 pub mod workspace_catalog_controller;
 mod flow_controller;
 pub mod flow_scheduler;

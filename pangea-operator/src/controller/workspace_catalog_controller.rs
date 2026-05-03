@@ -255,33 +255,17 @@ async fn patch_status_if_changed(
     mut new_status: WorkspaceCatalogStatus,
 ) -> Result<(), Error> {
     if let Some(prev) = old {
-        new_status.conditions =
-            merge_condition_transitions(&prev.conditions, new_status.conditions);
+        new_status.conditions = crate::controller::status::merge_condition_transitions(
+            &prev.conditions,
+            new_status.conditions,
+        );
         if status_content_equal(prev, &new_status) {
             debug!(workspace = %name, "WorkspaceCatalog status unchanged; skipping patch");
             return Ok(());
         }
     }
-
-    let api: Api<WorkspaceCatalog> = Api::all(client.clone());
-    let pp = PatchParams::default();
-    let patch = serde_json::json!({ "status": new_status });
-    api.patch_status(name, &pp, &Patch::Merge(&patch)).await?;
+    crate::controller::status::patch_status::<WorkspaceCatalog, _>(client, name, &new_status).await?;
     Ok(())
-}
-
-fn merge_condition_transitions(prev: &[Condition], new: Vec<Condition>) -> Vec<Condition> {
-    new.into_iter()
-        .map(|n| match prev.iter().find(|p| p.condition_type == n.condition_type) {
-            Some(p) if p.status == n.status && p.reason == n.reason && p.message == n.message => {
-                Condition {
-                    last_transition_time: p.last_transition_time,
-                    ..n
-                }
-            }
-            _ => n,
-        })
-        .collect()
 }
 
 fn status_content_equal(a: &WorkspaceCatalogStatus, b: &WorkspaceCatalogStatus) -> bool {
@@ -352,7 +336,7 @@ mod tests {
         let new_ts = Utc::now();
         let prev = vec![cond("Verified", "True", "AllGemsLoaded", "msg", old_ts)];
         let new = vec![cond("Verified", "True", "AllGemsLoaded", "msg", new_ts)];
-        let merged = merge_condition_transitions(&prev, new);
+        let merged = crate::controller::status::merge_condition_transitions(&prev, new);
         assert_eq!(merged[0].last_transition_time, old_ts);
     }
 
@@ -362,7 +346,7 @@ mod tests {
         let new_ts = Utc::now();
         let prev = vec![cond("Verified", "False", "GemsNotReady", "blocked", old_ts)];
         let new = vec![cond("Verified", "True", "AllGemsLoaded", "ok", new_ts)];
-        let merged = merge_condition_transitions(&prev, new);
+        let merged = crate::controller::status::merge_condition_transitions(&prev, new);
         assert_eq!(merged[0].last_transition_time, new_ts);
     }
 
