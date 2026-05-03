@@ -43,13 +43,13 @@ pub async fn run_for_template(
     }
 }
 
-/// Stage 1 — ReactivePolicy. Wraps the existing
-/// `template_controller::apply_reactive_policy` shape; pulled out
-/// here so the pipeline reads as an explicit list of stages rather
-/// than scattering pluck-from-controller calls.
+/// Stage 1 — ReactivePolicy. Wraps the
+/// `template/reactive_policy::apply_reactive_policy_internal` shape;
+/// pulled out here so the pipeline reads as an explicit list of
+/// stages rather than scattering pluck-from-controller calls.
 async fn run_reactive(
     template: &InfrastructureTemplate,
     state: &ControllerState,
 ) -> Result<()> {
-    super::template_controller::apply_reactive_policy_internal(template, state).await
+    super::template::reactive_policy::apply_reactive_policy_internal(template, state).await
 }

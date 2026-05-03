@@ -11,4 +11,5 @@
 pub mod events;
 pub mod finalizer;
 pub mod provider_creds;
+pub mod reactive_policy;
 pub mod status;
