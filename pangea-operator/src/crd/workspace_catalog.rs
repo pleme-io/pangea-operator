@@ -24,6 +24,7 @@ use super::infrastructure_template::GitRepositoryRef;
     kind = "WorkspaceCatalog",
     status = "WorkspaceCatalogStatus",
     shortname = "wsc",
+    category = "pangea",
     shortname = "wcat",
     printcolumn = r#"{"name":"Source","type":"string","jsonPath":".spec.source.gitRepository.url"}"#,
     printcolumn = r#"{"name":"Templates","type":"integer","jsonPath":".status.templateCount"}"#,

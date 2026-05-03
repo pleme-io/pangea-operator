@@ -17,6 +17,7 @@ use std::collections::BTreeMap;
     kind = "PangeaNamespace",
     status = "PangeaNamespaceStatus",
     shortname = "pns",
+    category = "pangea",
     printcolumn = r#"{"name":"Backend","type":"string","jsonPath":".spec.backend.type"}"#,
     printcolumn = r#"{"name":"Templates","type":"integer","jsonPath":".status.templateCount"}"#,
     printcolumn = r#"{"name":"Age","type":"date","jsonPath":".metadata.creationTimestamp"}"#

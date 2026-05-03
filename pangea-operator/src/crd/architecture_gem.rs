@@ -31,6 +31,7 @@ use super::infrastructure_template::GitRepositoryRef;
     kind = "ArchitectureGem",
     status = "ArchitectureGemStatus",
     shortname = "archgem",
+    category = "pangea",
     shortname = "agem",
     printcolumn = r#"{"name":"Phase","type":"string","jsonPath":".status.phase"}"#,
     printcolumn = r#"{"name":"Loaded","type":"integer","jsonPath":".status.loadedClassCount"}"#,

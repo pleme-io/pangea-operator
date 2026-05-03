@@ -22,6 +22,7 @@ use super::TemplateSource;
     namespaced,
     status = "InfrastructureFlowStatus",
     shortname = "flow",
+    category = "pangea",
     printcolumn = r#"{"name":"Phase","type":"string","jsonPath":".status.phase"}"#,
     printcolumn = r#"{"name":"Steps","type":"integer","jsonPath":".status.totalSteps"}"#,
     printcolumn = r#"{"name":"Ready","type":"integer","jsonPath":".status.readySteps"}"#,

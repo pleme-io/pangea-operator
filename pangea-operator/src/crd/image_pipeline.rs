@@ -30,6 +30,7 @@ use super::ami_test::{FailurePolicy, TestSuite};
     namespaced,
     status = "ImagePipelineStatus",
     shortname = "ip",
+    category = "pangea",
     printcolumn = r#"{"name":"Phase","type":"string","jsonPath":".status.phase"}"#,
     printcolumn = r#"{"name":"AMI","type":"string","jsonPath":".status.build.amiId"}"#,
     printcolumn = r#"{"name":"Plan","type":"string","jsonPath":".status.deploy.planSummary"}"#,

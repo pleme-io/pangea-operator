@@ -22,6 +22,7 @@ use super::{Condition, ProviderCredentials};
     namespaced,
     status = "AmiTestStatus",
     shortname = "at",
+    category = "pangea",
     printcolumn = r#"{"name":"Phase","type":"string","jsonPath":".status.phase"}"#,
     printcolumn = r#"{"name":"AMI","type":"string","jsonPath":".status.amiId"}"#,
     printcolumn = r#"{"name":"Suites","type":"string","jsonPath":".status.suiteSummary"}"#,

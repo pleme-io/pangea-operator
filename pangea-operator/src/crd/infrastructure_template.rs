@@ -21,6 +21,7 @@ use strum::{Display, EnumString};
     namespaced,
     status = "InfrastructureTemplateStatus",
     shortname = "infra",
+    category = "pangea",
     shortname = "it",
     printcolumn = r#"{"name":"Phase","type":"string","jsonPath":".status.phase"}"#,
     printcolumn = r#"{"name":"Namespace","type":"string","jsonPath":".spec.pangeaNamespace"}"#,

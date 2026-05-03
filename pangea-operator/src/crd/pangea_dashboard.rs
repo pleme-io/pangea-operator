@@ -21,6 +21,7 @@ use super::Condition;
     kind = "PangeaDashboard",
     status = "PangeaDashboardStatus",
     shortname = "pd",
+    category = "pangea",
     printcolumn = r#"{"name":"Folder","type":"string","jsonPath":".spec.folder"}"#,
     printcolumn = r#"{"name":"Phase","type":"string","jsonPath":".status.phase"}"#,
     printcolumn = r#"{"name":"Dashboard","type":"string","jsonPath":".status.dashboardUid"}"#,

@@ -50,6 +50,7 @@ use super::{Condition, TemplateObjectRef};
     namespaced,
     status = "ComplianceBindingStatus",
     shortname = "cb",
+    category = "pangea",
     printcolumn = r#"{"name":"Enforcement","type":"string","jsonPath":".spec.enforcement"}"#,
     printcolumn = r#"{"name":"Compliance","type":"string","jsonPath":".status.complianceState"}"#,
     printcolumn = r#"{"name":"Targets","type":"integer","jsonPath":".status.targetCount"}"#,

@@ -62,6 +62,7 @@ use super::{Condition, ProviderCredentials, SecretRef, TemplateObjectRef};
     namespaced,
     status = "ComplianceScheduleStatus",
     shortname = "cs",
+    category = "pangea",
     printcolumn = r#"{"name":"Phase","type":"string","jsonPath":".status.phase"}"#,
     printcolumn = r#"{"name":"Schedule","type":"string","jsonPath":".spec.schedule"}"#,
     printcolumn = r#"{"name":"Last Run","type":"date","jsonPath":".status.lastRunAt"}"#,

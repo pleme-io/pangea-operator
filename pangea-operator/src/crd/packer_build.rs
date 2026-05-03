@@ -25,6 +25,7 @@ use super::{Condition, ProviderCredentials, SecretRef, TemplateSource};
     namespaced,
     status = "PackerBuildStatus",
     shortname = "pb",
+    category = "pangea",
     printcolumn = r#"{"name":"Phase","type":"string","jsonPath":".status.phase"}"#,
     printcolumn = r#"{"name":"AMI","type":"string","jsonPath":".status.amiId"}"#,
     printcolumn = r#"{"name":"Duration","type":"string","jsonPath":".status.buildDuration"}"#,

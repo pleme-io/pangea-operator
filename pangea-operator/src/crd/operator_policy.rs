@@ -30,6 +30,7 @@ use std::collections::BTreeMap;
     kind = "OperatorPolicy",
     plural = "operatorpolicies",
     shortname = "oppol",
+    category = "pangea",
     status = "OperatorPolicyStatus",
     printcolumn = r#"{"name":"GlobalSuspend","type":"boolean","jsonPath":".spec.globalSuspend"}"#,
     printcolumn = r#"{"name":"Reason","type":"string","jsonPath":".spec.globalSuspendReason"}"#,

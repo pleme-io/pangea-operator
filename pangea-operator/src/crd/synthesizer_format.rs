@@ -45,6 +45,7 @@ use super::Condition;
     kind = "SynthesizerFormat",
     status = "SynthesizerFormatStatus",
     shortname = "sf",
+    category = "pangea",
     printcolumn = r#"{"name":"Sections","type":"string","jsonPath":".status.sectionSummary"}"#,
     printcolumn = r#"{"name":"Phase","type":"string","jsonPath":".status.phase"}"#,
     printcolumn = r#"{"name":"Age","type":"date","jsonPath":".metadata.creationTimestamp"}"#
