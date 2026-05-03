@@ -17,7 +17,6 @@ use crate::controller::ControllerState;
 use crate::crd::InfrastructureTemplate;
 use crate::error::Result;
 use chrono::Utc;
-use kube::api::{Api, Patch, PatchParams};
 use kube::runtime::events::EventType;
 use kube::ResourceExt;
 
@@ -151,7 +150,6 @@ async fn apply_reactive_policy(
         };
 
     // Patch only the fields that may have changed.
-    let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
     let mut conditions = prior_status.conditions.clone();
     // Drop any prior `Healthy` condition; emit a fresh one (preserve
     // transition time when status+reason+message all match).
@@ -186,11 +184,7 @@ async fn apply_reactive_policy(
             "lastEscalationReason": escalation_reason,
         }
     });
-    api.patch_status(
-        &name,
-        &PatchParams::apply("pangea-operator"),
-        &Patch::Merge(&patch),
-    )
+    crate::controller::status_patch::patch_status(template, &state.client, patch)
     .await?;
     Ok(())
 }

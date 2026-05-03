@@ -316,10 +316,6 @@ async fn update_compliance_state(
     state_val: BindingComplianceState,
     state: &ControllerState,
 ) -> std::result::Result<(), Error> {
-    let namespace = binding.namespace().unwrap_or_default();
-    let name = binding.name_any();
-    let api: Api<ComplianceBinding> = Api::namespaced(state.client.clone(), &namespace);
-
     let patch = serde_json::json!({
         "status": {
             "complianceState": state_val,
@@ -327,7 +323,7 @@ async fn update_compliance_state(
         }
     });
 
-    api.patch_status(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+    crate::controller::status_patch::patch_status(binding, &state.client, patch)
         .await
         .map_err(Error::Kube)?;
 
@@ -341,10 +337,6 @@ async fn update_full_status(
     compliance_hash: Option<&str>,
     state: &ControllerState,
 ) -> std::result::Result<(), Error> {
-    let namespace = binding.namespace().unwrap_or_default();
-    let name = binding.name_any();
-    let api: Api<ComplianceBinding> = Api::namespaced(state.client.clone(), &namespace);
-
     let ready = compliance_state == BindingComplianceState::Compliant;
     let conditions = vec![create_condition(
         "Ready",
@@ -364,7 +356,7 @@ async fn update_full_status(
         }
     });
 
-    api.patch_status(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+    crate::controller::status_patch::patch_status(binding, &state.client, patch)
         .await
         .map_err(Error::Kube)?;
 

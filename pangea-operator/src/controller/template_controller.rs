@@ -734,7 +734,6 @@ async fn handle_compile_failure(
 
     let name = template.name_any();
     let namespace = template.namespace().unwrap_or_default();
-    let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
 
     // Item J observability: bump rate counter + set current-count gauge
     // so Grafana can alert on "stuck-Compiling" before the settling
@@ -773,9 +772,8 @@ async fn handle_compile_failure(
                 "lastError": escalation_msg.clone(),
             },
         });
-        if let Err(e) = api
-            .patch_status(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
-            .await
+        if let Err(e) =
+            crate::controller::status_patch::patch_status(template, &state.client, patch).await
         {
             warn!(error = %e, "Failed to patch template status during compile-failure escalation");
         }
@@ -795,9 +793,8 @@ async fn handle_compile_failure(
                 "lastError": format!("Compile failed (attempt {}/{}): {}", next, max, err_msg),
             },
         });
-        if let Err(e) = api
-            .patch_status(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
-            .await
+        if let Err(e) =
+            crate::controller::status_patch::patch_status(template, &state.client, patch).await
         {
             warn!(error = %e, "Failed to patch template status on compile failure");
         }
@@ -834,13 +831,11 @@ async fn reset_compile_failure_counter(
     if prior == 0 {
         return Ok(());
     }
-    let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
     let patch = serde_json::json!({
         "status": { "consecutiveCompileFailures": 0 },
     });
-    if let Err(e) = api
-        .patch_status(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
-        .await
+    if let Err(e) =
+        crate::controller::status_patch::patch_status(template, &state.client, patch).await
     {
         warn!(error = %e, "Failed to reset consecutiveCompileFailures");
     }

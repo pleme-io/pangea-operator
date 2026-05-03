@@ -14,7 +14,7 @@ use futures::StreamExt;
 use k8s_openapi::api::batch::v1::{Job, JobSpec};
 use k8s_openapi::api::core::v1::{Container, EnvVar, PodSpec, PodTemplateSpec};
 use kube::{
-    api::{Api, ListParams, ObjectMeta, Patch, PatchParams},
+    api::{Api, ListParams, ObjectMeta},
     runtime::{
         controller::{Action, Controller},
         watcher::Config,
@@ -385,10 +385,6 @@ async fn update_phase(
     error_msg: Option<&str>,
     state: &ControllerState,
 ) -> std::result::Result<(), Error> {
-    let namespace = schedule.namespace().unwrap_or_default();
-    let name = schedule.name_any();
-    let api: Api<ComplianceSchedule> = Api::namespaced(state.client.clone(), &namespace);
-
     let ready = phase == ComplianceSchedulePhase::Compliant;
     let conditions = vec![create_condition(
         "Ready",
@@ -406,7 +402,7 @@ async fn update_phase(
         }
     });
 
-    api.patch_status(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+    crate::controller::status_patch::patch_status(schedule, &state.client, patch)
         .await
         .map_err(Error::Kube)?;
 
@@ -419,10 +415,6 @@ async fn update_suite_results(
     summary: &str,
     state: &ControllerState,
 ) -> std::result::Result<(), Error> {
-    let namespace = schedule.namespace().unwrap_or_default();
-    let name = schedule.name_any();
-    let api: Api<ComplianceSchedule> = Api::namespaced(state.client.clone(), &namespace);
-
     let total_runs = schedule.status.as_ref().map(|s| s.total_runs).unwrap_or(0) + 1;
 
     let patch = serde_json::json!({
@@ -433,7 +425,7 @@ async fn update_suite_results(
         }
     });
 
-    api.patch_status(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+    crate::controller::status_patch::patch_status(schedule, &state.client, patch)
         .await
         .map_err(Error::Kube)?;
 

@@ -863,10 +863,6 @@ async fn update_phase(
     error_msg: Option<&str>,
     state: &ControllerState,
 ) -> std::result::Result<(), Error> {
-    let namespace = pipeline.namespace().unwrap_or_default();
-    let name = pipeline.name_any();
-    let api: Api<ImagePipeline> = Api::namespaced(state.client.clone(), &namespace);
-
     let ready = phase == ImagePipelinePhase::Completed;
     let conditions = vec![create_condition(
         "Ready",
@@ -896,7 +892,7 @@ async fn update_phase(
         patch["status"]["completedAt"] = serde_json::json!(Utc::now());
     }
 
-    api.patch_status(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+    crate::controller::status_patch::patch_status(pipeline, &state.client, patch)
         .await
         .map_err(Error::Kube)?;
 
@@ -909,15 +905,10 @@ async fn update_build_status(
     build: &PipelineBuildStatus,
     state: &ControllerState,
 ) -> std::result::Result<(), Error> {
-    let namespace = pipeline.namespace().unwrap_or_default();
-    let name = pipeline.name_any();
-    let api: Api<ImagePipeline> = Api::namespaced(state.client.clone(), &namespace);
-
     let patch = serde_json::json!({ "status": { "build": build } });
-    api.patch_status(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+    crate::controller::status_patch::patch_status(pipeline, &state.client, patch)
         .await
         .map_err(Error::Kube)?;
-
     Ok(())
 }
 
@@ -926,15 +917,10 @@ async fn update_test_status(
     test: &PipelineTestStatus,
     state: &ControllerState,
 ) -> std::result::Result<(), Error> {
-    let namespace = pipeline.namespace().unwrap_or_default();
-    let name = pipeline.name_any();
-    let api: Api<ImagePipeline> = Api::namespaced(state.client.clone(), &namespace);
-
     let patch = serde_json::json!({ "status": { "test": test } });
-    api.patch_status(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+    crate::controller::status_patch::patch_status(pipeline, &state.client, patch)
         .await
         .map_err(Error::Kube)?;
-
     Ok(())
 }
 
@@ -943,15 +929,10 @@ async fn update_deploy_status(
     deploy: &PipelineDeployStatus,
     state: &ControllerState,
 ) -> std::result::Result<(), Error> {
-    let namespace = pipeline.namespace().unwrap_or_default();
-    let name = pipeline.name_any();
-    let api: Api<ImagePipeline> = Api::namespaced(state.client.clone(), &namespace);
-
     let patch = serde_json::json!({ "status": { "deploy": deploy } });
-    api.patch_status(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+    crate::controller::status_patch::patch_status(pipeline, &state.client, patch)
         .await
         .map_err(Error::Kube)?;
-
     Ok(())
 }
 
@@ -960,15 +941,10 @@ async fn update_verification_status(
     verification: &PipelineVerificationStatus,
     state: &ControllerState,
 ) -> std::result::Result<(), Error> {
-    let namespace = pipeline.namespace().unwrap_or_default();
-    let name = pipeline.name_any();
-    let api: Api<ImagePipeline> = Api::namespaced(state.client.clone(), &namespace);
-
     let patch = serde_json::json!({ "status": { "verification": verification } });
-    api.patch_status(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+    crate::controller::status_patch::patch_status(pipeline, &state.client, patch)
         .await
         .map_err(Error::Kube)?;
-
     Ok(())
 }
 

@@ -14,7 +14,7 @@ use futures::StreamExt;
 use k8s_openapi::api::batch::v1::{Job, JobSpec, JobStatus};
 use k8s_openapi::api::core::v1::{Container, EnvVar, PodSpec, PodTemplateSpec};
 use kube::{
-    api::{Api, ListParams, ObjectMeta, Patch, PatchParams},
+    api::{Api, ListParams, ObjectMeta},
     runtime::{
         controller::{Action, Controller},
         watcher::Config,
@@ -663,10 +663,6 @@ async fn update_phase(
     error_msg: Option<&str>,
     state: &ControllerState,
 ) -> std::result::Result<(), Error> {
-    let namespace = test.namespace().unwrap_or_default();
-    let name = test.name_any();
-    let api: Api<AmiTest> = Api::namespaced(state.client.clone(), &namespace);
-
     let ready = phase == AmiTestPhase::Passed;
     let conditions = vec![
         create_condition(
@@ -685,7 +681,7 @@ async fn update_phase(
         }
     });
 
-    api.patch_status(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+    crate::controller::status_patch::patch_status(test, &state.client, patch)
         .await
         .map_err(Error::Kube)?;
 
@@ -699,10 +695,6 @@ async fn update_status_with_ami(
     suites: &[SuiteResult],
     state: &ControllerState,
 ) -> std::result::Result<(), Error> {
-    let namespace = test.namespace().unwrap_or_default();
-    let name = test.name_any();
-    let api: Api<AmiTest> = Api::namespaced(state.client.clone(), &namespace);
-
     let patch = serde_json::json!({
         "status": {
             "phase": AmiTestPhase::Running,
@@ -714,7 +706,7 @@ async fn update_status_with_ami(
         }
     });
 
-    api.patch_status(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+    crate::controller::status_patch::patch_status(test, &state.client, patch)
         .await
         .map_err(Error::Kube)?;
 
@@ -726,10 +718,6 @@ async fn update_suites(
     suites: &[SuiteResult],
     state: &ControllerState,
 ) -> std::result::Result<(), Error> {
-    let namespace = test.namespace().unwrap_or_default();
-    let name = test.name_any();
-    let api: Api<AmiTest> = Api::namespaced(state.client.clone(), &namespace);
-
     let passed = suites
         .iter()
         .filter(|s| s.phase == SuitePhase::Succeeded)
@@ -744,7 +732,7 @@ async fn update_suites(
         }
     });
 
-    api.patch_status(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+    crate::controller::status_patch::patch_status(test, &state.client, patch)
         .await
         .map_err(Error::Kube)?;
 

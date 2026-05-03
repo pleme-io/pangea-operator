@@ -13,7 +13,6 @@
 //! AppliedFailure → Failed, PolicyGated → Drifted).
 
 use chrono::{DateTime, Utc};
-use kube::api::{Api, Patch, PatchParams};
 use kube::ResourceExt;
 use std::collections::HashSet;
 use tracing::{debug, info};
@@ -181,8 +180,6 @@ pub async fn record_reconcile_cycle(
     result: CycleResult,
 ) -> Result<()> {
     let name = template.name_any();
-    let namespace = template.namespace().unwrap_or_default();
-    let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
 
     let prior_status = template.status.clone().unwrap_or_default();
     let prior_cycle_count = prior_status.cycle_count;
@@ -229,11 +226,7 @@ pub async fn record_reconcile_cycle(
             "lastCycle": new_status.last_cycle,
         }
     });
-    api.patch_status(
-        &name,
-        &PatchParams::apply("pangea-operator"),
-        &Patch::Merge(&patch),
-    )
+    crate::controller::status_patch::patch_status(template, &state.client, patch)
     .await?;
 
     info!(

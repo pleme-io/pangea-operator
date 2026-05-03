@@ -13,7 +13,7 @@ use crate::executor::variable_resolver;
 
 use futures::StreamExt;
 use kube::{
-    api::{Api, Patch, PatchParams, PostParams},
+    api::{Api, PostParams},
     runtime::{
         controller::{Action, Controller},
         events::{Event, EventType, Recorder, Reporter},
@@ -81,8 +81,6 @@ async fn reconcile_flow(
     state
         .metrics
         .record_reconcile(crate::crd::ControllerKind::Flow, "ok");
-    let name = flow.name_any();
-    let namespace = flow.namespace().unwrap_or_default();
 
     info!("Reconciling InfrastructureFlow");
 
@@ -97,10 +95,9 @@ async fn reconcile_flow(
     }
 
     if flow.spec.suspend {
-        let api: Api<InfrastructureFlow> = Api::namespaced(state.client.clone(), &namespace);
         let conditions = conditions_for_suspended();
         let patch = serde_json::json!({ "status": { "conditions": conditions } });
-        let _ = api.patch_status(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch)).await;
+        let _ = crate::controller::status_patch::patch_status(&*flow, &state.client, patch).await;
         return Ok(Action::requeue(DEFAULT_REQUEUE_INTERVAL));
     }
 
@@ -116,6 +113,7 @@ async fn reconcile_flow(
     };
 
     // Collect current step statuses from managed templates
+    let namespace = flow.namespace().unwrap_or_default();
     let template_api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
     let mut step_statuses: BTreeMap<String, FlowStepStatus> = BTreeMap::new();
     let mut step_outputs: BTreeMap<String, BTreeMap<String, serde_json::Value>> = BTreeMap::new();
@@ -263,7 +261,6 @@ async fn reconcile_flow(
     };
 
     // Update flow status
-    let api: Api<InfrastructureFlow> = Api::namespaced(state.client.clone(), &namespace);
     let conditions = flow_conditions(flow_phase);
     let status = InfrastructureFlowStatus {
         phase: Some(flow_phase),
@@ -276,7 +273,7 @@ async fn reconcile_flow(
     };
 
     let patch = serde_json::json!({ "status": status });
-    api.patch_status(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch)).await?;
+    crate::controller::status_patch::patch_status(&*flow, &state.client, patch).await?;
 
     if flow_phase == FlowPhase::Ready {
         info!("All flow steps Ready");
@@ -358,10 +355,6 @@ async fn update_flow_phase(
     error: Option<&str>,
     state: &ControllerState,
 ) -> Result<()> {
-    let name = flow.name_any();
-    let namespace = flow.namespace().unwrap_or_default();
-    let api: Api<InfrastructureFlow> = Api::namespaced(state.client.clone(), &namespace);
-
     let patch = serde_json::json!({
         "status": {
             "phase": phase,
@@ -370,7 +363,7 @@ async fn update_flow_phase(
         }
     });
 
-    api.patch_status(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch)).await?;
+    crate::controller::status_patch::patch_status(flow, &state.client, patch).await?;
     Ok(())
 }
 

@@ -12,8 +12,6 @@
 //! to bump observedGeneration) immediately visible.
 
 use chrono::Utc;
-use kube::api::{Api, Patch, PatchParams};
-use kube::ResourceExt;
 use tracing::info;
 
 use crate::controller::reconciler::conditions_for_phase;
@@ -33,10 +31,7 @@ pub async fn update_phase(
     phase: Phase,
     state: &ControllerState,
 ) -> Result<()> {
-    let name = template.name_any();
-    let namespace = template.namespace().unwrap_or_default();
 
-    let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
 
     let mut status = template.status.clone().unwrap_or_default();
     let phase_changed = status.phase != Some(phase);
@@ -58,11 +53,7 @@ pub async fn update_phase(
 
     let patch = serde_json::json!({ "status": status });
 
-    api.patch_status(
-        &name,
-        &PatchParams::apply("pangea-operator"),
-        &Patch::Merge(&patch),
-    )
+    crate::controller::status_patch::patch_status(template, &state.client, patch)
     .await?;
 
     state
@@ -83,10 +74,7 @@ pub async fn update_phase_with_error(
     error_msg: &str,
     state: &ControllerState,
 ) -> Result<()> {
-    let name = template.name_any();
-    let namespace = template.namespace().unwrap_or_default();
 
-    let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
 
     let mut status = template.status.clone().unwrap_or_default();
     let phase_changed = status.phase != Some(phase);
@@ -101,11 +89,7 @@ pub async fn update_phase_with_error(
 
     let patch = serde_json::json!({ "status": status });
 
-    api.patch_status(
-        &name,
-        &PatchParams::apply("pangea-operator"),
-        &Patch::Merge(&patch),
-    )
+    crate::controller::status_patch::patch_status(template, &state.client, patch)
     .await?;
 
     // Post-reconcile pipeline — single ordered entry point for hooks
@@ -127,10 +111,7 @@ pub async fn update_plan_status(
     policy_evaluation: Option<PolicyEvaluation>,
     state: &ControllerState,
 ) -> Result<()> {
-    let name = template.name_any();
-    let namespace = template.namespace().unwrap_or_default();
 
-    let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
 
     let mut status = template.status.clone().unwrap_or_default();
     status.resources = resources;
@@ -141,11 +122,7 @@ pub async fn update_plan_status(
 
     let patch = serde_json::json!({ "status": status });
 
-    api.patch_status(
-        &name,
-        &PatchParams::apply("pangea-operator"),
-        &Patch::Merge(&patch),
-    )
+    crate::controller::status_patch::patch_status(template, &state.client, patch)
     .await?;
 
     Ok(())
@@ -159,10 +136,7 @@ pub async fn update_apply_status(
     outputs: Option<std::collections::BTreeMap<String, serde_json::Value>>,
     state: &ControllerState,
 ) -> Result<()> {
-    let name = template.name_any();
-    let namespace = template.namespace().unwrap_or_default();
 
-    let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
 
     let mut status = template.status.clone().unwrap_or_default();
     status.outputs = outputs;
@@ -174,11 +148,7 @@ pub async fn update_apply_status(
 
     let patch = serde_json::json!({ "status": status });
 
-    api.patch_status(
-        &name,
-        &PatchParams::apply("pangea-operator"),
-        &Patch::Merge(&patch),
-    )
+    crate::controller::status_patch::patch_status(template, &state.client, patch)
     .await?;
 
     Ok(())
@@ -198,9 +168,6 @@ pub async fn update_settling_status(
     state: &ControllerState,
 ) -> Result<()> {
     use crate::controller::settling::SettlingOutcome;
-    let name = template.name_any();
-    let namespace = template.namespace().unwrap_or_default();
-    let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
 
     let cycles = outcome.cycle_count();
     let stuck_addresses: Vec<String> = match outcome {
@@ -261,11 +228,7 @@ pub async fn update_settling_status(
     });
 
     let patch = serde_json::json!({ "status": status });
-    api.patch_status(
-        &name,
-        &PatchParams::apply("pangea-operator"),
-        &Patch::Merge(&patch),
-    )
+    crate::controller::status_patch::patch_status(template, &state.client, patch)
     .await?;
 
     Ok(())
@@ -276,10 +239,7 @@ pub async fn update_drift_check_timestamp(
     template: &InfrastructureTemplate,
     state: &ControllerState,
 ) -> Result<()> {
-    let name = template.name_any();
-    let namespace = template.namespace().unwrap_or_default();
 
-    let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
 
     let patch = serde_json::json!({
         "status": {
@@ -287,11 +247,7 @@ pub async fn update_drift_check_timestamp(
         }
     });
 
-    api.patch_status(
-        &name,
-        &PatchParams::apply("pangea-operator"),
-        &Patch::Merge(&patch),
-    )
+    crate::controller::status_patch::patch_status(template, &state.client, patch)
     .await?;
 
     Ok(())
@@ -305,10 +261,7 @@ pub async fn update_pending_plan_hash(
     plan_hash: &str,
     state: &ControllerState,
 ) -> Result<()> {
-    let name = template.name_any();
-    let namespace = template.namespace().unwrap_or_default();
 
-    let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
 
     let patch = serde_json::json!({
         "status": {
@@ -317,11 +270,7 @@ pub async fn update_pending_plan_hash(
         }
     });
 
-    api.patch_status(
-        &name,
-        &PatchParams::apply("pangea-operator"),
-        &Patch::Merge(&patch),
-    )
+    crate::controller::status_patch::patch_status(template, &state.client, patch)
     .await?;
 
     Ok(())

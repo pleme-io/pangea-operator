@@ -11,7 +11,7 @@ use chrono::Utc;
 use futures::StreamExt;
 use k8s_openapi::api::core::v1::ConfigMap;
 use kube::{
-    api::{Api, Patch, PatchParams},
+    api::Api,
     runtime::{
         controller::{Action, Controller},
         watcher::Config,
@@ -482,10 +482,6 @@ async fn update_phase(
     error_msg: Option<&str>,
     state: &ControllerState,
 ) -> std::result::Result<(), Error> {
-    let namespace = build.namespace().unwrap_or_default();
-    let name = build.name_any();
-    let api: Api<PackerBuild> = Api::namespaced(state.client.clone(), &namespace);
-
     let ready = phase == PackerBuildPhase::Ready;
     let reconciling = matches!(
         phase,
@@ -518,7 +514,7 @@ async fn update_phase(
         }
     });
 
-    api.patch_status(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+    crate::controller::status_patch::patch_status(build, &state.client, patch)
         .await
         .map_err(Error::Kube)?;
 
@@ -532,10 +528,6 @@ async fn update_phase_with_error(
     error_msg: &str,
     state: &ControllerState,
 ) -> std::result::Result<(), Error> {
-    let namespace = build.namespace().unwrap_or_default();
-    let name = build.name_any();
-    let api: Api<PackerBuild> = Api::namespaced(state.client.clone(), &namespace);
-
     let retry_count = build.status.as_ref().map(|s| s.retry_count).unwrap_or(0) + 1;
 
     let conditions = vec![
@@ -553,7 +545,7 @@ async fn update_phase_with_error(
         }
     });
 
-    api.patch_status(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+    crate::controller::status_patch::patch_status(build, &state.client, patch)
         .await
         .map_err(Error::Kube)?;
 
@@ -564,17 +556,13 @@ async fn update_started_at(
     build: &PackerBuild,
     state: &ControllerState,
 ) -> std::result::Result<(), Error> {
-    let namespace = build.namespace().unwrap_or_default();
-    let name = build.name_any();
-    let api: Api<PackerBuild> = Api::namespaced(state.client.clone(), &namespace);
-
     let patch = serde_json::json!({
         "status": {
             "startedAt": Utc::now(),
         }
     });
 
-    api.patch_status(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+    crate::controller::status_patch::patch_status(build, &state.client, patch)
         .await
         .map_err(Error::Kube)?;
 
@@ -588,10 +576,6 @@ async fn update_status_with_ami(
     raw_manifest: Option<&str>,
     state: &ControllerState,
 ) -> std::result::Result<(), Error> {
-    let namespace = build.namespace().unwrap_or_default();
-    let name = build.name_any();
-    let api: Api<PackerBuild> = Api::namespaced(state.client.clone(), &namespace);
-
     let phase = PackerBuildPhase::Ready;
     let conditions = vec![
         create_condition("Ready", true, "BuildComplete", &format!("AMI: {ami_id}")),
@@ -612,7 +596,7 @@ async fn update_status_with_ami(
         }
     });
 
-    api.patch_status(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+    crate::controller::status_patch::patch_status(build, &state.client, patch)
         .await
         .map_err(Error::Kube)?;
 
