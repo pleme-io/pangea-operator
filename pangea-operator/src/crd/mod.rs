@@ -20,6 +20,7 @@ pub mod synthesizer_format;
 pub mod compliance_schedule;
 pub mod compliance_binding;
 pub mod pangea_dashboard;
+pub mod pangea_fleet_status;
 pub mod workspace_catalog;
 
 // Re-export InfrastructureTemplate types
@@ -104,6 +105,15 @@ pub use operator_policy::{
     ControllerKind, ControllerSuspend, OperatorPolicy, OperatorPolicySpec,
     OperatorPolicyStatus, SuspensionDecision, SuspensionSource, WorkspaceState,
     WorkspaceSuspend, WorkspaceSuspendEntry, OPERATOR_POLICY_SINGLETON,
+};
+
+// Re-export PangeaFleetStatus types — operator-driven fleet
+// aggregation singleton.
+pub use pangea_fleet_status::{
+    ArchitectureGemTracking, ComplianceBindingTracking, PangeaFleetStatus,
+    PangeaFleetStatusSpec, PangeaFleetStatusStatus, PangeaNamespaceTracking,
+    PhaseHistogramTracking, TemplateTracking, WorkspaceCatalogTracking,
+    PANGEA_FLEET_STATUS_SINGLETON,
 };
 
 // Re-export ImagePipeline types
@@ -213,6 +223,15 @@ pub fn generate_crds() -> String {
             .expect("Failed to serialize OperatorPolicy CRD"),
     );
 
+    // PangeaFleetStatus: cluster-scoped operator-driven aggregation
+    // singleton. `kubectl get pangeafleetstatus default` surfaces the
+    // operator's running rollup of every pangea CRD class.
+    crds.push_str("---\n");
+    crds.push_str(
+        &serde_yaml::to_string(&PangeaFleetStatus::crd())
+            .expect("Failed to serialize PangeaFleetStatus CRD"),
+    );
+
     crds
 }
 
@@ -272,7 +291,7 @@ mod tests {
             assert!(parsed.is_ok(), "Invalid YAML in CRD document {}: {:?}", count, parsed.err());
             count += 1;
         }
-        assert_eq!(count, 13, "Expected 13 CRD documents");
+        assert_eq!(count, 14, "Expected 14 CRD documents");
     }
 
     // ── Item H — CRD upgrade-compat tests ────────────────────────

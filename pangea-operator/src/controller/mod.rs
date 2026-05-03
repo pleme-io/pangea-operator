@@ -7,6 +7,7 @@
 pub mod architecture_gem_controller;
 pub mod error_policy;
 pub mod finalizer;
+pub mod fleet_status_controller;
 pub mod import;
 pub mod status_patch;
 pub mod operator_policy_cache;

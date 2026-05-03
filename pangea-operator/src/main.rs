@@ -323,6 +323,17 @@ async fn main() -> Result<()> {
         }
     });
 
+    // PangeaFleetStatus controller — refreshes the cluster-scoped
+    // singleton with per-CRD-class aggregations every 30s. Bypasses
+    // OperatorPolicy.globalSuspend so fleet visibility stays live
+    // even while user-resource reconciles are paused. Self-creates
+    // the `default` CR on startup.
+    let fleet_status_client = state.client.clone();
+    let fleet_status_controller = tokio::spawn(async move {
+        pangea_operator::controller::fleet_status_controller::run(fleet_status_client).await;
+        error!("PangeaFleetStatus controller exited");
+    });
+
     info!("Controllers started");
 
     // Start GraphQL server
@@ -357,6 +368,7 @@ async fn main() -> Result<()> {
     architecture_gem_controller.abort();
     workspace_catalog_controller.abort();
     operator_policy_controller.abort();
+    fleet_status_controller.abort();
 
     info!("Pangea Operator stopped");
     Ok(())
