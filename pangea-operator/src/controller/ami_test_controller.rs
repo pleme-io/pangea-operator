@@ -866,3 +866,73 @@ mod tests {
         assert!(yaml.contains("- pangea"));
     }
 }
+
+#[cfg(test)]
+mod deep_tests {
+    use super::{is_job_failed, is_job_succeeded, validate_suite_dag};
+    use crate::crd::TestSuite;
+    use k8s_openapi::api::batch::v1::JobStatus;
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition;
+
+    #[test]
+    fn job_succeeded_when_succeeded_ge_1() {
+        let mut s = JobStatus::default();
+        assert!(!is_job_succeeded(&s));
+        s.succeeded = Some(1);
+        assert!(is_job_succeeded(&s));
+        s.succeeded = Some(0);
+        assert!(!is_job_succeeded(&s));
+    }
+
+    #[test]
+    fn job_failed_via_count_or_condition() {
+        let mut s = JobStatus::default();
+        assert!(!is_job_failed(&s));
+        s.failed = Some(2);
+        assert!(is_job_failed(&s));
+
+        // Reset count, fail via condition
+        s.failed = None;
+        s.conditions = Some(vec![k8s_openapi::api::batch::v1::JobCondition {
+            type_: "Failed".into(),
+            status: "True".into(),
+            reason: Some("BackoffLimitExceeded".into()),
+            message: Some("exceeded".into()),
+            last_probe_time: None,
+            last_transition_time: None,
+        }]);
+        assert!(is_job_failed(&s));
+    }
+
+    fn ts(name: &str, deps: &[&str]) -> TestSuite {
+        TestSuite {
+            name: name.into(),
+            suite_type: crate::crd::ami_test::TestSuiteType::PackerTest,
+            depends_on: deps.iter().map(|s| (*s).into()).collect(),
+            timeout: "5m".into(),
+            config: None,
+        }
+    }
+
+    #[test]
+    fn dag_validation_rejects_self_dep() {
+        let suites = vec![ts("a", &["a"])];
+        let r = validate_suite_dag(&suites);
+        assert!(r.is_err());
+        assert!(format!("{:?}", r.unwrap_err()).contains("itself"));
+    }
+
+    #[test]
+    fn dag_validation_rejects_missing_dep() {
+        let suites = vec![ts("a", &["nonexistent"])];
+        let r = validate_suite_dag(&suites);
+        assert!(r.is_err());
+        assert!(format!("{:?}", r.unwrap_err()).contains("does not exist"));
+    }
+
+    #[test]
+    fn dag_validation_accepts_proper_chain() {
+        let suites = vec![ts("a", &[]), ts("b", &["a"]), ts("c", &["a", "b"])];
+        assert!(validate_suite_dag(&suites).is_ok());
+    }
+}

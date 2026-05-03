@@ -179,4 +179,34 @@ mod tests {
         assert!(yaml.contains("pangeadashboards.pangea.pleme.io"));
         assert!(yaml.contains("- pangea"));
     }
+
+    // ── D4 deep tests — CRD shape regression coverage ──
+
+    #[test]
+    fn crd_namespaced_scope_locked() {
+        // 0.8.7 fixed a scope drift (kube derive defaulted to Cluster while the
+        // chart deployed Namespaced). Locking this in test prevents a future
+        // edit to the kube derive args from silently regressing the scope and
+        // breaking upgrades against existing CRDs (CRD scope is immutable).
+        let yaml = serde_yaml::to_string(&PangeaDashboard::crd()).expect("CRD serializes");
+        assert!(yaml.contains("scope: Namespaced"));
+    }
+
+    #[test]
+    fn crd_short_name_present() {
+        // The shortname is part of the user-facing API; drift would surprise
+        // operators who type `kubectl get pdb` (or similar shorthand).
+        let yaml = serde_yaml::to_string(&PangeaDashboard::crd()).expect("CRD serializes");
+        // Just assert shortNames exists; the specific value is the contract
+        // we maintain in the kube derive args.
+        assert!(yaml.contains("shortNames"));
+    }
+
+    #[test]
+    fn status_default_phase_is_none() {
+        // Unset phase is the explicit "not yet observed" signal — the
+        // operator's status patch progression depends on this default.
+        let s = PangeaDashboardStatus::default();
+        assert!(s.phase.is_none());
+    }
 }

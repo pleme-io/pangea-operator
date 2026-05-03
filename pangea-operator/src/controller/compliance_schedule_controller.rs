@@ -557,4 +557,26 @@ mod tests {
         assert!(yaml.contains("complianceschedules.pangea.pleme.io"));
         assert!(yaml.contains("- pangea"));
     }
+
+    // ── D4 deep tests — pure helper coverage ──
+
+    use super::{has_finalizer, FINALIZER_NAME};
+
+    fn fake_schedule(finalizers: Option<Vec<String>>) -> ComplianceSchedule {
+        let mut s: ComplianceSchedule = serde_json::from_value(serde_json::json!({
+            "apiVersion": "pangea.pleme.io/v1alpha1",
+            "kind": "ComplianceSchedule",
+            "metadata": { "name": "x", "namespace": "y" },
+            "spec": { "suites": [] }
+        })).unwrap();
+        s.metadata.finalizers = finalizers;
+        s
+    }
+
+    #[test]
+    fn has_finalizer_canonical() {
+        assert!(!has_finalizer(&fake_schedule(None)));
+        assert!(has_finalizer(&fake_schedule(Some(vec![FINALIZER_NAME.to_string()]))));
+        assert!(!has_finalizer(&fake_schedule(Some(vec!["unrelated/finalizer".to_string()]))));
+    }
 }

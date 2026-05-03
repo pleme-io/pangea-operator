@@ -739,4 +739,43 @@ mod tests {
         assert!(yaml.contains("packerbuilds.pangea.pleme.io"));
         assert!(yaml.contains("- pangea"));
     }
+
+    // ── D4 deep tests — pure helper coverage ──
+
+    use super::{has_finalizer, FINALIZER_NAME};
+
+    fn fake_build(finalizers: Option<Vec<String>>) -> PackerBuild {
+        let mut b: PackerBuild = serde_json::from_value(serde_json::json!({
+            "apiVersion": "pangea.pleme.io/v1alpha1",
+            "kind": "PackerBuild",
+            "metadata": { "name": "x" },
+            "spec": { "source": { "raw": "" } }
+        })).unwrap();
+        b.metadata.finalizers = finalizers;
+        b
+    }
+
+    #[test]
+    fn has_finalizer_detects_canonical_name() {
+        assert!(!has_finalizer(&fake_build(None)));
+        assert!(has_finalizer(&fake_build(Some(vec![FINALIZER_NAME.to_string()]))));
+        assert!(!has_finalizer(&fake_build(Some(vec!["unrelated/finalizer".to_string()]))));
+    }
+
+    #[test]
+    fn has_finalizer_handles_finalizer_among_several() {
+        // Mixed list — ours is present, returns true.
+        let mixed = vec![
+            "other.io/cleanup".to_string(),
+            FINALIZER_NAME.to_string(),
+            "yet-another/finalizer".to_string(),
+        ];
+        assert!(has_finalizer(&fake_build(Some(mixed))));
+        // Mixed without ours → false.
+        let only_others = vec![
+            "other.io/cleanup".to_string(),
+            "yet-another/finalizer".to_string(),
+        ];
+        assert!(!has_finalizer(&fake_build(Some(only_others))));
+    }
 }

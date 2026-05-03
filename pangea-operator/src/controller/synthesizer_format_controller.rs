@@ -333,4 +333,24 @@ mod tests {
         // Category we just added.
         assert!(yaml.contains("- pangea"));
     }
+
+    // ── D4 deep tests — pure helper coverage ──
+
+    use super::singularize;
+
+    #[test]
+    fn singularize_handles_common_endings() {
+        // The DSL's plural-to-singular helper drives the generated
+        // method names. Drift here breaks consumer-facing API.
+        assert_eq!(singularize("providers"), "provider");
+        assert_eq!(singularize("workers"), "worker");
+        assert_eq!(singularize("things"), "thing");
+    }
+
+    #[test]
+    fn singularize_passes_through_short_strings() {
+        // Words too short to have plural suffix shouldn't crash.
+        assert_eq!(singularize(""), "");
+        assert_eq!(singularize("a"), "a");
+    }
 }

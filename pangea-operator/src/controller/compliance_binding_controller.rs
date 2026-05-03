@@ -411,4 +411,35 @@ mod tests {
         let s = ComplianceBindingStatus::default();
         assert!(s.compliance_state.is_none());
     }
+
+    // ── D4 deep tests — CRD shape + enum coverage ──
+
+    #[test]
+    fn crd_namespaced_scope() {
+        // Compliance bindings are inherently namespaced: a binding controls
+        // resources within a namespace. A scope drift to Cluster would be a
+        // breaking change for every existing binding.
+        let yaml = serde_yaml::to_string(&ComplianceBinding::crd()).expect("CRD serializes");
+        assert!(yaml.contains("scope: Namespaced"));
+    }
+
+    #[test]
+    fn compliance_state_enum_serializes_known_variants() {
+        use crate::crd::compliance_binding::BindingComplianceState;
+        // Drift in these tags would silently break operator-emitted status
+        // patches against existing CRs.
+        let variants = [
+            BindingComplianceState::Compliant,
+            BindingComplianceState::NonCompliant,
+            BindingComplianceState::Unknown,
+            BindingComplianceState::Suspended,
+        ];
+        for v in variants {
+            let s = serde_json::to_string(&v).unwrap();
+            let back: BindingComplianceState = serde_json::from_str(&s).unwrap();
+            assert_eq!(format!("{:?}", v), format!("{:?}", back));
+        }
+        // Default is Unknown — the binding starts in observation mode.
+        assert_eq!(BindingComplianceState::default(), BindingComplianceState::Unknown);
+    }
 }

@@ -302,3 +302,62 @@ mod tests {
         assert!(yaml.contains("- pangea"));
     }
 }
+
+#[cfg(test)]
+mod deep_tests {
+    use super::validate_backend;
+    use crate::crd::{BackendConfig, BackendType, PangeaNamespace, PangeaNamespaceSpec};
+    use kube::api::ObjectMeta;
+
+    fn ns(backend: BackendConfig) -> PangeaNamespace {
+        PangeaNamespace {
+            metadata: ObjectMeta {
+                name: Some("test-ns".into()),
+                ..Default::default()
+            },
+            spec: PangeaNamespaceSpec {
+                description: None,
+                backend,
+                default_tags: Default::default(),
+                default_providers: None,
+                default_compliance_profiles: vec![],
+                suspend: false,
+            },
+            status: None,
+        }
+    }
+
+    #[test]
+    fn pg_backend_requires_pg_config() {
+        let n = ns(BackendConfig {
+            r#type: BackendType::Pg,
+            pg: None,
+            s3: None,
+        });
+        let r = validate_backend(&n);
+        assert!(r.is_err());
+        assert!(format!("{:?}", r.unwrap_err()).contains("PostgreSQL"));
+    }
+
+    #[test]
+    fn s3_backend_requires_s3_config() {
+        let n = ns(BackendConfig {
+            r#type: BackendType::S3,
+            pg: None,
+            s3: None,
+        });
+        let r = validate_backend(&n);
+        assert!(r.is_err());
+        assert!(format!("{:?}", r.unwrap_err()).contains("S3"));
+    }
+
+    #[test]
+    fn local_backend_requires_no_extra_config() {
+        let n = ns(BackendConfig {
+            r#type: BackendType::Local,
+            pg: None,
+            s3: None,
+        });
+        assert!(validate_backend(&n).is_ok());
+    }
+}

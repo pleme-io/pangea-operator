@@ -1091,4 +1091,102 @@ mod tests {
         assert!(yaml.contains("imagepipelines.pangea.pleme.io"));
         assert!(yaml.contains("- pangea"));
     }
+
+    // ── D4 deep tests — pure helper coverage ──
+
+    use super::{has_finalizer, validate_plan_assertion, FINALIZER_NAME};
+    use crate::crd::{PlanAssertion, PlanAssertionRule, ResourceSummary};
+
+    fn assertion_with_max_destroyed(max: u32) -> PlanAssertion {
+        PlanAssertion {
+            name: "no-mass-destroy".into(),
+            rule: PlanAssertionRule {
+                max_destroyed: Some(max),
+                max_added: None,
+                allowed_resource_types: vec![],
+                forbidden_resource_types: vec![],
+                max_total_changed: None,
+            },
+        }
+    }
+
+    #[test]
+    fn validate_plan_assertion_passes_when_under_max_destroyed() {
+        let a = assertion_with_max_destroyed(3);
+        let r = ResourceSummary {
+            total: 10,
+            added: 0,
+            changed: 0,
+            destroyed: 2,
+        };
+        assert!(validate_plan_assertion(&a, &r).is_ok());
+    }
+
+    #[test]
+    fn validate_plan_assertion_fails_when_over_max_destroyed() {
+        let a = assertion_with_max_destroyed(3);
+        let r = ResourceSummary {
+            total: 10,
+            added: 0,
+            changed: 0,
+            destroyed: 4,
+        };
+        let err = validate_plan_assertion(&a, &r).unwrap_err().to_string();
+        assert!(err.contains("no-mass-destroy"));
+        assert!(err.contains("4"));
+        assert!(err.contains("max 3"));
+    }
+
+    #[test]
+    fn validate_plan_assertion_max_total_changed_sums_all_three() {
+        // added + changed + destroyed = 1 + 2 + 3 = 6, which exceeds max 5.
+        let a = PlanAssertion {
+            name: "small-blast-radius".into(),
+            rule: PlanAssertionRule {
+                max_destroyed: None,
+                max_added: None,
+                allowed_resource_types: vec![],
+                forbidden_resource_types: vec![],
+                max_total_changed: Some(5),
+            },
+        };
+        let r = ResourceSummary {
+            total: 100,
+            added: 1,
+            changed: 2,
+            destroyed: 3,
+        };
+        let err = validate_plan_assertion(&a, &r).unwrap_err().to_string();
+        assert!(err.contains("6"));
+        assert!(err.contains("max 5"));
+    }
+
+    #[test]
+    fn has_finalizer_detects_canonical_name() {
+        // Build a minimal fake ImagePipeline via JSON (the spec has no
+        // Default impl and constructing it inline pulls in 6+ unrelated
+        // typed fields, defeating the "tiny test fixture" goal).
+        fn fake(finalizers: Option<Vec<String>>) -> ImagePipeline {
+            let mut p: ImagePipeline = serde_json::from_value(serde_json::json!({
+                "apiVersion": "pangea.pleme.io/v1alpha1",
+                "kind": "ImagePipeline",
+                "metadata": { "name": "x" },
+                "spec": {
+                    "build": { "source": { "raw": "" } },
+                    "deploy": {
+                        "targetTemplateRef": { "name": "t", "namespace": "n" },
+                        "amiVariable": "ami_id"
+                    }
+                }
+            })).unwrap();
+            p.metadata.finalizers = finalizers;
+            p
+        }
+        // No finalizers → false.
+        assert!(!has_finalizer(&fake(None)));
+        // With our finalizer → true.
+        assert!(has_finalizer(&fake(Some(vec![FINALIZER_NAME.to_string()]))));
+        // With only some other finalizer → false.
+        assert!(!has_finalizer(&fake(Some(vec!["other.io/finalizer".to_string()]))));
+    }
 }
