@@ -273,3 +273,30 @@ fn error_policy(
     error!(%error, "Namespace reconciliation error");
     Action::requeue(ERROR_REQUEUE_INTERVAL)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::crd::{PangeaNamespace, PangeaNamespaceStatus};
+    use kube::CustomResourceExt;
+
+    #[test]
+    fn status_default_round_trips() {
+        let s = PangeaNamespaceStatus::default();
+        let j = serde_json::to_string(&s).unwrap();
+        let back: PangeaNamespaceStatus = serde_json::from_str(&j).unwrap();
+        assert_eq!(format!("{:?}", s), format!("{:?}", back));
+    }
+
+    #[test]
+    fn status_default_template_count_is_zero() {
+        let s = PangeaNamespaceStatus::default();
+        assert_eq!(s.template_count, 0);
+    }
+
+    #[test]
+    fn crd_yaml_renders_cleanly() {
+        let yaml = serde_yaml::to_string(&PangeaNamespace::crd()).expect("CRD serializes");
+        assert!(yaml.contains("pangeanamespaces.pangea.pleme.io"));
+        assert!(yaml.contains("- pangea"));
+    }
+}

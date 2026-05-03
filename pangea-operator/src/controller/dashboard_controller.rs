@@ -141,3 +141,40 @@ async fn reconcile(
 
     Ok(Action::requeue(DEFAULT_REQUEUE_INTERVAL))
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::crd::pangea_dashboard::{
+        PangeaDashboard, PangeaDashboardPhase, PangeaDashboardStatus,
+    };
+    use kube::CustomResourceExt;
+
+    #[test]
+    fn phase_serde_round_trip() {
+        for p in [
+            PangeaDashboardPhase::Pending,
+            PangeaDashboardPhase::Synthesizing,
+            PangeaDashboardPhase::Ready,
+            PangeaDashboardPhase::Failed,
+        ] {
+            let s = serde_json::to_string(&p).unwrap();
+            let back: PangeaDashboardPhase = serde_json::from_str(&s).unwrap();
+            assert_eq!(format!("{:?}", p), format!("{:?}", back));
+        }
+    }
+
+    #[test]
+    fn status_default_round_trips() {
+        let s = PangeaDashboardStatus::default();
+        let j = serde_json::to_string(&s).unwrap();
+        let back: PangeaDashboardStatus = serde_json::from_str(&j).unwrap();
+        assert_eq!(format!("{:?}", s), format!("{:?}", back));
+    }
+
+    #[test]
+    fn crd_yaml_renders_cleanly() {
+        let yaml = serde_yaml::to_string(&PangeaDashboard::crd()).expect("CRD serializes");
+        assert!(yaml.contains("pangeadashboards.pangea.pleme.io"));
+        assert!(yaml.contains("- pangea"));
+    }
+}

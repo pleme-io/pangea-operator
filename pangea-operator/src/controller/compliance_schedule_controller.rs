@@ -518,3 +518,41 @@ fn error_policy(
     warn!(error = %error, "ComplianceSchedule error policy triggered");
     Action::requeue(ERROR_REQUEUE_INTERVAL)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::crd::compliance_schedule::{
+        ComplianceSchedule, ComplianceSchedulePhase, ComplianceScheduleStatus,
+    };
+    use kube::CustomResourceExt;
+
+    #[test]
+    fn phase_serde_round_trip() {
+        for p in [
+            ComplianceSchedulePhase::Idle,
+            ComplianceSchedulePhase::Running,
+            ComplianceSchedulePhase::Compliant,
+            ComplianceSchedulePhase::NonCompliant,
+            ComplianceSchedulePhase::Error,
+        ] {
+            let s = serde_json::to_string(&p).unwrap();
+            let back: ComplianceSchedulePhase = serde_json::from_str(&s).unwrap();
+            assert_eq!(format!("{:?}", p), format!("{:?}", back));
+        }
+    }
+
+    #[test]
+    fn status_default_round_trips() {
+        let s = ComplianceScheduleStatus::default();
+        let j = serde_json::to_string(&s).unwrap();
+        let back: ComplianceScheduleStatus = serde_json::from_str(&j).unwrap();
+        assert_eq!(format!("{:?}", s), format!("{:?}", back));
+    }
+
+    #[test]
+    fn crd_yaml_renders_cleanly() {
+        let yaml = serde_yaml::to_string(&ComplianceSchedule::crd()).expect("CRD serializes");
+        assert!(yaml.contains("complianceschedules.pangea.pleme.io"));
+        assert!(yaml.contains("- pangea"));
+    }
+}

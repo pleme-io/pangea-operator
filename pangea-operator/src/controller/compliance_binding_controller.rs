@@ -380,3 +380,33 @@ fn error_policy(
     warn!(error = %error, "ComplianceBinding error policy triggered");
     Action::requeue(ERROR_REQUEUE_INTERVAL)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::crd::compliance_binding::{ComplianceBinding, ComplianceBindingStatus};
+    use kube::CustomResourceExt;
+
+    #[test]
+    fn status_default_round_trips() {
+        let s = ComplianceBindingStatus::default();
+        let j = serde_json::to_string(&s).unwrap();
+        let back: ComplianceBindingStatus = serde_json::from_str(&j).unwrap();
+        assert_eq!(format!("{:?}", s), format!("{:?}", back));
+    }
+
+    #[test]
+    fn crd_yaml_renders_cleanly() {
+        let yaml = serde_yaml::to_string(&ComplianceBinding::crd()).expect("CRD serializes");
+        assert!(yaml.contains("compliancebindings.pangea.pleme.io"));
+        assert!(yaml.contains("- pangea"));
+    }
+
+    #[test]
+    fn status_default_initializes_to_no_compliance_state() {
+        // The status is "unknown" until the binding observes its first
+        // schedule evaluation — verifies the default isn't accidentally
+        // claiming Compliant.
+        let s = ComplianceBindingStatus::default();
+        assert!(s.compliance_state.is_none());
+    }
+}

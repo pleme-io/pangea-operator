@@ -1049,3 +1049,44 @@ fn error_policy(
         Action::requeue(Duration::from_secs(300))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::crd::image_pipeline::{ImagePipeline, ImagePipelinePhase, ImagePipelineStatus};
+    use kube::CustomResourceExt;
+
+    #[test]
+    fn phase_serde_round_trip() {
+        for p in [
+            ImagePipelinePhase::Pending,
+            ImagePipelinePhase::Building,
+            ImagePipelinePhase::Testing,
+            ImagePipelinePhase::Planning,
+            ImagePipelinePhase::AwaitingApproval,
+            ImagePipelinePhase::Applying,
+            ImagePipelinePhase::Verifying,
+            ImagePipelinePhase::Completed,
+            ImagePipelinePhase::Failed,
+            ImagePipelinePhase::RollingBack,
+        ] {
+            let s = serde_json::to_string(&p).unwrap();
+            let back: ImagePipelinePhase = serde_json::from_str(&s).unwrap();
+            assert_eq!(format!("{:?}", p), format!("{:?}", back));
+        }
+    }
+
+    #[test]
+    fn status_default_round_trips() {
+        let s = ImagePipelineStatus::default();
+        let j = serde_json::to_string(&s).unwrap();
+        let back: ImagePipelineStatus = serde_json::from_str(&j).unwrap();
+        assert_eq!(format!("{:?}", s), format!("{:?}", back));
+    }
+
+    #[test]
+    fn crd_yaml_renders_cleanly() {
+        let yaml = serde_yaml::to_string(&ImagePipeline::crd()).expect("CRD serializes");
+        assert!(yaml.contains("imagepipelines.pangea.pleme.io"));
+        assert!(yaml.contains("- pangea"));
+    }
+}

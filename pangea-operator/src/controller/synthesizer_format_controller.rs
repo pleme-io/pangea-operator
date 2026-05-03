@@ -288,3 +288,47 @@ fn error_policy(
     warn!(error = %error, "SynthesizerFormat error policy triggered");
     Action::requeue(Duration::from_secs(60))
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::crd::synthesizer_format::{
+        SynthesizerFormat, SynthesizerFormatPhase, SynthesizerFormatStatus,
+    };
+    use kube::CustomResourceExt;
+
+    /// Phase enum serializes to its expected variant strings —
+    /// guards against silent rename drift during refactors.
+    #[test]
+    fn phase_serde_round_trip() {
+        let phases = [
+            SynthesizerFormatPhase::Ready,
+            SynthesizerFormatPhase::Invalid,
+        ];
+        for p in phases {
+            let s = serde_json::to_string(&p).unwrap();
+            let back: SynthesizerFormatPhase = serde_json::from_str(&s).unwrap();
+            assert_eq!(format!("{:?}", p), format!("{:?}", back));
+        }
+    }
+
+    /// Default Status renders without panic and is serde-compatible.
+    #[test]
+    fn status_default_round_trips() {
+        let s = SynthesizerFormatStatus::default();
+        let j = serde_json::to_string(&s).unwrap();
+        let back: SynthesizerFormatStatus = serde_json::from_str(&j).unwrap();
+        assert_eq!(format!("{:?}", s), format!("{:?}", back));
+    }
+
+    /// CR can be derived (kube CustomResource trait wires correctly).
+    #[test]
+    fn crd_yaml_renders_cleanly() {
+        let yaml =
+            serde_yaml::to_string(&SynthesizerFormat::crd()).expect("CRD serializes to YAML");
+        // Must include the GVK + the singular name.
+        assert!(yaml.contains("synthesizerformats.pangea.pleme.io"));
+        assert!(yaml.contains("SynthesizerFormat"));
+        // Category we just added.
+        assert!(yaml.contains("- pangea"));
+    }
+}

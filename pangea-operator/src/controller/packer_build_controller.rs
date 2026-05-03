@@ -700,3 +700,41 @@ fn error_policy(
         Action::requeue(Duration::from_secs(300))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::crd::{PackerBuild, PackerBuildPhase, PackerBuildStatus};
+    use kube::CustomResourceExt;
+
+    #[test]
+    fn phase_serde_round_trip() {
+        for p in [
+            PackerBuildPhase::Pending,
+            PackerBuildPhase::Compiling,
+            PackerBuildPhase::Validating,
+            PackerBuildPhase::Building,
+            PackerBuildPhase::Extracting,
+            PackerBuildPhase::Ready,
+            PackerBuildPhase::Failed,
+        ] {
+            let s = serde_json::to_string(&p).unwrap();
+            let back: PackerBuildPhase = serde_json::from_str(&s).unwrap();
+            assert_eq!(format!("{:?}", p), format!("{:?}", back));
+        }
+    }
+
+    #[test]
+    fn status_default_round_trips() {
+        let s = PackerBuildStatus::default();
+        let j = serde_json::to_string(&s).unwrap();
+        let back: PackerBuildStatus = serde_json::from_str(&j).unwrap();
+        assert_eq!(format!("{:?}", s), format!("{:?}", back));
+    }
+
+    #[test]
+    fn crd_yaml_renders_cleanly() {
+        let yaml = serde_yaml::to_string(&PackerBuild::crd()).expect("CRD serializes");
+        assert!(yaml.contains("packerbuilds.pangea.pleme.io"));
+        assert!(yaml.contains("- pangea"));
+    }
+}
