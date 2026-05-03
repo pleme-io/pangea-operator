@@ -104,41 +104,26 @@ async fn reconcile_template(
     info!("Reconciling InfrastructureTemplate");
     state.metrics.reconciliations_total.inc();
 
-    // Cluster-wide kill-switch — honor `OperatorPolicy/default`.
-    if let Some(action) = crate::controller::policy_gate::check_operator_policy(
-        &state,
-        crate::crd::ControllerKind::Template,
-    ) {
-        return Ok(action);
-    }
-
-    // Per-workspace pause — honor
-    // `OperatorPolicy/default.spec.workspaceSuspend`. Resolves the
-    // tri-state precedence ladder (template → catalog cascade →
-    // controller → global) and:
-    //
-    //   * `Paused` → skip reconcile (return Action::requeue), regardless
-    //     of why the more-general layers said pause/run.
-    //   * `Active` → proceed even if a more-general layer said pause.
-    //     This is the surgical carve-out for "global paused, but THIS
-    //     template / its parent catalog must keep reconciling."
-    //   * `NotSuspended` → proceed normally.
-    //
-    // Parent-catalog name is read directly from the
-    // `pangea.pleme.io/workspace` label — no API call required, so
-    // the gate stays cheap on every reconcile.
+    // Pre-reconcile policy pipeline — runs the kill-switch + per-workspace
+    // pause gates in their canonical order. Each gate returns a SkipWith
+    // action when it fires; we early-return without executing the body.
+    // Per-CR template.spec.suspend + ReactivePolicy auto-suspend stay
+    // inline below since they need template-specific data (parent_wsc,
+    // status).
     let parent_catalog_name = template
         .metadata
         .labels
         .as_ref()
         .and_then(|l| l.get(crate::controller::workspace_catalog_controller::WORKSPACE_LABEL))
         .map(String::as_str);
-    if let Some(action) = crate::controller::policy_gate::check_template_workspace_policy(
+    if let Some(action) = crate::controller::policy_pipeline::run_for_template(
         &state,
         &namespace,
         &name,
         parent_catalog_name,
-    ) {
+    )
+    .into_skip_action()
+    {
         return Ok(action);
     }
 

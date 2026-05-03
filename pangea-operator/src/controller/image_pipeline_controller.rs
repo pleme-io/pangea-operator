@@ -95,10 +95,12 @@ async fn reconcile_image_pipeline(
     info!("Reconciling ImagePipeline");
 
     // Cluster-wide kill-switch — honor `OperatorPolicy/default`.
-    if let Some(action) = crate::controller::policy_gate::check_operator_policy(
+    if let Some(action) = crate::controller::policy_pipeline::run_for_controller(
         &state,
         crate::crd::ControllerKind::ImagePipeline,
-    ) {
+    )
+    .into_skip_action()
+    {
         return Ok(action);
     }
 

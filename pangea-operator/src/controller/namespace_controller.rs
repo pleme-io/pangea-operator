@@ -75,10 +75,12 @@ async fn reconcile_namespace(
     state.metrics.namespace_reconciliations_total.inc();
 
     // Cluster-wide kill-switch — honor `OperatorPolicy/default`.
-    if let Some(action) = crate::controller::policy_gate::check_operator_policy(
+    if let Some(action) = crate::controller::policy_pipeline::run_for_controller(
         &state,
         crate::crd::ControllerKind::Namespace,
-    ) {
+    )
+    .into_skip_action()
+    {
         return Ok(action);
     }
 

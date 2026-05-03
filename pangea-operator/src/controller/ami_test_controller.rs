@@ -93,10 +93,12 @@ async fn reconcile_ami_test(
     info!("Reconciling AmiTest");
 
     // Cluster-wide kill-switch — honor `OperatorPolicy/default`.
-    if let Some(action) = crate::controller::policy_gate::check_operator_policy(
+    if let Some(action) = crate::controller::policy_pipeline::run_for_controller(
         &state,
         crate::crd::ControllerKind::AmiTest,
-    ) {
+    )
+    .into_skip_action()
+    {
         return Ok(action);
     }
 
