@@ -6,12 +6,14 @@
 mod postgres;
 mod schema;
 mod state;
+pub mod state_backend;
 mod lock;
 mod config;
 
 pub use postgres::PostgresBackend;
 pub use schema::SchemaManager;
 pub use state::StateStore;
+pub use state_backend::{InMemoryStateBackend, PostgresStateBackend, StateBackend};
 pub use lock::{StateLock, LockGuard};
 pub use config::{BackendConfigGenerator, AwsCredentialsConfig, CloudflareCredentialsConfig};
 
