@@ -22,6 +22,7 @@ pub mod flow_scheduler;
 pub mod policy_cascade;
 mod reconciler;
 pub mod settling;
+mod template;
 mod template_controller;
 mod namespace_controller;
 mod packer_build_controller;
