@@ -11,3 +11,4 @@
 pub mod events;
 pub mod finalizer;
 pub mod provider_creds;
+pub mod status;
