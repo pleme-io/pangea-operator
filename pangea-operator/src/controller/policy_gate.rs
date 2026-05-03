@@ -885,4 +885,118 @@ mod tests {
         // 1 Active entry across both maps (catalogs.opensource).
         assert_eq!(ws.count_active_overrides(), 1);
     }
+
+    // ── R5: decision_from_entry + cache-only side effects ──
+
+    #[test]
+    fn decision_from_entry_inherit_returns_none() {
+        // Inherit means "fall through to next layer" — the helper must
+        // return None so the caller continues the precedence ladder.
+        let entry = WorkspaceSuspendEntry {
+            state: WorkspaceState::Inherit,
+            reason: Some("ignored".into()),
+        };
+        assert!(decision_from_entry(&entry, SuspensionSource::Workspace).is_none());
+    }
+
+    #[test]
+    fn decision_from_entry_paused_carries_reason_and_source() {
+        let entry = WorkspaceSuspendEntry {
+            state: WorkspaceState::Paused,
+            reason: Some("DR drill".into()),
+        };
+        let d = decision_from_entry(&entry, SuspensionSource::Catalog).unwrap();
+        match d {
+            SuspensionDecision::Paused { reason, source } => {
+                assert_eq!(reason.as_deref(), Some("DR drill"));
+                assert_eq!(source, SuspensionSource::Catalog);
+            }
+            _ => panic!("expected Paused decision"),
+        }
+    }
+
+    #[test]
+    fn decision_from_entry_active_carries_reason_and_source() {
+        let entry = WorkspaceSuspendEntry {
+            state: WorkspaceState::Active,
+            reason: Some("on-call carve-out".into()),
+        };
+        let d = decision_from_entry(&entry, SuspensionSource::Workspace).unwrap();
+        match d {
+            SuspensionDecision::Active { reason, source } => {
+                assert_eq!(reason.as_deref(), Some("on-call carve-out"));
+                assert_eq!(source, SuspensionSource::Workspace);
+            }
+            _ => panic!("expected Active decision"),
+        }
+    }
+
+    #[test]
+    fn evaluate_against_cache_bumps_skipped_on_global_suspend() {
+        // The cache-direct entry point used by architecture_gem +
+        // workspace_catalog must increment the skipped counter on
+        // every pause — observability for the kill-switch needs to
+        // count actual reconciles dropped, not just the policy-state
+        // boolean. Drift here would silently zero the dashboard.
+        let cache = OperatorPolicyCache::new_permissive();
+        cache.store(OperatorPolicySpec {
+            global_suspend: true,
+            global_suspend_reason: Some("R5 test".into()),
+            ..Default::default()
+        });
+        assert_eq!(cache.skipped(), 0);
+        let action = evaluate_against_cache(&cache, ControllerKind::ArchitectureGem);
+        assert!(action.is_some(), "expected a skip action");
+        assert_eq!(cache.skipped(), 1, "skipped counter must bump");
+    }
+
+    #[test]
+    fn evaluate_against_cache_does_not_bump_skipped_on_proceed() {
+        // Default-allow → no skip → counter stays at 0.
+        let cache = OperatorPolicyCache::new_permissive();
+        assert_eq!(cache.skipped(), 0);
+        let action = evaluate_against_cache(&cache, ControllerKind::WorkspaceCatalog);
+        assert!(action.is_none(), "permissive cache must not skip");
+        assert_eq!(cache.skipped(), 0, "permissive must not bump");
+    }
+
+    #[test]
+    fn evaluate_catalog_against_cache_paused_bumps_and_returns_action() {
+        // Per-catalog tri-state Paused → must bump the skipped
+        // counter and return Some(Action). Mirrors the architecture-
+        // gem path but for the catalog-level cascade tier.
+        let cache = OperatorPolicyCache::new_permissive();
+        let mut spec = OperatorPolicySpec::default();
+        spec.workspace_suspend.catalogs.insert(
+            "shared-infra".into(),
+            WorkspaceSuspendEntry {
+                state: WorkspaceState::Paused,
+                reason: Some("freeze for migration".into()),
+            },
+        );
+        cache.store(spec);
+        let before = cache.skipped();
+        let action = evaluate_catalog_against_cache(&cache, "shared-infra");
+        assert!(action.is_some());
+        assert_eq!(cache.skipped(), before + 1);
+    }
+
+    #[test]
+    fn evaluate_catalog_against_cache_active_does_not_skip() {
+        // Active is a carve-out — do not pause, do not bump.
+        let cache = OperatorPolicyCache::new_permissive();
+        let mut spec = OperatorPolicySpec::default();
+        spec.workspace_suspend.catalogs.insert(
+            "shared-infra".into(),
+            WorkspaceSuspendEntry {
+                state: WorkspaceState::Active,
+                reason: None,
+            },
+        );
+        cache.store(spec);
+        let before = cache.skipped();
+        let action = evaluate_catalog_against_cache(&cache, "shared-infra");
+        assert!(action.is_none(), "Active is a carve-out, not a pause");
+        assert_eq!(cache.skipped(), before, "Active must not bump skipped");
+    }
 }
