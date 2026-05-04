@@ -150,10 +150,14 @@ async fn main() -> Result<()> {
                 let owner = pangea_operator::ruby::RubyOwner::spawn(vec![])
                     .await
                     .expect("spawn ruby owner thread");
+                // Attach metrics so every dispatcher call emits
+                // pangea_compile_queue_depth + pangea_compile_request_seconds
+                // — see observability/metrics.rs S1 docstring.
                 let backend = pangea_operator::ruby::EmbeddedCompilerBackend::with_cache(
                     owner.tx_handle(),
                     cache,
-                );
+                )
+                .with_metrics(metrics.clone());
                 // Leak the owner so it lives the lifetime of the
                 // process — Drop on shutdown is best-effort.
                 std::mem::forget(owner);

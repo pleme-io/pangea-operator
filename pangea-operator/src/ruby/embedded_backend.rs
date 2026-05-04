@@ -34,6 +34,11 @@ pub struct EmbeddedCompilerBackend {
     /// Map of `gem_name → PreparedGem`. prepare_gem populates;
     /// smoke_test reads to resolve relative fixture paths.
     prepared: Arc<Mutex<std::collections::HashMap<String, PreparedGem>>>,
+    /// Optional metrics handle. When present, every dispatcher call
+    /// instruments: bumps `compile_queue_depth` before send, records
+    /// `compile_request_seconds` after response, decrements depth.
+    /// Optional so test/CLI callers can construct without a Metrics.
+    metrics: Option<Arc<crate::observability::Metrics>>,
 }
 
 impl EmbeddedCompilerBackend {
@@ -45,6 +50,7 @@ impl EmbeddedCompilerBackend {
             tx,
             cache: None,
             prepared: Arc::new(Mutex::new(Default::default())),
+            metrics: None,
         }
     }
 
@@ -56,7 +62,44 @@ impl EmbeddedCompilerBackend {
             tx,
             cache: Some(cache),
             prepared: Arc::new(Mutex::new(Default::default())),
+            metrics: None,
         }
+    }
+
+    /// Attach a metrics handle. Every subsequent dispatcher call
+    /// records `compile_queue_depth` (gauge) + `compile_request_seconds`
+    /// (histogram). Returns self by value so it composes with the
+    /// constructors:
+    ///
+    /// ```ignore
+    /// EmbeddedCompilerBackend::with_cache(tx, cache).with_metrics(m)
+    /// ```
+    pub fn with_metrics(mut self, metrics: Arc<crate::observability::Metrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
+    }
+
+    /// Wrap a send+await pair in queue-depth + request-duration
+    /// instrumentation. The `body` closure does the actual mpsc
+    /// send + oneshot await — see the four CompilerBackend methods
+    /// for the call shape. Drops the gauge increment + histogram
+    /// observation on the floor when no metrics handle is attached.
+    async fn instrumented<F, Fut, T>(&self, body: F) -> Result<T, BackendError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<T, BackendError>>,
+    {
+        let started = std::time::Instant::now();
+        if let Some(m) = &self.metrics {
+            m.compile_queue_depth.inc();
+        }
+        let result = body().await;
+        if let Some(m) = &self.metrics {
+            m.compile_queue_depth.dec();
+            m.compile_request_seconds
+                .observe(started.elapsed().as_secs_f64());
+        }
+        result
     }
 }
 
@@ -133,16 +176,17 @@ impl CompilerBackend for EmbeddedCompilerBackend {
     }
 
     async fn list_architectures(&self, gem: &str) -> Result<ArchListing, BackendError> {
-        let (rtx, rrx) = oneshot::channel();
-        self.tx
-            .send(RubyRequest::ListArchitectures {
-                gem: gem.to_string(),
-                respond: rtx,
-            })
-            .await
-            .map_err(|_| BackendError::Ruby("ruby owner channel closed".into()))?;
-        rrx.await
-            .map_err(|_| BackendError::Ruby("ruby owner reply lost".into()))?
+        let gem = gem.to_string();
+        self.instrumented(|| async move {
+            let (rtx, rrx) = oneshot::channel();
+            self.tx
+                .send(RubyRequest::ListArchitectures { gem, respond: rtx })
+                .await
+                .map_err(|_| BackendError::Ruby("ruby owner channel closed".into()))?;
+            rrx.await
+                .map_err(|_| BackendError::Ruby("ruby owner reply lost".into()))?
+        })
+        .await
     }
 
     async fn smoke_test(&self, req: SmokeRequest) -> Result<FixtureOutcome, BackendError> {
@@ -161,26 +205,32 @@ impl CompilerBackend for EmbeddedCompilerBackend {
             }
         }
 
-        let (rtx, rrx) = oneshot::channel();
-        self.tx
-            .send(RubyRequest::SmokeTest { req, respond: rtx })
-            .await
-            .map_err(|_| BackendError::Ruby("ruby owner channel closed".into()))?;
-        rrx.await
-            .map_err(|_| BackendError::Ruby("ruby owner reply lost".into()))?
+        self.instrumented(|| async move {
+            let (rtx, rrx) = oneshot::channel();
+            self.tx
+                .send(RubyRequest::SmokeTest { req, respond: rtx })
+                .await
+                .map_err(|_| BackendError::Ruby("ruby owner channel closed".into()))?;
+            rrx.await
+                .map_err(|_| BackendError::Ruby("ruby owner reply lost".into()))?
+        })
+        .await
     }
 
     async fn compile(&self, req: CompileRequest) -> Result<CompileResult, BackendError> {
         // M8.4: real implementation. Owner thread runs the
         // captured-block + instance_eval pattern; returns the
         // pretty-serialized terraform_json string.
-        let (rtx, rrx) = oneshot::channel();
-        self.tx
-            .send(RubyRequest::Compile { req, respond: rtx })
-            .await
-            .map_err(|_| BackendError::Ruby("ruby owner channel closed".into()))?;
-        rrx.await
-            .map_err(|_| BackendError::Ruby("ruby owner reply lost".into()))?
+        self.instrumented(|| async move {
+            let (rtx, rrx) = oneshot::channel();
+            self.tx
+                .send(RubyRequest::Compile { req, respond: rtx })
+                .await
+                .map_err(|_| BackendError::Ruby("ruby owner channel closed".into()))?;
+            rrx.await
+                .map_err(|_| BackendError::Ruby("ruby owner reply lost".into()))?
+        })
+        .await
     }
 
     async fn compile_any(

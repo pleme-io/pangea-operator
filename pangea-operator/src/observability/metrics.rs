@@ -169,6 +169,45 @@ pub struct Metrics {
     /// compliance. Labels: namespace, name (of binding).
     /// Used by alert: ComplianceBindingGating.
     pub compliance_bindings_gated_targets: IntGaugeVec,
+
+    // -----------------------------------------------------------------
+    // Compile dispatcher metrics (added during S1 — Tier 3 observability
+    // for the magnus owner thread).
+    //
+    // Why these matter: the embedded ruby owner thread is the only
+    // serialization point across templates' compile phases. To know
+    // whether a future RubyPool change helps, we need to separate
+    // "how long did this request wait in line" from "how long did the
+    // actual compile take". The existing pangea_compilation_duration_
+    // seconds conflates the two.
+    //
+    // The dispatcher records:
+    //   - depth: current count of pending requests, sampled on every
+    //     send. A growing depth = serialization is the bottleneck.
+    //   - wait time: per-request, T1 (owner picks up) − T0 (caller
+    //     enqueued). When the queue is short this is near-zero;
+    //     under contention it grows linearly with depth × per-compile
+    //     duration.
+    // -----------------------------------------------------------------
+
+    /// Instantaneous depth of the magnus dispatcher queue (mpsc channel
+    /// to the ruby owner thread). Bumped before every send, decremented
+    /// when the owner picks up the request. With one owner thread, a
+    /// non-zero value indicates compile contention.
+    pub compile_queue_depth: IntGauge,
+
+    /// End-to-end seconds for a compile-dispatcher request — measured
+    /// from the caller's `send` to the response arriving. Includes
+    /// both queue-wait and actual compile work. Pair with
+    /// `compilation_duration_seconds` (which the owner thread emits
+    /// for the actual compile, T2-T1) to derive queue-only wait:
+    ///
+    ///   queue_wait ≈ compile_request_seconds − compilation_duration_seconds
+    ///
+    /// Adding the owner-side instrumentation lands in S2 (RubyPool)
+    /// so the two metrics together prove that pool parallelism shifts
+    /// the queue-wait component without changing actual compile cost.
+    pub compile_request_seconds: Histogram,
 }
 
 impl Metrics {
@@ -419,6 +458,21 @@ impl Metrics {
         )
         .expect("metric can be created");
 
+        let compile_queue_depth = IntGauge::with_opts(Opts::new(
+            "pangea_compile_queue_depth",
+            "Instantaneous depth of the magnus compile dispatcher queue",
+        ))
+        .expect("metric can be created");
+
+        let compile_request_seconds = Histogram::with_opts(
+            HistogramOpts::new(
+                "pangea_compile_request_seconds",
+                "End-to-end seconds for a compile-dispatcher request — caller send to response received. Includes queue wait + compile work.",
+            )
+            .buckets(vec![0.001, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 30.0]),
+        )
+        .expect("metric can be created");
+
         // Register all metrics
         registry
             .register(Box::new(reconciliations_total.clone()))
@@ -501,6 +555,12 @@ impl Metrics {
         registry
             .register(Box::new(compliance_bindings_gated_targets.clone()))
             .expect("metric can be registered");
+        registry
+            .register(Box::new(compile_queue_depth.clone()))
+            .expect("metric can be registered");
+        registry
+            .register(Box::new(compile_request_seconds.clone()))
+            .expect("metric can be registered");
 
         Self {
             registry,
@@ -531,6 +591,8 @@ impl Metrics {
             ami_tests_by_phase,
             compliance_schedules_by_phase,
             compliance_bindings_gated_targets,
+            compile_queue_depth,
+            compile_request_seconds,
         }
     }
 
@@ -932,5 +994,53 @@ mod tests {
         assert!(text.contains("pangea_ami_tests_by_phase"));
         assert!(text.contains("pangea_compliance_schedules_by_phase"));
         assert!(text.contains("pangea_compliance_bindings_gated_targets"));
+    }
+
+    // ── S1: compile-dispatcher metrics ──
+
+    #[test]
+    fn compile_queue_depth_starts_at_zero_and_inc_dec_round_trip() {
+        // The dispatcher's instrumented<F> wrapper bumps depth before
+        // send and decrements after response. Verify the gauge can
+        // round-trip cleanly.
+        let metrics = Metrics::new();
+        assert_eq!(metrics.compile_queue_depth.get(), 0);
+        metrics.compile_queue_depth.inc();
+        metrics.compile_queue_depth.inc();
+        assert_eq!(metrics.compile_queue_depth.get(), 2);
+        metrics.compile_queue_depth.dec();
+        assert_eq!(metrics.compile_queue_depth.get(), 1);
+        metrics.compile_queue_depth.dec();
+        assert_eq!(metrics.compile_queue_depth.get(), 0);
+    }
+
+    #[test]
+    fn compile_request_seconds_observes_into_buckets() {
+        // Per-request duration histogram. Default buckets cover
+        // the expected range (1ms → 30s).
+        let metrics = Metrics::new();
+        // No samples yet — count should be 0.
+        let initial = metrics.compile_request_seconds.get_sample_count();
+        metrics.compile_request_seconds.observe(0.123);
+        metrics.compile_request_seconds.observe(0.456);
+        metrics.compile_request_seconds.observe(2.5);
+        assert_eq!(metrics.compile_request_seconds.get_sample_count(), initial + 3);
+        // Sum is the cumulative observed seconds.
+        assert!(metrics.compile_request_seconds.get_sample_sum() > 3.0);
+    }
+
+    #[test]
+    fn compile_dispatcher_metrics_appear_in_gather_text() {
+        // Smoke test that the registry actually contains the new
+        // metrics. Pre-S1 the alert pipeline (and any future
+        // dashboard) couldn't have referenced them; now they do.
+        let metrics = Metrics::new();
+        // Sentinel observation so the histogram emits its bucket
+        // lines (Prometheus skips metrics with zero observations).
+        metrics.compile_queue_depth.set(0);
+        metrics.compile_request_seconds.observe(0.0);
+        let text = metrics.gather();
+        assert!(text.contains("pangea_compile_queue_depth"));
+        assert!(text.contains("pangea_compile_request_seconds"));
     }
 }
