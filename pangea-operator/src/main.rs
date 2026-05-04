@@ -145,22 +145,29 @@ async fn main() -> Result<()> {
         match backend_kind.as_str() {
             #[cfg(feature = "embedded_ruby")]
             "embedded" => {
-                info!("Compiler backend: embedded magnus + gem cache");
+                // S2: pool of N ruby owner threads. PANGEA_RUBY_WORKERS
+                // env knob defaults to 1 (= today's behavior). S3
+                // surfaces this in helm values + flips the rio
+                // default to 4 once the metrics from S1 confirm
+                // the pool is healthy.
+                let n_workers: usize = std::env::var("PANGEA_RUBY_WORKERS")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(1);
+                info!(workers = n_workers, "Compiler backend: embedded magnus + gem cache");
                 let cache = pangea_operator::ruby::GemCache::from_env();
-                let owner = pangea_operator::ruby::RubyOwner::spawn(vec![])
+                let pool = pangea_operator::ruby::RubyPool::spawn(n_workers, vec![])
                     .await
-                    .expect("spawn ruby owner thread");
+                    .expect("spawn ruby pool");
+                let pool = std::sync::Arc::new(pool);
                 // Attach metrics so every dispatcher call emits
                 // pangea_compile_queue_depth + pangea_compile_request_seconds
                 // — see observability/metrics.rs S1 docstring.
                 let backend = pangea_operator::ruby::EmbeddedCompilerBackend::with_cache(
-                    owner.tx_handle(),
+                    pool,
                     cache,
                 )
                 .with_metrics(metrics.clone());
-                // Leak the owner so it lives the lifetime of the
-                // process — Drop on shutdown is best-effort.
-                std::mem::forget(owner);
                 std::sync::Arc::new(backend)
             }
             _ => {

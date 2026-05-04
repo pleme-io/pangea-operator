@@ -21,6 +21,9 @@ pub mod gem_cache;
 #[cfg(feature = "embedded_ruby")]
 pub mod owner;
 
+#[cfg(feature = "embedded_ruby")]
+pub mod pool;
+
 pub use backend::{
     ArchListing, BackendError, CompileAnyRequest, CompileAnyResult, CompileRequest,
     CompileResult, CompilerBackend, FixtureOutcome, GemSource, SmokeRequest, SourceKind,
@@ -35,3 +38,6 @@ pub use gem_cache::{GemCache, GemCacheError, GemEntry};
 
 #[cfg(feature = "embedded_ruby")]
 pub use owner::{RubyOwner, RubyRequest};
+
+#[cfg(feature = "embedded_ruby")]
+pub use pool::RubyPool;

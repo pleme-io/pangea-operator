@@ -15,6 +15,7 @@ use super::backend::{
 };
 use super::gem_cache::GemCache;
 use super::owner::RubyRequest;
+use super::pool::RubyPool;
 
 #[derive(Debug, Clone)]
 struct PreparedGem {
@@ -29,7 +30,9 @@ struct PreparedGem {
 
 #[derive(Clone)]
 pub struct EmbeddedCompilerBackend {
-    tx: mpsc::Sender<RubyRequest>,
+    /// Pool of ruby owner threads. One-shot requests round-robin
+    /// across workers; PrependLoadPath broadcasts to all.
+    pool: Arc<RubyPool>,
     cache: Option<GemCache>,
     /// Map of `gem_name → PreparedGem`. prepare_gem populates;
     /// smoke_test reads to resolve relative fixture paths.
@@ -45,9 +48,9 @@ impl EmbeddedCompilerBackend {
     /// Construct without a gem cache — `prepare_gem` becomes a no-op.
     /// Useful for tests + for environments where gems are still
     /// image-baked (transitional M8.4 deployments).
-    pub fn new(tx: mpsc::Sender<RubyRequest>) -> Self {
+    pub fn new(pool: Arc<RubyPool>) -> Self {
         Self {
-            tx,
+            pool,
             cache: None,
             prepared: Arc::new(Mutex::new(Default::default())),
             metrics: None,
@@ -55,11 +58,11 @@ impl EmbeddedCompilerBackend {
     }
 
     /// Construct with an active gem cache. `prepare_gem` clones +
-    /// prepends $LOAD_PATH on first call per (name, ref). Production
-    /// shape under M8.4.2.
-    pub fn with_cache(tx: mpsc::Sender<RubyRequest>, cache: GemCache) -> Self {
+    /// broadcasts $LOAD_PATH prepend to every pool worker on first
+    /// call per (name, ref). Production shape under M8.4.2.
+    pub fn with_cache(pool: Arc<RubyPool>, cache: GemCache) -> Self {
         Self {
-            tx,
+            pool,
             cache: Some(cache),
             prepared: Arc::new(Mutex::new(Default::default())),
             metrics: None,
@@ -72,7 +75,7 @@ impl EmbeddedCompilerBackend {
     /// constructors:
     ///
     /// ```ignore
-    /// EmbeddedCompilerBackend::with_cache(tx, cache).with_metrics(m)
+    /// EmbeddedCompilerBackend::with_cache(pool, cache).with_metrics(m)
     /// ```
     pub fn with_metrics(mut self, metrics: Arc<crate::observability::Metrics>) -> Self {
         self.metrics = Some(metrics);
@@ -80,20 +83,22 @@ impl EmbeddedCompilerBackend {
     }
 
     /// Wrap a send+await pair in queue-depth + request-duration
-    /// instrumentation. The `body` closure does the actual mpsc
-    /// send + oneshot await — see the four CompilerBackend methods
-    /// for the call shape. Drops the gauge increment + histogram
-    /// observation on the floor when no metrics handle is attached.
+    /// instrumentation. The `body` closure receives a round-robin-
+    /// picked `mpsc::Sender<RubyRequest>` and runs the actual send +
+    /// oneshot await — see the four CompilerBackend methods for the
+    /// call shape. Drops the gauge increment + histogram observation
+    /// on the floor when no metrics handle is attached.
     async fn instrumented<F, Fut, T>(&self, body: F) -> Result<T, BackendError>
     where
-        F: FnOnce() -> Fut,
+        F: FnOnce(mpsc::Sender<RubyRequest>) -> Fut,
         Fut: std::future::Future<Output = Result<T, BackendError>>,
     {
         let started = std::time::Instant::now();
         if let Some(m) = &self.metrics {
             m.compile_queue_depth.inc();
         }
-        let result = body().await;
+        let tx = self.pool.next_sender();
+        let result = body(tx).await;
         if let Some(m) = &self.metrics {
             m.compile_queue_depth.dec();
             m.compile_request_seconds
@@ -147,18 +152,13 @@ impl CompilerBackend for EmbeddedCompilerBackend {
             .await
             .map_err(|e| BackendError::Ruby(format!("gem cache: {e}")))?;
 
-        // Prepend lib/ to the embedded interpreter's $LOAD_PATH.
-        // The Ruby snippet is idempotent (`unless $LOAD_PATH.include?`).
-        let (rtx, rrx) = oneshot::channel();
-        self.tx
-            .send(RubyRequest::PrependLoadPath {
-                path: entry.lib_path.clone(),
-                respond: rtx,
-            })
-            .await
-            .map_err(|_| BackendError::Ruby("ruby owner channel closed".into()))?;
-        rrx.await
-            .map_err(|_| BackendError::Ruby("prepend reply lost".into()))??;
+        // Broadcast lib/ prepend to every pool worker — each VM has
+        // its own $LOAD_PATH, so we have to fan out. The gem clone
+        // itself happened once on the shared filesystem above; only
+        // the path-update is per-VM.
+        self.pool
+            .broadcast_prepend_load_path(entry.lib_path.clone())
+            .await?;
 
         // Mark prepared for this process lifetime; remember the gem
         // path so smoke_test can resolve relative fixture paths
@@ -177,10 +177,9 @@ impl CompilerBackend for EmbeddedCompilerBackend {
 
     async fn list_architectures(&self, gem: &str) -> Result<ArchListing, BackendError> {
         let gem = gem.to_string();
-        self.instrumented(|| async move {
+        self.instrumented(|tx| async move {
             let (rtx, rrx) = oneshot::channel();
-            self.tx
-                .send(RubyRequest::ListArchitectures { gem, respond: rtx })
+            tx.send(RubyRequest::ListArchitectures { gem, respond: rtx })
                 .await
                 .map_err(|_| BackendError::Ruby("ruby owner channel closed".into()))?;
             rrx.await
@@ -205,10 +204,9 @@ impl CompilerBackend for EmbeddedCompilerBackend {
             }
         }
 
-        self.instrumented(|| async move {
+        self.instrumented(|tx| async move {
             let (rtx, rrx) = oneshot::channel();
-            self.tx
-                .send(RubyRequest::SmokeTest { req, respond: rtx })
+            tx.send(RubyRequest::SmokeTest { req, respond: rtx })
                 .await
                 .map_err(|_| BackendError::Ruby("ruby owner channel closed".into()))?;
             rrx.await
@@ -221,10 +219,9 @@ impl CompilerBackend for EmbeddedCompilerBackend {
         // M8.4: real implementation. Owner thread runs the
         // captured-block + instance_eval pattern; returns the
         // pretty-serialized terraform_json string.
-        self.instrumented(|| async move {
+        self.instrumented(|tx| async move {
             let (rtx, rrx) = oneshot::channel();
-            self.tx
-                .send(RubyRequest::Compile { req, respond: rtx })
+            tx.send(RubyRequest::Compile { req, respond: rtx })
                 .await
                 .map_err(|_| BackendError::Ruby("ruby owner channel closed".into()))?;
             rrx.await
