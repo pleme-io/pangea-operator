@@ -341,6 +341,7 @@ pub(crate) async fn handle_pending_internal(
     handle_pending(template, state).await
 }
 
+#[tracing::instrument(skip_all, name = "handle_pending")]
 async fn handle_pending(
     template: &InfrastructureTemplate,
     state: &ControllerState,
@@ -370,6 +371,7 @@ pub(crate) async fn handle_compiling_internal(
     handle_compiling(template, state).await
 }
 
+#[tracing::instrument(skip_all, name = "handle_compiling")]
 async fn handle_compiling(
     template: &InfrastructureTemplate,
     state: &ControllerState,
@@ -712,6 +714,7 @@ pub(crate) fn evaluate_compile_failure_escalation(
 /// re-raises the original error to honor the existing retry semantics.
 /// Escalation is purely additive: the next reconcile cycle will see
 /// `phase=Failed` and skip past Compiling.
+#[tracing::instrument(skip_all, name = "handle_compile_failure")]
 async fn handle_compile_failure(
     template: &InfrastructureTemplate,
     state: &ControllerState,
@@ -853,6 +856,7 @@ pub(crate) async fn handle_initializing_internal(
     handle_initializing(template, state).await
 }
 
+#[tracing::instrument(skip_all, name = "handle_initializing")]
 async fn handle_initializing(
     template: &InfrastructureTemplate,
     state: &ControllerState,
@@ -949,6 +953,7 @@ pub(crate) async fn handle_planning_internal(
     handle_planning(template, state).await
 }
 
+#[tracing::instrument(skip_all, name = "handle_planning")]
 async fn handle_planning(
     template: &InfrastructureTemplate,
     state: &ControllerState,
@@ -1225,6 +1230,7 @@ pub(crate) async fn handle_applying_internal(
     handle_applying(template, state).await
 }
 
+#[tracing::instrument(skip_all, name = "handle_applying")]
 async fn handle_applying(
     template: &InfrastructureTemplate,
     state: &ControllerState,
@@ -1589,6 +1595,7 @@ pub(crate) async fn handle_ready_internal(
     handle_ready(template, state).await
 }
 
+#[tracing::instrument(skip_all, name = "handle_ready")]
 async fn handle_ready(
     template: &InfrastructureTemplate,
     state: &ControllerState,
@@ -1823,6 +1830,7 @@ pub(crate) async fn handle_drifted_internal(
     handle_drifted(template, state).await
 }
 
+#[tracing::instrument(skip_all, name = "handle_drifted")]
 async fn handle_drifted(
     template: &InfrastructureTemplate,
     state: &ControllerState,
@@ -1872,6 +1880,7 @@ pub(crate) async fn handle_failed_internal(
     handle_failed(template, state).await
 }
 
+#[tracing::instrument(skip_all, name = "handle_failed")]
 async fn handle_failed(
     template: &InfrastructureTemplate,
     state: &ControllerState,
@@ -1916,6 +1925,7 @@ pub(crate) async fn handle_destroying_internal(
     handle_destroying(template, state).await
 }
 
+#[tracing::instrument(skip_all, name = "handle_destroying")]
 async fn handle_destroying(
     template: &InfrastructureTemplate,
     state: &ControllerState,

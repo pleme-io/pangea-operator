@@ -7489,7 +7489,7 @@ rec {
         ];
 
       };
-      "opentelemetry 0.26.0" = rec {
+      "opentelemetry" = rec {
         crateName = "opentelemetry";
         version = "0.26.0";
         edition = "2021";
@@ -7532,64 +7532,11 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" "logs" "metrics" "pin-project-lite" "trace" ];
       };
-      "opentelemetry 0.27.1" = rec {
-        crateName = "opentelemetry";
-        version = "0.27.1";
-        edition = "2021";
-        sha256 = "1mx6kc1479pkak49xxy98jzqnfilkm1bc56liryvjdzd52606w5b";
-        dependencies = [
-          {
-            name = "futures-core";
-            packageId = "futures-core";
-            optional = true;
-          }
-          {
-            name = "futures-sink";
-            packageId = "futures-sink";
-            optional = true;
-          }
-          {
-            name = "js-sys";
-            packageId = "js-sys";
-            target = { target, features }: (("wasm32" == target."arch" or null) && (!("wasi" == target."os" or null)));
-          }
-          {
-            name = "pin-project-lite";
-            packageId = "pin-project-lite";
-            optional = true;
-          }
-          {
-            name = "thiserror";
-            packageId = "thiserror 1.0.69";
-            optional = true;
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "tracing";
-            packageId = "tracing";
-            optional = true;
-            usesDefaultFeatures = false;
-          }
-        ];
-        features = {
-          "default" = [ "trace" "metrics" "logs" "internal-logs" ];
-          "futures-core" = [ "dep:futures-core" ];
-          "futures-sink" = [ "dep:futures-sink" ];
-          "internal-logs" = [ "tracing" ];
-          "pin-project-lite" = [ "dep:pin-project-lite" ];
-          "spec_unstable_logs_enabled" = [ "logs" ];
-          "testing" = [ "trace" "metrics" ];
-          "thiserror" = [ "dep:thiserror" ];
-          "trace" = [ "pin-project-lite" "futures-sink" "futures-core" "thiserror" ];
-          "tracing" = [ "dep:tracing" ];
-        };
-        resolvedDefaultFeatures = [ "default" "futures-core" "futures-sink" "internal-logs" "logs" "metrics" "pin-project-lite" "thiserror" "trace" "tracing" ];
-      };
       "opentelemetry-otlp" = rec {
         crateName = "opentelemetry-otlp";
-        version = "0.27.0";
+        version = "0.26.0";
         edition = "2021";
-        sha256 = "0xhzw57khwribh4817lhf9rayl5ik8z1qaibpxvcbb4dhshn3kwi";
+        sha256 = "1gcn0r1cip9rg7pqpyhkx8q2aphxfg7yzh1hqwszdm1jn34gkq99";
         libName = "opentelemetry_otlp";
         dependencies = [
           {
@@ -7609,7 +7556,7 @@ rec {
           }
           {
             name = "opentelemetry";
-            packageId = "opentelemetry 0.27.1";
+            packageId = "opentelemetry";
             usesDefaultFeatures = false;
           }
           {
@@ -7619,7 +7566,7 @@ rec {
           }
           {
             name = "opentelemetry_sdk";
-            packageId = "opentelemetry_sdk 0.27.1";
+            packageId = "opentelemetry_sdk";
             usesDefaultFeatures = false;
           }
           {
@@ -7645,12 +7592,6 @@ rec {
             optional = true;
             usesDefaultFeatures = false;
           }
-          {
-            name = "tracing";
-            packageId = "tracing";
-            optional = true;
-            usesDefaultFeatures = false;
-          }
         ];
         devDependencies = [
           {
@@ -7661,15 +7602,14 @@ rec {
           }
         ];
         features = {
-          "default" = [ "grpc-tonic" "trace" "metrics" "logs" "internal-logs" ];
+          "default" = [ "grpc-tonic" "trace" "metrics" "logs" ];
+          "experimental-internal-logs" = [ "tracing" ];
           "grpc-tonic" = [ "tonic" "prost" "http" "tokio" "opentelemetry-proto/gen-tonic" ];
           "gzip-tonic" = [ "tonic/gzip" ];
           "http" = [ "dep:http" ];
           "http-json" = [ "serde_json" "prost" "opentelemetry-http" "opentelemetry-proto/gen-tonic-messages" "opentelemetry-proto/with-serde" "http" "trace" "metrics" ];
           "http-proto" = [ "prost" "opentelemetry-http" "opentelemetry-proto/gen-tonic-messages" "http" "trace" "metrics" ];
-          "hyper-client" = [ "opentelemetry-http/hyper" ];
           "integration-testing" = [ "tonic" "prost" "tokio/full" "trace" ];
-          "internal-logs" = [ "tracing" ];
           "logs" = [ "opentelemetry/logs" "opentelemetry_sdk/logs" "opentelemetry-proto/logs" ];
           "metrics" = [ "opentelemetry/metrics" "opentelemetry_sdk/metrics" "opentelemetry-proto/metrics" ];
           "opentelemetry-http" = [ "dep:opentelemetry-http" ];
@@ -7692,23 +7632,23 @@ rec {
           "tracing" = [ "dep:tracing" ];
           "zstd-tonic" = [ "tonic/zstd" ];
         };
-        resolvedDefaultFeatures = [ "default" "grpc-tonic" "http" "internal-logs" "logs" "metrics" "prost" "tokio" "tonic" "trace" "tracing" ];
+        resolvedDefaultFeatures = [ "default" "grpc-tonic" "http" "logs" "metrics" "prost" "tokio" "tonic" "trace" ];
       };
       "opentelemetry-proto" = rec {
         crateName = "opentelemetry-proto";
-        version = "0.27.0";
+        version = "0.26.1";
         edition = "2021";
-        sha256 = "19jryh79aalv4i6hds8mq03v7l5b2jpnhly84f8cfpnszb5mmq56";
+        sha256 = "0d4bbxfyjg9dnnm962574rvm8dqv76j4wg3yqajwrzdfwf69dly9";
         libName = "opentelemetry_proto";
         dependencies = [
           {
             name = "opentelemetry";
-            packageId = "opentelemetry 0.27.1";
+            packageId = "opentelemetry";
             usesDefaultFeatures = false;
           }
           {
             name = "opentelemetry_sdk";
-            packageId = "opentelemetry_sdk 0.27.1";
+            packageId = "opentelemetry_sdk";
             usesDefaultFeatures = false;
           }
           {
@@ -7744,7 +7684,7 @@ rec {
         };
         resolvedDefaultFeatures = [ "gen-tonic" "gen-tonic-messages" "logs" "metrics" "prost" "tonic" "trace" ];
       };
-      "opentelemetry_sdk 0.26.0" = rec {
+      "opentelemetry_sdk" = rec {
         crateName = "opentelemetry_sdk";
         version = "0.26.0";
         edition = "2021";
@@ -7780,87 +7720,7 @@ rec {
           }
           {
             name = "opentelemetry";
-            packageId = "opentelemetry 0.26.0";
-          }
-          {
-            name = "percent-encoding";
-            packageId = "percent-encoding";
-            optional = true;
-          }
-          {
-            name = "rand";
-            packageId = "rand 0.8.5";
-            optional = true;
-            usesDefaultFeatures = false;
-            features = [ "std" "std_rng" "small_rng" ];
-          }
-          {
-            name = "thiserror";
-            packageId = "thiserror 1.0.69";
-            usesDefaultFeatures = false;
-          }
-        ];
-        features = {
-          "async-std" = [ "dep:async-std" ];
-          "async-trait" = [ "dep:async-trait" ];
-          "default" = [ "trace" "metrics" "logs" ];
-          "experimental-internal-logs" = [ "tracing" ];
-          "glob" = [ "dep:glob" ];
-          "http" = [ "dep:http" ];
-          "jaeger_remote_sampler" = [ "trace" "opentelemetry-http" "http" "serde" "serde_json" "url" ];
-          "logs" = [ "opentelemetry/logs" "async-trait" "serde_json" ];
-          "logs_level_enabled" = [ "logs" "opentelemetry/logs_level_enabled" ];
-          "metrics" = [ "opentelemetry/metrics" "glob" "async-trait" ];
-          "opentelemetry-http" = [ "dep:opentelemetry-http" ];
-          "percent-encoding" = [ "dep:percent-encoding" ];
-          "rand" = [ "dep:rand" ];
-          "rt-async-std" = [ "async-std" ];
-          "rt-tokio" = [ "tokio" "tokio-stream" ];
-          "rt-tokio-current-thread" = [ "tokio" "tokio-stream" ];
-          "serde" = [ "dep:serde" ];
-          "serde_json" = [ "dep:serde_json" ];
-          "testing" = [ "opentelemetry/testing" "trace" "metrics" "logs" "rt-async-std" "rt-tokio" "rt-tokio-current-thread" "tokio/macros" "tokio/rt-multi-thread" ];
-          "tokio" = [ "dep:tokio" ];
-          "tokio-stream" = [ "dep:tokio-stream" ];
-          "trace" = [ "opentelemetry/trace" "rand" "async-trait" "percent-encoding" ];
-          "tracing" = [ "dep:tracing" ];
-          "url" = [ "dep:url" ];
-        };
-        resolvedDefaultFeatures = [ "async-trait" "glob" "metrics" "percent-encoding" "rand" "trace" ];
-      };
-      "opentelemetry_sdk 0.27.1" = rec {
-        crateName = "opentelemetry_sdk";
-        version = "0.27.1";
-        edition = "2021";
-        sha256 = "1f1sw5xjgbdz0nxfhkj7qwmjahffhmbk6lnzdmab5c7rxrn9s7i3";
-        dependencies = [
-          {
-            name = "async-trait";
-            packageId = "async-trait";
-            optional = true;
-          }
-          {
-            name = "futures-channel";
-            packageId = "futures-channel";
-          }
-          {
-            name = "futures-executor";
-            packageId = "futures-executor";
-          }
-          {
-            name = "futures-util";
-            packageId = "futures-util";
-            usesDefaultFeatures = false;
-            features = [ "std" "sink" "async-await-macro" ];
-          }
-          {
-            name = "glob";
-            packageId = "glob";
-            optional = true;
-          }
-          {
-            name = "opentelemetry";
-            packageId = "opentelemetry 0.27.1";
+            packageId = "opentelemetry";
           }
           {
             name = "percent-encoding";
@@ -7896,23 +7756,17 @@ rec {
             packageId = "tokio-stream";
             optional = true;
           }
-          {
-            name = "tracing";
-            packageId = "tracing";
-            optional = true;
-            usesDefaultFeatures = false;
-          }
         ];
         features = {
           "async-std" = [ "dep:async-std" ];
           "async-trait" = [ "dep:async-trait" ];
-          "default" = [ "trace" "metrics" "logs" "internal-logs" ];
-          "experimental_metrics_periodic_reader_no_runtime" = [ "metrics" ];
+          "default" = [ "trace" "metrics" "logs" ];
+          "experimental-internal-logs" = [ "tracing" ];
           "glob" = [ "dep:glob" ];
           "http" = [ "dep:http" ];
-          "internal-logs" = [ "tracing" ];
           "jaeger_remote_sampler" = [ "trace" "opentelemetry-http" "http" "serde" "serde_json" "url" ];
           "logs" = [ "opentelemetry/logs" "async-trait" "serde_json" ];
+          "logs_level_enabled" = [ "logs" "opentelemetry/logs_level_enabled" ];
           "metrics" = [ "opentelemetry/metrics" "glob" "async-trait" ];
           "opentelemetry-http" = [ "dep:opentelemetry-http" ];
           "percent-encoding" = [ "dep:percent-encoding" ];
@@ -7922,16 +7776,14 @@ rec {
           "rt-tokio-current-thread" = [ "tokio" "tokio-stream" ];
           "serde" = [ "dep:serde" ];
           "serde_json" = [ "dep:serde_json" ];
-          "spec_unstable_logs_enabled" = [ "logs" "opentelemetry/spec_unstable_logs_enabled" ];
-          "spec_unstable_metrics_views" = [ "metrics" ];
           "testing" = [ "opentelemetry/testing" "trace" "metrics" "logs" "rt-async-std" "rt-tokio" "rt-tokio-current-thread" "tokio/macros" "tokio/rt-multi-thread" ];
           "tokio" = [ "dep:tokio" ];
           "tokio-stream" = [ "dep:tokio-stream" ];
-          "trace" = [ "opentelemetry/trace" "rand" "percent-encoding" ];
+          "trace" = [ "opentelemetry/trace" "rand" "async-trait" "percent-encoding" ];
           "tracing" = [ "dep:tracing" ];
           "url" = [ "dep:url" ];
         };
-        resolvedDefaultFeatures = [ "async-trait" "default" "glob" "internal-logs" "logs" "metrics" "percent-encoding" "rand" "rt-tokio" "serde_json" "tokio" "tokio-stream" "trace" "tracing" ];
+        resolvedDefaultFeatures = [ "async-trait" "default" "glob" "logs" "metrics" "percent-encoding" "rand" "rt-tokio" "serde_json" "tokio" "tokio-stream" "trace" ];
       };
       "option-ext" = rec {
         crateName = "option-ext";
@@ -8229,7 +8081,7 @@ rec {
           }
           {
             name = "opentelemetry";
-            packageId = "opentelemetry 0.27.1";
+            packageId = "opentelemetry";
             features = [ "trace" ];
           }
           {
@@ -8239,7 +8091,7 @@ rec {
           }
           {
             name = "opentelemetry_sdk";
-            packageId = "opentelemetry_sdk 0.27.1";
+            packageId = "opentelemetry_sdk";
             features = [ "rt-tokio" ];
           }
           {
@@ -15198,13 +15050,13 @@ rec {
           }
           {
             name = "opentelemetry";
-            packageId = "opentelemetry 0.26.0";
+            packageId = "opentelemetry";
             usesDefaultFeatures = false;
             features = [ "trace" ];
           }
           {
             name = "opentelemetry_sdk";
-            packageId = "opentelemetry_sdk 0.26.0";
+            packageId = "opentelemetry_sdk";
             usesDefaultFeatures = false;
             features = [ "trace" ];
           }
@@ -15244,12 +15096,12 @@ rec {
         devDependencies = [
           {
             name = "opentelemetry";
-            packageId = "opentelemetry 0.26.0";
+            packageId = "opentelemetry";
             features = [ "trace" "metrics" ];
           }
           {
             name = "opentelemetry_sdk";
-            packageId = "opentelemetry_sdk 0.26.0";
+            packageId = "opentelemetry_sdk";
             usesDefaultFeatures = false;
             features = [ "trace" "rt-tokio" ];
           }
