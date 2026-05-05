@@ -1294,7 +1294,50 @@ async fn handle_applying(
             _ => None,
         };
 
-        update_apply_status(template, outputs, state).await?;
+        update_apply_status(template, outputs.clone(), state).await?;
+
+        // X2: write tofu outputs to user-bound K8s Secrets. Best-
+        // effort — bindings logged + metric'd; failure here doesn't
+        // fail the reconcile (apply already succeeded).
+        if !template.spec.output_bindings.is_empty() {
+            let outs_map = outputs.unwrap_or_default();
+            let results = crate::controller::template::output_bindings::apply_output_bindings(
+                template,
+                &outs_map,
+                &state.client,
+            )
+            .await;
+            let (published, missing, errored) =
+                crate::controller::template::output_bindings::summarize(&results);
+            let template_name = template
+                .metadata
+                .name
+                .clone()
+                .unwrap_or_else(|| "unknown".into());
+            let template_ns = template
+                .metadata
+                .namespace
+                .clone()
+                .unwrap_or_else(|| "unknown".into());
+            for r in &results {
+                let result_label = match &r.status {
+                    crate::controller::template::output_bindings::PublishStatus::Published { .. } => "published",
+                    crate::controller::template::output_bindings::PublishStatus::OutputMissing => "output_missing",
+                    crate::controller::template::output_bindings::PublishStatus::Errored(_) => "errored",
+                };
+                state.metrics.record_output_binding(
+                    &template_name,
+                    &template_ns,
+                    result_label,
+                );
+            }
+            info!(
+                template = %template_name,
+                published, missing, errored,
+                "output_bindings: cycle summary"
+            );
+        }
+
         update_phase(template, Phase::Ready, state).await?;
         record_reconcile_cycle(
             template,

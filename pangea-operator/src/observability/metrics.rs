@@ -208,6 +208,25 @@ pub struct Metrics {
     /// so the two metrics together prove that pool parallelism shifts
     /// the queue-wait component without changing actual compile cost.
     pub compile_request_seconds: Histogram,
+
+    // -----------------------------------------------------------------
+    // X2 — output-bindings metrics.
+    //
+    // Crossplane analog: connection-secret writes. Pangea variant is
+    // per-binding instead of all-outputs-to-one-secret. Each apply
+    // cycle increments once per binding, with the result label
+    // distinguishing publish/missing/errored.
+    //
+    // Cardinality: O(templates × distinct_results). The result label
+    // is bounded (3 values), so growth is linear in templates only.
+    // -----------------------------------------------------------------
+
+    /// Counter incremented once per output-binding per apply cycle.
+    /// Labels: template, namespace, result (published|output_missing|errored).
+    /// Use to alert on `errored` rates (RBAC misconfig in target ns) or
+    /// `output_missing` rates (binding declares an output the template
+    /// no longer produces — author drift).
+    pub output_bindings_published_total: IntCounterVec,
 }
 
 impl Metrics {
@@ -473,6 +492,15 @@ impl Metrics {
         )
         .expect("metric can be created");
 
+        let output_bindings_published_total = IntCounterVec::new(
+            Opts::new(
+                "pangea_output_bindings_published_total",
+                "Output bindings processed during a successful apply, by per-binding result (X2).",
+            ),
+            &["template", "namespace", "result"],
+        )
+        .expect("metric can be created");
+
         // Register all metrics
         registry
             .register(Box::new(reconciliations_total.clone()))
@@ -561,6 +589,9 @@ impl Metrics {
         registry
             .register(Box::new(compile_request_seconds.clone()))
             .expect("metric can be registered");
+        registry
+            .register(Box::new(output_bindings_published_total.clone()))
+            .expect("metric can be registered");
 
         Self {
             registry,
@@ -593,6 +624,7 @@ impl Metrics {
             compliance_bindings_gated_targets,
             compile_queue_depth,
             compile_request_seconds,
+            output_bindings_published_total,
         }
     }
 
@@ -626,6 +658,15 @@ impl Metrics {
         self.reconciliation_duration_seconds
             .with_label_values(&[phase])
             .start_timer()
+    }
+
+    /// X2: bump the output-bindings counter for one cycle's per-binding
+    /// outcome. `result` should be one of "published" / "output_missing"
+    /// / "errored" — keeps the label set bounded.
+    pub fn record_output_binding(&self, template: &str, namespace: &str, result: &str) {
+        self.output_bindings_published_total
+            .with_label_values(&[template, namespace, result])
+            .inc();
     }
 
     /// Compile-specific timer. Distinct from `record_phase_duration("compiling")`

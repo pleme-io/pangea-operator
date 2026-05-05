@@ -11,6 +11,7 @@
 pub mod cycle_receipts;
 pub mod events;
 pub mod finalizer;
+pub mod output_bindings;
 pub mod provider_creds;
 pub mod reactive_policy;
 pub mod status;

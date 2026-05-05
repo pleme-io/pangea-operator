@@ -221,6 +221,7 @@ async fn reconcile_flow(
                             reactive_policy: None,
                             import_policy: None,
                             import_hints: Default::default(),
+                            output_bindings: Default::default(),
                         },
                     );
 

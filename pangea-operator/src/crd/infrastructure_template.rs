@@ -210,6 +210,70 @@ pub struct InfrastructureTemplateSpec {
     /// the resource for the apply to handle.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub import_hints: BTreeMap<String, String>,
+
+    /// Publish selected `status.outputs` to user-defined K8s Secrets
+    /// after every successful apply. Each binding picks a single
+    /// output address and writes it to a named Secret/key in any
+    /// namespace the operator has reach to.
+    ///
+    /// X2 of the Crossplane-absorb plan — analog of Crossplane's
+    /// `writeConnectionSecretToRef`, but per-binding (not all
+    /// outputs to one secret) and with a typed `sensitive` flag.
+    /// Idempotent via server-side apply: re-publishes only when the
+    /// value actually changes.
+    ///
+    /// Empty (default) = no secret publication; consumers read
+    /// `status.outputs` JSON directly.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub output_bindings: Vec<OutputBinding>,
+}
+
+/// One binding of a tofu output to a K8s Secret key. Authored by
+/// the user on `InfrastructureTemplate.spec.outputBindings`; consumed
+/// by `controller/template/output_bindings.rs::apply_output_bindings`
+/// after every successful apply.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputBinding {
+    /// Tofu output address — looked up against `status.outputs`
+    /// after apply. Examples:
+    ///   - `cloudflare_pages_domain.varanda.id`
+    ///   - `aws_iam_role.deployer.arn`
+    /// Outputs the tofu run did not produce are skipped with a
+    /// log line; they don't fail the reconcile (apply already
+    /// succeeded by the time bindings publish).
+    pub output: String,
+
+    /// Where to write the value.
+    pub secret_ref: OutputSecretRef,
+}
+
+/// Target Secret + key for one output binding.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputSecretRef {
+    /// Secret name. Created if missing; updated via server-side
+    /// apply if existing.
+    pub name: String,
+
+    /// Secret namespace. Required — operators don't infer from the
+    /// template's namespace because templates often produce outputs
+    /// consumed in another namespace. The operator must have RBAC
+    /// to write Secrets in this namespace (chart 0.8.12+ grants
+    /// secrets create/update/patch cluster-wide).
+    pub namespace: String,
+
+    /// Key within the Secret's `.data` map.
+    pub key: String,
+
+    /// When true, the operator stamps a
+    /// `pangea.pleme.io/sensitive=true` label on the Secret.
+    /// Doesn't change K8s storage behavior — etcd encryption is
+    /// orthogonal — but surfaces author intent for downstream
+    /// tooling (mounted-as-env policies, audit dashboards, ESO
+    /// hand-off).
+    #[serde(default)]
+    pub sensitive: bool,
 }
 
 fn default_refresh_interval() -> String {
