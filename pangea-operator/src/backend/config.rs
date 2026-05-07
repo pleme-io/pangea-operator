@@ -74,11 +74,30 @@ impl BackendConfigGenerator {
     }
 
     /// Generate provider configuration with credentials.
+    ///
+    /// Returns `None` when no operator-side provider block is needed —
+    /// e.g. a workspace whose only declared provider is GitHub, where
+    /// the Ruby renderer's `provider :github do { token gh_token }`
+    /// block already inlines the credential via the env-var injection
+    /// path. In that case writing `{"provider": {}}` would be invalid
+    /// tofu syntax (rejected at `tofu init` with "Missing block label
+    /// — at least one object property is required").
+    ///
+    /// Returns `Some(json)` when at least one provider block must be
+    /// rendered into the operator's `providers.tf.json` (separate from
+    /// any provider blocks the Ruby DSL emits in workspace.tf.json).
+    ///
+    /// **Operator-side vs Ruby-side provider authority** is a typed
+    /// per-`ProviderKind` decision — see
+    /// `ProviderKind::operator_emits_provider_block()`. Adding a new
+    /// `ProviderKind` variant forces a typed answer; "I forgot to
+    /// extend the operator emitter" is a compile error rather than a
+    /// runtime tofu-init wedge.
     pub fn generate_provider_config(
         aws_region: Option<&str>,
         aws_credentials: Option<&AwsCredentialsConfig>,
         cloudflare_credentials: Option<&CloudflareCredentialsConfig>,
-    ) -> serde_json::Value {
+    ) -> Option<serde_json::Value> {
         let mut providers = serde_json::Map::new();
 
         if let Some(region) = aws_region {
@@ -103,16 +122,36 @@ impl BackendConfigGenerator {
             providers.insert("cloudflare".to_string(), serde_json::Value::Object(cf_config));
         }
 
-        serde_json::json!({
-            "provider": providers
-        })
+        // GitHub is intentionally absent: see ProviderKind::operator_emits_provider_block.
+        // The Ruby renderer's `provider :github do …` block handles this kind, the
+        // operator only needs to inject GITHUB_TOKEN as ENV (done in template_controller.rs).
+
+        if providers.is_empty() {
+            None
+        } else {
+            Some(serde_json::json!({
+                "provider": providers
+            }))
+        }
     }
 
     /// Write provider configuration to a file.
+    ///
+    /// Skips the write entirely when `config` is `None` (no operator-
+    /// side provider blocks to emit). This is the load-bearing safety
+    /// over the previous unconditional write that produced
+    /// `{"provider": {}}` for workspaces with only Ruby-handled
+    /// providers (GitHub-only orgs, etc.) — invalid tofu syntax that
+    /// wedged reconciliation indefinitely.
     pub async fn write_provider_config(
-        config: serde_json::Value,
+        config: Option<serde_json::Value>,
         work_dir: &Path,
     ) -> Result<()> {
+        let Some(config) = config else {
+            debug!("No operator-side provider config to write (Ruby-handled providers only)");
+            return Ok(());
+        };
+
         let config_path = work_dir.join("providers.tf.json");
         let content = serde_json::to_string_pretty(&config)
             .map_err(|e| crate::error::Error::Serialization(e))?;
@@ -205,7 +244,8 @@ mod tests {
                 session_token: None,
             }),
             None,
-        );
+        )
+        .expect("aws config produces a non-empty provider block");
 
         let aws = &config["provider"]["aws"];
         assert_eq!(aws["region"], "us-east-1");
@@ -224,7 +264,8 @@ mod tests {
                 session_token: Some("TOKEN123".to_string()),
             }),
             None,
-        );
+        )
+        .expect("aws config produces a non-empty provider block");
 
         assert_eq!(config["provider"]["aws"]["token"], "TOKEN123");
     }
@@ -237,7 +278,8 @@ mod tests {
             Some(&CloudflareCredentialsConfig {
                 api_token: "cf-token-xyz".to_string(),
             }),
-        );
+        )
+        .expect("cloudflare config produces a non-empty provider block");
 
         assert_eq!(config["provider"]["cloudflare"]["api_token"], "cf-token-xyz");
         assert!(config["provider"].get("aws").is_none());
@@ -255,17 +297,29 @@ mod tests {
             Some(&CloudflareCredentialsConfig {
                 api_token: "cf-token".to_string(),
             }),
-        );
+        )
+        .expect("two configs produce a non-empty provider block");
 
         assert!(config["provider"]["aws"].is_object());
         assert!(config["provider"]["cloudflare"].is_object());
     }
 
+    /// Regression for the pleme-io-opensource wedge.
+    ///
+    /// Workspaces whose only declared providerCredentials is GitHub
+    /// (operator-emits-provider-block = false; the Ruby DSL handles it)
+    /// must NOT cause the operator to write an empty
+    /// `{"provider": {}}` block — that's invalid tofu syntax and was
+    /// the root cause of the 2026-05-05 reconciliation wedge. The
+    /// function now returns None and `write_provider_config` skips the
+    /// file entirely.
     #[test]
-    fn test_generate_provider_config_no_providers() {
+    fn test_generate_provider_config_no_providers_returns_none() {
         let config = BackendConfigGenerator::generate_provider_config(None, None, None);
-        let providers = config["provider"].as_object().unwrap();
-        assert!(providers.is_empty());
+        assert!(
+            config.is_none(),
+            "no operator-side providers must produce None, not an empty block"
+        );
     }
 
     #[test]
@@ -274,7 +328,8 @@ mod tests {
             Some("ap-southeast-1"),
             None,
             None,
-        );
+        )
+        .expect("region-only AWS still emits a provider block");
         let aws = &config["provider"]["aws"];
         assert_eq!(aws["region"], "ap-southeast-1");
         assert!(aws.get("access_key").is_none());

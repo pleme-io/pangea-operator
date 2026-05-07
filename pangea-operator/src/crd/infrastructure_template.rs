@@ -450,6 +450,43 @@ impl ProviderKind {
             ProviderKind::GitHub => "github",
         }
     }
+
+    /// Does the operator emit an entry for this kind into
+    /// `providers.tf.json`?
+    ///
+    /// Two authority models for provider configuration:
+    ///
+    /// - **Operator-side** (`true`): the operator pulls the secret +
+    ///   renders the provider block into its own `providers.tf.json`
+    ///   alongside the workspace's compiled output. Used when the
+    ///   provider's natural Ruby DSL surface doesn't carry credentials
+    ///   inline (AWS region, Cloudflare API token).
+    /// - **Ruby-side** (`false`): the workspace's Ruby `provider :foo
+    ///   do { token … }` block already inlines the credential — usually
+    ///   via `ENV.fetch` against an env var the operator injects per
+    ///   `iter_secret_refs`. The operator must NOT emit a parallel
+    ///   provider block here; doing so produces conflicting / empty
+    ///   provider definitions.
+    ///
+    /// **Compile-time exhaustiveness:** adding a new `ProviderKind`
+    /// variant forces this match to be extended. "I added a provider
+    /// type, forgot the operator-emit decision" is impossible — this
+    /// is the typed contract that supersedes the silent
+    /// `{"provider": {}}` wedge that pleme-io-opensource hit when
+    /// `GitHubCredentials` was the only declared provider and the
+    /// operator's emitter unconditionally wrote an empty `providers`
+    /// map.
+    pub const fn operator_emits_provider_block(&self) -> bool {
+        match self {
+            ProviderKind::Aws => true,
+            ProviderKind::Cloudflare => true,
+            // GitHub: the Ruby `provider :github do { token gh_token }`
+            // block in workspace renderers (e.g. github_org_workspace.rb)
+            // inlines the token via ENV. Operator emits only the env-var
+            // injection, no providers.tf.json block.
+            ProviderKind::GitHub => false,
+        }
+    }
 }
 
 impl ProviderCredentials {

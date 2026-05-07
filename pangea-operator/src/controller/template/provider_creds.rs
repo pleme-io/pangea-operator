@@ -25,7 +25,7 @@ pub async fn resolve_provider_config(
     provider_creds: &crate::crd::ProviderCredentials,
     template: &InfrastructureTemplate,
     state: &ControllerState,
-) -> Result<serde_json::Value> {
+) -> Result<Option<serde_json::Value>> {
     let default_ns = template.namespace().unwrap_or_else(|| "default".to_string());
 
     let aws_creds = if let Some(aws) = &provider_creds.aws {
