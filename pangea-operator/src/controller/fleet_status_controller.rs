@@ -56,6 +56,7 @@ pub fn run(client: Client) -> impl std::future::Future<Output = ()> {
     let api: Api<PangeaFleetStatus> = Api::all(client.clone());
     let context = Arc::new(Context {
         client: client.clone(),
+        last_patched: tokio::sync::Mutex::new(None),
     });
 
     // Best-effort bootstrap: create the singleton if missing. If the
@@ -82,6 +83,16 @@ pub fn run(client: Client) -> impl std::future::Future<Output = ()> {
 
 struct Context {
     client: Client,
+    /// Cache of the most-recently-PATCHed status. Compared against
+    /// each new aggregation to gate the PATCH. We keep our own cache
+    /// rather than reading `fs.status` because kube-rs's cached
+    /// `Arc<PangeaFleetStatus>` lags the apiserver — when our PATCH
+    /// triggers a watch event, the reconcile fires *before* the
+    /// cache has the just-patched value, so `fs.status` is the
+    /// previous-previous value and our gate would always trigger
+    /// a write. The Mutex<Option<...>> shape is single-writer
+    /// (this controller) and rare-mutate (only on real changes).
+    last_patched: tokio::sync::Mutex<Option<PangeaFleetStatusStatus>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -118,11 +129,17 @@ async fn reconcile(
     // `last_transition_time` on the `Updated` condition; without the
     // gate, every reconcile re-PATCHes the same fleet aggregation
     // with new timestamps, refiring this controller's watch and
-    // creating a self-trigger loop on top of the 30s requeue floor
-    // (~10 reconciles/sec observed pre-gate). Bypassing
-    // `policy_gate` (this controller is read-only observability) means
-    // globalSuspend cannot save us — the fix has to be in-controller.
-    if !fleet_status_changed(fs.status.as_ref(), &new_status) {
+    // creating a self-trigger loop on top of the 30s requeue floor.
+    //
+    // Compare against `ctx.last_patched`, NOT `fs.status`: kube-rs's
+    // cached `Arc<PangeaFleetStatus>` lags the apiserver, so when
+    // our PATCH triggers a watch event the reconcile fires before
+    // the cache observes the just-patched value — `fs.status` would
+    // be the previous-previous status and the gate would never fire.
+    // Tracking last-patched explicitly in Context is single-writer
+    // (this controller) so no race.
+    let mut last = ctx.last_patched.lock().await;
+    if !fleet_status_changed(last.as_ref(), &new_status) {
         debug!(
             "PangeaFleetStatus aggregation unchanged; skipping patch \
              (avoids self-trigger watch loop on top of 30s refresh)"
@@ -131,6 +148,7 @@ async fn reconcile(
     }
 
     patch_status(&ctx.client, &new_status).await?;
+    *last = Some(new_status);
     Ok(Action::requeue(REFRESH_INTERVAL))
 }
 
