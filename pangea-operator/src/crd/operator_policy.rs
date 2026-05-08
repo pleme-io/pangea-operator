@@ -373,10 +373,32 @@ pub struct OperatorPolicyStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effective: Option<OperatorPolicySpec>,
 
-    /// Rolling counter incremented every time a controller skips a
-    /// reconcile due to this policy. Resets to zero on operator restart.
-    /// Use to confirm the kill-switch is taking effect:
+    /// Rolling counter — read this as the **last-snapshot** value, not
+    /// the live count. Since the rio firefighting 2026-05-07 wave (see
+    /// `operator_policy_controller::status_needs_patch`) the
+    /// OperatorPolicy status PATCH is diff-gated on substantive
+    /// changes only, so this field is updated only when something
+    /// material on the policy itself changes (`observedGeneration`,
+    /// `effective` spec, or the `workspaceOverrides` count). The
+    /// in-memory atomic counter the controller reads from
+    /// (`OperatorPolicyCache.skipped`) is sampled into here at write
+    /// time; between writes, the field is frozen.
+    ///
+    /// **For the live count** (every increment as it happens), use the
+    /// Prometheus counter `pangea_policy_skipped_total{controller, source,
+    /// reason, target}`. It carries label dimensions this CR field
+    /// can't (which controller skipped, which gate fired, which
+    /// workspace) and is the canonical source for the chart 0.8.14
+    /// `PangeaControllerReconcileRateHigh` alert.
+    ///
+    /// At-a-glance usage (still useful for a single-shot manual check):
     ///   `kubectl get operatorpolicy default -o jsonpath='{.status.reconcilesSkipped}'`
+    /// Live rate (Prometheus):
+    ///   `sum by (controller) (rate(pangea_policy_skipped_total[1m]))`
+    ///
+    /// Resets to zero on operator restart (the in-memory counter is
+    /// non-persistent; this field is overwritten by the next
+    /// substantive PATCH).
     #[serde(default)]
     pub reconciles_skipped: u64,
 

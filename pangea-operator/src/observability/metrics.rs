@@ -822,6 +822,80 @@ mod tests {
     }
 
     #[test]
+    fn record_reconcile_named_emits_label_pair_used_by_anomaly_alert() {
+        // Pin the metric label format that
+        // `PangeaControllerReconcileRateHigh` (chart 0.8.14) groups
+        // by — `controller=NAME, result=ok`. Without this test, a
+        // future rename (e.g. snake → camelCase or addition of a
+        // namespace label) could silently break the alert grouping
+        // and we'd discover the regression only when the next hot
+        // loop went undetected. The test calls the named-variant
+        // path used by the two self-driving controllers
+        // (operator_policy + fleet_status — intentionally absent from
+        // `ControllerKind`).
+        let metrics = Metrics::new();
+        metrics.record_reconcile_named("operator_policy", "ok");
+        metrics.record_reconcile_named("operator_policy", "ok");
+        metrics.record_reconcile_named("fleet_status", "ok");
+        metrics.record_reconcile_named("fleet_status", "error");
+
+        let output = metrics.gather();
+
+        // The exact strings the alert PromQL groups by — must match.
+        assert!(
+            output.contains(r#"controller="operator_policy""#),
+            "operator_policy series missing — alert grouping breaks:\n{output}"
+        );
+        assert!(
+            output.contains(r#"controller="fleet_status""#),
+            "fleet_status series missing — alert grouping breaks:\n{output}"
+        );
+        assert!(output.contains(r#"result="ok""#));
+        assert!(output.contains(r#"result="error""#));
+
+        // The exact metric name the alert PromQL queries.
+        assert!(
+            output.contains("pangea_controller_reconciliations_total"),
+            "metric name renamed — alert PromQL won't match:\n{output}"
+        );
+    }
+
+    #[test]
+    fn record_reconcile_typed_and_named_share_same_metric_series() {
+        // Defense-in-depth: the typed `record_reconcile(kind, result)`
+        // and the string `record_reconcile_named(name, result)` paths
+        // both target the same underlying IntCounterVec, so a
+        // controller migrated from one path to the other (or vice
+        // versa) keeps producing samples on the same series. If they
+        // ever diverged (e.g. a separate counter got introduced for
+        // the named path), the alert would only see one half of the
+        // fleet.
+        let metrics = Metrics::new();
+        metrics.record_reconcile(crate::crd::ControllerKind::Template, "ok");
+        metrics.record_reconcile_named("template", "ok");
+        let output = metrics.gather();
+
+        // Two increments, one series — the line should show count = 2.
+        let template_lines: Vec<&str> = output
+            .lines()
+            .filter(|l| l.starts_with("pangea_controller_reconciliations_total"))
+            .filter(|l| l.contains(r#"controller="template""#))
+            .filter(|l| l.contains(r#"result="ok""#))
+            .collect();
+        assert_eq!(
+            template_lines.len(),
+            1,
+            "typed + named paths produced multiple series — they must coalesce:\n{}",
+            template_lines.join("\n")
+        );
+        assert!(
+            template_lines[0].ends_with(" 2"),
+            "expected count = 2 (one typed + one named on the same series), got: {}",
+            template_lines[0]
+        );
+    }
+
+    #[test]
     fn test_namespace_reconciliation_counter() {
         let metrics = Metrics::new();
         metrics.namespace_reconciliations_total.inc();
