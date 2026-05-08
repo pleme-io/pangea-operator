@@ -18,10 +18,8 @@ use chrono::Utc;
 use futures::StreamExt;
 use kube::{
     api::{Api, Patch, PatchParams},
-    runtime::{
-        controller::{Action, Controller},
-        watcher::Config,
-    }, ResourceExt,
+    runtime::controller::Action,
+    ResourceExt,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -45,12 +43,11 @@ impl ImagePipelineController {
 
     pub async fn run(self) -> crate::error::Result<()> {
         let client = self.state.client.clone();
-        let api: Api<ImagePipeline> = Api::all(client.clone());
         let state = Arc::new(self.state);
 
         info!("Starting ImagePipeline controller");
 
-        Controller::new(api, Config::default())
+        crate::controller::generation_filter::filtered_controller::<ImagePipeline>(client)
             .run(
                 move |pipeline, ctx| {
                     let state = Arc::clone(&ctx);

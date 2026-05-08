@@ -12,10 +12,8 @@ use futures::StreamExt;
 use k8s_openapi::api::core::v1::ConfigMap;
 use kube::{
     api::Api,
-    runtime::{
-        controller::{Action, Controller},
-        watcher::Config,
-    }, ResourceExt,
+    runtime::controller::Action,
+    ResourceExt,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -41,12 +39,11 @@ impl PackerBuildController {
 
     pub async fn run(self) -> crate::error::Result<()> {
         let client = self.state.client.clone();
-        let api: Api<PackerBuild> = Api::all(client.clone());
         let state = Arc::new(self.state);
 
         info!("Starting PackerBuild controller");
 
-        Controller::new(api, Config::default())
+        crate::controller::generation_filter::filtered_controller::<PackerBuild>(client)
             .run(
                 move |build, ctx| {
                     let state = Arc::clone(&ctx);

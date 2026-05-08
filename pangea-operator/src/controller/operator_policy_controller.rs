@@ -28,10 +28,8 @@ use crate::error::{Error, Result};
 use futures::StreamExt;
 use kube::{
     api::{Api, Patch, PatchParams},
-    runtime::{
-        controller::{Action, Controller},
-        watcher::Config,
-    }, ResourceExt,
+    runtime::controller::Action,
+    ResourceExt,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -54,12 +52,11 @@ impl OperatorPolicyController {
     /// the controller stream terminates (operator shutdown).
     pub async fn run(self) -> Result<()> {
         let client = self.state.client.clone();
-        let api: Api<OperatorPolicy> = Api::all(client.clone());
         let state = Arc::new(self.state);
 
         info!("Starting OperatorPolicy controller");
 
-        Controller::new(api, Config::default())
+        crate::controller::generation_filter::filtered_controller::<OperatorPolicy>(client)
             .run(
                 move |policy, ctx| {
                     let state = Arc::clone(&ctx);

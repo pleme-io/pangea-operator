@@ -13,9 +13,8 @@ use k8s_openapi::api::core::v1::{ConfigMap, Secret};
 use kube::{
     api::{Api, Patch, PatchParams},
     runtime::{
-        controller::{Action, Controller},
+        controller::Action,
         events::EventType,
-        watcher::Config,
     },
     ResourceExt,
 };
@@ -56,7 +55,6 @@ impl TemplateController {
     /// Run the controller.
     pub async fn run(self) -> Result<()> {
         let client = self.state.client.clone();
-        let api: Api<InfrastructureTemplate> = Api::all(client.clone());
         let state = Arc::new(self.state);
 
         info!("Starting InfrastructureTemplate controller");
@@ -69,7 +67,11 @@ impl TemplateController {
         let workers = crate::controller::reconciler::reconcile_workers_from_env();
         info!(workers, "InfrastructureTemplate controller concurrency");
 
-        Controller::new(api, Config::default())
+        // generation-filtered watch stream — drops status-only watch
+        // events at the source so reconciles only fire on actual spec
+        // mutations + the explicit Action::requeue tick. See
+        // controller::generation_filter for the full rationale.
+        crate::controller::generation_filter::filtered_controller::<InfrastructureTemplate>(client)
             .run(
                 move |template, ctx| {
                     let state = Arc::clone(&ctx);

@@ -14,10 +14,7 @@ use crate::error::Error;
 use futures::StreamExt;
 use kube::{
     api::{Api, Patch, PatchParams},
-    runtime::{
-        controller::{Action, Controller},
-        watcher::Config,
-    },
+    runtime::controller::Action,
     ResourceExt,
 };
 use std::sync::Arc;
@@ -40,12 +37,11 @@ impl ComplianceBindingController {
 
     pub async fn run(self) -> crate::error::Result<()> {
         let client = self.state.client.clone();
-        let api: Api<ComplianceBinding> = Api::all(client.clone());
         let state = Arc::new(self.state);
 
         info!("Starting ComplianceBinding controller");
 
-        Controller::new(api, Config::default())
+        crate::controller::generation_filter::filtered_controller::<ComplianceBinding>(client)
             .run(
                 move |binding, ctx| {
                     let state = Arc::clone(&ctx);

@@ -15,10 +15,8 @@ use k8s_openapi::api::batch::v1::{Job, JobSpec};
 use k8s_openapi::api::core::v1::{Container, EnvVar, PodSpec, PodTemplateSpec};
 use kube::{
     api::{Api, ListParams, ObjectMeta},
-    runtime::{
-        controller::{Action, Controller},
-        watcher::Config,
-    }, ResourceExt,
+    runtime::controller::Action,
+    ResourceExt,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,12 +40,11 @@ impl ComplianceScheduleController {
 
     pub async fn run(self) -> crate::error::Result<()> {
         let client = self.state.client.clone();
-        let api: Api<ComplianceSchedule> = Api::all(client.clone());
         let state = Arc::new(self.state);
 
         info!("Starting ComplianceSchedule controller");
 
-        Controller::new(api, Config::default())
+        crate::controller::generation_filter::filtered_controller::<ComplianceSchedule>(client)
             .run(
                 move |schedule, ctx| {
                     let state = Arc::clone(&ctx);

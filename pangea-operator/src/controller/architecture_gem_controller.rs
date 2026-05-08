@@ -17,7 +17,7 @@
 use chrono::Utc;
 use kube::{
     api::Api,
-    runtime::controller::{Action, Controller},
+    runtime::controller::Action,
     Client,
 };
 use std::collections::HashSet;
@@ -47,15 +47,14 @@ pub fn run(
     operator_policy: Arc<crate::controller::operator_policy_cache::OperatorPolicyCache>,
     metrics: Arc<crate::observability::Metrics>,
 ) -> impl std::future::Future<Output = ()> {
-    let api: Api<ArchitectureGem> = Api::all(client.clone());
     let context = Arc::new(Context {
-        client,
+        client: client.clone(),
         backend,
         operator_policy,
         metrics,
     });
 
-    Controller::new(api, kube::runtime::watcher::Config::default())
+    crate::controller::generation_filter::filtered_controller::<ArchitectureGem>(client)
         .run(reconcile, error_policy, context)
         .for_each(|res| async move {
             match res {

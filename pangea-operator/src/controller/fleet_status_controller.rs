@@ -33,10 +33,7 @@ use chrono::Utc;
 use futures::StreamExt;
 use kube::{
     api::{Api, ListParams, Patch, PatchParams, PostParams},
-    runtime::{
-        controller::{Action, Controller},
-        watcher::Config,
-    },
+    runtime::controller::Action,
     Client,
 };
 use std::collections::BTreeMap;
@@ -53,7 +50,6 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 /// Wire fleet aggregation into the operator's runtime. Self-creates
 /// the singleton on startup, then runs the controller indefinitely.
 pub fn run(client: Client) -> impl std::future::Future<Output = ()> {
-    let api: Api<PangeaFleetStatus> = Api::all(client.clone());
     let context = Arc::new(Context {
         client: client.clone(),
         last_patched: tokio::sync::Mutex::new(None),
@@ -69,7 +65,7 @@ pub fn run(client: Client) -> impl std::future::Future<Output = ()> {
         }
     });
 
-    Controller::new(api, Config::default())
+    crate::controller::generation_filter::filtered_controller::<PangeaFleetStatus>(client)
         .run(reconcile, error_policy, context)
         .for_each(|res| async move {
             match res {

@@ -15,9 +15,8 @@ use futures::StreamExt;
 use kube::{
     api::{Api, PostParams},
     runtime::{
-        controller::{Action, Controller},
+        controller::Action,
         events::{Event, EventType, Recorder, Reporter},
-        watcher::Config,
     },
     Resource, ResourceExt,
 };
@@ -43,12 +42,11 @@ impl FlowController {
 
     pub async fn run(self) -> Result<()> {
         let client = self.state.client.clone();
-        let api: Api<InfrastructureFlow> = Api::all(client.clone());
         let state = Arc::new(self.state);
 
         info!("Starting InfrastructureFlow controller");
 
-        Controller::new(api, Config::default())
+        crate::controller::generation_filter::filtered_controller::<InfrastructureFlow>(client)
             .run(
                 move |flow, ctx| {
                     let state = Arc::clone(&ctx);

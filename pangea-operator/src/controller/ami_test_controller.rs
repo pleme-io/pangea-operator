@@ -15,10 +15,8 @@ use k8s_openapi::api::batch::v1::{Job, JobSpec, JobStatus};
 use k8s_openapi::api::core::v1::{Container, EnvVar, PodSpec, PodTemplateSpec};
 use kube::{
     api::{Api, ListParams, ObjectMeta},
-    runtime::{
-        controller::{Action, Controller},
-        watcher::Config,
-    }, ResourceExt,
+    runtime::controller::Action,
+    ResourceExt,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -43,12 +41,11 @@ impl AmiTestController {
 
     pub async fn run(self) -> crate::error::Result<()> {
         let client = self.state.client.clone();
-        let api: Api<AmiTest> = Api::all(client.clone());
         let state = Arc::new(self.state);
 
         info!("Starting AmiTest controller");
 
-        Controller::new(api, Config::default())
+        crate::controller::generation_filter::filtered_controller::<AmiTest>(client)
             .run(
                 move |test, ctx| {
                     let state = Arc::clone(&ctx);

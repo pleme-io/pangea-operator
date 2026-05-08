@@ -13,10 +13,7 @@ use std::time::Duration;
 use futures::StreamExt;
 use kube::{
     api::Api,
-    runtime::{
-        controller::{Action, Controller},
-        watcher::Config,
-    },
+    runtime::controller::Action,
     ResourceExt,
 };
 use tracing::{debug, error, info, instrument, warn};
@@ -39,12 +36,11 @@ impl DashboardController {
     /// Start the PangeaDashboard controller.
     pub async fn run(self) -> crate::error::Result<()> {
         let client = self.state.client.clone();
-        let api: Api<PangeaDashboard> = Api::all(client.clone());
         let state = Arc::new(self.state);
 
         info!("Starting PangeaDashboard controller");
 
-        Controller::new(api, Config::default())
+        crate::controller::generation_filter::filtered_controller::<PangeaDashboard>(client)
             .run(
                 move |pd, ctx| {
                     let state = Arc::clone(&ctx);

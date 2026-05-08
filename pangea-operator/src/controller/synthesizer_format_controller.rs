@@ -13,10 +13,7 @@ use crate::error::Error;
 use futures::StreamExt;
 use kube::{
     api::{Api, Patch, PatchParams},
-    runtime::{
-        controller::{Action, Controller},
-        watcher::Config,
-    },
+    runtime::controller::Action,
     ResourceExt,
 };
 use std::collections::HashSet;
@@ -37,12 +34,11 @@ impl SynthesizerFormatController {
 
     pub async fn run(self) -> crate::error::Result<()> {
         let client = self.state.client.clone();
-        let api: Api<SynthesizerFormat> = Api::all(client.clone());
         let state = Arc::new(self.state);
 
         info!("Starting SynthesizerFormat controller");
 
-        Controller::new(api, Config::default())
+        crate::controller::generation_filter::filtered_controller::<SynthesizerFormat>(client)
             .run(
                 move |format, ctx| {
                     let state = Arc::clone(&ctx);
