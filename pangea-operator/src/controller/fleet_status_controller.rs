@@ -110,9 +110,54 @@ async fn reconcile(
     }
 
     debug!("Refreshing PangeaFleetStatus/default");
-    let status = aggregate_fleet_status(&ctx.client).await?;
-    patch_status(&ctx.client, &status).await?;
+    let new_status = aggregate_fleet_status(&ctx.client).await?;
+
+    // Diff-gate the PATCH — same antipattern this file's siblings hit
+    // during rio firefighting 2026-05-07. `aggregate_fleet_status`
+    // returns a status with `last_updated_at = Utc::now()` and a fresh
+    // `last_transition_time` on the `Updated` condition; without the
+    // gate, every reconcile re-PATCHes the same fleet aggregation
+    // with new timestamps, refiring this controller's watch and
+    // creating a self-trigger loop on top of the 30s requeue floor
+    // (~10 reconciles/sec observed pre-gate). Bypassing
+    // `policy_gate` (this controller is read-only observability) means
+    // globalSuspend cannot save us — the fix has to be in-controller.
+    if !fleet_status_changed(fs.status.as_ref(), &new_status) {
+        debug!(
+            "PangeaFleetStatus aggregation unchanged; skipping patch \
+             (avoids self-trigger watch loop on top of 30s refresh)"
+        );
+        return Ok(Action::requeue(REFRESH_INTERVAL));
+    }
+
+    patch_status(&ctx.client, &new_status).await?;
     Ok(Action::requeue(REFRESH_INTERVAL))
+}
+
+/// Returns `true` iff the proposed fleet aggregation differs from
+/// `prev` on any *substantive* field — i.e., any per-CRD-class
+/// tracker. The `last_updated_at` timestamp and the `Updated`
+/// condition's `last_transition_time` are intentionally excluded:
+/// `aggregate_fleet_status` always restamps both, so a naive
+/// equality check would never gate. Trackers all derive `PartialEq`,
+/// so this is a straight field-by-field compare.
+fn fleet_status_changed(
+    prev: Option<&PangeaFleetStatusStatus>,
+    new: &PangeaFleetStatusStatus,
+) -> bool {
+    let Some(p) = prev else { return true };
+    p.workspace_catalogs != new.workspace_catalogs
+        || p.infrastructure_templates != new.infrastructure_templates
+        || p.architecture_gems != new.architecture_gems
+        || p.pangea_namespaces != new.pangea_namespaces
+        || p.image_pipelines != new.image_pipelines
+        || p.packer_builds != new.packer_builds
+        || p.ami_tests != new.ami_tests
+        || p.compliance_schedules != new.compliance_schedules
+        || p.compliance_bindings != new.compliance_bindings
+        || p.infrastructure_flows != new.infrastructure_flows
+        || p.pangea_dashboards != new.pangea_dashboards
+        || p.synthesizer_formats != new.synthesizer_formats
 }
 
 /// List every tracked pangea CRD class and return a populated
@@ -438,6 +483,85 @@ fn error_policy(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── fleet_status_changed (diff-gate) tests ─────────────────
+    //
+    // The gate must compare every per-CRD-class tracker but
+    // INTENTIONALLY ignore `last_updated_at` and the `Updated`
+    // condition's `last_transition_time` — both are restamped on
+    // every aggregation pass. Without that exclusion, the gate
+    // would never fire and the self-trigger watch loop returns.
+
+    fn empty_status() -> PangeaFleetStatusStatus {
+        PangeaFleetStatusStatus {
+            workspace_catalogs: Default::default(),
+            infrastructure_templates: Default::default(),
+            architecture_gems: Default::default(),
+            pangea_namespaces: Default::default(),
+            image_pipelines: Default::default(),
+            packer_builds: Default::default(),
+            ami_tests: Default::default(),
+            compliance_schedules: Default::default(),
+            compliance_bindings: Default::default(),
+            infrastructure_flows: Default::default(),
+            pangea_dashboards: Default::default(),
+            synthesizer_formats: Default::default(),
+            last_updated_at: Some(chrono::Utc::now()),
+            conditions: vec![],
+        }
+    }
+
+    #[test]
+    fn fleet_status_first_reconcile_must_patch() {
+        let new = empty_status();
+        assert!(
+            fleet_status_changed(None, &new),
+            "missing prev (first reconcile) must always force a PATCH"
+        );
+    }
+
+    #[test]
+    fn fleet_status_only_timestamp_change_skips_patch() {
+        use chrono::TimeZone;
+        // The rio loop case: every aggregation pass restamps
+        // last_updated_at + the Updated condition's transition time,
+        // but the per-CRD trackers are byte-equal. Gate must skip.
+        let mut prev = empty_status();
+        let mut new = empty_status();
+        // Different timestamps — but the gate must ignore them.
+        prev.last_updated_at =
+            Some(chrono::Utc.with_ymd_and_hms(2026, 5, 7, 0, 0, 0).unwrap());
+        new.last_updated_at =
+            Some(chrono::Utc.with_ymd_and_hms(2026, 5, 7, 0, 0, 30).unwrap());
+        assert!(
+            !fleet_status_changed(Some(&prev), &new),
+            "timestamp-only churn must NOT trigger a PATCH (the loop bug)"
+        );
+    }
+
+    #[test]
+    fn fleet_status_template_count_change_must_patch() {
+        let prev = empty_status();
+        let mut new = empty_status();
+        new.infrastructure_templates.total = 1;
+        assert!(
+            fleet_status_changed(Some(&prev), &new),
+            "template count change must force a PATCH"
+        );
+    }
+
+    #[test]
+    fn fleet_status_workspace_catalog_change_must_patch() {
+        let prev = empty_status();
+        let mut new = empty_status();
+        new.workspace_catalogs.total = 2;
+        new.workspace_catalogs.verified = 1;
+        new.workspace_catalogs.summary = "1/2".into();
+        assert!(
+            fleet_status_changed(Some(&prev), &new),
+            "workspace catalog tracker change must force a PATCH"
+        );
+    }
 
     // ─── Aggregation helpers ───
     //
