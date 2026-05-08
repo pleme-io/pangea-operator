@@ -187,21 +187,14 @@ async fn apply_reactive_policy(
     // already preserved above; comparing the rest of the writes
     // against `prior_status` covers verifiedBlockedSince,
     // autoSuspended, lastEscalatedAt, lastEscalationReason.
-    let conditions_unchanged = prior_status.conditions.len() == conditions.len()
-        && prior_status.conditions.iter().zip(conditions.iter()).all(|(p, n)| {
-            p.r#type == n.r#type
-                && p.status == n.status
-                && p.reason == n.reason
-                && p.message == n.message
-                && p.last_transition_time == n.last_transition_time
-        });
-    let nothing_changed = conditions_unchanged
-        && prior_status.verified_blocked_since == new_blocked_since
-        && prior_status.auto_suspended == new_auto_suspended
-        && prior_status.last_escalated_at == escalated_at
-        && prior_status.last_escalation_reason == escalation_reason;
-
-    if nothing_changed {
+    if reactive_policy_status_unchanged(
+        &prior_status,
+        &conditions,
+        new_blocked_since,
+        new_auto_suspended,
+        escalated_at,
+        escalation_reason.as_deref(),
+    ) {
         tracing::debug!(
             "ReactivePolicy: no observable status change; skipping patch (avoids self-trigger watch loop)"
         );
@@ -220,4 +213,138 @@ async fn apply_reactive_policy(
     crate::controller::status_patch::patch_status(template, &state.client, patch)
     .await?;
     Ok(())
+}
+
+/// Returns `true` iff every observable field of the proposed reactive-
+/// policy status PATCH equals what `prior_status` already carries
+/// (conditions compared field-by-field including `lastTransitionTime`,
+/// since the merge step above already preserves that timestamp when
+/// content matches). When this returns `true` we can skip the PATCH —
+/// otherwise it would refire this controller's watch and create a
+/// self-trigger reconcile loop on every template reconcile, since
+/// `apply_reactive_policy` runs unconditionally from
+/// `post_reconcile_pipeline::run_for_template`.
+fn reactive_policy_status_unchanged(
+    prior_status: &crate::crd::InfrastructureTemplateStatus,
+    new_conditions: &[crate::crd::Condition],
+    new_blocked_since: Option<chrono::DateTime<chrono::Utc>>,
+    new_auto_suspended: bool,
+    new_escalated_at: Option<chrono::DateTime<chrono::Utc>>,
+    new_escalation_reason: Option<&str>,
+) -> bool {
+    let conditions_unchanged = prior_status.conditions.len() == new_conditions.len()
+        && prior_status
+            .conditions
+            .iter()
+            .zip(new_conditions.iter())
+            .all(|(p, n)| {
+                p.r#type == n.r#type
+                    && p.status == n.status
+                    && p.reason == n.reason
+                    && p.message == n.message
+                    && p.last_transition_time == n.last_transition_time
+            });
+
+    conditions_unchanged
+        && prior_status.verified_blocked_since == new_blocked_since
+        && prior_status.auto_suspended == new_auto_suspended
+        && prior_status.last_escalated_at == new_escalated_at
+        && prior_status.last_escalation_reason.as_deref() == new_escalation_reason
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reactive_policy_status_unchanged;
+    use crate::crd::{Condition, InfrastructureTemplateStatus};
+    use chrono::TimeZone;
+
+    fn cond(typ: &str, status: &str, reason: &str, msg: &str) -> Condition {
+        Condition {
+            r#type: typ.into(),
+            status: status.into(),
+            reason: reason.into(),
+            message: msg.into(),
+            // Stable timestamp on purpose — the merge logic in
+            // apply_reactive_policy preserves prev's timestamp when
+            // content matches, so reaching this gate with equal
+            // (type, status, reason, message) means the timestamps
+            // also match. Tests reflect that contract.
+            last_transition_time: chrono::Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
+        }
+    }
+
+    fn healthy_status() -> InfrastructureTemplateStatus {
+        InfrastructureTemplateStatus {
+            conditions: vec![cond("Healthy", "True", "NoEscalations", "no reactive policies have fired")],
+            verified_blocked_since: None,
+            auto_suspended: false,
+            last_escalated_at: None,
+            last_escalation_reason: None,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn reactive_steady_state_skips_patch() {
+        let prev = healthy_status();
+        let new_cond = vec![cond("Healthy", "True", "NoEscalations", "no reactive policies have fired")];
+        assert!(
+            reactive_policy_status_unchanged(&prev, &new_cond, None, false, None, None),
+            "must NOT patch when nothing observable changed (timestamp-only churn case)"
+        );
+    }
+
+    #[test]
+    fn reactive_healthy_to_alert_must_patch() {
+        let prev = healthy_status();
+        let new_cond = vec![cond("Healthy", "False", "PhaseTimeout", "stuck in Compiling for 30m")];
+        let now = chrono::Utc.with_ymd_and_hms(2026, 5, 7, 0, 0, 0).unwrap();
+        assert!(
+            !reactive_policy_status_unchanged(
+                &prev,
+                &new_cond,
+                None,
+                false,
+                Some(now),
+                Some("PhaseTimeout"),
+            ),
+            "Healthy=True → False must force a PATCH"
+        );
+    }
+
+    #[test]
+    fn reactive_auto_suspend_flip_must_patch() {
+        let prev = healthy_status();
+        let new_cond = vec![cond("Healthy", "False", "ConsecutiveFailures", "5 consecutive failures")];
+        let now = chrono::Utc.with_ymd_and_hms(2026, 5, 7, 0, 0, 0).unwrap();
+        assert!(
+            !reactive_policy_status_unchanged(
+                &prev,
+                &new_cond,
+                None,
+                true, // suspend escalation fired
+                Some(now),
+                Some("ConsecutiveFailures"),
+            ),
+            "auto_suspended flip must force a PATCH"
+        );
+    }
+
+    #[test]
+    fn reactive_verified_blocked_clock_advance_must_patch() {
+        let prev = healthy_status();
+        let new_cond = vec![cond("Healthy", "True", "NoEscalations", "no reactive policies have fired")];
+        let blocked = chrono::Utc.with_ymd_and_hms(2026, 5, 7, 0, 0, 0).unwrap();
+        assert!(
+            !reactive_policy_status_unchanged(
+                &prev,
+                &new_cond,
+                Some(blocked), // started tracking verified-blocked
+                false,
+                None,
+                None,
+            ),
+            "verifiedBlockedSince changing from None → Some must force a PATCH"
+        );
+    }
 }

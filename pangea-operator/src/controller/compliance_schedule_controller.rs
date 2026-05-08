@@ -432,16 +432,18 @@ async fn update_suite_results(
     // which both produced a self-trigger watch loop and inflated
     // the counter semantics. Compare via JSON value since
     // ComplianceSuiteResult does not derive PartialEq.
-    let prev = schedule.status.as_ref();
-    let prev_summary = prev.and_then(|s| s.control_summary.as_deref());
-    let prev_suites_json = prev
+    let prev_summary = schedule
+        .status
+        .as_ref()
+        .and_then(|s| s.control_summary.as_deref());
+    let prev_suites_json = schedule
+        .status
+        .as_ref()
         .map(|s| serde_json::to_value(&s.suites).unwrap_or(serde_json::Value::Null))
         .unwrap_or(serde_json::Value::Null);
-    let new_suites_json =
-        serde_json::to_value(results).unwrap_or(serde_json::Value::Null);
+    let new_suites_json = serde_json::to_value(results).unwrap_or(serde_json::Value::Null);
 
-    let unchanged = prev_summary == Some(summary) && prev_suites_json == new_suites_json;
-    if unchanged {
+    if suite_results_unchanged(prev_summary, &prev_suites_json, summary, &new_suites_json) {
         debug!(
             "ComplianceSchedule suite results unchanged; skipping patch and totalRuns bump \
              (avoids self-trigger watch loop)"
@@ -449,7 +451,12 @@ async fn update_suite_results(
         return Ok(());
     }
 
-    let total_runs = prev.map(|s| s.total_runs).unwrap_or(0) + 1;
+    let total_runs = schedule
+        .status
+        .as_ref()
+        .map(|s| s.total_runs)
+        .unwrap_or(0)
+        + 1;
 
     let patch = serde_json::json!({
         "status": {
@@ -525,12 +532,75 @@ fn error_policy(
     )
 }
 
+/// Returns true iff the proposed `(summary, suites)` are byte-equal
+/// to what's already on cluster. Suites compared via JSON value since
+/// `ComplianceSuiteResult` does not derive `PartialEq`.
+///
+/// Pure function, used by `update_suite_results` to gate both the
+/// status PATCH AND the `totalRuns` counter increment — pre-fix, the
+/// counter advanced on every reconcile-after-jobs-done even when the
+/// result set hadn't moved.
+fn suite_results_unchanged(
+    prev_summary: Option<&str>,
+    prev_suites_json: &serde_json::Value,
+    new_summary: &str,
+    new_suites_json: &serde_json::Value,
+) -> bool {
+    prev_summary == Some(new_summary) && prev_suites_json == new_suites_json
+}
+
 #[cfg(test)]
 mod tests {
+    use super::suite_results_unchanged;
     use crate::crd::compliance_schedule::{
         ComplianceSchedule, ComplianceSchedulePhase, ComplianceScheduleStatus,
     };
     use kube::CustomResourceExt;
+
+    fn suite_json(name: &str, passed: bool) -> serde_json::Value {
+        serde_json::json!({
+            "name": name,
+            "passed": passed,
+        })
+    }
+
+    #[test]
+    fn suite_results_match_when_summary_and_json_equal() {
+        let prev = serde_json::json!([suite_json("a", true), suite_json("b", true)]);
+        let new = serde_json::json!([suite_json("a", true), suite_json("b", true)]);
+        assert!(
+            suite_results_unchanged(Some("2/2 suites passed"), &prev, "2/2 suites passed", &new),
+            "byte-equal results must skip patch and totalRuns bump"
+        );
+    }
+
+    #[test]
+    fn suite_results_summary_change_must_patch() {
+        let same = serde_json::json!([suite_json("a", true)]);
+        assert!(
+            !suite_results_unchanged(Some("0/1 suites passed"), &same, "1/1 suites passed", &same),
+            "summary text change must force a PATCH"
+        );
+    }
+
+    #[test]
+    fn suite_results_pass_flip_must_patch() {
+        let prev = serde_json::json!([suite_json("a", false)]);
+        let new = serde_json::json!([suite_json("a", true)]);
+        assert!(
+            !suite_results_unchanged(Some("1/1 suites passed"), &prev, "1/1 suites passed", &new),
+            "individual suite pass flip must force a PATCH (caught via JSON diff)"
+        );
+    }
+
+    #[test]
+    fn suite_results_first_run_must_patch() {
+        let new = serde_json::json!([suite_json("a", true)]);
+        assert!(
+            !suite_results_unchanged(None, &serde_json::Value::Null, "1/1 suites passed", &new),
+            "no prev summary must force a PATCH"
+        );
+    }
 
     #[test]
     fn phase_serde_round_trip() {

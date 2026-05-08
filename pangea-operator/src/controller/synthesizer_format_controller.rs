@@ -254,31 +254,15 @@ async fn update_status(
     // refire this controller's watch and create the canonical
     // status-write self-trigger loop. Compare observable status
     // fields semantically and skip when nothing changed.
-    let prev = format.status.as_ref();
-    let prev_phase = prev.and_then(|s| s.phase);
-    let prev_summary = prev.and_then(|s| s.section_summary.as_deref());
-    let prev_methods: &[String] = prev.map(|s| s.dsl_methods.as_slice()).unwrap_or(&[]);
-    let prev_observed_gen = prev.map(|s| s.observed_generation).unwrap_or(0);
-    let prev_error = prev.and_then(|s| s.error.as_deref());
-    let prev_conditions: &[crate::crd::Condition] =
-        prev.map(|s| s.conditions.as_slice()).unwrap_or(&[]);
-
-    let conditions_match = prev_conditions.len() == conditions.len()
-        && conditions.iter().all(|n| {
-            prev_conditions.iter().any(|p| {
-                p.r#type == n.r#type
-                    && p.status == n.status
-                    && p.reason == n.reason
-                    && p.message == n.message
-            })
-        });
-    let needs_patch = format.status.is_none()
-        || !conditions_match
-        || prev_phase != Some(phase)
-        || prev_summary != Some(summary.as_str())
-        || prev_methods != methods.as_slice()
-        || prev_observed_gen != new_observed_gen
-        || prev_error != error;
+    let needs_patch = synthesizer_format_status_needs_patch(
+        format.status.as_ref(),
+        phase,
+        summary.as_str(),
+        &methods,
+        &conditions,
+        new_observed_gen,
+        error,
+    );
 
     if !needs_patch {
         debug!(%phase, "SynthesizerFormat status unchanged; skipping patch (avoids self-trigger watch loop)");
@@ -330,12 +314,157 @@ fn error_policy(
     )
 }
 
+/// Diff-gate for the SynthesizerFormat `update_status` PATCH.
+///
+/// Returns `true` only when at least one observable status field
+/// would change. Without this gate, every reconcile re-PATCHes the
+/// same `(phase, summary, methods, conditions, gen, error)` tuple
+/// with a fresh `lastTransitionTime` (`create_condition` calls
+/// `Utc::now()`), refiring the watch and creating a self-trigger
+/// reconcile loop.
+#[allow(clippy::too_many_arguments)]
+fn synthesizer_format_status_needs_patch(
+    prev: Option<&crate::crd::SynthesizerFormatStatus>,
+    new_phase: SynthesizerFormatPhase,
+    new_summary: &str,
+    new_methods: &[String],
+    new_conditions: &[crate::crd::Condition],
+    new_observed_gen: i64,
+    new_error: Option<&str>,
+) -> bool {
+    let prev_phase = prev.and_then(|s| s.phase);
+    let prev_summary = prev.and_then(|s| s.section_summary.as_deref());
+    let prev_methods: &[String] = prev.map(|s| s.dsl_methods.as_slice()).unwrap_or(&[]);
+    let prev_observed_gen = prev.map(|s| s.observed_generation).unwrap_or(0);
+    let prev_error = prev.and_then(|s| s.error.as_deref());
+    let prev_conditions: &[crate::crd::Condition] =
+        prev.map(|s| s.conditions.as_slice()).unwrap_or(&[]);
+
+    let conditions_match = prev_conditions.len() == new_conditions.len()
+        && new_conditions.iter().all(|n| {
+            prev_conditions.iter().any(|p| {
+                p.r#type == n.r#type
+                    && p.status == n.status
+                    && p.reason == n.reason
+                    && p.message == n.message
+            })
+        });
+
+    prev.is_none()
+        || !conditions_match
+        || prev_phase != Some(new_phase)
+        || prev_summary != Some(new_summary)
+        || prev_methods != new_methods
+        || prev_observed_gen != new_observed_gen
+        || prev_error != new_error
+}
+
 #[cfg(test)]
 mod tests {
+    use super::synthesizer_format_status_needs_patch;
     use crate::crd::synthesizer_format::{
         SynthesizerFormat, SynthesizerFormatPhase, SynthesizerFormatStatus,
     };
+    use crate::crd::Condition;
     use kube::CustomResourceExt;
+
+    fn cond(typ: &str, status: &str, reason: &str, msg: &str) -> Condition {
+        Condition {
+            r#type: typ.into(),
+            status: status.into(),
+            reason: reason.into(),
+            message: msg.into(),
+            last_transition_time: chrono::TimeZone::with_ymd_and_hms(
+                &chrono::Utc, 2025, 1, 1, 0, 0, 0
+            ).unwrap(),
+        }
+    }
+
+    fn ready_status(observed_gen: i64) -> SynthesizerFormatStatus {
+        SynthesizerFormatStatus {
+            phase: Some(SynthesizerFormatPhase::Ready),
+            section_summary: Some("2 array, 1 map".into()),
+            dsl_methods: vec!["synth.thing(:type, ...)".into()],
+            conditions: vec![cond("Ready", "True", "Ready", "Format validated and ready")],
+            observed_generation: observed_gen,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn synth_first_reconcile_must_patch() {
+        let conds = vec![cond("Ready", "True", "Ready", "Format validated and ready")];
+        assert!(
+            synthesizer_format_status_needs_patch(
+                None,
+                SynthesizerFormatPhase::Ready,
+                "2 array, 1 map",
+                &["synth.thing(:type, ...)".into()],
+                &conds,
+                1,
+                None,
+            ),
+            "missing prev status must always force a PATCH"
+        );
+    }
+
+    #[test]
+    fn synth_steady_state_skips_patch() {
+        let prev = ready_status(7);
+        let conds = vec![cond("Ready", "True", "Ready", "Format validated and ready")];
+        assert!(
+            !synthesizer_format_status_needs_patch(
+                Some(&prev),
+                SynthesizerFormatPhase::Ready,
+                "2 array, 1 map",
+                &["synth.thing(:type, ...)".into()],
+                &conds,
+                7,
+                None,
+            ),
+            "must NOT patch on timestamp-only churn"
+        );
+    }
+
+    #[test]
+    fn synth_phase_change_must_patch() {
+        let prev = ready_status(7);
+        let conds = vec![cond("Ready", "False", "Invalid", "Validation failed")];
+        assert!(
+            synthesizer_format_status_needs_patch(
+                Some(&prev),
+                SynthesizerFormatPhase::Invalid,
+                "2 array, 1 map",
+                &["synth.thing(:type, ...)".into()],
+                &conds,
+                7,
+                Some("missing field"),
+            ),
+            "phase change Ready→Invalid must force a PATCH"
+        );
+    }
+
+    #[test]
+    fn synth_dsl_methods_change_must_patch() {
+        let prev = ready_status(7);
+        let conds = vec![cond("Ready", "True", "Ready", "Format validated and ready")];
+        // user added a new section → method list grows
+        assert!(
+            synthesizer_format_status_needs_patch(
+                Some(&prev),
+                SynthesizerFormatPhase::Ready,
+                "2 array, 1 map",
+                &[
+                    "synth.thing(:type, ...)".into(),
+                    "synth.thing2(:type, ...)".into(),
+                ],
+                &conds,
+                7,
+                None,
+            ),
+            "dsl_methods diff must force a PATCH"
+        );
+    }
 
     /// Phase enum serializes to its expected variant strings —
     /// guards against silent rename drift during refactors.

@@ -5,9 +5,9 @@
 //! suspending/resuming targets, posting webhooks, updating sekiban gates.
 
 use crate::crd::{
-    BindingComplianceState, ComplianceBinding, ComplianceSchedule, ComplianceSchedulePhase,
-    EnforcementLevel, ImagePipeline, InfrastructureFlow, InfrastructureTemplate, PackerBuild,
-    ReactionAction, TargetKind, TargetStatus,
+    BindingComplianceState, ComplianceBinding, ComplianceBindingStatus, ComplianceSchedule,
+    ComplianceSchedulePhase, EnforcementLevel, ImagePipeline, InfrastructureFlow,
+    InfrastructureTemplate, PackerBuild, ReactionAction, TargetKind, TargetStatus,
 };
 use crate::error::Error;
 
@@ -354,28 +354,14 @@ async fn update_full_status(
     // same posture and we can skip without missing semantic drift.
     // Conditions compared semantically (`create_condition` restamps
     // lastTransitionTime on every call).
-    let prev = binding.status.as_ref();
-    let prev_state: Option<BindingComplianceState> = prev.and_then(|s| s.compliance_state);
-    let prev_target_count = prev.map(|s| s.target_count).unwrap_or(0);
-    let prev_hash = prev.and_then(|s| s.compliance_hash.as_deref());
-    let prev_observed_gen = prev.map(|s| s.observed_generation).unwrap_or(0);
-    let prev_conditions: &[crate::crd::Condition] =
-        prev.map(|s| s.conditions.as_slice()).unwrap_or(&[]);
-    let conditions_match = prev_conditions.len() == conditions.len()
-        && conditions.iter().all(|n| {
-            prev_conditions.iter().any(|p| {
-                p.r#type == n.r#type
-                    && p.status == n.status
-                    && p.reason == n.reason
-                    && p.message == n.message
-            })
-        });
-    let needs_patch = !conditions_match
-        || prev_state != Some(compliance_state)
-        || prev_target_count != targets.len() as u32
-        || prev_hash != compliance_hash
-        || prev_observed_gen != new_observed_gen
-        || binding.status.is_none();
+    let needs_patch = binding_status_needs_patch(
+        binding.status.as_ref(),
+        compliance_state,
+        targets.len() as u32,
+        compliance_hash,
+        &conditions,
+        new_observed_gen,
+    );
 
     if needs_patch {
         let patch = serde_json::json!({
@@ -425,10 +411,169 @@ fn error_policy(
     )
 }
 
+/// Diff-gate for the ComplianceBinding `update_full_status` PATCH.
+///
+/// Returns `true` only when at least one observable status field
+/// would change. Without this gate, every reconcile re-PATCHes the
+/// same `(state, hash, count, conditions)` tuple with a fresh
+/// `lastTransitionTime` — `create_condition` calls `Utc::now()` on
+/// every invocation — which refires the watch and creates the same
+/// closed-loop reconcile cycle the operator hit on rio.
+///
+/// The targets list itself is intentionally omitted from the gate:
+/// `complianceHash` is the canonical fingerprint of the rendered
+/// target set, so a hash match implies a posture match even if the
+/// list reorders. Skipping the per-target compare also avoids needing
+/// `PartialEq` on `TargetStatus` (which carries free-form fields).
+fn binding_status_needs_patch(
+    prev: Option<&ComplianceBindingStatus>,
+    new_state: BindingComplianceState,
+    new_target_count: u32,
+    new_hash: Option<&str>,
+    new_conditions: &[crate::crd::Condition],
+    new_observed_gen: i64,
+) -> bool {
+    let prev_state: Option<BindingComplianceState> = prev.and_then(|s| s.compliance_state);
+    let prev_target_count = prev.map(|s| s.target_count).unwrap_or(0);
+    let prev_hash = prev.and_then(|s| s.compliance_hash.as_deref());
+    let prev_observed_gen = prev.map(|s| s.observed_generation).unwrap_or(0);
+    let prev_conditions: &[crate::crd::Condition] =
+        prev.map(|s| s.conditions.as_slice()).unwrap_or(&[]);
+    let conditions_match = prev_conditions.len() == new_conditions.len()
+        && new_conditions.iter().all(|n| {
+            prev_conditions.iter().any(|p| {
+                p.r#type == n.r#type
+                    && p.status == n.status
+                    && p.reason == n.reason
+                    && p.message == n.message
+            })
+        });
+    !conditions_match
+        || prev_state != Some(new_state)
+        || prev_target_count != new_target_count
+        || prev_hash != new_hash
+        || prev_observed_gen != new_observed_gen
+        || prev.is_none()
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::crd::compliance_binding::{ComplianceBinding, ComplianceBindingStatus};
+    use super::binding_status_needs_patch;
+    use crate::crd::compliance_binding::{
+        BindingComplianceState, ComplianceBinding, ComplianceBindingStatus,
+    };
+    use crate::crd::Condition;
     use kube::CustomResourceExt;
+
+    fn cond(typ: &str, status: &str, reason: &str, msg: &str) -> Condition {
+        Condition {
+            r#type: typ.into(),
+            status: status.into(),
+            reason: reason.into(),
+            message: msg.into(),
+            last_transition_time: chrono::TimeZone::with_ymd_and_hms(
+                &chrono::Utc, 2025, 1, 1, 0, 0, 0
+            ).unwrap(),
+        }
+    }
+
+    fn compliant_status(observed_gen: i64, hash: &str) -> ComplianceBindingStatus {
+        ComplianceBindingStatus {
+            compliance_state: Some(BindingComplianceState::Compliant),
+            target_count: 5,
+            targets: vec![],
+            compliance_hash: Some(hash.into()),
+            conditions: vec![cond("Ready", "True", "Compliant", "Compliant")],
+            observed_generation: observed_gen,
+        }
+    }
+
+    #[test]
+    fn binding_first_reconcile_must_patch() {
+        let new_conds = vec![cond("Ready", "True", "Compliant", "Compliant")];
+        assert!(
+            binding_status_needs_patch(
+                None,
+                BindingComplianceState::Compliant,
+                5,
+                Some("h1"),
+                &new_conds,
+                1,
+            ),
+            "missing prev status must always force a PATCH"
+        );
+    }
+
+    #[test]
+    fn binding_compliance_state_change_must_patch() {
+        let prev = compliant_status(2, "h1");
+        let new_conds = vec![cond("Ready", "False", "NonCompliant", "NonCompliant")];
+        assert!(
+            binding_status_needs_patch(
+                Some(&prev),
+                BindingComplianceState::NonCompliant,
+                5,
+                Some("h1"),
+                &new_conds,
+                2,
+            ),
+            "compliance state flip must force a PATCH"
+        );
+    }
+
+    #[test]
+    fn binding_hash_change_must_patch() {
+        let prev = compliant_status(2, "h1");
+        let new_conds = vec![cond("Ready", "True", "Compliant", "Compliant")];
+        assert!(
+            binding_status_needs_patch(
+                Some(&prev),
+                BindingComplianceState::Compliant,
+                5,
+                Some("h2"),
+                &new_conds,
+                2,
+            ),
+            "hash change (target set re-rendered) must force a PATCH"
+        );
+    }
+
+    #[test]
+    fn binding_steady_state_skips_patch() {
+        let prev = compliant_status(7, "h1");
+        // Same posture, same hash, same generation — only fresh
+        // `lastTransitionTime` would differ (`create_condition` always
+        // stamps Utc::now()). Gate must skip.
+        let new_conds = vec![cond("Ready", "True", "Compliant", "Compliant")];
+        assert!(
+            !binding_status_needs_patch(
+                Some(&prev),
+                BindingComplianceState::Compliant,
+                5,
+                Some("h1"),
+                &new_conds,
+                7,
+            ),
+            "must NOT patch on timestamp-only churn"
+        );
+    }
+
+    #[test]
+    fn binding_observed_gen_advance_must_patch() {
+        let prev = compliant_status(7, "h1");
+        let new_conds = vec![cond("Ready", "True", "Compliant", "Compliant")];
+        assert!(
+            binding_status_needs_patch(
+                Some(&prev),
+                BindingComplianceState::Compliant,
+                5,
+                Some("h1"),
+                &new_conds,
+                8,
+            ),
+            "observed generation bump must force a PATCH"
+        );
+    }
 
     #[test]
     fn status_default_round_trips() {

@@ -293,35 +293,21 @@ async fn reconcile_flow(
     // would refire the watch even when nothing observable changed.
     let new_conditions = flow_conditions(flow_phase);
     let new_observed_gen = flow.metadata.generation.unwrap_or(0);
-    let prev = flow.status.as_ref();
-    let prev_phase = prev.and_then(|s| s.phase);
-    let prev_total = prev.map(|s| s.total_steps).unwrap_or(0);
-    let prev_ready = prev.map(|s| s.ready_steps).unwrap_or(0);
-    let prev_observed_gen = prev.map(|s| s.observed_generation).unwrap_or(0);
-    let prev_conditions: &[crate::crd::Condition] =
-        prev.map(|s| s.conditions.as_slice()).unwrap_or(&[]);
 
-    let conditions_match = prev_conditions.len() == new_conditions.len()
-        && new_conditions.iter().all(|n| {
-            prev_conditions.iter().any(|p| {
-                p.r#type == n.r#type
-                    && p.status == n.status
-                    && p.reason == n.reason
-                    && p.message == n.message
-            })
-        });
-
-    // We deliberately don't compare the per-step `steps` map: its
-    // `FlowStepStatus` type does not derive PartialEq (carries
-    // `serde_json::Value` for state snapshots), and its content already
-    // changes whenever phase/ready_count change. Phase + counts +
-    // conditions + observedGeneration are sufficient to gate the
-    // self-trigger loop.
-    let needs_patch = !conditions_match
-        || prev_phase != Some(flow_phase)
-        || prev_total != total_steps
-        || prev_ready != ready_count
-        || prev_observed_gen != new_observed_gen;
+    // We deliberately don't compare the per-step `steps` map in the
+    // gate: its `FlowStepStatus` type does not derive PartialEq
+    // (carries `serde_json::Value` for state snapshots), and its
+    // content already changes whenever phase/ready_count change.
+    // Phase + counts + conditions + observedGeneration are sufficient
+    // to gate the self-trigger loop.
+    let needs_patch = flow_status_needs_patch(
+        flow.status.as_ref(),
+        flow_phase,
+        total_steps,
+        ready_count,
+        &new_conditions,
+        new_observed_gen,
+    );
 
     if needs_patch {
         let status = InfrastructureFlowStatus {
@@ -345,6 +331,53 @@ async fn reconcile_flow(
     } else {
         Ok(Action::requeue(SHORT_REQUEUE_INTERVAL))
     }
+}
+
+/// Diff-gate for the InfrastructureFlow main reconcile status PATCH.
+///
+/// Returns `true` only when at least one observable status field would
+/// change. Without this gate, every reconcile would re-PATCH the same
+/// content with a fresh `lastTransitionTime` (`flow_conditions` calls
+/// `create_condition`, which stamps `Utc::now()`), refiring the watch
+/// and creating a closed-loop reconcile cycle. Conditions are compared
+/// semantically — `(type, status, reason, message)` tuples — ignoring
+/// the timestamp that's the source of churn.
+///
+/// The per-step `steps` map is intentionally omitted from this check:
+/// its `FlowStepStatus` type does not derive `PartialEq` (carries
+/// `serde_json::Value`), and its content already covaries with
+/// `phase`/`ready_count`, so the omission cannot mask a real change.
+fn flow_status_needs_patch(
+    prev: Option<&InfrastructureFlowStatus>,
+    new_phase: FlowPhase,
+    new_total: u32,
+    new_ready: u32,
+    new_conditions: &[crate::crd::Condition],
+    new_observed_gen: i64,
+) -> bool {
+    let prev_phase = prev.and_then(|s| s.phase);
+    let prev_total = prev.map(|s| s.total_steps).unwrap_or(0);
+    let prev_ready = prev.map(|s| s.ready_steps).unwrap_or(0);
+    let prev_observed_gen = prev.map(|s| s.observed_generation).unwrap_or(0);
+    let prev_conditions: &[crate::crd::Condition] =
+        prev.map(|s| s.conditions.as_slice()).unwrap_or(&[]);
+
+    let conditions_match = prev_conditions.len() == new_conditions.len()
+        && new_conditions.iter().all(|n| {
+            prev_conditions.iter().any(|p| {
+                p.r#type == n.r#type
+                    && p.status == n.status
+                    && p.reason == n.reason
+                    && p.message == n.message
+            })
+        });
+
+    !conditions_match
+        || prev_phase != Some(new_phase)
+        || prev_total != new_total
+        || prev_ready != new_ready
+        || prev_observed_gen != new_observed_gen
+        || prev.is_none()
 }
 
 /// Topological sort of flow steps by dependencies.
@@ -485,6 +518,89 @@ mod tests {
             retry: None,
         }
     }
+
+    // ── Diff-gate tests ─────────────────────────────────────────
+    fn cond(typ: &str, status: &str, reason: &str, msg: &str) -> crate::crd::Condition {
+        crate::crd::Condition {
+            r#type: typ.into(),
+            status: status.into(),
+            reason: reason.into(),
+            message: msg.into(),
+            // Stale on purpose — the gate must compare semantically
+            // and not be tricked by old timestamps.
+            last_transition_time: chrono::TimeZone::with_ymd_and_hms(
+                &chrono::Utc, 2025, 1, 1, 0, 0, 0
+            ).unwrap(),
+        }
+    }
+
+    fn ready_status(observed_gen: i64) -> InfrastructureFlowStatus {
+        InfrastructureFlowStatus {
+            phase: Some(FlowPhase::Ready),
+            total_steps: 3,
+            ready_steps: 3,
+            steps: BTreeMap::new(),
+            conditions: flow_conditions(FlowPhase::Ready)
+                .into_iter()
+                .map(|c| cond(&c.r#type, &c.status, &c.reason, &c.message))
+                .collect(),
+            observed_generation: observed_gen,
+            last_error: None,
+        }
+    }
+
+    #[test]
+    fn flow_status_first_reconcile_must_patch() {
+        let new_conditions = flow_conditions(FlowPhase::Progressing);
+        assert!(
+            flow_status_needs_patch(None, FlowPhase::Progressing, 3, 1, &new_conditions, 1),
+            "missing prev status must always force a PATCH"
+        );
+    }
+
+    #[test]
+    fn flow_status_phase_transition_must_patch() {
+        let prev = ready_status(5);
+        // Same generation, but phase regresses Ready → Progressing.
+        let new_conditions = flow_conditions(FlowPhase::Progressing);
+        assert!(
+            flow_status_needs_patch(Some(&prev), FlowPhase::Progressing, 3, 2, &new_conditions, 5),
+            "phase change must force a PATCH even if conditions slot in semantically"
+        );
+    }
+
+    #[test]
+    fn flow_status_observed_gen_advance_must_patch() {
+        let prev = ready_status(5);
+        let new_conditions = flow_conditions(FlowPhase::Ready);
+        assert!(
+            flow_status_needs_patch(Some(&prev), FlowPhase::Ready, 3, 3, &new_conditions, 6),
+            "observed generation bump must force a PATCH"
+        );
+    }
+
+    #[test]
+    fn flow_status_steady_state_skips_patch() {
+        // The rio loop case: nothing changed, only `lastTransitionTime`
+        // would be re-stamped fresh. Gate must skip.
+        let prev = ready_status(7);
+        let new_conditions = flow_conditions(FlowPhase::Ready);
+        assert!(
+            !flow_status_needs_patch(Some(&prev), FlowPhase::Ready, 3, 3, &new_conditions, 7),
+            "must NOT patch on timestamp-only churn — that's the loop bug"
+        );
+    }
+
+    #[test]
+    fn flow_status_ready_count_change_must_patch() {
+        let prev = ready_status(5);
+        let new_conditions = flow_conditions(FlowPhase::Progressing);
+        assert!(
+            flow_status_needs_patch(Some(&prev), FlowPhase::Progressing, 3, 2, &new_conditions, 5),
+            "ready_count change must force a PATCH"
+        );
+    }
+
 
     #[test]
     fn test_toposort_simple() {

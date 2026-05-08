@@ -247,31 +247,9 @@ pub async fn update_settling_status(
     // preserves transition time when content matches; the only
     // remaining always-fresh field would be `last_drift_check_at`,
     // which we update unconditionally below since callers expect
-    // it to track the most recent drift run. Compare every
-    // observable settling field; skip if all match prev. Bumping
-    // `last_drift_check_at` only when we actually PATCH avoids
-    // restamping it on no-op rounds.
-    // DriftDetail does not derive PartialEq (carries Vec<DriftAttribute>
-    // with serde_json::Value attributes) — compare via JSON value to
-    // avoid touching the CRD struct.
-    let drift_changed = serde_json::to_value(&prev_status.drift_details).ok()
-        != serde_json::to_value(&status.drift_details).ok();
-    let cycles_changed = prev_status.consecutive_drift_cycles != status.consecutive_drift_cycles;
-    let stuck_changed = prev_status.stuck_resources != status.stuck_resources;
-    let conditions_changed = prev_status.conditions.len() != status.conditions.len()
-        || prev_status
-            .conditions
-            .iter()
-            .zip(status.conditions.iter())
-            .any(|(p, n)| {
-                p.r#type != n.r#type
-                    || p.status != n.status
-                    || p.reason != n.reason
-                    || p.message != n.message
-                    || p.last_transition_time != n.last_transition_time
-            });
-
-    if !(drift_changed || cycles_changed || stuck_changed || conditions_changed) {
+    // it to track the most recent drift run. Bumping it only when
+    // we actually PATCH avoids restamping on no-op rounds.
+    if !settling_status_needs_patch(&prev_status, &status) {
         tracing::debug!(
             "Settling status unchanged; skipping patch (avoids self-trigger watch loop)"
         );
@@ -305,14 +283,11 @@ pub async fn update_drift_check_timestamp(
 ) -> Result<()> {
     let now = Utc::now();
     let prev_check = template.status.as_ref().and_then(|s| s.last_drift_check_at);
-    if let Some(prev) = prev_check {
-        let elapsed = now.signed_duration_since(prev);
-        if elapsed < chrono::Duration::seconds(30) {
-            tracing::debug!(
-                "lastDriftCheckAt advanced <30s ago; skipping patch (avoids self-trigger watch loop)"
-            );
-            return Ok(());
-        }
+    if drift_check_too_recent(prev_check, now) {
+        tracing::debug!(
+            "lastDriftCheckAt advanced <30s ago; skipping patch (avoids self-trigger watch loop)"
+        );
+        return Ok(());
     }
 
     let patch = serde_json::json!({
@@ -357,6 +332,54 @@ pub async fn update_pending_plan_hash(
 /// workspace level (notify-but-don't-block) but maps to `AutoApply`
 /// at the template level because the alerting mechanism is separate
 /// from the apply gate.
+/// Returns `true` iff the previous drift-check timestamp is recent
+/// enough that we should skip writing a fresh one. The 30s threshold
+/// is below `DEFAULT_REQUEUE_INTERVAL` (5 min) but above the typical
+/// reconcile latency, so steady-state drift loops settle on at most
+/// 2 PATCHes/min for the timestamp field, breaking the self-trigger
+/// watch loop without losing operator UX freshness.
+fn drift_check_too_recent(
+    prev: Option<chrono::DateTime<chrono::Utc>>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    match prev {
+        Some(p) => now.signed_duration_since(p) < chrono::Duration::seconds(30),
+        None => false,
+    }
+}
+
+/// Returns `true` iff the proposed settling status differs from
+/// `prev` on any observable field (drift_details, cycles, stuck
+/// resources, conditions). Compares conditions field-by-field
+/// including `lastTransitionTime` (the caller already merged the
+/// Settled condition's transition time when content matches, so an
+/// observed timestamp diff here is meaningful). Drift-details are
+/// compared via JSON value because `DriftDetail` carries attribute
+/// fields that do not derive `PartialEq`.
+fn settling_status_needs_patch(
+    prev: &crate::crd::InfrastructureTemplateStatus,
+    new: &crate::crd::InfrastructureTemplateStatus,
+) -> bool {
+    let drift_changed = serde_json::to_value(&prev.drift_details).ok()
+        != serde_json::to_value(&new.drift_details).ok();
+    let cycles_changed = prev.consecutive_drift_cycles != new.consecutive_drift_cycles;
+    let stuck_changed = prev.stuck_resources != new.stuck_resources;
+    let conditions_changed = prev.conditions.len() != new.conditions.len()
+        || prev
+            .conditions
+            .iter()
+            .zip(new.conditions.iter())
+            .any(|(p, n)| {
+                p.r#type != n.r#type
+                    || p.status != n.status
+                    || p.reason != n.reason
+                    || p.message != n.message
+                    || p.last_transition_time != n.last_transition_time
+            });
+
+    drift_changed || cycles_changed || stuck_changed || conditions_changed
+}
+
 pub fn workspace_drift_reaction_to_policy_decision(
     dr: crate::crd::architecture_gem::DriftReaction,
 ) -> Option<PolicyDecision> {
@@ -401,6 +424,120 @@ mod tests {
         assert_eq!(
             workspace_drift_reaction_to_policy_decision(DriftReaction::Refuse),
             Some(PolicyDecision::Refuse)
+        );
+    }
+
+    // ── drift_check_too_recent rate-limit tests ────────────────
+    use super::drift_check_too_recent;
+    use chrono::TimeZone;
+
+    fn t(secs: i64) -> chrono::DateTime<chrono::Utc> {
+        chrono::Utc.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap()
+            + chrono::Duration::seconds(secs)
+    }
+
+    #[test]
+    fn drift_check_no_prev_must_patch() {
+        assert!(
+            !drift_check_too_recent(None, t(0)),
+            "first reconcile must NOT be rate-limited"
+        );
+    }
+
+    #[test]
+    fn drift_check_within_30s_throttles() {
+        assert!(
+            drift_check_too_recent(Some(t(0)), t(15)),
+            "15s after prev check must skip"
+        );
+        assert!(
+            drift_check_too_recent(Some(t(0)), t(29)),
+            "29s after prev check must still skip (just under threshold)"
+        );
+    }
+
+    #[test]
+    fn drift_check_at_threshold_advances() {
+        assert!(
+            !drift_check_too_recent(Some(t(0)), t(30)),
+            "exactly 30s elapsed must allow PATCH"
+        );
+        assert!(
+            !drift_check_too_recent(Some(t(0)), t(60)),
+            "60s elapsed must allow PATCH"
+        );
+    }
+
+    // ── settling_status_needs_patch tests ───────────────────────
+    use super::settling_status_needs_patch;
+    use crate::crd::{Condition, InfrastructureTemplateStatus};
+
+    fn cond(typ: &str, status: &str, reason: &str, msg: &str) -> Condition {
+        Condition {
+            r#type: typ.into(),
+            status: status.into(),
+            reason: reason.into(),
+            message: msg.into(),
+            last_transition_time: chrono::Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
+        }
+    }
+
+    fn settled_status() -> InfrastructureTemplateStatus {
+        InfrastructureTemplateStatus {
+            consecutive_drift_cycles: 0,
+            stuck_resources: vec![],
+            drift_details: vec![],
+            conditions: vec![cond("Settled", "True", "Settled", "no drift")],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn settling_no_change_skips_patch() {
+        let prev = settled_status();
+        let new = settled_status();
+        assert!(
+            !settling_status_needs_patch(&prev, &new),
+            "byte-equal settling status must skip patch"
+        );
+    }
+
+    #[test]
+    fn settling_cycles_advance_must_patch() {
+        let prev = settled_status();
+        let mut new = settled_status();
+        new.consecutive_drift_cycles = 1;
+        assert!(
+            settling_status_needs_patch(&prev, &new),
+            "consecutive_drift_cycles change must force PATCH"
+        );
+    }
+
+    #[test]
+    fn settling_settled_to_stuck_must_patch() {
+        let prev = settled_status();
+        let mut new = settled_status();
+        // condition flipped from Settled=True to Settled=False
+        new.conditions = vec![cond(
+            "Settled",
+            "False",
+            "StuckByCount",
+            "Exceeded max cycles",
+        )];
+        assert!(
+            settling_status_needs_patch(&prev, &new),
+            "Settled True→False (status flip) must force PATCH"
+        );
+    }
+
+    #[test]
+    fn settling_new_stuck_resource_must_patch() {
+        let prev = settled_status();
+        let mut new = settled_status();
+        new.stuck_resources = vec!["aws_eks_cluster.main".into()];
+        assert!(
+            settling_status_needs_patch(&prev, &new),
+            "stuck_resources change must force PATCH"
         );
     }
 }
