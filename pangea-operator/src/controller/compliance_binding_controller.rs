@@ -435,15 +435,10 @@ fn binding_status_needs_patch(
     let prev_observed_gen = prev.map(|s| s.observed_generation).unwrap_or(0);
     let prev_conditions: &[crate::crd::Condition] =
         prev.map(|s| s.conditions.as_slice()).unwrap_or(&[]);
-    let conditions_match = prev_conditions.len() == new_conditions.len()
-        && new_conditions.iter().all(|n| {
-            prev_conditions.iter().any(|p| {
-                p.r#type == n.r#type
-                    && p.status == n.status
-                    && p.reason == n.reason
-                    && p.message == n.message
-            })
-        });
+    let conditions_match = crate::controller::status::conditions_observably_equal(
+        prev_conditions,
+        new_conditions,
+    );
     !conditions_match
         || prev_state != Some(new_state)
         || prev_target_count != new_target_count

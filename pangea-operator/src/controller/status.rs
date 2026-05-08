@@ -79,6 +79,44 @@ pub fn merge_condition_transitions<C: ConditionLike + Clone>(
         .collect()
 }
 
+/// Compare two condition lists semantically — `(type, status, reason,
+/// message)` — ignoring `lastTransitionTime`.
+///
+/// Why: `create_condition()` (and equivalent constructors) restamp
+/// `lastTransitionTime = Utc::now()` on every call, so a byte-equal
+/// `Vec<Condition> == Vec<Condition>` check ALWAYS returns false.
+/// Diff-gates that use it as a "did anything change?" check fall
+/// through into the always-PATCH path and re-trigger their own
+/// watches — the canonical self-trigger loop fixed across all
+/// controllers in the rio firefighting 2026-05-07 wave.
+///
+/// This helper is the lifted, single-implementation version of the
+/// condition-comparison pattern that was hand-rolled in 5+ controller
+/// files (template, flow, compliance_binding, synthesizer_format,
+/// fleet_status). Adding a new diff-gate? Use this instead of
+/// reimplementing.
+///
+/// Returns true iff every condition in `new` has a same-typed
+/// condition in `prev` with matching status + reason + message AND
+/// the lengths match (so an extra new condition forces a patch).
+/// Order-insensitive — finding a same-typed match anywhere in `prev`
+/// is enough.
+///
+/// Pure function — no I/O, deterministic, easy to test.
+pub fn conditions_observably_equal<C: ConditionLike>(prev: &[C], new: &[C]) -> bool {
+    if prev.len() != new.len() {
+        return false;
+    }
+    new.iter().all(|n| {
+        prev.iter().any(|p| {
+            p.condition_type() == n.condition_type()
+                && p.status() == n.status()
+                && p.reason() == n.reason()
+                && p.message() == n.message()
+        })
+    })
+}
+
 /// Patch a Kubernetes resource's status sub-resource with the given
 /// status struct. Wraps the typical `Api::patch_status + Patch::Merge
 /// + serde_json::json!({"status": ...})` boilerplate.
@@ -177,5 +215,87 @@ mod tests {
         let merged = merge_condition_transitions(&[], new.clone());
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].ts, new[0].ts);
+    }
+
+    // ── conditions_observably_equal — the lifted diff-gate primitive ─
+
+    #[test]
+    fn observable_equality_ignores_timestamp() {
+        let prev = vec![cond("Ready", "True", "Healthy", "ok", 2025)];
+        let new = vec![cond("Ready", "True", "Healthy", "ok", 2026)];
+        assert!(
+            conditions_observably_equal(&prev, &new),
+            "byte-equal except for timestamp must read as equal — that's the whole point of the gate"
+        );
+    }
+
+    #[test]
+    fn observable_equality_detects_status_flip() {
+        let prev = vec![cond("Ready", "True", "Healthy", "ok", 2025)];
+        let new = vec![cond("Ready", "False", "Sick", "down", 2026)];
+        assert!(!conditions_observably_equal(&prev, &new));
+    }
+
+    #[test]
+    fn observable_equality_detects_reason_change() {
+        let prev = vec![cond("Ready", "True", "Healthy", "ok", 2025)];
+        let new = vec![cond("Ready", "True", "Verified", "ok", 2025)];
+        assert!(!conditions_observably_equal(&prev, &new));
+    }
+
+    #[test]
+    fn observable_equality_detects_message_change() {
+        let prev = vec![cond("Ready", "True", "Healthy", "ok", 2025)];
+        let new = vec![cond("Ready", "True", "Healthy", "still ok", 2025)];
+        assert!(!conditions_observably_equal(&prev, &new));
+    }
+
+    #[test]
+    fn observable_equality_detects_extra_new_condition() {
+        let prev = vec![cond("Ready", "True", "Healthy", "ok", 2025)];
+        let new = vec![
+            cond("Ready", "True", "Healthy", "ok", 2025),
+            cond("Verified", "True", "Audited", "ok", 2025),
+        ];
+        assert!(
+            !conditions_observably_equal(&prev, &new),
+            "extra new condition must force PATCH (length differs)"
+        );
+    }
+
+    #[test]
+    fn observable_equality_detects_missing_new_condition() {
+        let prev = vec![
+            cond("Ready", "True", "Healthy", "ok", 2025),
+            cond("Verified", "True", "Audited", "ok", 2025),
+        ];
+        let new = vec![cond("Ready", "True", "Healthy", "ok", 2025)];
+        assert!(
+            !conditions_observably_equal(&prev, &new),
+            "missing new condition must force PATCH"
+        );
+    }
+
+    #[test]
+    fn observable_equality_is_order_insensitive() {
+        // Same conditions, different order. Order-insensitive matching
+        // is intentional — controllers that sort conditions for display
+        // shouldn't trip the gate.
+        let prev = vec![
+            cond("Ready", "True", "Healthy", "ok", 2025),
+            cond("Verified", "True", "Audited", "ok", 2025),
+        ];
+        let new = vec![
+            cond("Verified", "True", "Audited", "ok", 2026),
+            cond("Ready", "True", "Healthy", "ok", 2026),
+        ];
+        assert!(conditions_observably_equal(&prev, &new));
+    }
+
+    #[test]
+    fn observable_equality_empty_lists_match() {
+        let prev: Vec<TestCond> = vec![];
+        let new: Vec<TestCond> = vec![];
+        assert!(conditions_observably_equal(&prev, &new));
     }
 }

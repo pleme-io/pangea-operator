@@ -336,15 +336,10 @@ fn synthesizer_format_status_needs_patch(
     let prev_conditions: &[crate::crd::Condition] =
         prev.map(|s| s.conditions.as_slice()).unwrap_or(&[]);
 
-    let conditions_match = prev_conditions.len() == new_conditions.len()
-        && new_conditions.iter().all(|n| {
-            prev_conditions.iter().any(|p| {
-                p.r#type == n.r#type
-                    && p.status == n.status
-                    && p.reason == n.reason
-                    && p.message == n.message
-            })
-        });
+    let conditions_match = crate::controller::status::conditions_observably_equal(
+        prev_conditions,
+        new_conditions,
+    );
 
     prev.is_none()
         || !conditions_match

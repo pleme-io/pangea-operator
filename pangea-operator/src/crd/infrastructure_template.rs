@@ -973,6 +973,22 @@ pub struct Condition {
     pub message: String,
 }
 
+/// Implements the shared `ConditionLike` accessor trait so this CRD's
+/// `Condition` type works with `crate::controller::status` helpers
+/// (`merge_condition_transitions`, `conditions_observably_equal`).
+/// Without this impl, every consumer (template, flow, compliance,
+/// synthesizer, fleet_status — anything using `crate::crd::Condition`)
+/// would have to hand-roll its own condition comparison.
+impl crate::controller::status::ConditionLike for Condition {
+    type Time = DateTime<Utc>;
+    fn condition_type(&self) -> &str { &self.r#type }
+    fn status(&self) -> &str { &self.status }
+    fn reason(&self) -> &str { &self.reason }
+    fn message(&self) -> &str { &self.message }
+    fn last_transition_time(&self) -> &DateTime<Utc> { &self.last_transition_time }
+    fn set_last_transition_time(&mut self, t: DateTime<Utc>) { self.last_transition_time = t; }
+}
+
 /// Summary of managed resources.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]

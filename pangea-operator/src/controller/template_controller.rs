@@ -2112,29 +2112,21 @@ impl From<ReconcileAction> for Action {
     }
 }
 
-/// Returns true iff `prev` already carries every condition in `new`
-/// with matching `(type, status, reason, message)` — meaning a
-/// re-PATCH would be a no-op except for `lastTransitionTime` churn.
+/// Returns true iff `prev` already carries the suspended-condition
+/// set semantically. Thin wrapper around the lifted helper so the
+/// suspended-skip call site reads naturally.
 ///
-/// `create_condition` stamps a fresh `Utc::now()` on every call, so
-/// raw `Vec<Condition>` equality is useless for this check; we have
-/// to compare semantically. Order in `prev` is irrelevant — we check
-/// each `new` against any matching same-typed condition in `prev`.
-///
-/// Used by the suspended-template skip path to gate status PATCHes
-/// and break the closed-loop self-trigger watch cycle.
+/// Suspended-PATCH issues a Merge patch on the `conditions` field,
+/// which RFC 7396 replaces in full — so in steady state prev's length
+/// matches new's, and `conditions_observably_equal` (which also
+/// length-checks) returns true. The first PATCH after entering
+/// suspended state may force a write because prev had a different
+/// set (e.g. Ready=True from prior phases) — that's correct behavior.
 fn suspended_conditions_already_set(
     prev: &[crate::crd::Condition],
     new: &[crate::crd::Condition],
 ) -> bool {
-    new.iter().all(|n| {
-        prev.iter().any(|p| {
-            p.r#type == n.r#type
-                && p.status == n.status
-                && p.reason == n.reason
-                && p.message == n.message
-        })
-    })
+    crate::controller::status::conditions_observably_equal(prev, new)
 }
 
 #[cfg(test)]
@@ -2199,10 +2191,20 @@ mod suspended_diff_tests {
     }
 
     #[test]
-    fn ignores_extra_unrelated_prev_conditions() {
+    fn extra_prev_conditions_force_patch_to_overwrite() {
         // prev has the 3 suspended conditions plus extras (Settled,
-        // Verified). The gate should still match — we only check
-        // that every new condition has a same-typed match in prev.
+        // Verified). The lifted `conditions_observably_equal` helper
+        // length-checks, so this returns false → we PATCH. That's the
+        // CORRECT behavior: the suspended-PATCH issues a JSON Merge on
+        // the conditions field which RFC-7396-replaces the whole
+        // array, so writing our authoritative 3-condition set
+        // intentionally overwrites the extras (which would have come
+        // from a stale prior phase or an outside actor — neither of
+        // which we want to coexist with).
+        //
+        // Pre-refinement (the original `suspended_conditions_already_set`
+        // had no length check) this case skipped the PATCH and the
+        // extras lingered until something else removed them.
         let new = conditions_for_suspended();
         let mut prev: Vec<Condition> = new
             .iter()
@@ -2211,8 +2213,8 @@ mod suspended_diff_tests {
         prev.push(cond("Settled", "True", "Settled", "no drift"));
         prev.push(cond("Verified", "True", "Audited", "ok"));
         assert!(
-            suspended_conditions_already_set(&prev, &new),
-            "extra unrelated prior conditions must not force a no-op PATCH"
+            !suspended_conditions_already_set(&prev, &new),
+            "extras in prev must force PATCH so our authoritative set wins"
         );
     }
 }

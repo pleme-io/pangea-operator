@@ -107,14 +107,10 @@ async fn reconcile_flow(
             .as_ref()
             .map(|s| s.conditions.as_slice())
             .unwrap_or(&[]);
-        let already_set = new_conditions.iter().all(|n| {
-            prev_conditions.iter().any(|p| {
-                p.r#type == n.r#type
-                    && p.status == n.status
-                    && p.reason == n.reason
-                    && p.message == n.message
-            })
-        });
+        let already_set = crate::controller::status::conditions_observably_equal(
+            prev_conditions,
+            &new_conditions,
+        );
         if !already_set {
             let patch = serde_json::json!({ "status": { "conditions": new_conditions } });
             let _ = crate::controller::status_patch::patch_status(&*flow, &state.client, patch).await;
@@ -360,15 +356,10 @@ fn flow_status_needs_patch(
     let prev_conditions: &[crate::crd::Condition] =
         prev.map(|s| s.conditions.as_slice()).unwrap_or(&[]);
 
-    let conditions_match = prev_conditions.len() == new_conditions.len()
-        && new_conditions.iter().all(|n| {
-            prev_conditions.iter().any(|p| {
-                p.r#type == n.r#type
-                    && p.status == n.status
-                    && p.reason == n.reason
-                    && p.message == n.message
-            })
-        });
+    let conditions_match = crate::controller::status::conditions_observably_equal(
+        prev_conditions,
+        new_conditions,
+    );
 
     !conditions_match
         || prev_phase != Some(new_phase)
