@@ -6004,7 +6004,7 @@ rec {
           "webpki-roots" = [ "kube-client/webpki-roots" "client" ];
           "ws" = [ "kube-client/ws" "kube-core/ws" ];
         };
-        resolvedDefaultFeatures = [ "client" "config" "default" "derive" "kube-client" "kube-derive" "kube-runtime" "runtime" "rustls-tls" ];
+        resolvedDefaultFeatures = [ "client" "config" "default" "derive" "kube-client" "kube-derive" "kube-runtime" "runtime" "rustls-tls" "unstable-runtime" ];
       };
       "kube-client" = rec {
         crateName = "kube-client";
@@ -6493,6 +6493,7 @@ rec {
         features = {
           "unstable-runtime" = [ "unstable-runtime-subscribe" "unstable-runtime-stream-control" "unstable-runtime-reconcile-on" ];
         };
+        resolvedDefaultFeatures = [ "unstable-runtime" "unstable-runtime-reconcile-on" "unstable-runtime-stream-control" "unstable-runtime-subscribe" ];
       };
       "lalrpop-util" = rec {
         crateName = "lalrpop-util";
@@ -8073,7 +8074,7 @@ rec {
           {
             name = "kube";
             packageId = "kube";
-            features = [ "runtime" "derive" "runtime" "client" ];
+            features = [ "runtime" "derive" "unstable-runtime" "runtime" "client" ];
           }
           {
             name = "once_cell";
