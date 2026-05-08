@@ -424,7 +424,32 @@ async fn update_suite_results(
     summary: &str,
     state: &ControllerState,
 ) -> std::result::Result<(), Error> {
-    let total_runs = schedule.status.as_ref().map(|s| s.total_runs).unwrap_or(0) + 1;
+    // Diff-gate: only count this as a "new run" (and PATCH the
+    // results) when the suite set or summary actually differs from
+    // what's on-cluster. The previous unconditional increment would
+    // bump `totalRuns` on every reconcile that found jobs done,
+    // even when results haven't changed since the last PATCH —
+    // which both produced a self-trigger watch loop and inflated
+    // the counter semantics. Compare via JSON value since
+    // ComplianceSuiteResult does not derive PartialEq.
+    let prev = schedule.status.as_ref();
+    let prev_summary = prev.and_then(|s| s.control_summary.as_deref());
+    let prev_suites_json = prev
+        .map(|s| serde_json::to_value(&s.suites).unwrap_or(serde_json::Value::Null))
+        .unwrap_or(serde_json::Value::Null);
+    let new_suites_json =
+        serde_json::to_value(results).unwrap_or(serde_json::Value::Null);
+
+    let unchanged = prev_summary == Some(summary) && prev_suites_json == new_suites_json;
+    if unchanged {
+        debug!(
+            "ComplianceSchedule suite results unchanged; skipping patch and totalRuns bump \
+             (avoids self-trigger watch loop)"
+        );
+        return Ok(());
+    }
+
+    let total_runs = prev.map(|s| s.total_runs).unwrap_or(0) + 1;
 
     let patch = serde_json::json!({
         "status": {

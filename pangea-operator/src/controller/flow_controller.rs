@@ -95,9 +95,34 @@ async fn reconcile_flow(
     }
 
     if flow.spec.suspend {
-        let conditions = conditions_for_suspended();
-        let patch = serde_json::json!({ "status": { "conditions": conditions } });
-        let _ = crate::controller::status_patch::patch_status(&*flow, &state.client, patch).await;
+        // Diff-gate the suspend-skip status patch — matches the
+        // template_controller fix (rio firefighting 2026-05-07).
+        // Without this gate, every reconcile re-PATCHes the same
+        // (type, status, reason, message) tuple with a fresh
+        // `lastTransitionTime` (`create_condition` calls `Utc::now()`),
+        // refiring the watch and creating a closed loop. Compare
+        // observable fields and skip the PATCH when prev already
+        // carries the suspended condition set.
+        let new_conditions = conditions_for_suspended();
+        let prev_conditions: &[crate::crd::Condition] = flow
+            .status
+            .as_ref()
+            .map(|s| s.conditions.as_slice())
+            .unwrap_or(&[]);
+        let already_set = new_conditions.iter().all(|n| {
+            prev_conditions.iter().any(|p| {
+                p.r#type == n.r#type
+                    && p.status == n.status
+                    && p.reason == n.reason
+                    && p.message == n.message
+            })
+        });
+        if !already_set {
+            let patch = serde_json::json!({ "status": { "conditions": new_conditions } });
+            let _ = crate::controller::status_patch::patch_status(&*flow, &state.client, patch).await;
+        } else {
+            debug!("Suspended flow conditions already set; skipping status patch (avoids self-trigger watch loop)");
+        }
         return Ok(Action::requeue(DEFAULT_REQUEUE_INTERVAL));
     }
 
@@ -261,20 +286,58 @@ async fn reconcile_flow(
         FlowPhase::Progressing
     };
 
-    // Update flow status
-    let conditions = flow_conditions(flow_phase);
-    let status = InfrastructureFlowStatus {
-        phase: Some(flow_phase),
-        total_steps,
-        ready_steps: ready_count,
-        steps: step_statuses,
-        conditions,
-        observed_generation: flow.metadata.generation.unwrap_or(0),
-        last_error: None,
-    };
+    // Update flow status — but diff-gate the PATCH to avoid the
+    // self-trigger watch loop pattern (see operator_policy_controller
+    // header for the canonical bug-class description). `flow_conditions`
+    // restamps `lastTransitionTime` on every call, so naive PATCHes
+    // would refire the watch even when nothing observable changed.
+    let new_conditions = flow_conditions(flow_phase);
+    let new_observed_gen = flow.metadata.generation.unwrap_or(0);
+    let prev = flow.status.as_ref();
+    let prev_phase = prev.and_then(|s| s.phase);
+    let prev_total = prev.map(|s| s.total_steps).unwrap_or(0);
+    let prev_ready = prev.map(|s| s.ready_steps).unwrap_or(0);
+    let prev_observed_gen = prev.map(|s| s.observed_generation).unwrap_or(0);
+    let prev_conditions: &[crate::crd::Condition] =
+        prev.map(|s| s.conditions.as_slice()).unwrap_or(&[]);
 
-    let patch = serde_json::json!({ "status": status });
-    crate::controller::status_patch::patch_status(&*flow, &state.client, patch).await?;
+    let conditions_match = prev_conditions.len() == new_conditions.len()
+        && new_conditions.iter().all(|n| {
+            prev_conditions.iter().any(|p| {
+                p.r#type == n.r#type
+                    && p.status == n.status
+                    && p.reason == n.reason
+                    && p.message == n.message
+            })
+        });
+
+    // We deliberately don't compare the per-step `steps` map: its
+    // `FlowStepStatus` type does not derive PartialEq (carries
+    // `serde_json::Value` for state snapshots), and its content already
+    // changes whenever phase/ready_count change. Phase + counts +
+    // conditions + observedGeneration are sufficient to gate the
+    // self-trigger loop.
+    let needs_patch = !conditions_match
+        || prev_phase != Some(flow_phase)
+        || prev_total != total_steps
+        || prev_ready != ready_count
+        || prev_observed_gen != new_observed_gen;
+
+    if needs_patch {
+        let status = InfrastructureFlowStatus {
+            phase: Some(flow_phase),
+            total_steps,
+            ready_steps: ready_count,
+            steps: step_statuses,
+            conditions: new_conditions,
+            observed_generation: new_observed_gen,
+            last_error: None,
+        };
+        let patch = serde_json::json!({ "status": status });
+        crate::controller::status_patch::patch_status(&*flow, &state.client, patch).await?;
+    } else {
+        debug!("Flow status unchanged; skipping patch (avoids self-trigger watch loop)");
+    }
 
     if flow_phase == FlowPhase::Ready {
         info!("All flow steps Ready");

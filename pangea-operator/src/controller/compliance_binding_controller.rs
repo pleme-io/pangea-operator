@@ -345,20 +345,58 @@ async fn update_full_status(
         &format!("{compliance_state}"),
     )];
 
-    let patch = serde_json::json!({
-        "status": {
-            "complianceState": compliance_state,
-            "targetCount": targets.len(),
-            "targets": targets,
-            "complianceHash": compliance_hash,
-            "conditions": conditions,
-            "observedGeneration": binding.metadata.generation.unwrap_or(0),
-        }
-    });
+    let new_observed_gen = binding.metadata.generation.unwrap_or(0);
 
-    crate::controller::status_patch::patch_status(binding, &state.client, patch)
-        .await
-        .map_err(Error::Kube)?;
+    // Diff-gate: skip the PATCH when nothing observable would change.
+    // `complianceHash` is the canonical fingerprint of the rendered
+    // target set, so when it (and the scalar state fields) haven't
+    // moved, the targets list — even if reordered — represents the
+    // same posture and we can skip without missing semantic drift.
+    // Conditions compared semantically (`create_condition` restamps
+    // lastTransitionTime on every call).
+    let prev = binding.status.as_ref();
+    let prev_state: Option<BindingComplianceState> = prev.and_then(|s| s.compliance_state);
+    let prev_target_count = prev.map(|s| s.target_count).unwrap_or(0);
+    let prev_hash = prev.and_then(|s| s.compliance_hash.as_deref());
+    let prev_observed_gen = prev.map(|s| s.observed_generation).unwrap_or(0);
+    let prev_conditions: &[crate::crd::Condition] =
+        prev.map(|s| s.conditions.as_slice()).unwrap_or(&[]);
+    let conditions_match = prev_conditions.len() == conditions.len()
+        && conditions.iter().all(|n| {
+            prev_conditions.iter().any(|p| {
+                p.r#type == n.r#type
+                    && p.status == n.status
+                    && p.reason == n.reason
+                    && p.message == n.message
+            })
+        });
+    let needs_patch = !conditions_match
+        || prev_state != Some(compliance_state)
+        || prev_target_count != targets.len() as u32
+        || prev_hash != compliance_hash
+        || prev_observed_gen != new_observed_gen
+        || binding.status.is_none();
+
+    if needs_patch {
+        let patch = serde_json::json!({
+            "status": {
+                "complianceState": compliance_state,
+                "targetCount": targets.len(),
+                "targets": targets,
+                "complianceHash": compliance_hash,
+                "conditions": conditions,
+                "observedGeneration": new_observed_gen,
+            }
+        });
+
+        crate::controller::status_patch::patch_status(binding, &state.client, patch)
+            .await
+            .map_err(Error::Kube)?;
+    } else {
+        debug!(
+            "ComplianceBinding status unchanged; skipping patch (avoids self-trigger watch loop)"
+        );
+    }
 
     // Emit pangea_compliance_bindings_gated_targets so the
     // ComplianceBindingGating alert can fire (was silently inert

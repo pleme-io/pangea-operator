@@ -205,27 +205,80 @@ pub async fn update_settling_status(
         ),
     };
 
-    let mut status = template.status.clone().unwrap_or_default();
+    let prev_status = template.status.clone().unwrap_or_default();
+    let mut status = prev_status.clone();
     status.consecutive_drift_cycles = cycles;
-    status.stuck_resources = stuck_addresses;
+    status.stuck_resources = stuck_addresses.clone();
     if !drift_details.is_empty() {
         status.drift_details = drift_details.to_vec();
     } else if matches!(outcome, SettlingOutcome::Settled) {
         // Clear stale drift details once we've settled.
         status.drift_details = Vec::new();
     }
-    status.last_drift_check_at = Some(Utc::now());
 
-    // Replace any prior `Settled` condition; preserve other types.
-    let now = Utc::now();
+    // Compute the would-be Settled condition from the outcome,
+    // preserving lastTransitionTime when status/reason/message all
+    // match the prior Settled condition (canonical condition idiom).
+    let prior_settled = prev_status
+        .conditions
+        .iter()
+        .find(|c| c.r#type == "Settled")
+        .cloned();
+    let new_settled_transition = match prior_settled.as_ref() {
+        Some(p)
+            if p.status == settled_status
+                && p.reason == settled_reason
+                && p.message == settled_msg =>
+        {
+            p.last_transition_time
+        }
+        _ => Utc::now(),
+    };
     status.conditions.retain(|c| c.r#type != "Settled");
     status.conditions.push(crate::crd::Condition {
         r#type: "Settled".to_string(),
         status: settled_status.to_string(),
-        last_transition_time: now,
+        last_transition_time: new_settled_transition,
         reason: settled_reason,
         message: settled_msg,
     });
+
+    // Diff-gate the PATCH. The Settled condition above already
+    // preserves transition time when content matches; the only
+    // remaining always-fresh field would be `last_drift_check_at`,
+    // which we update unconditionally below since callers expect
+    // it to track the most recent drift run. Compare every
+    // observable settling field; skip if all match prev. Bumping
+    // `last_drift_check_at` only when we actually PATCH avoids
+    // restamping it on no-op rounds.
+    // DriftDetail does not derive PartialEq (carries Vec<DriftAttribute>
+    // with serde_json::Value attributes) — compare via JSON value to
+    // avoid touching the CRD struct.
+    let drift_changed = serde_json::to_value(&prev_status.drift_details).ok()
+        != serde_json::to_value(&status.drift_details).ok();
+    let cycles_changed = prev_status.consecutive_drift_cycles != status.consecutive_drift_cycles;
+    let stuck_changed = prev_status.stuck_resources != status.stuck_resources;
+    let conditions_changed = prev_status.conditions.len() != status.conditions.len()
+        || prev_status
+            .conditions
+            .iter()
+            .zip(status.conditions.iter())
+            .any(|(p, n)| {
+                p.r#type != n.r#type
+                    || p.status != n.status
+                    || p.reason != n.reason
+                    || p.message != n.message
+                    || p.last_transition_time != n.last_transition_time
+            });
+
+    if !(drift_changed || cycles_changed || stuck_changed || conditions_changed) {
+        tracing::debug!(
+            "Settling status unchanged; skipping patch (avoids self-trigger watch loop)"
+        );
+        return Ok(());
+    }
+
+    status.last_drift_check_at = Some(Utc::now());
 
     let patch = serde_json::json!({ "status": status });
     crate::controller::status_patch::patch_status(template, &state.client, patch)
@@ -235,15 +288,36 @@ pub async fn update_settling_status(
 }
 
 /// Update only the last drift check timestamp.
+///
+/// Diff-gate against drift-check spam: even though the drift-check
+/// gate at `template_controller::handle_drift_detection` already
+/// rate-limits actual drift runs to `spec.refreshInterval`, every
+/// drift run that DOES execute would PATCH a fresh `Utc::now()`
+/// here, refire the template watch, schedule another reconcile, and
+/// burn one extra reconcile pass before the gate re-skips. Skip
+/// PATCHes that would advance the timestamp by less than 30 seconds
+/// — operator UX still sees a fresh-ish "last checked" value, the
+/// loop fires at most twice per minute even if the upstream gate
+/// loosens, and the wall-clock semantic stays correct.
 pub async fn update_drift_check_timestamp(
     template: &InfrastructureTemplate,
     state: &ControllerState,
 ) -> Result<()> {
-
+    let now = Utc::now();
+    let prev_check = template.status.as_ref().and_then(|s| s.last_drift_check_at);
+    if let Some(prev) = prev_check {
+        let elapsed = now.signed_duration_since(prev);
+        if elapsed < chrono::Duration::seconds(30) {
+            tracing::debug!(
+                "lastDriftCheckAt advanced <30s ago; skipping patch (avoids self-trigger watch loop)"
+            );
+            return Ok(());
+        }
+    }
 
     let patch = serde_json::json!({
         "status": {
-            "lastDriftCheckAt": Utc::now()
+            "lastDriftCheckAt": now,
         }
     });
 

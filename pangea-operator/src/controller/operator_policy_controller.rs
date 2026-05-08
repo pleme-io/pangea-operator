@@ -106,12 +106,14 @@ async fn reconcile(
 
     // Layer 1: propagate spec into the in-memory cache so every
     // controller's `policy_gate` sees the new value on its next read.
+    // This is cheap (atomic-pointer swap) and ALWAYS runs — the cache
+    // must stay live regardless of whether we end up writing status.
     state.operator_policy.store(policy.spec.clone());
 
     // Update the workspace_active_override gauge from the spec.
     // Single-writer pattern: this controller owns the gauge, every
     // policy reconcile rebuilds the snapshot. No per-template or
-    // per-catalog tracking required elsewhere.
+    // per-catalog tracking required elsewhere. Cheap, always runs.
     publish_active_override_gauges(&state, &policy.spec);
 
     if policy.spec.global_suspend {
@@ -123,17 +125,52 @@ async fn reconcile(
         info!(reason = %reason, "Global suspend ACTIVE — every controller is paused");
     }
 
-    // Layer 2: surface the resolved view + counter into status.
-    // workspace_overrides is computed directly from spec — it's a
-    // count of `Active` carve-outs across both the templates and
-    // catalogs maps, surfaced via printer column for at-a-glance
-    // operator visibility.
+    // Layer 2: surface the resolved view + counter into status — but
+    // diff-gate the PATCH to avoid the self-trigger watch loop.
+    //
+    // Why this gate matters: every status PATCH bumps
+    // `metadata.resourceVersion`, the OperatorPolicy watch fires,
+    // this controller re-runs reconcile, which previously ALWAYS
+    // re-PATCHed status (because `last_changed_at = Utc::now()` and
+    // `reconciles_skipped` from the live atomic counter both differed
+    // on every read). That closed loop ran at ~76 reconciles/sec
+    // observed on rio, persisting even with `globalSuspend = true`
+    // because this controller intentionally does NOT consult
+    // `policy_gate` (see header comment).
+    //
+    // Resolution: only PATCH when something *substantive* changed —
+    // observedGeneration (spec was mutated), effective spec, or
+    // the workspace_overrides count. The `reconciles_skipped`
+    // counter is observable via the `pangea_policy_skipped_total`
+    // Prometheus counter, so freezing its echo into `.status` to
+    // the last-substantive-change snapshot is acceptable; live
+    // counts live in metrics.
+    let observed_gen = policy.metadata.generation.unwrap_or(0);
+    let new_effective = Some(policy.spec.clone());
+    let new_workspace_overrides = policy.spec.workspace_suspend.count_active_overrides();
+
+    let needs_patch = status_needs_patch(
+        policy.status.as_ref(),
+        observed_gen,
+        new_effective.as_ref(),
+        new_workspace_overrides,
+    );
+
+    if !needs_patch {
+        debug!(
+            observed_gen,
+            "OperatorPolicy effective state unchanged; skipping status patch \
+             (avoids self-trigger watch loop). Live skip counts in pangea_policy_skipped_total."
+        );
+        return Ok(Action::requeue(REQUEUE_INTERVAL));
+    }
+
     let status = OperatorPolicyStatus {
-        observed_generation: policy.metadata.generation.unwrap_or(0),
+        observed_generation: observed_gen,
         last_changed_at: Some(chrono::Utc::now()),
-        effective: Some(policy.spec.clone()),
+        effective: new_effective,
         reconciles_skipped: state.operator_policy.skipped(),
-        workspace_overrides: policy.spec.workspace_suspend.count_active_overrides(),
+        workspace_overrides: new_workspace_overrides,
     };
 
     let api: Api<OperatorPolicy> = Api::all(state.client.clone());
@@ -151,6 +188,37 @@ async fn reconcile(
     }
 
     Ok(Action::requeue(REQUEUE_INTERVAL))
+}
+
+/// Diff-gate for the OperatorPolicy status PATCH.
+///
+/// Returns `true` only when at least one observable status field
+/// would actually change. Without this gate the controller's own
+/// status writes refire its watch and create a closed-loop
+/// reconciliation at apiserver-event speed (~76/sec on rio,
+/// 2026-05-07 firefighting). Specifically, the previous
+/// implementation always set `last_changed_at = Utc::now()` and
+/// echoed the live `reconciles_skipped` atomic — both differed on
+/// every PATCH, so every reconcile bumped resourceVersion and
+/// scheduled the next reconcile.
+///
+/// We intentionally exclude `reconciles_skipped` from this check —
+/// its live count is observable via `pangea_policy_skipped_total`
+/// (Prometheus). Echoing it into status drove the loop; freezing
+/// the echo to last-substantive-change snapshots is acceptable.
+fn status_needs_patch(
+    prev: Option<&OperatorPolicyStatus>,
+    observed_gen: i64,
+    new_effective: Option<&OperatorPolicySpec>,
+    new_workspace_overrides: u64,
+) -> bool {
+    let prev_observed_gen = prev.map(|s| s.observed_generation).unwrap_or(0);
+    let prev_effective = prev.and_then(|s| s.effective.as_ref());
+    let prev_workspace_overrides = prev.map(|s| s.workspace_overrides).unwrap_or(0);
+
+    observed_gen != prev_observed_gen
+        || prev_effective != new_effective
+        || prev_workspace_overrides != new_workspace_overrides
 }
 
 fn error_policy(
@@ -249,5 +317,102 @@ mod tests {
         assert!(json.get("observedGeneration").is_some());
         assert!(json.get("reconcilesSkipped").is_some());
         assert_eq!(json.get("reconcilesSkipped").unwrap(), 42);
+    }
+
+    // ── Diff-gate (status_needs_patch) tests ─────────────────────
+    //
+    // Lock in the gate that broke the self-trigger watch loop
+    // observed on rio (~76 reconciles/sec, 2026-05-07). Each test
+    // pins one branch of the substantive-change predicate.
+
+    fn spec_global_suspend(b: bool) -> OperatorPolicySpec {
+        OperatorPolicySpec {
+            global_suspend: b,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn patch_required_when_status_is_absent_so_first_reconcile_initializes_it() {
+        // Brand-new resource: status is None. First reconcile must
+        // populate status.effective so observers can see what the
+        // operator considers the resolved spec. The gate honors
+        // this by reporting `None != Some(&spec)` for the
+        // prev_effective check.
+        let prev: Option<&OperatorPolicyStatus> = None;
+        let spec = OperatorPolicySpec::default();
+        assert!(
+            status_needs_patch(prev, 0, Some(&spec), 0),
+            "first reconcile after creation must initialize status"
+        );
+    }
+
+    #[test]
+    fn patch_required_when_observed_generation_advances() {
+        let prev = OperatorPolicyStatus {
+            observed_generation: 1,
+            effective: Some(spec_global_suspend(true)),
+            workspace_overrides: 0,
+            ..Default::default()
+        };
+        // Spec mutated → metadata.generation bumped to 2.
+        let spec = spec_global_suspend(true);
+        assert!(
+            status_needs_patch(Some(&prev), 2, Some(&spec), 0),
+            "generation bump must always force a status PATCH"
+        );
+    }
+
+    #[test]
+    fn patch_required_when_effective_spec_differs() {
+        // Spec mutated to flip globalSuspend; generation bumped too
+        // in real life, but verify the effective-diff branch in
+        // isolation (gen unchanged here).
+        let prev = OperatorPolicyStatus {
+            observed_generation: 3,
+            effective: Some(spec_global_suspend(false)),
+            workspace_overrides: 0,
+            ..Default::default()
+        };
+        let spec = spec_global_suspend(true);
+        assert!(
+            status_needs_patch(Some(&prev), 3, Some(&spec), 0),
+            "effective-spec diff alone must force a status PATCH"
+        );
+    }
+
+    #[test]
+    fn patch_required_when_workspace_overrides_count_changes() {
+        let prev = OperatorPolicyStatus {
+            observed_generation: 5,
+            effective: Some(spec_global_suspend(true)),
+            workspace_overrides: 0,
+            ..Default::default()
+        };
+        let spec = spec_global_suspend(true);
+        assert!(
+            status_needs_patch(Some(&prev), 5, Some(&spec), 1),
+            "workspace_overrides count change (e.g. operator added a carve-out) must force a PATCH"
+        );
+    }
+
+    #[test]
+    fn skip_patch_when_substantive_state_matches() {
+        // The case that drove the rio hot loop: nothing of substance
+        // has changed, only the live `reconciles_skipped` counter
+        // and `last_changed_at` would advance. Gate must return
+        // false to break the closed loop.
+        let prev = OperatorPolicyStatus {
+            observed_generation: 7,
+            effective: Some(spec_global_suspend(true)),
+            workspace_overrides: 1,
+            reconciles_skipped: 1234, // live counter — should NOT trigger patch
+            last_changed_at: Some(chrono::Utc::now()),
+        };
+        let spec = spec_global_suspend(true);
+        assert!(
+            !status_needs_patch(Some(&prev), 7, Some(&spec), 1),
+            "must NOT patch on counter-only / timestamp-only churn — that's the loop bug"
+        );
     }
 }

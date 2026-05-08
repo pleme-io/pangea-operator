@@ -247,13 +247,51 @@ async fn update_status(
         create_condition("Ready", ready, &format!("{phase}"), message),
     ];
 
+    let new_observed_gen = format.metadata.generation.unwrap_or(0);
+
+    // Diff-gate the PATCH — `create_condition` restamps
+    // lastTransitionTime on every call, so unconditional PATCHes
+    // refire this controller's watch and create the canonical
+    // status-write self-trigger loop. Compare observable status
+    // fields semantically and skip when nothing changed.
+    let prev = format.status.as_ref();
+    let prev_phase = prev.and_then(|s| s.phase);
+    let prev_summary = prev.and_then(|s| s.section_summary.as_deref());
+    let prev_methods: &[String] = prev.map(|s| s.dsl_methods.as_slice()).unwrap_or(&[]);
+    let prev_observed_gen = prev.map(|s| s.observed_generation).unwrap_or(0);
+    let prev_error = prev.and_then(|s| s.error.as_deref());
+    let prev_conditions: &[crate::crd::Condition] =
+        prev.map(|s| s.conditions.as_slice()).unwrap_or(&[]);
+
+    let conditions_match = prev_conditions.len() == conditions.len()
+        && conditions.iter().all(|n| {
+            prev_conditions.iter().any(|p| {
+                p.r#type == n.r#type
+                    && p.status == n.status
+                    && p.reason == n.reason
+                    && p.message == n.message
+            })
+        });
+    let needs_patch = format.status.is_none()
+        || !conditions_match
+        || prev_phase != Some(phase)
+        || prev_summary != Some(summary.as_str())
+        || prev_methods != methods.as_slice()
+        || prev_observed_gen != new_observed_gen
+        || prev_error != error;
+
+    if !needs_patch {
+        debug!(%phase, "SynthesizerFormat status unchanged; skipping patch (avoids self-trigger watch loop)");
+        return Ok(());
+    }
+
     let patch = serde_json::json!({
         "status": {
             "phase": phase,
             "sectionSummary": summary,
             "dslMethods": methods,
             "conditions": conditions,
-            "observedGeneration": format.metadata.generation.unwrap_or(0),
+            "observedGeneration": new_observed_gen,
             "error": error,
         }
     });

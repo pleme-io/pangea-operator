@@ -175,11 +175,44 @@ async fn apply_reactive_policy(
         message: healthy_message,
     });
 
+    let new_auto_suspended = suspend_now || prior_status.auto_suspended;
+
+    // Diff-gate: skip the PATCH when none of the observable fields
+    // would actually change. Without this gate, every template
+    // reconcile triggers a status PATCH from the post-reconcile
+    // pipeline (this function runs unconditionally for every
+    // template), each PATCH bumps `metadata.resourceVersion`, the
+    // template controller's watch fires, reconcile runs again →
+    // closed loop. The Healthy condition's transition time is
+    // already preserved above; comparing the rest of the writes
+    // against `prior_status` covers verifiedBlockedSince,
+    // autoSuspended, lastEscalatedAt, lastEscalationReason.
+    let conditions_unchanged = prior_status.conditions.len() == conditions.len()
+        && prior_status.conditions.iter().zip(conditions.iter()).all(|(p, n)| {
+            p.r#type == n.r#type
+                && p.status == n.status
+                && p.reason == n.reason
+                && p.message == n.message
+                && p.last_transition_time == n.last_transition_time
+        });
+    let nothing_changed = conditions_unchanged
+        && prior_status.verified_blocked_since == new_blocked_since
+        && prior_status.auto_suspended == new_auto_suspended
+        && prior_status.last_escalated_at == escalated_at
+        && prior_status.last_escalation_reason == escalation_reason;
+
+    if nothing_changed {
+        tracing::debug!(
+            "ReactivePolicy: no observable status change; skipping patch (avoids self-trigger watch loop)"
+        );
+        return Ok(());
+    }
+
     let patch = serde_json::json!({
         "status": {
             "conditions": conditions,
             "verifiedBlockedSince": new_blocked_since,
-            "autoSuspended": suspend_now || prior_status.auto_suspended,
+            "autoSuspended": new_auto_suspended,
             "lastEscalatedAt": escalated_at,
             "lastEscalationReason": escalation_reason,
         }

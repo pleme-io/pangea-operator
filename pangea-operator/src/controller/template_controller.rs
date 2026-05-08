@@ -234,18 +234,39 @@ async fn reconcile_template(
             template_suspended = template.spec.suspend,
             "Template is suspended, skipping reconciliation"
         );
-        let ns = template.namespace().unwrap_or_default();
-        let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &ns);
-        let patch = serde_json::json!({
-            "status": { "conditions": conditions_for_suspended() }
-        });
-        let _ = api
-            .patch_status(
-                &name,
-                &PatchParams::apply("pangea-operator"),
-                &Patch::Merge(&patch),
-            )
-            .await;
+        // Diff-gate: skip the status patch when the on-cluster
+        // conditions already match the suspended set. Without this
+        // gate, every reconcile (~5 min default + every status-watch
+        // event) re-PATCHes the same `(type, status, reason, message)`
+        // tuple with a fresh `lastTransitionTime` (`create_condition`
+        // calls `Utc::now()`). The PATCH bumps `metadata.resourceVersion`,
+        // the watch fires, the controller re-reconciles — closed loop
+        // observed at ~123 PATCHes/sec on a single template.
+        let new_conditions = conditions_for_suspended();
+        let prev_conditions: &[crate::crd::Condition] = template
+            .status
+            .as_ref()
+            .map(|s| s.conditions.as_slice())
+            .unwrap_or(&[]);
+        let already_set = suspended_conditions_already_set(prev_conditions, &new_conditions);
+        if !already_set {
+            let ns = template.namespace().unwrap_or_default();
+            let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &ns);
+            let patch = serde_json::json!({
+                "status": { "conditions": new_conditions }
+            });
+            let _ = api
+                .patch_status(
+                    &name,
+                    &PatchParams::apply("pangea-operator"),
+                    &Patch::Merge(&patch),
+                )
+                .await;
+        } else {
+            debug!(
+                "Suspended template conditions already set; skipping status patch (avoids self-trigger watch loop)"
+            );
+        }
         return Ok(Action::requeue(DEFAULT_REQUEUE_INTERVAL));
     }
 
@@ -2086,6 +2107,111 @@ impl From<ReconcileAction> for Action {
             ReconcileAction::Requeue(duration) => Action::requeue(duration),
             ReconcileAction::Done => Action::await_change(),
         }
+    }
+}
+
+/// Returns true iff `prev` already carries every condition in `new`
+/// with matching `(type, status, reason, message)` — meaning a
+/// re-PATCH would be a no-op except for `lastTransitionTime` churn.
+///
+/// `create_condition` stamps a fresh `Utc::now()` on every call, so
+/// raw `Vec<Condition>` equality is useless for this check; we have
+/// to compare semantically. Order in `prev` is irrelevant — we check
+/// each `new` against any matching same-typed condition in `prev`.
+///
+/// Used by the suspended-template skip path to gate status PATCHes
+/// and break the closed-loop self-trigger watch cycle.
+fn suspended_conditions_already_set(
+    prev: &[crate::crd::Condition],
+    new: &[crate::crd::Condition],
+) -> bool {
+    new.iter().all(|n| {
+        prev.iter().any(|p| {
+            p.r#type == n.r#type
+                && p.status == n.status
+                && p.reason == n.reason
+                && p.message == n.message
+        })
+    })
+}
+
+#[cfg(test)]
+mod suspended_diff_tests {
+    //! Lock in the diff-gate that breaks the suspended-template
+    //! self-trigger watch loop (rio firefighting 2026-05-07: was
+    //! observed at ~123 PATCH/sec on cloudflare-pleme).
+    use super::suspended_conditions_already_set;
+    use super::super::reconciler::conditions_for_suspended;
+    use crate::crd::Condition;
+    use chrono::{TimeZone, Utc};
+
+    fn cond(typ: &str, status: &str, reason: &str, msg: &str) -> Condition {
+        Condition {
+            r#type: typ.into(),
+            status: status.into(),
+            reason: reason.into(),
+            message: msg.into(),
+            // Stale timestamp on purpose: the diff-gate must NOT
+            // be tricked into "differing" just because the existing
+            // condition was stamped earlier.
+            last_transition_time: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
+        }
+    }
+
+    #[test]
+    fn skips_patch_when_all_three_suspended_conditions_already_present() {
+        let new = conditions_for_suspended();
+        let prev: Vec<Condition> = new
+            .iter()
+            .map(|n| cond(&n.r#type, &n.status, &n.reason, &n.message))
+            .collect();
+        assert!(
+            suspended_conditions_already_set(&prev, &new),
+            "should skip PATCH when (type, status, reason, message) already match"
+        );
+    }
+
+    #[test]
+    fn requests_patch_when_status_differs() {
+        let new = conditions_for_suspended();
+        // Same types, but status is wrong — e.g., a previous Ready=True
+        // hasn't been overwritten yet.
+        let prev = vec![
+            cond("Ready", "True", "Ready", "Healthy"),
+            cond("Reconciling", "True", "Apply", "Applying changes"),
+            cond("DriftDetected", "False", "Settled", "No drift"),
+        ];
+        assert!(
+            !suspended_conditions_already_set(&prev, &new),
+            "must PATCH when prior conditions disagree on status/reason/message"
+        );
+    }
+
+    #[test]
+    fn requests_patch_when_prev_is_empty() {
+        let new = conditions_for_suspended();
+        assert!(
+            !suspended_conditions_already_set(&[], &new),
+            "must PATCH when no prior conditions exist"
+        );
+    }
+
+    #[test]
+    fn ignores_extra_unrelated_prev_conditions() {
+        // prev has the 3 suspended conditions plus extras (Settled,
+        // Verified). The gate should still match — we only check
+        // that every new condition has a same-typed match in prev.
+        let new = conditions_for_suspended();
+        let mut prev: Vec<Condition> = new
+            .iter()
+            .map(|n| cond(&n.r#type, &n.status, &n.reason, &n.message))
+            .collect();
+        prev.push(cond("Settled", "True", "Settled", "no drift"));
+        prev.push(cond("Verified", "True", "Audited", "ok"));
+        assert!(
+            suspended_conditions_already_set(&prev, &new),
+            "extra unrelated prior conditions must not force a no-op PATCH"
+        );
     }
 }
 
