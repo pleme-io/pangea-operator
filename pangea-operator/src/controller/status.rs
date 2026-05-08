@@ -103,6 +103,40 @@ pub fn merge_condition_transitions<C: ConditionLike + Clone>(
 /// is enough.
 ///
 /// Pure function — no I/O, deterministic, easy to test.
+///
+/// # Example
+///
+/// ```
+/// use pangea_operator::controller::status::{conditions_observably_equal, ConditionLike};
+///
+/// // Minimal type implementing ConditionLike — your CRD's Condition
+/// // type would do the same (see `crate::crd::Condition` for the
+/// // canonical impl used across the operator).
+/// #[derive(Clone)]
+/// struct C { typ: String, status: String, reason: String, msg: String, ts: i32 }
+/// impl ConditionLike for C {
+///     type Time = i32;
+///     fn condition_type(&self) -> &str { &self.typ }
+///     fn status(&self) -> &str { &self.status }
+///     fn reason(&self) -> &str { &self.reason }
+///     fn message(&self) -> &str { &self.msg }
+///     fn last_transition_time(&self) -> &i32 { &self.ts }
+///     fn set_last_transition_time(&mut self, t: i32) { self.ts = t; }
+/// }
+/// fn c(typ: &str, status: &str, ts: i32) -> C {
+///     C { typ: typ.into(), status: status.into(), reason: "Ready".into(), msg: "ok".into(), ts }
+/// }
+///
+/// // The whole point — different timestamps, same observable content,
+/// // returns true → call site skips the PATCH.
+/// let prev = vec![c("Ready", "True", 2025)];
+/// let new = vec![c("Ready", "True", 2026)];
+/// assert!(conditions_observably_equal(&prev, &new));
+///
+/// // Status flip detected → returns false → call site PATCHes.
+/// let new_flipped = vec![c("Ready", "False", 2026)];
+/// assert!(!conditions_observably_equal(&prev, &new_flipped));
+/// ```
 pub fn conditions_observably_equal<C: ConditionLike>(prev: &[C], new: &[C]) -> bool {
     if prev.len() != new.len() {
         return false;

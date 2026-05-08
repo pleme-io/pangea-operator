@@ -4,7 +4,9 @@
 //! `values.schema.json` can be generated mechanically from `schemars`
 //! rather than hand-authored. Run:
 //!
-//!     cargo run --bin pangea-operator -- --generate-values-schema
+//! ```text
+//! cargo run --bin pangea-operator -- --generate-values-schema
+//! ```
 //!
 //! to emit the schema; pipe into `helmworks/charts/pangea-operator/values.schema.json`.
 //!
@@ -18,7 +20,9 @@
 //! The hand-authored schema in helmworks adds a JSON Schema `allOf`
 //! conditional that schemars can't express directly:
 //!
-//!     when useEmbeddedRuby=true → require gemAuth.tokenSecret.name (non-empty)
+//! ```text
+//! when useEmbeddedRuby=true → require gemAuth.tokenSecret.name (non-empty)
+//! ```
 //!
 //! The generator threads that conditional onto the schemars output as
 //! a post-process step (see `generate_values_schema_json`).
