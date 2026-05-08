@@ -278,6 +278,134 @@ for d in docs:
 \""
 ```
 
+## Status-write loops — the canonical pattern
+
+Every kube-rs controller in this operator MUST follow this two-layer
+pattern when writing its own resource's `.status`. Pre-2026-05-07 the
+shape was inconsistent across controllers; the rio firefighting wave
+(commits c02ab09 → 6a9663f → 4f421cb → ab859b0 → 8a6ccb7 → a0c1370 →
+9ccb221) standardized it. New controllers MUST follow the established
+shape; existing controllers that drift back to direct `Controller::new`
+or unconditional `patch_status` will be caught by the
+`PangeaControllerReconcileRateHigh` alert (chart 0.8.14+) within ~1
+minute of the regression.
+
+**Why:** any status field built with `Utc::now()` (condition
+`lastTransitionTime`, custom `lastUpdatedAt`, etc.) restamps on every
+reconcile, so a byte-equal status check ALWAYS reports "differs" — the
+PATCH refires the controller's own watch and creates a closed loop at
+apiserver-event speed. Observed peaks on rio: 123 PATCH/sec on a
+single template, 76 reconciles/sec on OperatorPolicy/default, 10/sec on
+PangeaFleetStatus — collectively burning ~7.5 cores via amplified k3s
+API churn.
+
+### Layer 1: diff-gate at the write boundary
+
+Every `patch_status` call site needs a `*_status_needs_patch(prev,
+new_*) -> bool` helper that returns false when nothing observable
+changed. Compare:
+
+* Scalar / enum fields: direct `==`
+* Conditions: use `crate::controller::status::conditions_observably_equal`
+  — compares `(type, status, reason, message)` tuples, ignoring
+  `lastTransitionTime`. Don't reimplement.
+
+Example shape:
+
+```rust
+async fn update_full_status(...) -> Result<()> {
+    let new_conditions = build_conditions();
+    let needs_patch = my_status_needs_patch(
+        cr.status.as_ref(),
+        new_phase, new_observed_gen, &new_conditions, ...
+    );
+    if !needs_patch {
+        debug!("status unchanged; skipping patch (avoids self-trigger watch loop)");
+        return Ok(());
+    }
+    let patch = serde_json::json!({ "status": ... });
+    crate::controller::status_patch::patch_status(cr, &state.client, patch).await?;
+    Ok(())
+}
+
+fn my_status_needs_patch(
+    prev: Option<&MyStatus>,
+    new_phase: MyPhase,
+    new_observed_gen: i64,
+    new_conditions: &[crate::crd::Condition],
+) -> bool {
+    let prev_phase = prev.and_then(|s| s.phase);
+    let prev_observed_gen = prev.map(|s| s.observed_generation).unwrap_or(0);
+    let prev_conditions: &[_] = prev.map(|s| s.conditions.as_slice()).unwrap_or(&[]);
+    let conditions_match = crate::controller::status::conditions_observably_equal(
+        prev_conditions, new_conditions,
+    );
+    !conditions_match
+        || prev_phase != Some(new_phase)
+        || prev_observed_gen != new_observed_gen
+        || prev.is_none()  // first reconcile must always patch
+}
+```
+
+The helper is pure (no I/O), trivially testable. Each one comes
+with 4-5 unit tests pinning: first-reconcile-must-patch, observable-
+field-change-must-patch, timestamp-only-churn-must-skip.
+
+**`obj.status` vs in-Context snapshot:** for controllers that write
+their own *watched* resource (e.g., `operator_policy_controller`
+writes OperatorPolicy, `fleet_status_controller` writes
+PangeaFleetStatus), the kube-rs reflector cache LAGS the apiserver —
+when the controller's own PATCH triggers a watch event, the reconcile
+fires *before* the cache observes the patch, so `obj.status` from the
+reconcile arg is stale-by-one. Compare against an in-Context
+`Mutex<Option<MyStatus>>` snapshot updated AFTER successful PATCHes,
+not against `obj.status`. See
+`fleet_status_controller::Context.last_patched` for the canonical
+shape. Other controllers (which write child resources, not their own
+watched type) are not affected.
+
+### Layer 2: predicate filter at the watch-stream boundary
+
+Every `Controller::new(api, Config::default())` call site has been
+replaced with `crate::controller::generation_filter::filtered_controller::<K>(client)`,
+which wraps `watcher → default_backoff → reflect → applied_objects →
+predicate_filter(predicates::generation) → Controller::for_stream`.
+The filter drops every watch event where `metadata.generation` is
+unchanged from the previous time we saw the object — and the apiserver
+guarantees `metadata.generation` only advances on spec mutations, so
+status PATCHes (even our own legitimate ones) never refire reconciles
+through this stream. Combined with each controller's `Action::requeue`
+floor, every controller has exactly two work sources:
+
+  1. an actual spec mutation (or new resource creation), and
+  2. its own scheduled refresh tick.
+
+Requires the kube-rs `unstable-runtime` feature (transitively pulls in
+`unstable-runtime-stream-control`). Already enabled in the workspace
+Cargo.toml.
+
+### Defense-in-depth metric
+
+Every controller MUST call `state.metrics.record_reconcile(kind, "ok")`
+in its reconcile success path (or `record_reconcile_named("foo", "ok")`
+for the two self-driving controllers — operator_policy and
+fleet_status — which intentionally aren't in `ControllerKind`). This
+fills the denominator for the chart 0.8.14
+`PangeaControllerReconcileRateHigh` alert; without it, a hot loop in
+your new controller wouldn't trigger the alert and you'd be back to
+the rio firefighting session shape.
+
+### Reference call sites
+
+For canonical examples to copy from when adding a new controller:
+
+* Diff-gate helper: `compliance_binding_controller::binding_status_needs_patch`
+* In-Context snapshot pattern: `fleet_status_controller`
+* Suspended-skip diff-gate (when controller writes only conditions):
+  `template_controller::suspended_conditions_already_set`
+* `filtered_controller` migration: any of the 14 controllers — all
+  use the same one-line replacement
+
 ## Common gotchas
 
 - **CRDs don't upgrade with chart by default.** Helm/Flux skip CRDs on

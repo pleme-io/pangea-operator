@@ -340,8 +340,13 @@ async fn main() -> Result<()> {
     // even while user-resource reconciles are paused. Self-creates
     // the `default` CR on startup.
     let fleet_status_client = state.client.clone();
+    let fleet_status_metrics = state.metrics.clone();
     let fleet_status_controller = tokio::spawn(async move {
-        pangea_operator::controller::fleet_status_controller::run(fleet_status_client).await;
+        pangea_operator::controller::fleet_status_controller::run(
+            fleet_status_client,
+            fleet_status_metrics,
+        )
+        .await;
         error!("PangeaFleetStatus controller exited");
     });
 

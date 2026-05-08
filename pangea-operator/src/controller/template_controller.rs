@@ -112,6 +112,15 @@ async fn reconcile_template(
 
     info!("Reconciling InfrastructureTemplate");
     state.metrics.reconciliations_total.inc();
+    // Per-controller reconcile counter — completes the denominator
+    // for `pangea_controller_reconciliations_total{controller="template"}`
+    // so the chart 0.8.14 PangeaControllerReconcileRateHigh alert can
+    // see this controller. (The standalone `reconciliations_total`
+    // counter at line above predates the per-controller labeled one
+    // and is kept for the existing template-specific dashboard.)
+    state
+        .metrics
+        .record_reconcile(crate::crd::ControllerKind::Template, "ok");
 
     // Pre-reconcile policy pipeline — runs the kill-switch + per-workspace
     // pause gates in their canonical order. Each gate returns a SkipWith

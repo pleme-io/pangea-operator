@@ -49,9 +49,13 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Wire fleet aggregation into the operator's runtime. Self-creates
 /// the singleton on startup, then runs the controller indefinitely.
-pub fn run(client: Client) -> impl std::future::Future<Output = ()> {
+pub fn run(
+    client: Client,
+    metrics: Arc<crate::observability::Metrics>,
+) -> impl std::future::Future<Output = ()> {
     let context = Arc::new(Context {
         client: client.clone(),
+        metrics,
         last_patched: tokio::sync::Mutex::new(None),
     });
 
@@ -79,6 +83,11 @@ pub fn run(client: Client) -> impl std::future::Future<Output = ()> {
 
 struct Context {
     client: Client,
+    /// Shared operator metrics — needed for record_reconcile_named
+    /// (this controller bypasses the policy gate by design and
+    /// therefore isn't in `ControllerKind`, so it uses the named
+    /// record path).
+    metrics: Arc<crate::observability::Metrics>,
     /// Cache of the most-recently-PATCHed status. Compared against
     /// each new aggregation to gate the PATCH. We keep our own cache
     /// rather than reading `fs.status` because kube-rs's cached
@@ -117,6 +126,15 @@ async fn reconcile(
     }
 
     debug!("Refreshing PangeaFleetStatus/default");
+    // Per-controller reconcile counter — uses the `_named` variant
+    // because fleet_status is intentionally absent from
+    // `ControllerKind` (read-only observability, bypasses the policy
+    // gate). Completes the denominator for the chart 0.8.14
+    // PangeaControllerReconcileRateHigh alert so it can detect a
+    // regression of the rio 2026-05-07 self-trigger loop on this
+    // CR (was 10 reconciles/sec).
+    ctx.metrics.record_reconcile_named("fleet_status", "ok");
+
     let new_status = aggregate_fleet_status(&ctx.client).await?;
 
     // Diff-gate the PATCH — same antipattern this file's siblings hit

@@ -201,6 +201,134 @@ the dashboard reflects the expected pause topology. Resolve by editing
 
 ---
 
+## reconcile-rate-anomaly
+
+Fires from `PangeaControllerReconcileRateHigh` (warning, >1/sec for
+1m) or `PangeaControllerReconcileRateCritical` (critical, >10/sec
+for 5m). Both are gated behind
+`prometheusRules.reconcileRateAnomaly.enabled` (chart 0.8.14+,
+default OFF — clusters opt in after baselining).
+
+**Diagnosis:** the operator is reconciling at a rate that no
+legitimate workload can drive. Spec mutations and `Action::requeue`
+ticks combined floor at <1/sec/controller in steady state. Anything
+above that is a self-trigger watch loop.
+
+Sequence to confirm:
+
+1. **Identify the controller** — alert label `controller` carries the
+   kind (template, operator_policy, fleet_status, …).
+2. **Pick a CR the controller manages** — `kubectl -n <ns> get
+   <crd>` and grab any one. For singleton controllers
+   (operator_policy, fleet_status) the CR is `default`.
+3. **Watch its `metadata.resourceVersion`** for 5 seconds:
+   ```sh
+   for i in 1 2 3 4 5; do
+     kubectl -n <ns> get <crd> <name> -o jsonpath='{.metadata.resourceVersion}{"\n"}'
+     sleep 1
+   done
+   ```
+   If the version bumps faster than once per the controller's
+   `Action::requeue` interval (5m for templates, 60s for operator
+   policy, 30s for fleet_status), there is a self-trigger loop.
+4. **Read the controller log for "Refreshing"/"Reconciling" lines** —
+   if hundreds per minute, confirmed.
+
+**Mitigation (immediate):** scale the operator to 0 replicas:
+```sh
+kubectl -n pangea-system scale deployment/pangea-operator --replicas=0
+```
+
+This stops the apiserver burn instantly. The fleet stops
+reconciling — accept that for the duration of the diagnosis.
+
+**Mitigation (less drastic):** if `globalSuspend=false`, flip it to
+true:
+```sh
+kubectl patch operatorpolicy default --type=merge \
+  -p '{"spec": {"globalSuspend": true,
+       "globalSuspendReason": "incident-<date>: reconcile-rate alert"}}'
+```
+
+This pauses every controller that consults the policy gate, but
+**bypassed-by-design** controllers (currently only
+fleet_status_controller — read-only observability) keep firing. So
+this only helps for spec-write loops, not status-write loops in
+fleet_status.
+
+**Root cause is almost always** a status-write feedback loop. The
+fix shape is:
+
+1. Read the controller's `reconcile()` and find the `patch_status`
+   call. If it writes any field that uses `Utc::now()`
+   (condition `lastTransitionTime`, custom `lastUpdatedAt`, etc.) on
+   every reconcile without a "did anything material change?" gate,
+   that's the loop.
+2. Wrap the PATCH in a diff-gate: `if !*_status_needs_patch(prev,
+   new_*) { return Ok(...); }`. Compare scalar/enum fields directly;
+   compare conditions via `crate::controller::status::conditions_observably_equal`.
+3. **If the controller writes its own watched resource (e.g.,
+   fleet_status writes PangeaFleetStatus, operator_policy writes
+   OperatorPolicy):** the kube-rs reflector cache LAGS the
+   apiserver — `obj.status` from the reconcile arg is stale-by-one.
+   Diff-gate against an in-Context `Mutex<Option<...>>` snapshot,
+   not `obj.status`. See `fleet_status_controller::Context.last_patched`
+   for the canonical pattern.
+4. Make sure `controller::generation_filter::filtered_controller<K>`
+   wraps the controller — drops status-only watch events at the
+   stream layer. All 14 sites already use this; if you see a raw
+   `Controller::new` anywhere, that's the regression.
+
+**Reference incident:** rio firefighting 2026-05-07 (image
+chain c02ab09 → 6a9663f → 4f421cb → ab859b0 → 8a6ccb7 → a0c1370).
+Three confirmed loops fixed: template_controller suspended-skip
+(123 PATCH/sec), operator_policy_controller (76 reconciles/sec
+even under globalSuspend=true), fleet_status_controller (10/sec).
+Five proactive fixes for latent ones in flow, compliance_*,
+synthesizer_format, template/reactive_policy,
+template/status (drift_check + settling). 603 unit tests pin the
+diff-gate semantics.
+
+---
+
+## operator-error-rate-high
+
+Fires from `PangeaOperatorErrorRateHigh` (warning, >0.5
+err/sec for 10m). Same chart 0.8.14 alert family as above, also
+gated by `prometheusRules.reconcileRateAnomaly.enabled`.
+
+**Diagnosis:** a controller is failing-and-retrying at a sustained
+rate. Likely a stuck external dependency rather than a hot loop.
+
+Sequence:
+
+1. **Identify the controller** — alert label `controller`.
+2. **Read recent logs** for the controller's error type:
+   ```sh
+   kubectl -n pangea-system logs deploy/pangea-operator \
+     --since 10m | grep -iE "error|warn"
+   ```
+3. **Check the affected CR's `status.lastError`** — the operator
+   surfaces the most-recent error message there.
+4. **Check the upstream the controller depends on:**
+
+| Controller | Common upstream failures |
+|---|---|
+| template | terraform state lock, postgres backend down, gem fetch (gem-auth Secret expired/invalid), tofu binary missing |
+| compliance_schedule / compliance_binding | k8s Job submission, kensa/InSpec image pull |
+| ami_test / packer_build / image_pipeline | Packer manifest parse, AWS API throttling, AMI registration |
+| architecture_gem | compiler sidecar HTTP unreachable, magnus boot failure |
+| synthesizer_format | compiler sidecar `/v1/architectures/smoke-test` failure |
+
+**Mitigation:** depends on the upstream. There's no generic fix —
+this alert is a flag, not a script. If the upstream is unfixable
+in the near term, suspend the affected controller via
+`OperatorPolicy.spec.controllerSuspend.<kind>=true` so the alert
+quiets and the operator stops eating CPU on guaranteed-to-fail
+retries.
+
+---
+
 ## When none of the above match
 
 Postmortem template:

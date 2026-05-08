@@ -637,6 +637,35 @@ impl Metrics {
             .inc();
     }
 
+    /// Sibling of `record_reconcile` for the controllers that don't
+    /// fit `ControllerKind` (which is scoped to policy-gate-governed
+    /// reconcilers). Currently:
+    ///
+    ///   * `operator_policy` — owns the policy CR; bypasses the gate
+    ///     by design (otherwise globalSuspend would freeze the very
+    ///     controller that surfaces the pause status).
+    ///   * `fleet_status` — read-only fleet aggregator; bypasses the
+    ///     gate so observability stays live during pauses.
+    ///
+    /// Keeping the metric label-space wider than `ControllerKind`
+    /// (whose primary purpose is naming entries in
+    /// `OperatorPolicy.spec.controllerSuspend`) lets the
+    /// `pangea_controller_reconciliations_total` denominator cover
+    /// 100% of controllers — important so the
+    /// `PangeaControllerReconcileRateHigh` alert can detect a hot
+    /// loop in either of these too. (operator_policy and
+    /// fleet_status both had observed self-trigger loops on rio
+    /// 2026-05-07; the alert needs to see them.)
+    ///
+    /// `name` should be the snake_case controller name to match the
+    /// rest of the label space: "template", "namespace", …,
+    /// "operator_policy", "fleet_status".
+    pub fn record_reconcile_named(&self, name: &str, result: &str) {
+        self.controller_reconciliations_total
+            .with_label_values(&[name, result])
+            .inc();
+    }
+
     /// Start a phase-duration timer for `reconciliation_duration_seconds{phase}`.
     /// The returned `HistogramTimer` records the elapsed wall-clock on drop,
     /// so call sites can simply hold it for the duration of a phase handler:

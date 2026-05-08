@@ -101,6 +101,17 @@ async fn reconcile(
 
     info!("Reconciling OperatorPolicy/default");
 
+    // Per-controller reconcile counter — uses the `_named` variant
+    // because OperatorPolicy is intentionally absent from
+    // `ControllerKind` (which is the policy-gate-governed enum, and
+    // this controller bypasses the gate by design). Completes the
+    // denominator for the chart 0.8.14 PangeaControllerReconcileRateHigh
+    // alert so it can detect a regression of the rio 2026-05-07
+    // self-trigger loop on this CR (was 76 reconciles/sec).
+    state
+        .metrics
+        .record_reconcile_named("operator_policy", "ok");
+
     // Layer 1: propagate spec into the in-memory cache so every
     // controller's `policy_gate` sees the new value on its next read.
     // This is cheap (atomic-pointer swap) and ALWAYS runs — the cache

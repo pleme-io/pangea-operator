@@ -67,6 +67,13 @@ async fn reconcile_namespace(
 
     info!("Reconciling PangeaNamespace");
     state.metrics.namespace_reconciliations_total.inc();
+    // Per-controller reconcile counter — completes the denominator
+    // for the chart 0.8.14 PangeaControllerReconcileRateHigh alert
+    // (the standalone `namespace_reconciliations_total` counter
+    // above predates the labeled metric and stays for back-compat).
+    state
+        .metrics
+        .record_reconcile(crate::crd::ControllerKind::Namespace, "ok");
 
     // Cluster-wide kill-switch — honor `OperatorPolicy/default`.
     if let Some(action) = crate::controller::policy_pipeline::run_for_controller(
