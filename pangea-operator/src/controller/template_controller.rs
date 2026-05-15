@@ -1310,10 +1310,41 @@ async fn handle_applying(
         None
     };
 
-    let result = state
+    let mut result = state
         .executor
         .apply(&workspace.path, plan_file, true)
         .await?;
+
+    // Self-heal: stale-plan auto-recovery within the same reconcile.
+    //
+    // OpenTofu refuses to consume a cached `-out` plan if state has
+    // changed since the plan was generated — that's "Saved plan is
+    // stale". The cached plan is unrecoverable, but the underlying
+    // reconcile intent isn't: a fresh plan-then-apply (with
+    // `plan_file = None`) will compute a new plan against current
+    // state and apply it in one shot. Detecting + retrying here
+    // converts what was a phase-trapping failure (the operator stuck
+    // at Applying for ~7 days on rio, 2026-05-08) into a transient
+    // condition the operator defeats inside one reconcile.
+    if !result.success && is_self_healable_apply_error(&result.stderr) {
+        warn!(
+            stderr = %result.stderr,
+            "tofu apply rejected cached plan (stale or unusable) — discarding plan cache and retrying with fresh apply"
+        );
+        record_event(
+            template,
+            state,
+            EventType::Normal,
+            "StalePlanRecovery",
+            "discarding stale plan cache and retrying apply with fresh plan",
+        )
+        .await;
+        let _ = tokio::fs::remove_file(&plan_path).await;
+        result = state
+            .executor
+            .apply(&workspace.path, None, true)
+            .await?;
+    }
 
     if result.success {
         info!(duration_secs = result.duration.as_secs_f64(), "tofu apply completed successfully");
@@ -1396,6 +1427,54 @@ async fn handle_applying(
     }
 
     Ok(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL))
+}
+
+/// Detect tofu apply errors that are self-healable by discarding the
+/// cached `-out` plan and retrying with a fresh plan-then-apply.
+///
+/// The classic case is `Saved plan is stale`: state was mutated
+/// between `tofu plan -out` and `tofu apply <plan>`, so the plan
+/// snapshot no longer reflects reality. The fix isn't to surrender
+/// the reconcile to the Failed phase and wait for `handle_failed` to
+/// wipe the workspace — it's to discard the one stale artifact
+/// (the plan file) and let tofu compute a fresh plan inline.
+///
+/// Match substrings (not regex) so behavior is predictable even if
+/// tofu reformats messages across versions. Keep the list tight —
+/// every entry is a deliberate "this is recoverable by replanning"
+/// claim, not a catch-all that papers over real bugs.
+fn is_self_healable_apply_error(stderr: &str) -> bool {
+    // The canonical opentofu / terraform stale-plan banner.
+    stderr.contains("Saved plan is stale")
+}
+
+#[cfg(test)]
+mod self_healable_apply_error_tests {
+    use super::is_self_healable_apply_error;
+
+    #[test]
+    fn detects_canonical_stale_plan_banner() {
+        let stderr = "\nError: Saved plan is stale\n\nThe given plan file can no longer be applied because the state was changed by\nanother operation after the plan was created.";
+        assert!(
+            is_self_healable_apply_error(stderr),
+            "canonical stale-plan stderr must trigger recovery"
+        );
+    }
+
+    #[test]
+    fn ignores_unrelated_apply_failure() {
+        let stderr =
+            "Error: error creating GitHub repository: 422 Validation Failed (name already exists)";
+        assert!(
+            !is_self_healable_apply_error(stderr),
+            "real provider errors must NOT trigger the stale-plan recovery path"
+        );
+    }
+
+    #[test]
+    fn ignores_empty_stderr() {
+        assert!(!is_self_healable_apply_error(""));
+    }
 }
 
 /// Run the pre-apply import sweep. Returns the set of addresses

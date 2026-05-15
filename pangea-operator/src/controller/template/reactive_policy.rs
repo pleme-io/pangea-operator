@@ -212,7 +212,112 @@ async fn apply_reactive_policy(
     });
     crate::controller::status_patch::patch_status(template, &state.client, patch)
     .await?;
+
+    // Self-heal: when the worst trigger is a PhaseTimeout for a
+    // non-terminal phase, force the phase to Failed so the next
+    // reconcile runs `handle_failed` (workspace.clean + reset to
+    // Pending). Without this, the operator can sit in a non-terminal
+    // phase indefinitely while reactive policy logs Alerts on every
+    // reconcile — the rio cluster spent 2026-05-08 → 2026-05-14 stuck
+    // in Applying on a stale plan because the Alert-only escalation
+    // never punted the phase. Layer 1 (`is_self_healable_apply_error`)
+    // catches the specific stale-plan case inline; this layer is the
+    // broader net for any future stuck-phase condition.
+    //
+    // Gated on `is_new_phase_timeout`: only fires the first reconcile
+    // after the timeout threshold is crossed, then `escalation_reason`
+    // becomes the same value across reconciles and the gate stops it
+    // re-firing. Failing-the-failed (template already Failed) is also
+    // a no-op since Phase::Failed isn't in the timeout-eligible set.
+    if let Escalation::Triggered { reason, .. } = &escalation {
+        let is_new_phase_timeout = prior_reason.as_deref() != Some(reason.as_str())
+            && reason.starts_with("PhaseTimeout:");
+        if is_new_phase_timeout {
+            if let Some(current_phase) = template.status.as_ref().and_then(|s| s.phase) {
+                if phase_is_force_resettable(current_phase) {
+                    let err = format!(
+                        "ReactivePolicy: {reason} — forcing phase to Failed so handle_failed can recover (workspace clean + reset to Pending). Triggered after phase stuck past timeout threshold."
+                    );
+                    let force_patch = serde_json::json!({
+                        "status": {
+                            "phase": "Failed",
+                            "lastError": err,
+                            "failureCount": template
+                                .status
+                                .as_ref()
+                                .map(|s| s.failure_count.saturating_add(1))
+                                .unwrap_or(1),
+                        }
+                    });
+                    if let Err(e) = crate::controller::status_patch::patch_status(
+                        template,
+                        &state.client,
+                        force_patch,
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            error = %e,
+                            "PhaseTimeout force-reset patch failed (non-fatal); next reconcile will retry"
+                        );
+                    } else {
+                        tracing::warn!(
+                            %reason,
+                            current_phase = %current_phase,
+                            "PhaseTimeout escalation: forced phase → Failed for self-heal recovery"
+                        );
+                        record_event(
+                            template,
+                            state,
+                            EventType::Warning,
+                            "PhaseTimeoutForceReset",
+                            &err,
+                        )
+                        .await;
+                    }
+                }
+            }
+        }
+    }
     Ok(())
+}
+
+/// Whether a `Phase` is one we will forcibly reset to `Failed` when a
+/// `PhaseTimeout:*` escalation fires. The reconcile-driving phases
+/// (everything that does work and can therefore get stuck) are in;
+/// terminal/transient phases (`Ready`, `Failed`, `Pending`,
+/// `Destroying`) are excluded because forcing them to Failed would be
+/// either a no-op or destructive (e.g. yanking a happy `Ready`
+/// template into a recovery cycle because some clock skew misread its
+/// `phase_entered_at`).
+fn phase_is_force_resettable(phase: crate::crd::Phase) -> bool {
+    use crate::crd::Phase;
+    matches!(
+        phase,
+        Phase::Compiling | Phase::Initializing | Phase::Planning | Phase::Applying,
+    )
+}
+
+#[cfg(test)]
+mod force_reset_tests {
+    use super::phase_is_force_resettable;
+    use crate::crd::Phase;
+
+    #[test]
+    fn force_resettable_for_working_phases() {
+        assert!(phase_is_force_resettable(Phase::Compiling));
+        assert!(phase_is_force_resettable(Phase::Initializing));
+        assert!(phase_is_force_resettable(Phase::Planning));
+        assert!(phase_is_force_resettable(Phase::Applying));
+    }
+
+    #[test]
+    fn not_force_resettable_for_terminal_or_idle_phases() {
+        assert!(!phase_is_force_resettable(Phase::Pending));
+        assert!(!phase_is_force_resettable(Phase::Ready));
+        assert!(!phase_is_force_resettable(Phase::Failed));
+        assert!(!phase_is_force_resettable(Phase::Destroying));
+    }
 }
 
 /// Returns `true` iff every observable field of the proposed reactive-
