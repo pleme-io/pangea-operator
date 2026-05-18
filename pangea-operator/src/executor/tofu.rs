@@ -229,6 +229,15 @@ impl TofuExecutor {
         id: &str,
     ) -> Result<TofuResult> {
         let mut args: Vec<&str> = BASE_ARGS.to_vec();
+        // -lock-timeout=300s: the import-prepass runs N imports in
+        // parallel (buffer_unordered in template_controller) and the
+        // pg backend's advisory lock is workspace-scoped, so N-1
+        // imports would otherwise fail instantly with "Workspace is
+        // already locked: default". 300 s is a generous ceiling —
+        // each import holds the lock for ~200ms during the
+        // state-write step, so 300 s covers thousands of queued
+        // imports comfortably even at very high parallelism.
+        args.push("-lock-timeout=300s");
         args.push(address);
         args.push(id);
         self.execute(TofuCommand::Import, work_dir, &args, &HashMap::new())
