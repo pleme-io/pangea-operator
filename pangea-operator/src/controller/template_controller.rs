@@ -1412,11 +1412,34 @@ async fn handle_applying(
         // exhausts maxRetries — observed against pleme-io-opensource on
         // 2026-05-18 (image @b6550b2). The race is rare in steady state
         // but pod restarts during the apply window make it deterministic.
+        //
+        // Also catches the sibling failure mode `"Apply requires
+        // configuration to be present"` / `"No configuration files"` —
+        // these fire when a previous self-heal called workspace.clean()
+        // (which wipes main.tf.json) but the operator pod was killed
+        // before it could `update_phase(Pending)`. The new pod sees the
+        // template still in `Applying`, runs handle_applying against an
+        // empty workspace, and tofu refuses with these errors. Same
+        // recovery: clean (idempotent) + transition to Pending.
         let is_stale_plan = combined_output.contains("Saved plan is stale")
             || combined_output.contains("plan is stale");
-        if is_stale_plan {
+        let is_empty_workspace = combined_output.contains("No configuration files")
+            || combined_output.contains("Apply requires configuration to be present");
+        if is_stale_plan || is_empty_workspace {
+            let (reason_code, reason_msg) = if is_stale_plan {
+                (
+                    "StalePlanRecovered",
+                    "Apply hit stale-plan race; wiped workspace and re-queued from Pending for a fresh plan",
+                )
+            } else {
+                (
+                    "EmptyWorkspaceRecovered",
+                    "Apply found empty workspace (likely pod restart mid-self-heal); re-queued from Pending",
+                )
+            };
             warn!(
-                "Stale plan detected — wiping workspace + transitioning to Pending to force re-plan"
+                kind = reason_code,
+                "Apply failure is recoverable — wiping workspace + transitioning to Pending"
             );
             let workspace_clean = state.workspace_manager.get_workspace(template).await;
             if let Ok(ws) = workspace_clean {
@@ -1427,8 +1450,8 @@ async fn handle_applying(
                 template,
                 state,
                 EventType::Normal,
-                "StalePlanRecovered",
-                "Apply hit stale-plan race; wiped workspace and re-queued from Pending for a fresh plan",
+                reason_code,
+                reason_msg,
             )
             .await;
             return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
