@@ -114,6 +114,21 @@ impl TofuExecutor {
     }
 
     /// Run `tofu apply`.
+    ///
+    /// When applying a saved plan, we pass `-refresh=false` to skip any
+    /// refresh-during-apply. The saved plan already embeds the refreshed state
+    /// snapshot at plan time; a fresh refresh during apply can race against
+    /// in-flight external changes (e.g. the busy GitHub API across ~600 tracked
+    /// resources on the pleme-io-opensource template) and bump the pg backend's
+    /// state serial mid-apply, causing OpenTofu to reject the plan as stale:
+    ///
+    ///   Error: Saved plan is stale — The given plan file can no longer be
+    ///   applied because the state was changed by another operation after the
+    ///   plan was created.
+    ///
+    /// Empirically observed 2026-05-18 on rio: pleme-io-opensource exhausted
+    /// `maxRetries=3` with the same race on every cycle. `-refresh=false` is
+    /// the canonical OpenTofu fix for this class of bug.
     pub async fn apply(
         &self,
         work_dir: &Path,
@@ -127,6 +142,7 @@ impl TofuExecutor {
         }
 
         if let Some(pf) = plan_file {
+            args.push("-refresh=false");
             args.push(pf.to_str().unwrap());
         }
 
