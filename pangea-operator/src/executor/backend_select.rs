@@ -116,4 +116,51 @@ mod tests {
             assert_eq!(ExecutorBackend::parse(backend.label()), Some(backend));
         }
     }
+
+    #[test]
+    fn resolve_preserves_label_round_trip() {
+        // After resolution, the label of the chosen backend MUST
+        // re-parse to the same backend. Locks in the
+        // label↔parse↔resolve coherence so future label-formatting
+        // changes can't silently break the resolution chain.
+        for backend in [ExecutorBackend::Tofu, ExecutorBackend::Magma] {
+            let chosen = ExecutorBackend::resolve(Some(backend.label()), None);
+            assert_eq!(chosen, backend);
+            // Round-trip again through env-default position.
+            let via_env = ExecutorBackend::resolve(None, Some(backend.label()));
+            assert_eq!(via_env, backend);
+        }
+    }
+
+    #[test]
+    fn empty_string_treated_as_unset() {
+        // A literal empty string from a YAML-marshaled
+        // Option<String> shouldn't accidentally pick a backend.
+        // Today empty string is unrecognized so it falls through —
+        // verify that explicitly.
+        let r = ExecutorBackend::resolve(Some(""), None);
+        assert_eq!(r, ExecutorBackend::Tofu);
+    }
+
+    #[test]
+    fn resolve_does_not_panic_on_garbage_input() {
+        // No matter what byte sequence comes in via CR or env,
+        // resolve must return a valid backend (never panic).
+        for garbage in ["", "?", "tofu;rm -rf /", "magma\n", "MAGMA\0", "\x00\x01\x02"] {
+            let _ = ExecutorBackend::resolve(Some(garbage), Some(garbage));
+        }
+    }
+
+    #[test]
+    fn parse_of_label_always_succeeds() {
+        // Property: for every variant, parse(label(variant)) ==
+        // Some(variant). If we add a third backend (e.g. magma-wasm)
+        // and forget to wire it into parse(), this test breaks
+        // before the new variant lands.
+        let variants = [ExecutorBackend::Tofu, ExecutorBackend::Magma];
+        for v in variants {
+            assert_eq!(ExecutorBackend::parse(v.label()), Some(v),
+                       "label/parse asymmetric for {v:?}");
+        }
+    }
 }

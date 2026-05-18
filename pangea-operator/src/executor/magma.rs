@@ -583,6 +583,161 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn restart_resume_apply_uses_checkpoint_from_separate_instance() {
+        // Restart-safety claim: a MagmaExecutor process can be killed
+        // between `plan` and `apply`; a fresh MagmaExecutor instance
+        // pointed at the SAME state backend + workspace dir can
+        // resume `apply` from the on-disk plan checkpoint. This test
+        // simulates that by constructing TWO independent
+        // MagmaExecutor instances over a SHARED InMemoryStateBackend.
+        let store: Arc<InMemoryStateBackend> = Arc::new(InMemoryStateBackend::new());
+        let make_executor = || MagmaExecutor::new(MagmaExecutorConfig {
+            state_backend:   Arc::clone(&store),
+            schema_name:     "s".into(),
+            template_name:   "t".into(),
+            state_name:      "default".into(),
+            backend_shape:   BackendShape::Magma,
+            plan_checkpoint: true,
+        });
+
+        let tmp = tempfile::tempdir().unwrap();
+        render_workspace(
+            tmp.path(),
+            &json!({
+                "provider": { "aws": { "region": "us-east-1" } },
+                "resource": { "aws_iam_role": { "r": { "name": "restart-resume" } } },
+            }),
+        )
+        .await;
+
+        // Instance #1: plan, then "crash" (drop without applying).
+        let exec1 = make_executor();
+        let plan_result = exec1.plan(tmp.path(), None, &[]).await.unwrap();
+        assert_eq!(plan_result.exit_code, 2, "plan should signal changes");
+        drop(exec1);
+
+        let checkpoint = tmp.path().join("magma-plan.json");
+        assert!(checkpoint.exists(), "checkpoint must survive across instances");
+
+        let state_before = store.get_state("s", "t", "default").await.unwrap();
+        assert!(state_before.is_none(), "state must be untouched until apply");
+
+        // Instance #2: apply from the existing checkpoint.
+        let exec2 = make_executor();
+        let apply_result = exec2.apply(tmp.path(), None, true).await.unwrap();
+        assert!(apply_result.success, "instance 2 must apply from checkpoint");
+        assert_eq!(apply_result.exit_code, 0);
+
+        let state_after = store
+            .get_state("s", "t", "default").await.unwrap()
+            .expect("state must exist after apply");
+        let parsed: serde_json::Value =
+            serde_json::from_slice(&state_after.data.unwrap()).unwrap();
+        assert!(parsed["resources"].as_array().unwrap().len() >= 1);
+    }
+
+    #[tokio::test]
+    async fn separate_state_names_are_isolated() {
+        // Two MagmaExecutor instances pointed at the SAME backend
+        // but with different state_name slots must never see each
+        // other's resources.
+        let store: Arc<InMemoryStateBackend> = Arc::new(InMemoryStateBackend::new());
+        let make = |state_name: &str| MagmaExecutor::new(MagmaExecutorConfig {
+            state_backend:   Arc::clone(&store),
+            schema_name:     "s".into(),
+            template_name:   "t".into(),
+            state_name:      state_name.into(),
+            backend_shape:   BackendShape::Magma,
+            plan_checkpoint: true,
+        });
+
+        let tmp_a = tempfile::tempdir().unwrap();
+        let tmp_b = tempfile::tempdir().unwrap();
+        render_workspace(
+            tmp_a.path(),
+            &json!({
+                "provider": { "aws": { "region": "us-east-1" } },
+                "resource": { "aws_iam_role": { "rA": { "name": "A" } } },
+            }),
+        ).await;
+        render_workspace(
+            tmp_b.path(),
+            &json!({
+                "provider": { "aws": { "region": "us-east-1" } },
+                "resource": { "aws_iam_role": { "rB": { "name": "B" } } },
+            }),
+        ).await;
+
+        let exec_a = make("slot_a");
+        let exec_b = make("slot_b");
+        exec_a.plan(tmp_a.path(), None, &[]).await.unwrap();
+        exec_a.apply(tmp_a.path(), None, true).await.unwrap();
+        exec_b.plan(tmp_b.path(), None, &[]).await.unwrap();
+        exec_b.apply(tmp_b.path(), None, true).await.unwrap();
+
+        let entry_a = store.get_state("s", "t", "slot_a").await.unwrap().unwrap();
+        let entry_b = store.get_state("s", "t", "slot_b").await.unwrap().unwrap();
+        let parsed_a: serde_json::Value =
+            serde_json::from_slice(&entry_a.data.unwrap()).unwrap();
+        let parsed_b: serde_json::Value =
+            serde_json::from_slice(&entry_b.data.unwrap()).unwrap();
+        let names_a: Vec<&str> = parsed_a["resources"]
+            .as_array().unwrap().iter()
+            .map(|r| r["address"]["name"].as_str().unwrap_or(""))
+            .collect();
+        let names_b: Vec<&str> = parsed_b["resources"]
+            .as_array().unwrap().iter()
+            .map(|r| r["address"]["name"].as_str().unwrap_or(""))
+            .collect();
+        assert_eq!(names_a, vec!["rA"]);
+        assert_eq!(names_b, vec!["rB"]);
+    }
+
+    #[tokio::test]
+    async fn plan_with_explicit_plan_file_path_writes_there() {
+        let exec = MagmaExecutor::new(fixture_config());
+        let tmp = tempfile::tempdir().unwrap();
+        render_workspace(
+            tmp.path(),
+            &json!({
+                "provider": { "aws": { "region": "us-east-1" } },
+                "resource": { "aws_iam_role": { "r": { "name": "x" } } },
+            }),
+        )
+        .await;
+
+        let custom_plan = tmp.path().join("custom-plan.json");
+        exec.plan(tmp.path(), Some(&custom_plan), &[]).await.unwrap();
+        assert!(custom_plan.exists(), "plan written to explicit path");
+        assert!(
+            !tmp.path().join("magma-plan.json").exists(),
+            "default checkpoint should not exist when explicit plan_file is set",
+        );
+        let apply_result = exec.apply(tmp.path(), Some(&custom_plan), true).await.unwrap();
+        assert!(apply_result.success);
+    }
+
+    #[tokio::test]
+    async fn plan_checkpoint_disabled_skips_disk_write() {
+        let cfg = MagmaExecutorConfig {
+            plan_checkpoint: false,
+            ..fixture_config()
+        };
+        let exec = MagmaExecutor::new(cfg);
+        let tmp = tempfile::tempdir().unwrap();
+        render_workspace(
+            tmp.path(),
+            &json!({
+                "provider": { "aws": { "region": "us-east-1" } },
+                "resource": { "aws_iam_role": { "r": { "name": "x" } } },
+            }),
+        )
+        .await;
+        exec.plan(tmp.path(), None, &[]).await.unwrap();
+        assert!(!tmp.path().join("magma-plan.json").exists());
+    }
+
+    #[tokio::test]
     async fn tofu_shape_persistence_writes_canonical_provider_form() {
         let cfg = MagmaExecutorConfig {
             state_backend:   Arc::new(InMemoryStateBackend::new()),
