@@ -1466,7 +1466,18 @@ async fn handle_applying(
             CycleResult::AppliedFailure(err_msg.clone()),
         )
         .await?;
-        record_event(template, state, EventType::Warning, "ApplyFailed", &err_msg).await;
+        // K8s Events have a 1024-char message limit; the combined stdout+stderr
+        // err_msg can be much longer (one provider's "Creating..." log + several
+        // diagnostics easily exceeds 1KiB). Truncate before recording the
+        // event so we don't lose the failure on K8s admission validation.
+        // The full err_msg is still on the template status (lastError +
+        // lastCycle.outcomes) and in the operator log.
+        let event_msg = if err_msg.len() > 1000 {
+            format!("{}…[truncated, full err in template status]", &err_msg[..1000])
+        } else {
+            err_msg.clone()
+        };
+        record_event(template, state, EventType::Warning, "ApplyFailed", &event_msg).await;
     }
 
     Ok(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL))
