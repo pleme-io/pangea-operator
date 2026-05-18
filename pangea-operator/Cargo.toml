@@ -19,6 +19,22 @@ grpc = ["tonic", "prost"]
 # Pulls in pangea-ruby-eval which links libruby — only enable in builds
 # where CRuby is available (Linux container image, dev shell).
 embedded_ruby = ["dep:pangea-ruby-eval"]
+# Magma-backed IacExecutor (alternative to TofuExecutor). When OFF
+# (the default) the operator only ships `TofuExecutor`. When ON,
+# `MagmaExecutor` is also compiled in and is selectable per-CR or
+# via PANGEA_EXECUTOR=magma. Pulls in the magma library suite
+# (in-process plan/apply/state). Per
+# theory/MAGMA-OPERATOR-BACKEND.md §V (M0.10–M0.15).
+executor_magma = [
+    "dep:magma-backend",
+    "dep:magma-config",
+    "dep:magma-plan",
+    "dep:magma-apply",
+    "dep:magma-state",
+    "dep:magma-types",
+    "dep:magma-operator-backend",
+    "dep:hex",
+]
 
 [dependencies]
 # Shared types
@@ -26,6 +42,19 @@ pangea-types = { workspace = true, features = ["server"] }
 
 # In-process Ruby evaluator (feature-gated; see [features].embedded_ruby).
 pangea-ruby-eval = { path = "../pangea-ruby-eval", optional = true }
+
+# Magma library suite (feature-gated; see [features].executor_magma).
+# Per theory/MAGMA-OPERATOR-BACKEND.md — every reconcile runs as
+# in-process Rust calls when MagmaExecutor is selected. Both
+# TofuExecutor and MagmaExecutor coexist; selection is per-CR.
+magma-backend          = { git = "https://github.com/pleme-io/magma", optional = true }
+magma-config           = { git = "https://github.com/pleme-io/magma", optional = true }
+magma-plan             = { git = "https://github.com/pleme-io/magma", optional = true }
+magma-apply            = { git = "https://github.com/pleme-io/magma", optional = true }
+magma-state            = { git = "https://github.com/pleme-io/magma", optional = true }
+magma-types            = { git = "https://github.com/pleme-io/magma", optional = true }
+magma-operator-backend = { git = "https://github.com/pleme-io/magma", optional = true }
+hex                    = { version = "0.4", optional = true }
 
 # Kubernetes
 kube = { workspace = true, features = ["runtime", "client"] }

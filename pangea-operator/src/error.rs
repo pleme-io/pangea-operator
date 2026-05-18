@@ -33,6 +33,13 @@ pub enum Error {
     #[error("OpenTofu execution failed: {0}")]
     TofuExecution(String),
 
+    /// Magma in-process execution error. Parallel to `TofuExecution`
+    /// for the `MagmaExecutor` IacExecutor impl. Per
+    /// theory/MAGMA-OPERATOR-BACKEND.md — both executors ship side
+    /// by side with symmetric error variants.
+    #[error("Magma execution failed: {0}")]
+    MagmaExecution(String),
+
     /// Packer execution error.
     #[error("Packer execution failed: {0}")]
     PackerExecution(String),

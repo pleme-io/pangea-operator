@@ -11,6 +11,12 @@ mod plan;
 pub mod packer;
 pub mod policy;
 pub mod variable_resolver;
+// Magma-backed alternative IacExecutor (feature-gated). Per
+// theory/MAGMA-OPERATOR-BACKEND.md. Both `TofuExecutor` and
+// `MagmaExecutor` ship side-by-side; the controller selects at
+// startup or per-CR.
+#[cfg(feature = "executor_magma")]
+pub mod magma;
 
 pub use iac_executor::IacExecutor;
 pub use recording::{RecordedCall, RecordingExecutor};
@@ -19,6 +25,9 @@ pub use workspace::{Workspace, WorkspaceManager};
 pub use plan::{Plan, PlanSummary, ResourceChange, ChangeType};
 pub use packer::{PackerExecutor, PackerCommand, PackerResult, parse_packer_manifest, parse_packer_manifest_region};
 pub use policy::{evaluate as evaluate_policy, is_configured as policy_is_configured, PolicyOutcome};
+
+#[cfg(feature = "executor_magma")]
+pub use magma::{MagmaExecutor, MagmaExecutorConfig, StateBackendAsync};
 
 use std::path::PathBuf;
 
