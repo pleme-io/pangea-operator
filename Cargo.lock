@@ -2494,6 +2494,7 @@ dependencies = [
  "futures",
  "k8s-openapi",
  "kube",
+ "libc",
  "once_cell",
  "opentelemetry",
  "opentelemetry-otlp",
