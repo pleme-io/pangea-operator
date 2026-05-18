@@ -331,9 +331,18 @@ impl TofuExecutor {
                 "Tofu command completed"
             );
         } else {
+            // OpenTofu writes most errors to stdout, NOT stderr (e.g. "Saved
+            // plan is stale", "Apply requires configuration to be present",
+            // provider-level diagnostics). Logging only stderr loses every
+            // non-trivial error message — a real bug observed against the
+            // pleme-io-opensource template on 2026-05-18 where apply exited
+            // with code 1 + empty stderr and the actual cause hid in stdout.
+            // Log BOTH streams + duration so the failure is fully visible.
             warn!(
                 command = cmd_str,
                 exit_code,
+                duration_secs = duration.as_secs_f64(),
+                stdout = %stdout,
                 stderr = %stderr,
                 "Tofu command failed"
             );

@@ -1412,8 +1412,59 @@ async fn handle_applying(
         .await?;
         record_event(template, state, EventType::Normal, "Applied", "Infrastructure applied successfully").await;
     } else {
-        let err_msg = format!("tofu apply failed: {}", result.stderr);
+        // OpenTofu writes most diagnostics to stdout, not stderr. Combine
+        // both into the err_msg so the operator surface tells the human
+        // exactly which class of failure tripped.
+        let combined_output = if result.stdout.is_empty() {
+            result.stderr.clone()
+        } else if result.stderr.is_empty() {
+            result.stdout.clone()
+        } else {
+            format!("{}\n--- stderr ---\n{}", result.stdout, result.stderr)
+        };
+        let err_msg = format!("tofu apply failed: {combined_output}");
         warn!(%err_msg);
+
+        // Self-heal the "Saved plan is stale" race: the cached tfplan was
+        // generated against a state serial that no longer matches the live
+        // state. Cause is usually a pod restart mid-Applying or an
+        // out-of-band state write between plan and apply. The recovery
+        // path:
+        //   1. Drop the stale tfplan (so handle_applying can't pick it up
+        //      on next reconcile)
+        //   2. Run workspace.clean() (also drops main.tf.json so the next
+        //      Compiling re-renders deterministically)
+        //   3. Transition phase back to Pending → kube-rs's watch fires →
+        //      next cycle walks Pending → Compiling → Init → Plan → Apply
+        //      with a fresh tfplan against current state.
+        //
+        // Without this self-heal, every retry under the affected workspace
+        // re-uses the same stale tfplan and the cycle deterministically
+        // exhausts maxRetries — observed against pleme-io-opensource on
+        // 2026-05-18 (image @b6550b2). The race is rare in steady state
+        // but pod restarts during the apply window make it deterministic.
+        let is_stale_plan = combined_output.contains("Saved plan is stale")
+            || combined_output.contains("plan is stale");
+        if is_stale_plan {
+            warn!(
+                "Stale plan detected — wiping workspace + transitioning to Pending to force re-plan"
+            );
+            let workspace_clean = state.workspace_manager.get_workspace(template).await;
+            if let Ok(ws) = workspace_clean {
+                let _ = ws.clean().await;
+            }
+            update_phase(template, Phase::Pending, state).await?;
+            record_event(
+                template,
+                state,
+                EventType::Normal,
+                "StalePlanRecovered",
+                "Apply hit stale-plan race; wiped workspace and re-queued from Pending for a fresh plan",
+            )
+            .await;
+            return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
+        }
+
         update_phase_with_error(template, Phase::Failed, &err_msg, state).await?;
         record_reconcile_cycle(
             template,
