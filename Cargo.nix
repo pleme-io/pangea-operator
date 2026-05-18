@@ -8031,6 +8031,7 @@ rec {
           {
             name = "arc-swap";
             packageId = "arc-swap";
+            target = { target, features }: (target."unix" or false);
           }
           {
             name = "async-graphql";
@@ -8046,6 +8047,7 @@ rec {
           {
             name = "async-trait";
             packageId = "async-trait";
+            target = { target, features }: (target."unix" or false);
           }
           {
             name = "axum";
@@ -8056,11 +8058,13 @@ rec {
             name = "chrono";
             packageId = "chrono";
             usesDefaultFeatures = false;
+            target = { target, features }: (target."unix" or false);
             features = [ "serde" "serde" ];
           }
           {
             name = "derive_builder";
             packageId = "derive_builder";
+            target = { target, features }: (target."unix" or false);
           }
           {
             name = "futures";
@@ -8077,8 +8081,14 @@ rec {
             features = [ "runtime" "derive" "unstable-runtime" "runtime" "client" ];
           }
           {
+            name = "libc";
+            packageId = "libc";
+            target = { target, features }: (target."unix" or false);
+          }
+          {
             name = "once_cell";
             packageId = "once_cell";
+            target = { target, features }: (target."unix" or false);
           }
           {
             name = "opentelemetry";
@@ -8121,20 +8131,24 @@ rec {
           {
             name = "rand";
             packageId = "rand 0.8.5";
+            target = { target, features }: (target."unix" or false);
           }
           {
             name = "regex";
             packageId = "regex";
+            target = { target, features }: (target."unix" or false);
           }
           {
             name = "reqwest";
             packageId = "reqwest";
             usesDefaultFeatures = false;
+            target = { target, features }: (target."unix" or false);
             features = [ "rustls-tls" "json" ];
           }
           {
             name = "schemars";
             packageId = "schemars";
+            target = { target, features }: (target."unix" or false);
             features = [ "chrono" ];
           }
           {
@@ -8158,11 +8172,13 @@ rec {
           {
             name = "strum";
             packageId = "strum";
+            target = { target, features }: (target."unix" or false);
             features = [ "derive" ];
           }
           {
             name = "tempfile";
             packageId = "tempfile";
+            target = { target, features }: (target."unix" or false);
           }
           {
             name = "thiserror";
@@ -8212,14 +8228,17 @@ rec {
           {
             name = "url";
             packageId = "url";
+            target = { target, features }: (target."unix" or false);
           }
           {
             name = "urlencoding";
             packageId = "urlencoding";
+            target = { target, features }: (target."unix" or false);
           }
           {
             name = "uuid";
             packageId = "uuid";
+            target = { target, features }: (target."unix" or false);
             features = [ "v4" "serde" ];
           }
         ];
