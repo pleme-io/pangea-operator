@@ -51,7 +51,9 @@ pub use dashboard_controller::DashboardController;
 pub use operator_policy_controller::OperatorPolicyController;
 
 use crate::error::Result;
-use crate::executor::{ExecutorConfig, PackerExecutor, TofuExecutor, WorkspaceManager};
+use crate::executor::{
+    ExecutorBackend, ExecutorConfig, IacExecutor, PackerExecutor, TofuExecutor, WorkspaceManager,
+};
 use kube::Client;
 use std::sync::Arc;
 use std::time::Duration;
@@ -69,8 +71,20 @@ pub struct ControllerState {
     /// PostgreSQL connection pool (if configured).
     pub db_pool: Option<Arc<RwLock<sqlx::PgPool>>>,
 
-    /// OpenTofu executor for running infrastructure commands.
-    pub executor: Arc<TofuExecutor>,
+    /// IaC executor for running infrastructure commands. Polymorphic
+    /// over `Arc<dyn IacExecutor>` so the same controller can dispatch
+    /// to either `TofuExecutor` (subprocess, default) or
+    /// `MagmaExecutor` (in-process, opt-in per-CR via
+    /// `spec.executor: magma`). Per
+    /// `theory/MAGMA-OPERATOR-BACKEND.md` §VI. Use
+    /// `executor_for(spec)` to pick per-CR.
+    pub executor: Arc<dyn IacExecutor>,
+
+    /// The operator-wide default backend choice, derived from the
+    /// `PANGEA_EXECUTOR` env var at startup. `executor_for(spec)`
+    /// uses this as the fallback when a CR doesn't set its own
+    /// `spec.executor`.
+    pub default_backend: ExecutorBackend,
 
     /// Packer executor for running AMI build commands.
     pub packer_executor: Arc<PackerExecutor>,
@@ -103,7 +117,13 @@ impl ControllerState {
         executor_config: ExecutorConfig,
         compiler_backend: Arc<dyn crate::ruby::CompilerBackend>,
     ) -> Result<Self> {
-        let executor = Arc::new(TofuExecutor::new(
+        // Default backend selection: env var → tofu fallback. The
+        // CR-level override happens in `executor_for(spec)`.
+        let default_backend = ExecutorBackend::resolve(
+            None,
+            std::env::var("PANGEA_EXECUTOR").ok().as_deref(),
+        );
+        let executor: Arc<dyn IacExecutor> = Arc::new(TofuExecutor::new(
             executor_config.tofu_binary.clone(),
             Duration::from_secs(executor_config.timeout_secs),
             executor_config.verbose,
@@ -127,12 +147,32 @@ impl ControllerState {
             metrics,
             db_pool: None,
             executor,
+            default_backend,
             packer_executor,
             workspace_manager,
             compiler_backend,
             routing_client: Arc::new(routing::RoutingClient::from_env()),
             operator_policy: Arc::new(operator_policy_cache::OperatorPolicyCache::new_permissive()),
         })
+    }
+
+    /// Resolve which `IacExecutor` impl handles a CR. Honors the
+    /// CR's `spec.executor` first, then `default_backend` (which
+    /// itself came from `PANGEA_EXECUTOR` or `tofu` fallback). M0.12.
+    ///
+    /// For M0.12 step 2 every CR returns the same `Arc<dyn IacExecutor>`
+    /// (the operator's single shared instance). M0.12.x lands the
+    /// MagmaExecutor instance alongside, with selection routing here.
+    pub fn executor_for(&self, spec: &crate::crd::InfrastructureTemplateSpec) -> Arc<dyn IacExecutor> {
+        let _chosen = ExecutorBackend::resolve(
+            spec.executor.as_deref(),
+            Some(self.default_backend.label()),
+        );
+        // The polymorphic switch lands in M0.12.x once a magma
+        // executor instance is wired in alongside the tofu one.
+        // Both backends are already feature-compiled; the wiring is
+        // a follow-up that owns the lifecycle.
+        Arc::clone(&self.executor)
     }
 
     /// Set the database pool.
