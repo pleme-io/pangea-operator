@@ -302,9 +302,35 @@ impl TofuExecutor {
                 return Err(Error::TofuExecution(format!("Failed to wait for tofu: {}", e)));
             }
             Err(_) => {
-                // Timeout - kill the process
-                error!(command = cmd_str, "Tofu command timed out");
-                let _ = child.kill().await;
+                // Timeout — send SIGTERM first, then SIGKILL as a last resort.
+                //
+                // SIGKILL alone leaks the pg-backend advisory lock that tofu
+                // holds during apply/plan, causing the next cycle's plan to
+                // fail instantly with "lock already held". The self-heal
+                // recovers but the lock stays leaked until pg session
+                // expires (minutes), so each retry burns a cycle.
+                //
+                // SIGTERM gives tofu the chance to flush state, release the
+                // lock, and exit cleanly. We wait up to 30 seconds for that
+                // to happen; if tofu ignores the signal we escalate to
+                // SIGKILL so we don't hang the reconciler indefinitely.
+                error!(command = cmd_str, "Tofu command timed out — sending SIGTERM for clean shutdown");
+                if let Some(pid) = child.id() {
+                    // SIGTERM via libc — tokio::process::Child::kill is SIGKILL.
+                    #[cfg(unix)]
+                    unsafe {
+                        let _ = libc::kill(pid as libc::pid_t, libc::SIGTERM);
+                    }
+                }
+                // Grace period for tofu to release the lock + flush state.
+                let graceful = tokio::time::timeout(
+                    std::time::Duration::from_secs(30),
+                    child.wait(),
+                ).await;
+                if graceful.is_err() {
+                    error!(command = cmd_str, "Tofu did not exit within 30s of SIGTERM — sending SIGKILL");
+                    let _ = child.kill().await;
+                }
                 return Err(Error::Timeout(self.timeout.as_secs()));
             }
         };

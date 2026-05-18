@@ -78,6 +78,14 @@ prometheus = "0.13"
 thiserror.workspace = true
 anyhow.workspace = true
 
+# SIGTERM-then-SIGKILL graceful shutdown for tofu apply timeouts.
+# tokio::process::Child::kill only does SIGKILL; SIGKILL leaks the
+# pg-backend advisory lock held by tofu. SIGTERM lets tofu flush
+# state and release the lock cleanly before we escalate to SIGKILL
+# at the 30-second grace boundary.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # HTTP client (for compiler sidecar)
 reqwest.workspace = true
 
