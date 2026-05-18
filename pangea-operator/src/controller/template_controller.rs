@@ -1525,8 +1525,10 @@ async fn run_import_prepass(
     }
 
     let variables = template.spec.variables.clone().unwrap_or_default();
-    let mut imported: Vec<String> = Vec::new();
     let mut covered: HashSet<String> = HashSet::new();
+    // (address, import_id, source_label). Resolved synchronously up
+    // front — no I/O — then dispatched concurrently below.
+    let mut import_targets: Vec<(String, String, String)> = Vec::new();
 
     // Layer 1: per-address importHints (existing behaviour, highest
     // priority — the user explicitly named these resources).
@@ -1534,8 +1536,11 @@ async fn run_import_prepass(
         if !create_addresses.contains(&addr.as_str()) {
             continue;
         }
-        let import_id = match substitute_import_id(id_template, &variables) {
-            Ok(id) => id,
+        match substitute_import_id(id_template, &variables) {
+            Ok(id) => {
+                import_targets.push((addr.clone(), id, "hint".to_string()));
+                covered.insert(addr.clone());
+            }
             Err(missing) => {
                 warn!(
                     address = %addr,
@@ -1552,13 +1557,8 @@ async fn run_import_prepass(
                     ),
                 )
                 .await;
-                continue;
             }
-        };
-        if try_tofu_import(template, state, workspace_path, addr, &import_id, "hint").await {
-            imported.push(addr.clone());
         }
-        covered.insert(addr.clone());
     }
 
     // Layer 2 + 3: auto-import via importPolicy.naturalIds (or
@@ -1600,8 +1600,10 @@ async fn run_import_prepass(
                 .get(*addr)
                 .cloned()
                 .unwrap_or(serde_json::Value::Null);
-            let import_id = match substitute_with_planned(&id_template, &planned_attrs, &variables) {
-                Ok(id) => id,
+            match substitute_with_planned(&id_template, &planned_attrs, &variables) {
+                Ok(id) => {
+                    import_targets.push(((*addr).to_string(), id, "auto".to_string()));
+                }
                 Err(missing) => {
                     // Common cause: the template references a
                     // server-assigned attribute (e.g. `planned.id`,
@@ -1625,18 +1627,55 @@ async fn run_import_prepass(
                         },
                         "auto-import: substitution failed; skipping"
                     );
-                    continue;
                 }
             };
-            if try_tofu_import(template, state, workspace_path, addr, &import_id, "auto").await {
-                imported.push((*addr).to_string());
-            }
         }
         // Replace bundled_natural_ids fn-pointer warning with explicit use to avoid
         // dead_code on the import. (The fn is invoked transitively via resolve_natural_id.)
         let _ = bundled_natural_ids;
     }
 
+    // Dispatch all resolved imports concurrently. Each `tofu import`
+    // is its own subprocess and the pg backend's advisory lock
+    // naturally serializes the state-write step (~200ms/import),
+    // so the win comes from overlapping the non-locked phases
+    // (config load, provider gRPC init, GitHub API call — ~10-15s
+    // each). Empirically against pleme-io-opensource (~459 imports)
+    // serial=1/15s = 7000s+ ≈ 2h; buffer_unordered(10) ≈ 12-15min.
+    const IMPORT_CONCURRENCY: usize = 10;
+    let total_targets = import_targets.len();
+    if total_targets > 0 {
+        info!(
+            total = total_targets,
+            concurrency = IMPORT_CONCURRENCY,
+            "Running import prepass concurrently"
+        );
+    }
+    let imported: Vec<String> = futures::stream::iter(import_targets.into_iter())
+        .map(|(addr, import_id, source_label)| async move {
+            let ok = try_tofu_import(
+                template,
+                state,
+                workspace_path,
+                &addr,
+                &import_id,
+                &source_label,
+            )
+            .await;
+            if ok { Some(addr) } else { None }
+        })
+        .buffer_unordered(IMPORT_CONCURRENCY)
+        .filter_map(|maybe_addr| async move { maybe_addr })
+        .collect()
+        .await;
+
+    if total_targets > 0 {
+        info!(
+            imported = imported.len(),
+            total = total_targets,
+            "Import prepass complete"
+        );
+    }
     imported
 }
 
