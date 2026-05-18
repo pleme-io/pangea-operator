@@ -1562,6 +1562,38 @@ mod self_healable_apply_error_tests {
     }
 }
 
+/// Extract every address with a `create` action from a `tofu show
+/// -json <tfplan>` payload. Used by the import prepass to find ALL
+/// create-action addresses without the 50-entry cap that
+/// `Plan::drift_details` applies for status-surface fitness.
+fn extract_create_addresses_from_plan(plan_json: &str) -> Vec<String> {
+    let parsed: serde_json::Value = match serde_json::from_str(plan_json) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    let changes = match parsed.get("resource_changes").and_then(|v| v.as_array()) {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+    changes
+        .iter()
+        .filter_map(|change| {
+            let actions = change
+                .pointer("/change/actions")
+                .and_then(|v| v.as_array())?;
+            let is_create = actions.iter().any(|a| a.as_str() == Some("create"));
+            if !is_create {
+                return None;
+            }
+            change
+                .get("address")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
+        .collect()
+}
+
+
 /// Run the pre-apply import sweep. Returns the set of addresses
 /// successfully imported so the cycle receipt can mark them as
 /// `Outcome::Imported` instead of whatever the apply-time plan
@@ -1594,14 +1626,32 @@ async fn run_import_prepass(
         return Vec::new();
     }
 
-    let create_addresses: Vec<&str> = prior_drifts
-        .iter()
-        .filter(|d| d.action == "create")
-        .map(|d| d.address.as_str())
-        .collect();
-    if create_addresses.is_empty() {
+    // Read the plan JSON ONCE and derive create_addresses from it
+    // directly — NOT from prior_drifts. Drift details on status are
+    // capped at 50 entries (k8s object size limit), but the actual
+    // tofu plan can have hundreds of creates. Reading the plan file
+    // bypasses the cap entirely so the prepass sees every create-
+    // action it could import. prior_drifts is kept as a fallback
+    // path for callers that don't have a plan file available.
+    let plan_json = match state.executor.show_plan(workspace_path, plan_path).await {
+        Ok(r) if r.success => r.stdout,
+        _ => String::new(),
+    };
+    let plan_create_addresses = extract_create_addresses_from_plan(&plan_json);
+    let create_addresses_owned: Vec<String> = if !plan_create_addresses.is_empty() {
+        plan_create_addresses
+    } else {
+        prior_drifts
+            .iter()
+            .filter(|d| d.action == "create")
+            .map(|d| d.address.clone())
+            .collect()
+    };
+    if create_addresses_owned.is_empty() {
         return Vec::new();
     }
+    let create_addresses: Vec<&str> =
+        create_addresses_owned.iter().map(|s| s.as_str()).collect();
 
     let variables = template.spec.variables.clone().unwrap_or_default();
     let mut covered: HashSet<String> = HashSet::new();
@@ -1644,14 +1694,11 @@ async fn run_import_prepass(
     // bundled defaults) for every create-action not already covered
     // by an explicit hint. Only fires when autoOnConflict is true.
     if auto_import {
-        // Snapshot the plan once. parse_planned_attrs is best-effort —
-        // an empty map just means substitution will fail per-address
-        // and the address gets skipped (we fall back to the apply,
-        // which then fails in a debuggable way).
-        let plan_json = match state.executor.show_plan(workspace_path, plan_path).await {
-            Ok(r) if r.success => r.stdout,
-            _ => String::new(),
-        };
+        // Plan JSON already parsed above (shared with create_addresses
+        // derivation). parse_planned_attrs is best-effort — an empty
+        // map just means substitution will fail per-address and the
+        // address gets skipped (we fall back to the apply, which then
+        // fails in a debuggable way).
         let planned_by_addr = parse_planned_attrs(&plan_json);
 
         let user_natural_ids = template
