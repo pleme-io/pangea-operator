@@ -3,6 +3,7 @@
 //! Manages the execution of OpenTofu commands (init, plan, apply, destroy)
 //! in isolated workspaces with proper credential and state handling.
 
+pub mod backend_select;
 pub mod iac_executor;
 pub mod recording;
 mod tofu;
@@ -18,6 +19,7 @@ pub mod variable_resolver;
 #[cfg(feature = "executor_magma")]
 pub mod magma;
 
+pub use backend_select::ExecutorBackend;
 pub use iac_executor::IacExecutor;
 pub use recording::{RecordedCall, RecordingExecutor};
 pub use tofu::{TofuExecutor, TofuCommand, TofuResult};

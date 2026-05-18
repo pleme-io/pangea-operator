@@ -230,6 +230,10 @@ async fn reconcile_flow(
                             auto_approve: step.auto_approve.unwrap_or(true),
                             refresh_interval: step.refresh_interval.clone().unwrap_or_else(|| "10m".into()),
                             suspend: false,
+                            // Flow-spawned templates inherit the operator-wide
+                            // executor default. Per-CR overrides happen on
+                            // operator-authored templates only (M0.12).
+                            executor: None,
                             destroy_protection: step.destroy_protection.unwrap_or(flow.spec.destroy_protection),
                             retry_policy: None,
                             provider_credentials: None,

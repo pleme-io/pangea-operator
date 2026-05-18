@@ -67,6 +67,18 @@ pub struct InfrastructureTemplateSpec {
     #[serde(default)]
     pub suspend: bool,
 
+    /// IaC backend to use for plan/apply on this CR. Accepts `tofu`
+    /// (default — OpenTofu subprocess) or `magma` (in-process Rust
+    /// library via the `executor_magma` feature). When unset, falls
+    /// back to the operator-wide default from the `PANGEA_EXECUTOR`
+    /// env var, then to `tofu`.
+    ///
+    /// Both backends coexist indefinitely; this field is the per-CR
+    /// opt-in for magma during the burn-in period. Per
+    /// `theory/MAGMA-OPERATOR-BACKEND.md` §VI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executor: Option<String>,
+
     /// Prevent destruction of the managed infrastructure.
     ///
     /// When enabled, the operator will refuse to run `tofu destroy` even if
