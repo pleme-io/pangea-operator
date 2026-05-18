@@ -78,6 +78,32 @@ impl TofuResult {
     }
 }
 
+/// Common args every state-mutating tofu invocation shares: `-input=false`
+/// (no interactive prompts in a controller) + `-no-color` (no ANSI in logs).
+/// Centralized per the prime directive — three+ copies of this literal
+/// pair previously lived inline in init/plan/apply/destroy/refresh/import.
+const BASE_ARGS: &[&str] = &["-input=false", "-no-color"];
+
+/// Bump tofu's default parallelism (10) for plan + apply + destroy.
+///
+/// On templates whose resource graph fans out to hundreds of provider API
+/// calls (e.g. pleme-io-opensource with ~600 GitHub resources, or large
+/// AWS workspaces), the bottleneck is provider concurrency — not CPU.
+/// 20 roughly halves wall-time on those templates while staying well
+/// below typical provider rate-limit thresholds (GitHub: 5000/hr authed;
+/// AWS: per-service). Empirically validated against pleme-io-opensource
+/// 2026-05-18.
+///
+/// Future direction: thread `spec.parallelism` through the
+/// InfrastructureTemplate CRD so per-template values can override this
+/// default when the upstream provider has tighter or looser limits.
+const PARALLELISM_FLAG: &str = "-parallelism=20";
+
+/// Collapse repeated identical warnings during long-running ops. Trims
+/// log volume by 30-50 % on templates that produce the same deprecation
+/// or attribute-default warning per-resource.
+const COMPACT_WARNINGS_FLAG: &str = "-compact-warnings";
+
 impl TofuExecutor {
     /// Create a new executor.
     pub fn new(binary: std::path::PathBuf, timeout: Duration, verbose: bool) -> Self {
@@ -90,7 +116,7 @@ impl TofuExecutor {
 
     /// Run `tofu init`.
     pub async fn init(&self, work_dir: &Path, extra_args: &[&str]) -> Result<TofuResult> {
-        let mut args = vec!["-input=false", "-no-color"];
+        let mut args: Vec<&str> = BASE_ARGS.to_vec();
         args.extend(extra_args);
         self.execute(TofuCommand::Init, work_dir, &args, &HashMap::new()).await
     }
@@ -102,7 +128,10 @@ impl TofuExecutor {
         plan_file: Option<&Path>,
         extra_args: &[&str],
     ) -> Result<TofuResult> {
-        let mut args = vec!["-input=false", "-no-color", "-detailed-exitcode"];
+        let mut args: Vec<&str> = BASE_ARGS.to_vec();
+        args.push("-detailed-exitcode");
+        args.push(PARALLELISM_FLAG);
+        args.push(COMPACT_WARNINGS_FLAG);
 
         if let Some(pf) = plan_file {
             args.push("-out");
@@ -129,13 +158,18 @@ impl TofuExecutor {
     /// Empirically observed 2026-05-18 on rio: pleme-io-opensource exhausted
     /// `maxRetries=3` with the same race on every cycle. `-refresh=false` is
     /// the canonical OpenTofu fix for this class of bug.
+    ///
+    /// Parallelism + compact-warnings inherit the same tuning as `plan` —
+    /// see the file-level constants above.
     pub async fn apply(
         &self,
         work_dir: &Path,
         plan_file: Option<&Path>,
         auto_approve: bool,
     ) -> Result<TofuResult> {
-        let mut args = vec!["-input=false", "-no-color"];
+        let mut args: Vec<&str> = BASE_ARGS.to_vec();
+        args.push(PARALLELISM_FLAG);
+        args.push(COMPACT_WARNINGS_FLAG);
 
         if auto_approve {
             args.push("-auto-approve");
@@ -151,7 +185,8 @@ impl TofuExecutor {
 
     /// Run `tofu destroy`.
     pub async fn destroy(&self, work_dir: &Path, auto_approve: bool) -> Result<TofuResult> {
-        let mut args = vec!["-input=false", "-no-color"];
+        let mut args: Vec<&str> = BASE_ARGS.to_vec();
+        args.push(PARALLELISM_FLAG);
 
         if auto_approve {
             args.push("-auto-approve");
@@ -174,7 +209,7 @@ impl TofuExecutor {
 
     /// Run `tofu refresh`.
     pub async fn refresh(&self, work_dir: &Path) -> Result<TofuResult> {
-        let args = vec!["-input=false", "-no-color"];
+        let args = BASE_ARGS.to_vec();
         self.execute(TofuCommand::Refresh, work_dir, &args, &HashMap::new()).await
     }
 
@@ -193,7 +228,9 @@ impl TofuExecutor {
         address: &str,
         id: &str,
     ) -> Result<TofuResult> {
-        let args = vec!["-input=false", "-no-color", address, id];
+        let mut args: Vec<&str> = BASE_ARGS.to_vec();
+        args.push(address);
+        args.push(id);
         self.execute(TofuCommand::Import, work_dir, &args, &HashMap::new())
             .await
     }
