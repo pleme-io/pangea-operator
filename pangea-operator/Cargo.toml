@@ -39,6 +39,7 @@ executor_magma = [
     "dep:magma-bundle",
     "dep:magma-fsm",
     "dep:magma-rubygems",
+    "dep:magma-stream",
     "dep:hex",
 ]
 
@@ -82,6 +83,10 @@ magma-fsm              = { git = "https://github.com/pleme-io/magma", optional =
 # Gemfile.lock + attests the closure; future M1-M5 materialize the
 # tree end-to-end so bundle install vanishes from operator startup.
 magma-rubygems         = { git = "https://github.com/pleme-io/magma", optional = true }
+# BLAKE3-chained audit event stream + JsonLinesSink for durable
+# audit logs. Captured during plan/apply and threaded into
+# Bundle.audit per theory/CONVERGENCE-SUBSTRATE.md §IV.2.
+magma-stream           = { git = "https://github.com/pleme-io/magma", optional = true }
 hex                    = { version = "0.4", optional = true }
 
 # Kubernetes

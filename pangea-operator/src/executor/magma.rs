@@ -151,6 +151,15 @@ pub struct MagmaExecutorConfig<S: StateBackend + ?Sized> {
     /// Cosmetic, alert+auto-fix Functional, require-approval for
     /// Critical).
     pub drift_policy: magma_drift::DriftPolicy,
+    /// Optional path to a JSON-lines audit log. When set, every
+    /// reconcile emits typed magma-stream events (PlanComputed,
+    /// DriftClassified, ApplyOutcome) into the file. The chain is
+    /// BLAKE3-Merkle-linked so post-hoc audits can verify
+    /// non-tampering. Captured events are also threaded into
+    /// Bundle.audit so the compliance artifact carries them.
+    /// None = no audit log (events emit only into the in-memory
+    /// stream captured into Bundle.audit).
+    pub audit_log_path: Option<PathBuf>,
 }
 
 impl<S: StateBackend + ?Sized> Default for MagmaExecutorConfig<S>
@@ -167,6 +176,7 @@ where
             plan_checkpoint: true,
             preflight_laws:  true,
             drift_policy:    magma_drift::DriftPolicy::conservative_default(),
+            audit_log_path:  None,
         }
     }
 }
@@ -182,6 +192,7 @@ impl<S: StateBackend + ?Sized> Clone for MagmaExecutorConfig<S> {
             plan_checkpoint: self.plan_checkpoint,
             preflight_laws:  self.preflight_laws,
             drift_policy:    self.drift_policy.clone(),
+            audit_log_path:  self.audit_log_path.clone(),
         }
     }
 }
@@ -234,6 +245,44 @@ fn ok_tofu_result(stdout: String, started: Instant) -> TofuResult {
         success:   true,
         duration:  started.elapsed(),
     }
+}
+
+/// Emit typed magma-stream events (PlanComputed, DriftClassified,
+/// optional ApplyOutcome) into:
+/// * an in-process `InMemorySink` (captured into the returned
+///   Vec<Event> + threaded into Bundle.audit)
+/// * an optional `JsonLinesSink` at `audit_log_path` (durable
+///   on-disk audit log, BLAKE3-chained per magma_stream's contract)
+///
+/// Returns the captured event chain — every event's hash is
+/// linked to the previous (`prev_hash`) so the consumer can
+/// verify chain integrity with `magma_stream::verify_chain`.
+async fn emit_stream_events(
+    audit_log_path: &Option<PathBuf>,
+    plan:           &magma_converge::Plan,
+    drift:          &magma_drift::DriftReport,
+    outcome:        Option<&magma_converge::Outcome>,
+) -> Vec<magma_stream::Event> {
+    use std::sync::Arc;
+
+    let in_mem = Arc::new(magma_stream::InMemorySink::new("audit_capture"));
+    let mut stream = magma_stream::PlanStream::new();
+    stream.register(in_mem.clone());
+    if let Some(path) = audit_log_path.as_ref() {
+        stream.register(Arc::new(magma_stream::JsonLinesSink::new(
+            "audit_log_jsonl",
+            path,
+        )));
+    }
+    // PlanComputed
+    stream.emit_plan("terraform", plan).await;
+    // DriftClassified
+    stream.emit_drift(drift).await;
+    // ApplyOutcome (apply-stage only)
+    if let Some(o) = outcome {
+        stream.emit_outcome(o).await;
+    }
+    in_mem.events()
 }
 
 /// If the workspace ships a `Gemfile.lock`, parse it through
@@ -381,11 +430,21 @@ where
             "magma_executor::plan",
         ).map_err(|e| Error::MagmaExecution(format!("fsm transition: {e}")))?;
 
-        // Build a typed Bundle: plan + drift + lifecycle + (empty
-        // audit at this stage) + optional gem-tree attestation.
-        // The bundle's BLAKE3 hash is the compliance-export
-        // identity that follows this reconcile through apply +
-        // verification.
+        // Emit typed events into a magma-stream PlanStream so the
+        // BLAKE3-chained audit log captures every lifecycle stage.
+        // Always-on InMemorySink captures events for the Bundle;
+        // optional JsonLinesSink durably persists to disk.
+        let audit_events = emit_stream_events(
+            &self.cfg.audit_log_path,
+            &universal_plan,
+            &drift_report,
+            None, // no outcome at plan-stage
+        ).await;
+
+        // Build a typed Bundle: plan + drift + lifecycle + audit
+        // chain + optional gem-tree attestation. The bundle's
+        // BLAKE3 hash is the compliance-export identity that
+        // follows this reconcile through apply + verification.
         let workspace_label = self.cfg.schema_name.clone() + "/" + &self.cfg.template_name;
         let gem_tree_attestation = compute_gem_tree_attestation(work_dir).await;
         let bundle = magma_bundle::Bundle::new_with_gem_tree(
@@ -395,7 +454,7 @@ where
             None, // no outcome at plan-stage
             drift_report.clone(),
             lifecycle.clone(),
-            vec![],
+            audit_events,
             gem_tree_attestation,
         ).map_err(|e| Error::MagmaExecution(format!("magma_bundle::new: {e}")))?;
 
@@ -550,6 +609,16 @@ where
             started_at:  outcome.started_at,
             finished_at: outcome.finished_at,
         };
+        // Emit apply-stage events into the audit chain (PlanComputed
+        // + DriftClassified + ApplyOutcome). The chain is appended
+        // to the audit_log_path if configured + captured into the
+        // final Bundle.audit field.
+        let audit_events = emit_stream_events(
+            &self.cfg.audit_log_path,
+            &universal_plan,
+            &drift,
+            Some(&universal_outcome),
+        ).await;
         let workspace_label = self.cfg.schema_name.clone() + "/" + &self.cfg.template_name;
         let gem_tree_attestation = compute_gem_tree_attestation(work_dir).await;
         let final_bundle = magma_bundle::Bundle::new_with_gem_tree(
@@ -559,7 +628,7 @@ where
             Some(universal_outcome),
             drift,
             lifecycle.clone(),
-            vec![],
+            audit_events,
             gem_tree_attestation,
         ).map_err(|e| Error::MagmaExecution(format!("magma_bundle::new: {e}")))?;
         let bundle_bytes = serde_json::to_vec_pretty(&final_bundle)
@@ -701,6 +770,7 @@ mod tests {
             // Default which has preflight_laws: true.
             preflight_laws:  false,
             drift_policy:    magma_drift::DriftPolicy::conservative_default(),
+            audit_log_path:  None,
         }
     }
 
@@ -864,6 +934,7 @@ mod tests {
             plan_checkpoint: true,
             preflight_laws:  false,
             drift_policy:    magma_drift::DriftPolicy::conservative_default(),
+            audit_log_path:  None,
         });
 
         let tmp = tempfile::tempdir().unwrap();
@@ -917,6 +988,7 @@ mod tests {
             plan_checkpoint: true,
             preflight_laws:  false,
             drift_policy:    magma_drift::DriftPolicy::conservative_default(),
+            audit_log_path:  None,
         });
 
         let tmp_a = tempfile::tempdir().unwrap();
@@ -1016,6 +1088,7 @@ mod tests {
             plan_checkpoint: true,
             preflight_laws:  false,
             drift_policy:    magma_drift::DriftPolicy::conservative_default(),
+            audit_log_path:  None,
         };
         let exec = MagmaExecutor::new(cfg.clone());
         let tmp = tempfile::tempdir().unwrap();
@@ -1063,6 +1136,7 @@ mod tests {
             plan_checkpoint: true,
             preflight_laws:  true, // production default
             drift_policy:    magma_drift::DriftPolicy::conservative_default(),
+            audit_log_path:  None,
         };
         let exec = MagmaExecutor::new(cfg);
         let tmp = tempfile::tempdir().unwrap();
@@ -1100,6 +1174,43 @@ mod tests {
             }
             other => panic!("expected MagmaExecution preflight error, got: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn audit_log_writes_chained_jsonl_events() {
+        // With audit_log_path set, plan() writes BLAKE3-chained
+        // typed events to the configured path. The same events
+        // are captured into Bundle.audit; chain verification
+        // against the on-disk file passes.
+        let tmp = tempfile::tempdir().unwrap();
+        let log_path = tmp.path().join("audit.jsonl");
+        let mut cfg = fixture_config();
+        cfg.audit_log_path = Some(log_path.clone());
+        let exec = MagmaExecutor::new(cfg);
+        render_workspace(
+            tmp.path(),
+            &json!({
+                "provider": { "aws": { "region": "us-east-1" } },
+                "resource": { "aws_iam_role": { "n": { "name": "audit-role" } } }
+            }),
+        )
+        .await;
+        exec.plan(tmp.path(), None, &[]).await.unwrap();
+
+        // Audit file exists + contains JSONL events.
+        assert!(log_path.exists());
+        let text = std::fs::read_to_string(&log_path).unwrap();
+        let event_count = text.lines().filter(|l| !l.trim().is_empty()).count();
+        // plan() emits 2 events: PlanComputed + DriftClassified.
+        assert_eq!(event_count, 2);
+
+        // Bundle.audit captured the same chain.
+        let bundle_path = tmp.path().join("magma-bundle.json");
+        let bundle: magma_bundle::Bundle =
+            serde_json::from_slice(&std::fs::read(&bundle_path).unwrap()).unwrap();
+        assert_eq!(bundle.audit.len(), 2);
+        // verify the chain end-to-end.
+        magma_stream::verify_chain(&bundle.audit).unwrap();
     }
 
     #[tokio::test]

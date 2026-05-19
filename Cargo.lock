@@ -2951,6 +2951,7 @@ dependencies = [
  "magma-plan",
  "magma-rubygems",
  "magma-state",
+ "magma-stream",
  "magma-test-laws",
  "magma-types",
  "once_cell",
