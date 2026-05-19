@@ -141,6 +141,16 @@ pub struct MagmaExecutorConfig<S: StateBackend + ?Sized> {
     /// never reach the live backend. Default true for production
     /// safety; tests with minimal fixtures may opt out.
     pub preflight_laws: bool,
+    /// Drift classification policy. Every plan's resource changes
+    /// are classified per this policy into AutoCorrect /
+    /// AutoCorrectWithAlert / RequireApproval / Refuse. Plans
+    /// containing changes that policy refuses or holds for
+    /// approval are surfaced in stdout JSON + CR status; the
+    /// reconcile loop can use that to halt or escalate. Default
+    /// is `DriftPolicy::conservative_default()` (auto-fix
+    /// Cosmetic, alert+auto-fix Functional, require-approval for
+    /// Critical).
+    pub drift_policy: magma_drift::DriftPolicy,
 }
 
 impl<S: StateBackend + ?Sized> Default for MagmaExecutorConfig<S>
@@ -156,6 +166,7 @@ where
             backend_shape:   BackendShape::Magma,
             plan_checkpoint: true,
             preflight_laws:  true,
+            drift_policy:    magma_drift::DriftPolicy::conservative_default(),
         }
     }
 }
@@ -170,6 +181,7 @@ impl<S: StateBackend + ?Sized> Clone for MagmaExecutorConfig<S> {
             backend_shape:   self.backend_shape,
             plan_checkpoint: self.plan_checkpoint,
             preflight_laws:  self.preflight_laws,
+            drift_policy:    self.drift_policy.clone(),
         }
     }
 }
@@ -218,6 +230,34 @@ fn ok_tofu_result(stdout: String, started: Instant) -> TofuResult {
         success:   true,
         duration:  started.elapsed(),
     }
+}
+
+/// Convert a `magma_types::Plan` (Terraform-shape, granular Action
+/// surface) into a `magma_converge::Plan` (universal shape with
+/// derived severity). Lets the operator route any
+/// magma-plan-produced plan through magma-drift's classifier
+/// without touching the Reconciler trait machinery.
+fn to_universal_plan(plan: &magma_types::Plan) -> magma_converge::Plan {
+    let changes: Vec<magma_converge::Change> = plan
+        .resource_changes
+        .iter()
+        .map(|rc| {
+            let address = format!("{}.{}", rc.address.type_id.0, rc.address.name);
+            let action = match rc.action {
+                magma_types::Action::Create           => magma_converge::Action::Create,
+                magma_types::Action::Update           => magma_converge::Action::Update,
+                magma_types::Action::Delete           => magma_converge::Action::Delete,
+                magma_types::Action::Replace          => magma_converge::Action::Replace,
+                magma_types::Action::NoOp             => magma_converge::Action::NoOp,
+                magma_types::Action::Read             => magma_converge::Action::NoOp,
+                magma_types::Action::Forget           => magma_converge::Action::Delete,
+                magma_types::Action::CreateThenDelete => magma_converge::Action::Replace,
+                magma_types::Action::DeleteThenCreate => magma_converge::Action::Replace,
+            };
+            magma_converge::change(address, action, rc.before.clone(), rc.after.clone())
+        })
+        .collect();
+    magma_converge::Plan::new("terraform", changes)
 }
 
 fn changes_tofu_result(stdout: String, started: Instant) -> TofuResult {
@@ -299,11 +339,28 @@ where
             tokio::fs::write(&checkpoint, &bytes).await.map_err(Error::Io)?;
         }
 
+        // Classify the plan per the configured DriftPolicy. Every
+        // change is routed into AutoCorrect / AutoCorrectWithAlert /
+        // RequireApproval / Refuse so the reconcile loop can act
+        // (auto-apply, surface alert, halt for approval, refuse).
+        let universal_plan = to_universal_plan(&plan);
+        let drift_report = magma_drift::classify(&universal_plan, &self.cfg.drift_policy);
+
         let stdout = serde_json::to_string_pretty(&serde_json::json!({
             "plan_id":          hex::encode(plan.id.0),
             "created_at":       plan.created_at,
             "resource_changes": plan.resource_changes.len(),
             "changes":          plan.resource_changes,
+            "drift": {
+                "summary": drift_report.summary,
+                "decisions": drift_report.events.iter().map(|e| serde_json::json!({
+                    "address":  e.address,
+                    "action":   e.action,
+                    "severity": e.severity,
+                    "decision": e.decision,
+                    "matched_policy": e.matched_policy,
+                })).collect::<Vec<_>>(),
+            },
         }))
         .unwrap_or_default();
 
@@ -471,6 +528,7 @@ mod tests {
             // reject them. Production code paths use the
             // Default which has preflight_laws: true.
             preflight_laws:  false,
+            drift_policy:    magma_drift::DriftPolicy::conservative_default(),
         }
     }
 
@@ -633,6 +691,7 @@ mod tests {
             backend_shape:   BackendShape::Magma,
             plan_checkpoint: true,
             preflight_laws:  false,
+            drift_policy:    magma_drift::DriftPolicy::conservative_default(),
         });
 
         let tmp = tempfile::tempdir().unwrap();
@@ -685,6 +744,7 @@ mod tests {
             backend_shape:   BackendShape::Magma,
             plan_checkpoint: true,
             preflight_laws:  false,
+            drift_policy:    magma_drift::DriftPolicy::conservative_default(),
         });
 
         let tmp_a = tempfile::tempdir().unwrap();
@@ -783,6 +843,7 @@ mod tests {
             backend_shape:   BackendShape::Tofu,
             plan_checkpoint: true,
             preflight_laws:  false,
+            drift_policy:    magma_drift::DriftPolicy::conservative_default(),
         };
         let exec = MagmaExecutor::new(cfg.clone());
         let tmp = tempfile::tempdir().unwrap();
@@ -829,6 +890,7 @@ mod tests {
             backend_shape:   BackendShape::Magma,
             plan_checkpoint: true,
             preflight_laws:  true, // production default
+            drift_policy:    magma_drift::DriftPolicy::conservative_default(),
         };
         let exec = MagmaExecutor::new(cfg);
         let tmp = tempfile::tempdir().unwrap();
@@ -866,5 +928,37 @@ mod tests {
             }
             other => panic!("expected MagmaExecution preflight error, got: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn plan_stdout_includes_drift_classification() {
+        // Every plan emits a typed drift classification using the
+        // configured DriftPolicy. Auto-fix Cosmetic, alert+auto-fix
+        // Functional, require-approval for Critical (conservative
+        // default).
+        let exec = MagmaExecutor::new(fixture_config());
+        let tmp = tempfile::tempdir().unwrap();
+        render_workspace(
+            tmp.path(),
+            &json!({
+                "provider": { "aws": { "region": "us-east-1" } },
+                "resource": {
+                    "aws_iam_role": { "node": { "name": "drift-role" } }
+                }
+            }),
+        )
+        .await;
+        let result = exec.plan(tmp.path(), None, &[]).await.unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result.stdout).unwrap();
+        assert!(parsed["drift"].is_object(), "plan stdout missing drift block");
+        // Create of Functional severity routes to AutoCorrectWithAlert
+        // under the conservative_default policy.
+        let decisions = parsed["drift"]["decisions"].as_array().unwrap();
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0]["decision"], "auto_correct_with_alert");
+        // Summary reflects the 1-change classification.
+        let summary = &parsed["drift"]["summary"];
+        assert_eq!(summary["total_changes"], 1);
+        assert_eq!(summary["auto_corrected_with_alert"], 1);
     }
 }

@@ -2330,6 +2330,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "magma-drift"
+version = "0.1.0"
+source = "git+https://github.com/pleme-io/magma#2c87971f068529bba6023102f92ae5ce01a7373b"
+dependencies = [
+ "blake3",
+ "chrono",
+ "hex",
+ "magma-converge",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "magma-flow"
 version = "0.1.0"
 source = "git+https://github.com/pleme-io/magma#2c87971f068529bba6023102f92ae5ce01a7373b"
@@ -2870,6 +2884,8 @@ dependencies = [
  "magma-apply",
  "magma-backend",
  "magma-config",
+ "magma-converge",
+ "magma-drift",
  "magma-operator-backend",
  "magma-plan",
  "magma-state",
@@ -3293,7 +3309,7 @@ version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be769465445e8c1474e9c5dac2018218498557af32d9ed057325ec9a41ae81bf"
 dependencies = [
- "heck 0.5.0",
+ "heck 0.4.1",
  "itertools",
  "log",
  "multimap",

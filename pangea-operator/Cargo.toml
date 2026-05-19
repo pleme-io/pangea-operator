@@ -34,6 +34,8 @@ executor_magma = [
     "dep:magma-types",
     "dep:magma-operator-backend",
     "dep:magma-test-laws",
+    "dep:magma-drift",
+    "dep:magma-converge",
     "dep:hex",
 ]
 
@@ -59,6 +61,12 @@ magma-operator-backend = { git = "https://github.com/pleme-io/magma", optional =
 # so malformed workspaces fail loudly instead of reaching the live
 # backend. See theory/TESTING-SUBSTRATE.md.
 magma-test-laws        = { git = "https://github.com/pleme-io/magma", optional = true, features = ["preflight"] }
+# Drift classification + DriftPolicy — every plan is classified per
+# the configured policy so operators can route AutoCorrect /
+# AutoCorrectWithAlert / RequireApproval / Refuse anomalies.
+magma-drift            = { git = "https://github.com/pleme-io/magma", optional = true }
+# Universal Change / Plan / Action types (needed for drift conversion).
+magma-converge         = { git = "https://github.com/pleme-io/magma", optional = true }
 hex                    = { version = "0.4", optional = true }
 
 # Kubernetes
