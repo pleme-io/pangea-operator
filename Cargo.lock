@@ -2296,6 +2296,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "magma-bundle"
+version = "0.1.0"
+source = "git+https://github.com/pleme-io/magma#2c87971f068529bba6023102f92ae5ce01a7373b"
+dependencies = [
+ "blake3",
+ "chrono",
+ "hex",
+ "magma-converge",
+ "magma-drift",
+ "magma-fsm",
+ "magma-stream",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "magma-config"
 version = "0.1.0"
 source = "git+https://github.com/pleme-io/magma#2c87971f068529bba6023102f92ae5ce01a7373b"
@@ -2359,6 +2376,18 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "magma-fsm"
+version = "0.1.0"
+source = "git+https://github.com/pleme-io/magma#2c87971f068529bba6023102f92ae5ce01a7373b"
+dependencies = [
+ "chrono",
+ "magma-converge",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -2478,6 +2507,24 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "magma-stream"
+version = "0.1.0"
+source = "git+https://github.com/pleme-io/magma#2c87971f068529bba6023102f92ae5ce01a7373b"
+dependencies = [
+ "async-trait",
+ "blake3",
+ "chrono",
+ "hex",
+ "magma-converge",
+ "magma-drift",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2883,9 +2930,11 @@ dependencies = [
  "libc",
  "magma-apply",
  "magma-backend",
+ "magma-bundle",
  "magma-config",
  "magma-converge",
  "magma-drift",
+ "magma-fsm",
  "magma-operator-backend",
  "magma-plan",
  "magma-state",
@@ -3309,7 +3358,7 @@ version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be769465445e8c1474e9c5dac2018218498557af32d9ed057325ec9a41ae81bf"
 dependencies = [
- "heck 0.4.1",
+ "heck 0.5.0",
  "itertools",
  "log",
  "multimap",

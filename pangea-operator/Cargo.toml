@@ -36,6 +36,8 @@ executor_magma = [
     "dep:magma-test-laws",
     "dep:magma-drift",
     "dep:magma-converge",
+    "dep:magma-bundle",
+    "dep:magma-fsm",
     "dep:hex",
 ]
 
@@ -67,6 +69,14 @@ magma-test-laws        = { git = "https://github.com/pleme-io/magma", optional =
 magma-drift            = { git = "https://github.com/pleme-io/magma", optional = true }
 # Universal Change / Plan / Action types (needed for drift conversion).
 magma-converge         = { git = "https://github.com/pleme-io/magma", optional = true }
+# Typed compliance artifact — every reconcile produces a BLAKE3-attested
+# Bundle carrying plan + drift + lifecycle, written to disk between
+# plan and apply for compliance export + restart-safe handoff.
+magma-bundle           = { git = "https://github.com/pleme-io/magma", optional = true }
+# Lifecycle FSM — Idle -> Planning -> Approving -> Applying -> Verifying
+# -> Stable transitions tracked per reconcile so CR status reflects
+# phase, and bundles carry the full transition history.
+magma-fsm              = { git = "https://github.com/pleme-io/magma", optional = true }
 hex                    = { version = "0.4", optional = true }
 
 # Kubernetes

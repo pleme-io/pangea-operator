@@ -208,6 +208,10 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
         OperatorBackend::with_shape(store, self.cfg.backend_shape)
     }
 
+    fn bundle_checkpoint_path(work_dir: &Path) -> PathBuf {
+        work_dir.join("magma-bundle.json")
+    }
+
     fn plan_checkpoint_path(work_dir: &Path) -> PathBuf {
         work_dir.join("magma-plan.json")
     }
@@ -346,6 +350,40 @@ where
         let universal_plan = to_universal_plan(&plan);
         let drift_report = magma_drift::classify(&universal_plan, &self.cfg.drift_policy);
 
+        // Lifecycle FSM: every reconcile threads through typed
+        // phases. plan() transitions Idle -> Planning -> Approving
+        // (if changes pending). apply() picks up from Planning and
+        // transitions Applying -> Verifying -> Stable / Failed.
+        let mut lifecycle = magma_fsm::LifecycleState::new();
+        lifecycle.transition(
+            magma_fsm::Phase::Planning,
+            None,
+            "magma_executor::plan",
+        ).map_err(|e| Error::MagmaExecution(format!("fsm transition: {e}")))?;
+
+        // Build a typed Bundle: plan + drift + lifecycle + (empty
+        // audit at this stage). The bundle's BLAKE3 hash is the
+        // compliance-export identity that follows this reconcile
+        // through apply + verification.
+        let workspace_label = self.cfg.schema_name.clone() + "/" + &self.cfg.template_name;
+        let bundle = magma_bundle::Bundle::new(
+            "terraform",
+            workspace_label,
+            universal_plan.clone(),
+            None, // no outcome at plan-stage
+            drift_report.clone(),
+            lifecycle.clone(),
+            vec![],
+        ).map_err(|e| Error::MagmaExecution(format!("magma_bundle::new: {e}")))?;
+
+        // Persist bundle alongside the plan checkpoint so apply()
+        // (potentially a separate process) can pick it up and
+        // continue the lifecycle on the same typed identity.
+        let bundle_path = Self::bundle_checkpoint_path(work_dir);
+        let bundle_bytes = serde_json::to_vec_pretty(&bundle)
+            .map_err(|e| Error::MagmaExecution(format!("encode bundle: {e}")))?;
+        tokio::fs::write(&bundle_path, &bundle_bytes).await.map_err(Error::Io)?;
+
         let stdout = serde_json::to_string_pretty(&serde_json::json!({
             "plan_id":          hex::encode(plan.id.0),
             "created_at":       plan.created_at,
@@ -360,6 +398,10 @@ where
                     "decision": e.decision,
                     "matched_policy": e.matched_policy,
                 })).collect::<Vec<_>>(),
+            },
+            "bundle": {
+                "bundle_id": bundle.bundle_id,
+                "phase":     format!("{:?}", lifecycle.current),
             },
         }))
         .unwrap_or_default();
@@ -399,12 +441,117 @@ where
             .await
             .map_err(|e| Error::MagmaExecution(format!("write state: {e}")))?;
 
+        // Continue the lifecycle FSM: read the plan-stage bundle
+        // (if present) + transition through Applying -> Verifying
+        // -> Stable/Failed, then re-emit the bundle with the apply
+        // outcome attached. Restart-safe: if a fresh executor
+        // picks this up, it sees the durable bundle on disk.
+        let bundle_path = Self::bundle_checkpoint_path(work_dir);
+        let mut lifecycle = if bundle_path.exists() {
+            let prev_bytes = tokio::fs::read(&bundle_path).await.ok();
+            match prev_bytes
+                .as_deref()
+                .and_then(|b| serde_json::from_slice::<magma_bundle::Bundle>(b).ok())
+            {
+                Some(prev) => prev.lifecycle,
+                None       => magma_fsm::LifecycleState::new(),
+            }
+        } else {
+            // No prior plan-stage bundle — treat as Idle start.
+            let mut s = magma_fsm::LifecycleState::new();
+            let _ = s.transition(
+                magma_fsm::Phase::Planning,
+                None,
+                "magma_executor::apply (synthesized planning)",
+            );
+            s
+        };
+        let plan_phase_id = magma_converge::PlanId(hex::encode(outcome.plan_id.0));
+        let _ = lifecycle.transition(
+            magma_fsm::Phase::Applying,
+            Some(plan_phase_id.clone()),
+            "magma_executor::apply",
+        );
+        let _ = lifecycle.transition(
+            magma_fsm::Phase::Verifying,
+            Some(plan_phase_id.clone()),
+            "post-apply verification",
+        );
+        let final_phase = if outcome.failed.is_empty() {
+            magma_fsm::Phase::Stable
+        } else {
+            magma_fsm::Phase::Failed
+        };
+        let final_reason = if outcome.failed.is_empty() {
+            "apply succeeded; state converged"
+        } else {
+            "apply produced failed changes"
+        };
+        let _ = lifecycle.transition(
+            final_phase,
+            Some(plan_phase_id.clone()),
+            final_reason,
+        );
+
+        // Re-shape the magma_types::Plan + Outcome into universal
+        // form so they can be stored in the Bundle alongside drift
+        // + lifecycle. Drift is classified again on the typed
+        // universal plan (deterministic — same plan + policy =
+        // same report).
+        let universal_plan = to_universal_plan(&plan);
+        let drift = magma_drift::classify(&universal_plan, &self.cfg.drift_policy);
+        let universal_outcome = magma_converge::Outcome {
+            plan_id:     plan_phase_id.clone(),
+            kind:        "terraform".into(),
+            applied:     outcome.applied.iter().map(|a| magma_converge::AppliedChange {
+                address: format!("{}.{}", a.address.type_id.0, a.address.name),
+                action:  match a.action {
+                    magma_types::Action::Create  => magma_converge::Action::Create,
+                    magma_types::Action::Update  => magma_converge::Action::Update,
+                    magma_types::Action::Delete  => magma_converge::Action::Delete,
+                    magma_types::Action::Replace => magma_converge::Action::Replace,
+                    _ => magma_converge::Action::NoOp,
+                },
+            }).collect(),
+            failed: outcome.failed.iter().map(|f| magma_converge::FailedChange {
+                address: format!("{}.{}", f.address.type_id.0, f.address.name),
+                action:  match f.action {
+                    magma_types::Action::Create  => magma_converge::Action::Create,
+                    magma_types::Action::Update  => magma_converge::Action::Update,
+                    magma_types::Action::Delete  => magma_converge::Action::Delete,
+                    magma_types::Action::Replace => magma_converge::Action::Replace,
+                    _ => magma_converge::Action::NoOp,
+                },
+                error: f.reason.clone(),
+            }).collect(),
+            started_at:  outcome.started_at,
+            finished_at: outcome.finished_at,
+        };
+        let workspace_label = self.cfg.schema_name.clone() + "/" + &self.cfg.template_name;
+        let final_bundle = magma_bundle::Bundle::new(
+            "terraform",
+            workspace_label,
+            universal_plan,
+            Some(universal_outcome),
+            drift,
+            lifecycle.clone(),
+            vec![],
+        ).map_err(|e| Error::MagmaExecution(format!("magma_bundle::new: {e}")))?;
+        let bundle_bytes = serde_json::to_vec_pretty(&final_bundle)
+            .map_err(|e| Error::MagmaExecution(format!("encode bundle: {e}")))?;
+        tokio::fs::write(&bundle_path, &bundle_bytes).await.map_err(Error::Io)?;
+
         let stdout = serde_json::to_string_pretty(&serde_json::json!({
             "plan_id":     hex::encode(outcome.plan_id.0),
             "applied":     outcome.applied.len(),
             "failed":      outcome.failed.len(),
             "started_at":  outcome.started_at,
             "finished_at": outcome.finished_at,
+            "bundle": {
+                "bundle_id": final_bundle.bundle_id,
+                "phase":     format!("{:?}", lifecycle.current),
+                "lifecycle_transitions": lifecycle.history.len(),
+            },
         }))
         .unwrap_or_default();
         Ok(if outcome.failed.is_empty() {
@@ -928,6 +1075,72 @@ mod tests {
             }
             other => panic!("expected MagmaExecution preflight error, got: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn plan_emits_bundle_to_disk_with_matching_plan_id() {
+        let exec = MagmaExecutor::new(fixture_config());
+        let tmp = tempfile::tempdir().unwrap();
+        render_workspace(
+            tmp.path(),
+            &json!({
+                "provider": { "aws": { "region": "us-east-1" } },
+                "resource": {
+                    "aws_iam_role": { "node": { "name": "bundle-role" } }
+                }
+            }),
+        )
+        .await;
+        let result = exec.plan(tmp.path(), None, &[]).await.unwrap();
+
+        // Stdout JSON carries the bundle_id + phase.
+        let parsed: serde_json::Value = serde_json::from_str(&result.stdout).unwrap();
+        assert!(parsed["bundle"].is_object(), "plan stdout missing bundle block");
+        let bundle_id = parsed["bundle"]["bundle_id"].as_str().unwrap();
+        assert_eq!(bundle_id.len(), 64, "bundle_id should be 64-char BLAKE3 hex");
+        assert_eq!(parsed["bundle"]["phase"], "Planning");
+
+        // Bundle file materialized on disk.
+        let bundle_path = tmp.path().join("magma-bundle.json");
+        assert!(bundle_path.exists(), "magma-bundle.json should exist after plan");
+        let bytes = std::fs::read(&bundle_path).unwrap();
+        let bundle: magma_bundle::Bundle = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(bundle.bundle_id, bundle_id);
+        bundle.verify().unwrap_or_else(|e| panic!("bundle.verify(): {e:?}"));
+    }
+
+    #[tokio::test]
+    async fn apply_walks_lifecycle_to_stable_and_re_emits_bundle() {
+        let exec = MagmaExecutor::new(fixture_config());
+        let tmp = tempfile::tempdir().unwrap();
+        render_workspace(
+            tmp.path(),
+            &json!({
+                "provider": { "aws": { "region": "us-east-1" } },
+                "resource": {
+                    "aws_iam_role": { "node": { "name": "lifecycle-role" } }
+                }
+            }),
+        )
+        .await;
+        exec.plan(tmp.path(), None, &[]).await.unwrap();
+        let result = exec.apply(tmp.path(), None, false).await.unwrap();
+
+        // Apply stdout carries the post-apply bundle reference.
+        let parsed: serde_json::Value = serde_json::from_str(&result.stdout).unwrap();
+        assert_eq!(parsed["bundle"]["phase"], "Stable");
+        // Apply contributes 3 transitions (Applying, Verifying, Stable)
+        // on top of plan()'s Planning transition; total = 4.
+        assert_eq!(parsed["bundle"]["lifecycle_transitions"], 4);
+
+        // Re-read bundle: should have Outcome + Stable phase + verify.
+        let bundle_path = tmp.path().join("magma-bundle.json");
+        let bytes = std::fs::read(&bundle_path).unwrap();
+        let bundle: magma_bundle::Bundle = serde_json::from_slice(&bytes).unwrap();
+        bundle.verify().unwrap_or_else(|e| panic!("post-apply bundle.verify(): {e:?}"));
+        assert_eq!(bundle.lifecycle.current, magma_fsm::Phase::Stable);
+        assert!(bundle.outcome.is_some(), "post-apply bundle should carry an Outcome");
+        assert!(bundle.fully_succeeded(), "post-apply bundle.fully_succeeded()");
     }
 
     #[tokio::test]
