@@ -33,6 +33,7 @@ executor_magma = [
     "dep:magma-state",
     "dep:magma-types",
     "dep:magma-operator-backend",
+    "dep:magma-test-laws",
     "dep:hex",
 ]
 
@@ -54,6 +55,10 @@ magma-apply            = { git = "https://github.com/pleme-io/magma", optional =
 magma-state            = { git = "https://github.com/pleme-io/magma", optional = true }
 magma-types            = { git = "https://github.com/pleme-io/magma", optional = true }
 magma-operator-backend = { git = "https://github.com/pleme-io/magma", optional = true }
+# Universal substrate law battery — used as preflight before plan/apply
+# so malformed workspaces fail loudly instead of reaching the live
+# backend. See theory/TESTING-SUBSTRATE.md.
+magma-test-laws        = { git = "https://github.com/pleme-io/magma", optional = true, features = ["preflight"] }
 hex                    = { version = "0.4", optional = true }
 
 # Kubernetes

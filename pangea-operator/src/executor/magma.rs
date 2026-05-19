@@ -134,6 +134,13 @@ pub struct MagmaExecutorConfig<S: StateBackend + ?Sized> {
     /// Whether to write a typed plan checkpoint to the workspace
     /// dir between plan + apply for restart safety. Default true.
     pub plan_checkpoint: bool,
+    /// Whether to run the universal substrate law battery on the
+    /// rendered Config before plan/apply. Catches malformed
+    /// workspaces (dangling refs, missing providers, duplicate
+    /// addresses, null outputs) at the controller layer — they
+    /// never reach the live backend. Default true for production
+    /// safety; tests with minimal fixtures may opt out.
+    pub preflight_laws: bool,
 }
 
 impl<S: StateBackend + ?Sized> Default for MagmaExecutorConfig<S>
@@ -148,6 +155,7 @@ where
             state_name:      "default".into(),
             backend_shape:   BackendShape::Magma,
             plan_checkpoint: true,
+            preflight_laws:  true,
         }
     }
 }
@@ -161,6 +169,7 @@ impl<S: StateBackend + ?Sized> Clone for MagmaExecutorConfig<S> {
             state_name:      self.state_name.clone(),
             backend_shape:   self.backend_shape,
             plan_checkpoint: self.plan_checkpoint,
+            preflight_laws:  self.preflight_laws,
         }
     }
 }
@@ -254,6 +263,26 @@ where
     ) -> Result<TofuResult> {
         let started = Instant::now();
         let cfg = Self::load_config(work_dir).await?;
+
+        // Preflight: run the universal substrate law battery before
+        // even reading state. Catches malformed workspaces
+        // (dangling refs, missing providers, duplicate addresses,
+        // null outputs) at the controller layer — they never reach
+        // the live backend. See theory/TESTING-SUBSTRATE.md §IV.
+        if self.cfg.preflight_laws {
+            let violations = magma_test_laws::preflight::check_workspace_full(&cfg);
+            if !violations.is_empty() {
+                let summary = violations
+                    .iter()
+                    .map(|v| format!("{}: {}", v.law, v.message))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                return Err(Error::MagmaExecution(format!(
+                    "substrate preflight violations: {summary}"
+                )));
+            }
+        }
+
         let backend = self.make_backend();
         let state = magma_backend::Backend::read_state(&backend)
             .await
@@ -437,6 +466,11 @@ mod tests {
             state_name:      "default".into(),
             backend_shape:   BackendShape::Magma,
             plan_checkpoint: true,
+            // Test fixtures use minimal Pangea shapes that omit
+            // `terraform.required_providers`; preflight would
+            // reject them. Production code paths use the
+            // Default which has preflight_laws: true.
+            preflight_laws:  false,
         }
     }
 
@@ -598,6 +632,7 @@ mod tests {
             state_name:      "default".into(),
             backend_shape:   BackendShape::Magma,
             plan_checkpoint: true,
+            preflight_laws:  false,
         });
 
         let tmp = tempfile::tempdir().unwrap();
@@ -649,6 +684,7 @@ mod tests {
             state_name:      state_name.into(),
             backend_shape:   BackendShape::Magma,
             plan_checkpoint: true,
+            preflight_laws:  false,
         });
 
         let tmp_a = tempfile::tempdir().unwrap();
@@ -746,6 +782,7 @@ mod tests {
             state_name:      "default".into(),
             backend_shape:   BackendShape::Tofu,
             plan_checkpoint: true,
+            preflight_laws:  false,
         };
         let exec = MagmaExecutor::new(cfg.clone());
         let tmp = tempfile::tempdir().unwrap();
@@ -776,5 +813,58 @@ mod tests {
             provider.contains("registry.terraform.io/hashicorp/aws"),
             "expected canonical tofu provider form, got: {provider}",
         );
+    }
+
+    #[tokio::test]
+    async fn preflight_rejects_dangling_reference() {
+        // With preflight enabled, a malformed workspace (dangling
+        // reference) is refused at the controller layer — the live
+        // backend never sees it. This is the substrate's "promises
+        // become theorems" property in operator form.
+        let cfg = MagmaExecutorConfig {
+            state_backend:   Arc::new(InMemoryStateBackend::new()),
+            schema_name:     "s".into(),
+            template_name:   "t".into(),
+            state_name:      "default".into(),
+            backend_shape:   BackendShape::Magma,
+            plan_checkpoint: true,
+            preflight_laws:  true, // production default
+        };
+        let exec = MagmaExecutor::new(cfg);
+        let tmp = tempfile::tempdir().unwrap();
+        render_workspace(
+            tmp.path(),
+            &json!({
+                "terraform": {
+                    "required_providers": {
+                        "aws": { "source": "hashicorp/aws" }
+                    }
+                },
+                "resource": {
+                    "aws_subnet": {
+                        "web": {
+                            // Dangling — aws_vpc.main is not declared.
+                            "vpc_id":     "${aws_vpc.main.id}",
+                            "cidr_block": "10.0.1.0/24"
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+        let result = exec.plan(tmp.path(), None, &[]).await;
+        match result {
+            Err(Error::MagmaExecution(msg)) => {
+                assert!(
+                    msg.contains("substrate preflight violations"),
+                    "expected preflight rejection, got: {msg}",
+                );
+                assert!(
+                    msg.contains("dangling reference"),
+                    "expected dangling-ref reason in error, got: {msg}",
+                );
+            }
+            other => panic!("expected MagmaExecution preflight error, got: {other:?}"),
+        }
     }
 }
