@@ -236,6 +236,26 @@ fn ok_tofu_result(stdout: String, started: Instant) -> TofuResult {
     }
 }
 
+/// If the workspace ships a `Gemfile.lock`, parse it through
+/// magma-rubygems + return the BLAKE3 attestation of the gem
+/// closure. None when the workspace has no Gemfile.lock or when
+/// parsing fails (operator continues without gem-tree attestation;
+/// the bundle just lacks the field).
+///
+/// Once magma-rubygems M5 materializes the gem tree end-to-end,
+/// this helper produces the live `VirtualGemTree::attestation`;
+/// today it produces the lockfile-only attestation as a
+/// forward-compatible bridge.
+async fn compute_gem_tree_attestation(work_dir: &Path) -> Option<String> {
+    let gemfile_lock = work_dir.join("Gemfile.lock");
+    if !gemfile_lock.exists() {
+        return None;
+    }
+    let source = tokio::fs::read_to_string(&gemfile_lock).await.ok()?;
+    let lock = magma_rubygems::lockfile::parse(&source).ok()?;
+    Some(magma_rubygems::attestation::attest_lockfile(&lock))
+}
+
 /// Convert a `magma_types::Plan` (Terraform-shape, granular Action
 /// surface) into a `magma_converge::Plan` (universal shape with
 /// derived severity). Lets the operator route any
@@ -362,11 +382,13 @@ where
         ).map_err(|e| Error::MagmaExecution(format!("fsm transition: {e}")))?;
 
         // Build a typed Bundle: plan + drift + lifecycle + (empty
-        // audit at this stage). The bundle's BLAKE3 hash is the
-        // compliance-export identity that follows this reconcile
-        // through apply + verification.
+        // audit at this stage) + optional gem-tree attestation.
+        // The bundle's BLAKE3 hash is the compliance-export
+        // identity that follows this reconcile through apply +
+        // verification.
         let workspace_label = self.cfg.schema_name.clone() + "/" + &self.cfg.template_name;
-        let bundle = magma_bundle::Bundle::new(
+        let gem_tree_attestation = compute_gem_tree_attestation(work_dir).await;
+        let bundle = magma_bundle::Bundle::new_with_gem_tree(
             "terraform",
             workspace_label,
             universal_plan.clone(),
@@ -374,6 +396,7 @@ where
             drift_report.clone(),
             lifecycle.clone(),
             vec![],
+            gem_tree_attestation,
         ).map_err(|e| Error::MagmaExecution(format!("magma_bundle::new: {e}")))?;
 
         // Persist bundle alongside the plan checkpoint so apply()
@@ -528,7 +551,8 @@ where
             finished_at: outcome.finished_at,
         };
         let workspace_label = self.cfg.schema_name.clone() + "/" + &self.cfg.template_name;
-        let final_bundle = magma_bundle::Bundle::new(
+        let gem_tree_attestation = compute_gem_tree_attestation(work_dir).await;
+        let final_bundle = magma_bundle::Bundle::new_with_gem_tree(
             "terraform",
             workspace_label,
             universal_plan,
@@ -536,6 +560,7 @@ where
             drift,
             lifecycle.clone(),
             vec![],
+            gem_tree_attestation,
         ).map_err(|e| Error::MagmaExecution(format!("magma_bundle::new: {e}")))?;
         let bundle_bytes = serde_json::to_vec_pretty(&final_bundle)
             .map_err(|e| Error::MagmaExecution(format!("encode bundle: {e}")))?;
@@ -1075,6 +1100,68 @@ mod tests {
             }
             other => panic!("expected MagmaExecution preflight error, got: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn plan_carries_gem_tree_attestation_when_gemfile_lock_present() {
+        // When the workspace ships a Gemfile.lock, the bundle
+        // emitted by plan() carries the BLAKE3 attestation of the
+        // resolved gem closure. Compliance teams export the bundle
+        // + verify the gem-tree identity end-to-end.
+        let exec = MagmaExecutor::new(fixture_config());
+        let tmp = tempfile::tempdir().unwrap();
+        render_workspace(
+            tmp.path(),
+            &json!({
+                "provider": { "aws": { "region": "us-east-1" } },
+                "resource": { "aws_iam_role": { "node": { "name": "n" } } }
+            }),
+        )
+        .await;
+        // Drop a minimal Pangea-shaped Gemfile.lock into the workspace.
+        let lock = r#"GEM
+  remote: https://rubygems.org/
+  specs:
+    rspec (3.12.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  rspec (~> 3.12)
+
+BUNDLED WITH
+   2.5.22
+"#;
+        tokio::fs::write(tmp.path().join("Gemfile.lock"), lock).await.unwrap();
+
+        exec.plan(tmp.path(), None, &[]).await.unwrap();
+        let bundle_path = tmp.path().join("magma-bundle.json");
+        let bytes = std::fs::read(&bundle_path).unwrap();
+        let bundle: magma_bundle::Bundle = serde_json::from_slice(&bytes).unwrap();
+        bundle.verify().unwrap();
+        let attestation = bundle.gem_tree_attestation.as_deref().unwrap();
+        assert_eq!(attestation.len(), 64, "gem-tree attestation should be 64-hex BLAKE3");
+    }
+
+    #[tokio::test]
+    async fn plan_omits_gem_tree_attestation_when_no_gemfile_lock() {
+        let exec = MagmaExecutor::new(fixture_config());
+        let tmp = tempfile::tempdir().unwrap();
+        render_workspace(
+            tmp.path(),
+            &json!({
+                "provider": { "aws": { "region": "us-east-1" } },
+                "resource": { "aws_iam_role": { "node": { "name": "n" } } }
+            }),
+        )
+        .await;
+        // No Gemfile.lock at workspace root.
+        exec.plan(tmp.path(), None, &[]).await.unwrap();
+        let bundle_path = tmp.path().join("magma-bundle.json");
+        let bytes = std::fs::read(&bundle_path).unwrap();
+        let bundle: magma_bundle::Bundle = serde_json::from_slice(&bytes).unwrap();
+        assert!(bundle.gem_tree_attestation.is_none());
     }
 
     #[tokio::test]

@@ -38,6 +38,7 @@ executor_magma = [
     "dep:magma-converge",
     "dep:magma-bundle",
     "dep:magma-fsm",
+    "dep:magma-rubygems",
     "dep:hex",
 ]
 
@@ -77,6 +78,10 @@ magma-bundle           = { git = "https://github.com/pleme-io/magma", optional =
 # -> Stable transitions tracked per reconcile so CR status reflects
 # phase, and bundles carry the full transition history.
 magma-fsm              = { git = "https://github.com/pleme-io/magma", optional = true }
+# In-memory Pangea Ruby gem dependency tree owner. M0 parses
+# Gemfile.lock + attests the closure; future M1-M5 materialize the
+# tree end-to-end so bundle install vanishes from operator startup.
+magma-rubygems         = { git = "https://github.com/pleme-io/magma", optional = true }
 hex                    = { version = "0.4", optional = true }
 
 # Kubernetes
