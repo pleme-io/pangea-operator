@@ -35,7 +35,7 @@ jobs:
     uses: pleme-io/substrate/.github/workflows/image-push.yml@main
     with:
       imageAttr: dockerImage-operator-embedded-amd64
-      imageName: pangea-operator
+      imageName: pleme-io/pangea-operator
       tag: ${{ github.ref_name }}
     secrets: inherit
 
