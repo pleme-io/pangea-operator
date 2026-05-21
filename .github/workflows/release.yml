@@ -29,7 +29,9 @@ jobs:
     name: container image → ghcr.io
     uses: pleme-io/substrate/.github/workflows/image-push.yml@main
     with:
-      image-name: pangea-operator
+      imageAttr: dockerImage-operator-embedded-amd64
+      imageName: pangea-operator
+      tag: ${{ github.ref_name }}
 
   chart:
     name: Helm chart → ArtifactHub OCI
