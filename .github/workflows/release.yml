@@ -1,44 +1,14 @@
 name: release
-
-# Tag-triggered (v*). Three jobs run in parallel through substrate
-# primitives — Rust binaries to the GH Release, container image to
-# ghcr.io, Helm chart to ArtifactHub via OCI. Each is a thin caller
-# of the matching substrate workflow.
-
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version to publish (e.g. 0.1.0); informational — Chart.yaml is source of truth'
-        required: false
-
 permissions:
   contents: write
   packages: write
-
 jobs:
   binaries:
-    name: cross-arch binaries → GH Release
     uses: pleme-io/substrate/.github/workflows/rust-binary-release.yml@main
     with:
       binary-name: pangea-operator
-    secrets: inherit
-
-  image:
-    name: container image → ghcr.io
-    uses: pleme-io/substrate/.github/workflows/image-push.yml@main
-    with:
-      imageAttr: dockerImage-operator-embedded-amd64
-      imageName: pangea-operator
-      tag: ${{ github.ref_name }}
-    secrets: inherit
-
-  chart:
-    name: Helm chart → ArtifactHub OCI
-    uses: pleme-io/substrate/.github/workflows/helm-chart-release.yml@main
-    with:
-      chart-path: ./pangea-operator/charts/pangea-operator
-      oci-registry: oci://ghcr.io/pleme-io/charts
     secrets: inherit
