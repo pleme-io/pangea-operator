@@ -24,6 +24,7 @@ jobs:
     uses: pleme-io/substrate/.github/workflows/rust-binary-release.yml@main
     with:
       binary-name: pangea-operator
+    secrets: inherit
 
   image:
     name: container image → ghcr.io
@@ -32,6 +33,7 @@ jobs:
       imageAttr: dockerImage-operator-embedded-amd64
       imageName: pangea-operator
       tag: ${{ github.ref_name }}
+    secrets: inherit
 
   chart:
     name: Helm chart → ArtifactHub OCI
@@ -39,3 +41,4 @@ jobs:
     with:
       chart-path: ./pangea-operator/charts/pangea-operator
       oci-registry: oci://ghcr.io/pleme-io/charts
+    secrets: inherit
