@@ -124,7 +124,7 @@
       # resulting bundlerEnv.
       mkCompilerImage = imageSystem:
         let
-          imagePkgs = import nixpkgs { system = imageSystem; };
+          imagePkgs = import nixpkgs { system = imageSystem; config.allowUnfree = true; };
           ws = (import "${substrate}/lib/build/ruby/workspace.nix" {
             nixpkgs = nixpkgs;
             system = imageSystem;
@@ -217,7 +217,7 @@
 
       compilerExtension = system:
         let
-          pkgs = import nixpkgs { inherit system; };
+          pkgs = import nixpkgs { inherit system; config.allowUnfree = true; };
           imageAmd64 = mkCompilerImage "x86_64-linux";
           imageArm64 = mkCompilerImage "aarch64-linux";
           mkPushApp = imagePath: archTag: pkgs.writeShellScript "pangea-compiler-push-${archTag}" ''
@@ -264,7 +264,7 @@
       # See helmworks@494533b chart values + theory M8.5.
       mkEmbeddedOperatorImage = imageSystem:
         let
-          imagePkgs = import nixpkgs { system = imageSystem; };
+          imagePkgs = import nixpkgs { system = imageSystem; config.allowUnfree = true; };
           ruby = imagePkgs.ruby_3_3;
           libclang = imagePkgs.llvmPackages.libclang;
           # bindgen needs libc headers (stdio.h, stddef.h, …) on its
@@ -369,7 +369,7 @@
 
       embeddedOperatorExtension = system:
         let
-          pkgs = import nixpkgs { inherit system; };
+          pkgs = import nixpkgs { inherit system; config.allowUnfree = true; };
           imageAmd64 = mkEmbeddedOperatorImage "x86_64-linux";
           imageArm64 = mkEmbeddedOperatorImage "aarch64-linux";
           # Push to the EXISTING pangea-operator registry path with a
@@ -426,7 +426,7 @@
       # this shell becomes optional for routine builds.
       rubyEvalShell = system:
         let
-          pkgs = import nixpkgs { inherit system; };
+          pkgs = import nixpkgs { inherit system; config.allowUnfree = true; };
           # Aligned with the embedded image's ruby (3.3) to match
           # the bundlerEnv's ABI — gem C-extensions compiled against
           # 3.3 won't load under a 3.4 libruby.
