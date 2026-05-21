@@ -1,0 +1,38 @@
+Pangea operator {{ .Chart.AppVersion }} is being deployed to namespace
+"{{ .Release.Namespace }}" under release "{{ .Release.Name }}".
+
+1. Wait for the operator to become Ready:
+
+   kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "pangea-operator.fullname" . }}
+
+2. Confirm the CRDs are installed (cluster-scoped):
+
+   kubectl get crd architecturegems.pangea.pleme.io \
+                   workspacecatalogs.pangea.pleme.io \
+                   infrastructuretemplates.pangea.pleme.io \
+                   pangeanamespaces.pangea.pleme.io
+
+3. Tail logs:
+
+   kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/instance={{ .Release.Name }} -f
+
+4. Port-forward the GraphQL API:
+
+   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "pangea-operator.fullname" . }} 8081:{{ .Values.service.ports.graphql }}
+   open http://localhost:8081/graphiql
+
+5. Create your first ArchitectureGem + InfrastructureTemplate.
+   See https://github.com/pleme-io/pangea-operator/blob/main/docs/AUTHORING.md
+
+{{- if not .Values.auth.enabled }}
+
+WARNING: auth.enabled=false — the GraphQL and gRPC APIs are unauthenticated.
+Re-enable for any non-dev cluster: --set auth.enabled=true \
+  --set auth.existingSecret=<your-secret>
+{{- end }}
+
+{{- if and .Values.auth.enabled (eq .Values.auth.existingSecret "") (eq .Values.auth.token "") }}
+
+WARNING: auth.enabled=true but no token source configured (existingSecret or token
+both empty). The operator will start but no client will be able to authenticate.
+{{- end }}

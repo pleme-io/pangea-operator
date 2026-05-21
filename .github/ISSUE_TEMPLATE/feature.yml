@@ -1,0 +1,26 @@
+name: Feature request
+description: A new reconciler, CRD field, chart value, or operator behaviour.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: usecase
+    attributes:
+      label: Use case
+      description: What infrastructure pattern are you trying to express? Why doesn't the current CRD surface fit?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Concrete description of the new CRD field, reconciler behaviour, or value.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false

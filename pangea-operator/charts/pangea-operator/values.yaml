@@ -1,22 +1,39 @@
-# Pangea Operator Helm Values
+# Default values for pangea-operator (public release track).
+#
+# Every value is annotated; pass `--set` overrides on `helm install` to
+# customize. For a richer reference see charts/pangea-operator/README.md.
 
+# Number of operator pods. Leader election (see leaderElection.enabled)
+# coordinates which replica owns reconciliation at a given time, so
+# replicaCount > 1 buys you faster failover but never parallel reconcile.
 replicaCount: 1
 
 image:
-  repository: ghcr.io/pleme-io/nexus/pangea-operator
+  # OCI image published by the release.yml workflow.
+  repository: ghcr.io/pleme-io/pangea-operator
   pullPolicy: IfNotPresent
-  tag: ""  # Defaults to appVersion
+  # When empty, defaults to .Chart.AppVersion (set at release time).
+  tag: ""
 
+# Image pull secrets passed verbatim to the pod spec.
 imagePullSecrets: []
+# Override the chart name (used as the prefix of generated resource names).
 nameOverride: ""
+# Fully override the generated resource names.
 fullnameOverride: ""
 
 serviceAccount:
+  # Create a dedicated SA + RBAC for the operator. Disable only if you
+  # supply an external SA via `serviceAccount.name`.
   create: true
+  # Mount the SA token automatically (kube >= 1.27 makes this opt-in).
   automount: true
   annotations: {}
+  # When `create=false`, use this externally provided SA name.
   name: ""
 
+# Prometheus scrape annotations on the operator pod. Disable by setting
+# to {} if your Prometheus uses ServiceMonitor (see `serviceMonitor.*`).
 podAnnotations:
   prometheus.io/scrape: "true"
   prometheus.io/port: "9090"
@@ -38,24 +55,23 @@ securityContext:
   runAsNonRoot: true
   runAsUser: 1000
 
-# Operator configuration
+# Operator runtime configuration.
 config:
-  # Log format: pretty or json
+  # Log format: pretty (dev) or json (prod / aggregation pipelines).
   logFormat: json
-  # Log level via RUST_LOG
+  # RUST_LOG-style filter; supports per-crate severity.
   logLevel: "info,pangea_operator=debug"
-  # Health server address
+  # HTTP /healthz + /readyz bind address.
   healthAddr: "0.0.0.0:8080"
-  # Metrics server address
+  # /metrics (Prometheus exposition) bind address.
   metricsAddr: "0.0.0.0:9090"
-  # GraphQL server address
+  # GraphQL API bind address (queries InfrastructureTemplate / CycleReceipt).
   graphqlAddr: "0.0.0.0:8081"
-  # gRPC server address
+  # gRPC API bind address (internal control plane).
   grpcAddr: "0.0.0.0:50051"
-  # OpenTelemetry endpoint (optional)
+  # OTLP/HTTP endpoint for trace export; empty disables OpenTelemetry.
   otelEndpoint: ""
 
-# Service configuration
 service:
   type: ClusterIP
   ports:
@@ -72,18 +88,27 @@ resources:
     cpu: 100m
     memory: 128Mi
 
-# Leader election settings
 leaderElection:
+  # Required when replicaCount > 1; safe to leave on for single-replica.
   enabled: true
   leaseDuration: 15s
   renewDeadline: 10s
   retryPeriod: 2s
 
-# Compiler sidecar configuration (Ruby Pangea gem)
+# Embedded magnus / CRuby evaluator. When true (recommended for v0.1.0),
+# the operator binary itself owns a single CRuby interpreter and
+# evaluates Pangea templates in-process — no compiler sidecar needed.
+# When false, the operator dispatches to the pangea-compiler sidecar
+# over HTTP (legacy path; sidecar must be enabled below).
+useEmbeddedRuby: true
+
+# Compiler sidecar (legacy HTTP backend). Set `enabled: false` when
+# `useEmbeddedRuby: true` and you don't need the sidecar for any
+# transitional or out-of-band template builds.
 compilerSidecar:
-  enabled: true
+  enabled: false
   image:
-    repository: ghcr.io/pleme-io/nexus/pangea-compiler
+    repository: ghcr.io/pleme-io/pangea-compiler
     tag: latest
     pullPolicy: IfNotPresent
   resources:
@@ -95,40 +120,47 @@ compilerSidecar:
       memory: 64Mi
 
 nodeSelector: {}
-
 tolerations: []
-
 affinity: {}
 
-# Ingress configuration for GraphQL API
+# Ingress for the GraphQL API. Disabled by default — most consumers
+# port-forward or expose via Gateway API / Istio.
 ingress:
   enabled: false
   className: "nginx"
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: "10m"
   hosts:
-    - host: pangea-api.quero.local
+    - host: pangea-api.example.local
       paths:
         - path: /
           pathType: Prefix
           port: 8081
   tls: []
 
-# API authentication
+# API token authentication for the GraphQL / gRPC surfaces.
 auth:
-  # Enable API token authentication
   enabled: true
-  # Reference to existing secret containing API_TOKEN key
+  # Reference an existing secret carrying API_TOKEN. If empty, the
+  # chart generates a Secret containing `token` (below) — only use
+  # this for dev / smoke; production should supply the secret.
   existingSecret: ""
-  # Secret key name (if using existingSecret)
   secretKey: "API_TOKEN"
-  # Create secret with this token value (only if existingSecret is empty)
+  # Token value for the chart-generated Secret (ignored when
+  # `existingSecret` is set). Leave empty to skip Secret generation.
   token: ""
 
-# ServiceMonitor for Prometheus Operator
+# Prometheus Operator integration. When enabled and the
+# monitoring.coreos.com/v1 CRDs are installed, the chart renders a
+# ServiceMonitor scraping the operator's /metrics endpoint.
 serviceMonitor:
   enabled: false
   namespace: ""
   interval: 30s
   scrapeTimeout: 10s
   labels: {}
+
+# Install the four Pangea CRDs (ArchitectureGem, WorkspaceCatalog,
+# InfrastructureTemplate, PangeaNamespace). Set false when CRDs are
+# managed out-of-band (e.g. argocd's `--include-crds=false` workflow).
+installCRDs: true

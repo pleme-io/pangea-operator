@@ -1,0 +1,68 @@
+name: Bug report
+description: The operator panics, a reconciler misbehaves, a CR transitions to the wrong state, or the chart deploys incorrectly.
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Operator version
+      description: Chart appVersion or image tag
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: k8s_version
+    attributes:
+      label: Kubernetes version
+      description: Output of `kubectl version --short`
+      placeholder: "v1.30.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install_method
+    attributes:
+      label: Install method
+      options:
+        - Helm chart (OCI from ghcr.io)
+        - Helm chart (local clone)
+        - Raw kustomize / kubectl apply -f
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: cr_yaml
+    attributes:
+      label: Triggering CR YAML
+      description: The CR(s) being reconciled when the bug happened. Redact secrets.
+      render: yaml
+    validations:
+      required: true
+
+  - type: textarea
+    id: operator_logs
+    attributes:
+      label: Operator logs
+      description: Output of `kubectl logs -n <ns> deploy/pangea-operator` around the failure.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: not_secret
+    attributes:
+      label: Pre-submission checks
+      options:
+        - label: I have not included any cluster credentials, cloud tokens, or other secrets in the report.
+          required: true
+        - label: I checked existing issues and didn't find a duplicate.
+          required: true

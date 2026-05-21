@@ -1,18 +1,63 @@
 apiVersion: v2
 name: pangea-operator
-description: Rust-based Kubernetes operator for Pangea infrastructure management
+description: |
+  Pangea — a Rust Kubernetes operator that reconciles InfrastructureTemplate,
+  ArchitectureGem, WorkspaceCatalog and PangeaNamespace CRs end-to-end:
+  compiles a Pangea Ruby DSL through embedded magnus, synthesizes Terraform
+  JSON, runs tofu plan/apply, and emits typed cycle receipts with declarative
+  reactive escalation policies.
 type: application
-version: 0.2.0
-appVersion: "0.2.0"
-home: https://github.com/pleme-io/nexus
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.27.0-0"
+home: https://github.com/pleme-io/pangea-operator
 sources:
-  - https://github.com/pleme-io/nexus/tree/main/pkgs/operators/pangea-operator
-maintainers:
-  - name: Pleme Engineering
-    email: engineering@pleme.io
+  - https://github.com/pleme-io/pangea-operator
+  - https://github.com/pleme-io/theory/blob/main/PANGEA-WORKSPACE-RECONCILIATION.md
 keywords:
   - infrastructure
+  - infrastructure-as-code
   - terraform
   - opentofu
   - pangea
   - kubernetes-operator
+  - controller
+  - rust
+  - gitops
+  - reactive-policy
+maintainers:
+  - name: Pleme Engineering
+    email: engineering@pleme.io
+    url: https://github.com/pleme-io
+icon: https://avatars.githubusercontent.com/u/186960569
+annotations:
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/operator: "true"
+  artifacthub.io/operatorCapabilities: Deep Insights
+  artifacthub.io/category: integration-delivery
+  artifacthub.io/links: |
+    - name: Source
+      url: https://github.com/pleme-io/pangea-operator
+    - name: Theory
+      url: https://github.com/pleme-io/theory/blob/main/PANGEA-WORKSPACE-RECONCILIATION.md
+  artifacthub.io/crds: |
+    - kind: ArchitectureGem
+      version: v1
+      name: architecturegems.pangea.pleme.io
+      displayName: Architecture Gem
+      description: A Pangea Ruby gem the operator loads + smoke-tests before any template referencing it can advance past Verified.
+    - kind: WorkspaceCatalog
+      version: v1
+      name: workspacecatalogs.pangea.pleme.io
+      displayName: Workspace Catalog
+      description: A logical workspace (git source + required gems + workspace-level reactive policy).
+    - kind: InfrastructureTemplate
+      version: v1
+      name: infrastructuretemplates.pangea.pleme.io
+      displayName: Infrastructure Template
+      description: One Pangea Ruby template the operator should reconcile (source, variables, per-resource policies, reactive policy, import hints).
+    - kind: PangeaNamespace
+      version: v1
+      name: pangeanamespaces.pangea.pleme.io
+      displayName: Pangea Namespace
+      description: State-storage isolation boundary (PostgreSQL schema or S3 prefix) referenced by templates via spec.pangeaNamespace.
