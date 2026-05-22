@@ -422,4 +422,143 @@ mod tests {
         assert!(!is_sha_ref("g"));                         // non-hex char
         assert!(!is_sha_ref(&"a".repeat(41)));             // > 40 chars
     }
+
+    // ── Integration tests guarding the load-bearing invariant ──
+    //
+    // These spin up a temp "remote" git repo, point a GemCache at a
+    // separate cache root, and verify the contract end-to-end. If
+    // any future refactor regresses the cache to "immutable per ref"
+    // semantics, these tests fail loud.
+
+    use tempfile::TempDir;
+    use tokio::process::Command as TokioCommand;
+
+    async fn git_run(dir: &Path, args: &[&str]) {
+        let out = TokioCommand::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .expect("git spawn");
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// Build a "remote" git repo with one initial commit on `main`
+    /// touching `lib/test_gem/marker.txt`. Returns the dir + the
+    /// initial commit SHA.
+    async fn make_remote_repo(content: &str) -> (TempDir, String) {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path();
+        git_run(path, &["init", "-q", "-b", "main"]).await;
+        git_run(path, &["config", "user.email", "test@example.com"]).await;
+        git_run(path, &["config", "user.name", "test"]).await;
+        git_run(path, &["config", "commit.gpgsign", "false"]).await;
+        let lib_dir = path.join("lib").join("test_gem");
+        tokio::fs::create_dir_all(&lib_dir).await.unwrap();
+        tokio::fs::write(lib_dir.join("marker.txt"), content)
+            .await
+            .unwrap();
+        git_run(path, &["add", "-A"]).await;
+        git_run(path, &["commit", "-q", "-m", "initial"]).await;
+        let sha_out = TokioCommand::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .await
+            .expect("rev-parse");
+        let sha = String::from_utf8_lossy(&sha_out.stdout).trim().to_string();
+        (dir, sha)
+    }
+
+    /// Push a new commit overwriting `marker.txt`. Returns the new SHA.
+    async fn add_commit(remote: &Path, content: &str) -> String {
+        tokio::fs::write(remote.join("lib").join("test_gem").join("marker.txt"), content)
+            .await
+            .unwrap();
+        git_run(remote, &["add", "-A"]).await;
+        git_run(remote, &["commit", "-q", "-m", "update"]).await;
+        let sha_out = TokioCommand::new("git")
+            .arg("-C")
+            .arg(remote)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .await
+            .expect("rev-parse");
+        String::from_utf8_lossy(&sha_out.stdout).trim().to_string()
+    }
+
+    async fn read_marker(entry: &GemEntry) -> String {
+        let path = entry.lib_path.join("test_gem").join("marker.txt");
+        tokio::fs::read_to_string(&path).await.unwrap_or_default()
+    }
+
+    /// THE bug-fix invariant: cache hit on a branch ref re-fetches.
+    /// Without the fix in this commit, the second ensure() returns
+    /// the stale "v1" contents. With the fix, it returns "v2".
+    #[tokio::test]
+    async fn mutable_branch_ref_re_fetches_on_subsequent_ensure() {
+        let (remote, _) = make_remote_repo("v1").await;
+        let cache_dir = TempDir::new().expect("cache tempdir");
+        let cache = GemCache::new(cache_dir.path());
+
+        let url = format!("file://{}", remote.path().display());
+        let entry1 = cache
+            .ensure("test-gem", &url, "main")
+            .await
+            .expect("first ensure");
+        assert_eq!(read_marker(&entry1).await, "v1");
+
+        // Mutate the remote.
+        add_commit(remote.path(), "v2").await;
+
+        // Same call — must observe the new content.
+        let entry2 = cache
+            .ensure("test-gem", &url, "main")
+            .await
+            .expect("second ensure");
+        assert_eq!(
+            read_marker(&entry2).await,
+            "v2",
+            "mutable-ref cache hit should refresh from origin"
+        );
+    }
+
+    /// SHA refs remain immutable — second ensure() should NOT re-fetch
+    /// even if remote moves. (Verified by checking we still see the
+    /// original content after a remote commit.)
+    #[tokio::test]
+    async fn sha_ref_is_immutable_no_refresh() {
+        let (remote, sha) = make_remote_repo("v1").await;
+        let cache_dir = TempDir::new().expect("cache tempdir");
+        let cache = GemCache::new(cache_dir.path());
+        let url = format!("file://{}", remote.path().display());
+
+        let entry1 = cache
+            .ensure("test-gem", &url, &sha)
+            .await
+            .expect("first ensure");
+        assert_eq!(read_marker(&entry1).await, "v1");
+
+        add_commit(remote.path(), "v2").await;
+
+        let entry2 = cache
+            .ensure("test-gem", &url, &sha)
+            .await
+            .expect("second ensure");
+        assert_eq!(
+            read_marker(&entry2).await,
+            "v1",
+            "SHA-pinned cache hit must stay frozen at the original commit"
+        );
+    }
 }
