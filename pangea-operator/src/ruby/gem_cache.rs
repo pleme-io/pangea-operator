@@ -92,6 +92,16 @@ impl GemCache {
     /// Idempotent: clone the gem if not cached, otherwise return
     /// the existing entry. `git_url` may be HTTPS or SSH; whatever
     /// the operator's git config can handle.
+    ///
+    /// Cache semantics differ by ref shape:
+    ///   - **SHA refs** (`/[0-9a-f]{7,40}/`) are content-addressed and
+    ///     immutable — a cache hit returns immediately, no network.
+    ///   - **Branch / tag / symbolic refs** (`main`, `v1.2.3`, `HEAD`)
+    ///     are mutable — we `git fetch` + `git reset --hard origin/<ref>`
+    ///     on every `ensure()` so the operator picks up new commits
+    ///     pushed to the ref. Without this, mutable-ref users (most
+    ///     "track main" CRs) would clone once and never see new commits,
+    ///     which is the bug this comment ships the fix for.
     pub async fn ensure(
         &self,
         name: &str,
@@ -101,21 +111,49 @@ impl GemCache {
         let dir = self.entry_dir(name, git_ref)?;
         let lib_path = dir.join("lib");
 
-        if dir.is_dir() {
-            // Cache hit. Check it has a .git so we know it's a real
-            // clone (not a stray dir); rebuild if not.
-            if dir.join(".git").exists() || dir.join("lib").exists() {
+        if dir.is_dir() && dir.join(".git").exists() {
+            // Cache exists with a real .git. SHA refs are immutable —
+            // return as-is. Mutable refs (branch/tag/etc.) re-fetch
+            // from origin so the working tree tracks upstream HEAD.
+            if is_sha_ref(git_ref) {
                 info!(
                     name,
                     git_ref,
                     path = %dir.display(),
-                    "gem cache hit"
+                    "gem cache hit (immutable SHA ref)"
                 );
                 return Ok(GemEntry {
                     gem_path: dir,
                     lib_path,
                 });
             }
+            // Mutable ref — refresh from origin. Failures here fall
+            // through to a fresh re-clone (defensive: better to
+            // re-clone slowly than serve a stale gem).
+            match refresh_mutable_ref(&dir, git_ref).await {
+                Ok(()) => {
+                    info!(
+                        name,
+                        git_ref,
+                        path = %dir.display(),
+                        "gem cache hit (mutable ref re-fetched)"
+                    );
+                    return Ok(GemEntry {
+                        gem_path: dir,
+                        lib_path,
+                    });
+                }
+                Err(e) => {
+                    warn!(
+                        name,
+                        git_ref,
+                        error = %e,
+                        "mutable-ref refresh failed; re-cloning from scratch"
+                    );
+                    let _ = tokio::fs::remove_dir_all(&dir).await;
+                }
+            }
+        } else if dir.is_dir() {
             warn!(
                 name,
                 git_ref,
@@ -244,6 +282,62 @@ fn inject_github_token(url: &str) -> String {
     }
 }
 
+/// Heuristic: does `r` look like a git SHA? Accepts 7–40 lower-case
+/// hex chars. SHA refs are content-addressed and cache-immutable;
+/// every other ref (branch, tag, HEAD, FETCH_HEAD, …) is mutable
+/// and requires re-fetching on each `ensure()`.
+fn is_sha_ref(r: &str) -> bool {
+    let len = r.len();
+    (7..=40).contains(&len) && r.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+}
+
+/// Refresh a cached shallow clone to track upstream `<ref>`. Runs
+/// `git fetch --depth 1 origin <ref>` then `git reset --hard FETCH_HEAD`.
+/// Authenticates via the same PANGEA_GEM_AUTH_TOKEN injection the
+/// initial clone uses (the cached remote URL already carries it if
+/// the original clone was authed).
+async fn refresh_mutable_ref(dir: &Path, git_ref: &str) -> Result<(), GemCacheError> {
+    let fetch = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .arg("fetch")
+        .arg("--depth")
+        .arg("1")
+        .arg("origin")
+        .arg(git_ref)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .map_err(|e| GemCacheError::Clone(format!("spawn git fetch: {e}")))?;
+    if !fetch.status.success() {
+        return Err(GemCacheError::Clone(format!(
+            "git fetch origin {git_ref}: {}",
+            String::from_utf8_lossy(&fetch.stderr)
+        )));
+    }
+    let reset = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .arg("reset")
+        .arg("--hard")
+        .arg("FETCH_HEAD")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .map_err(|e| GemCacheError::Clone(format!("spawn git reset: {e}")))?;
+    if !reset.status.success() {
+        return Err(GemCacheError::Clone(format!(
+            "git reset --hard FETCH_HEAD: {}",
+            String::from_utf8_lossy(&reset.stderr)
+        )));
+    }
+    Ok(())
+}
+
 /// Validate a name component is safe to use as a filesystem path
 /// segment. Rejects path traversal, NUL, leading dots, slashes.
 fn validate_name_component(s: &str) -> Result<(), GemCacheError> {
@@ -309,5 +403,23 @@ mod tests {
         let other = "https://gitlab.com/foo/bar";
         assert_eq!(inject_github_token(other), other, "non-github should pass through");
         std::env::remove_var("PANGEA_GEM_AUTH_TOKEN");
+    }
+
+    #[test]
+    fn is_sha_ref_classification() {
+        // SHA-like (immutable in cache)
+        assert!(is_sha_ref("7fb2fcc"));                    // short
+        assert!(is_sha_ref("7fb2fccdeadbeef"));            // 15 chars
+        assert!(is_sha_ref("0123456789abcdef0123456789abcdef01234567")); // 40 chars
+        // Not SHA-like (re-fetch every ensure)
+        assert!(!is_sha_ref("main"));
+        assert!(!is_sha_ref("HEAD"));
+        assert!(!is_sha_ref("v0.1.0"));                    // tag — also mutable in practice
+        assert!(!is_sha_ref("feature/foo"));
+        assert!(!is_sha_ref("ABCDEF0123456789ABCDEF0123456789ABCDEF01")); // uppercase rejected
+        assert!(!is_sha_ref(""));
+        assert!(!is_sha_ref("abc"));                       // < 7 chars
+        assert!(!is_sha_ref("g"));                         // non-hex char
+        assert!(!is_sha_ref(&"a".repeat(41)));             // > 40 chars
     }
 }
