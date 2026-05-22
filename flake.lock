@@ -764,11 +764,11 @@
         "rust-analyzer-src": "rust-analyzer-src"
       },
       "locked": {
-        "lastModified": 1779357702,
-        "narHash": "sha256-QGu9ycXwaaqUzDkP7bcanTjGhuqlUNmjh1jLUPjDHgw=",
+        "lastModified": 1779442979,
+        "narHash": "sha256-CtoDst6OfZYWAuqT7J5A9QduRYIL7+xTlBd9CS8RKOk=",
         "owner": "nix-community",
         "repo": "fenix",
-        "rev": "a6ebca03f87958a09065959897223790014cdcac",
+        "rev": "e8d2e251fa22fd892997612423e16c733a8775c4",
         "type": "github"
       },
       "original": {
@@ -1245,11 +1245,11 @@
         "substrate": "substrate"
       },
       "locked": {
-        "lastModified": 1779425145,
-        "narHash": "sha256-erSx9cx91wVJPGB1UShQFx7s4qYegFuw9riocsJiah8=",
+        "lastModified": 1779450581,
+        "narHash": "sha256-vwO5wXTmfhjkx3qlLwe16Klrhil0HfR64ccTa63yy84=",
         "owner": "pleme-io",
         "repo": "forge",
-        "rev": "6a25969aa398e8e838239a0f8d118f6c4b821f46",
+        "rev": "26fd49a9616f2b757ff1a623a975483d07677f2e",
         "type": "github"
       },
       "original": {
@@ -2543,11 +2543,11 @@
     "pangea-akeyless": {
       "flake": false,
       "locked": {
-        "lastModified": 1779429276,
-        "narHash": "sha256-5fVVDcGK2oRtuuEdYI1Jp76O30wAQEuJGXv5tgdaEiU=",
+        "lastModified": 1779456693,
+        "narHash": "sha256-TnvHefLXk3qHvuBwrL2L/0EJsuozk3cdPlgRi12yNy4=",
         "owner": "pleme-io",
         "repo": "pangea-akeyless",
-        "rev": "a38972e44abac06466c4ca8343403c316feebc66",
+        "rev": "90a1c0580b6b8f3c81fe7a79308fb9a2d97eeefe",
         "type": "github"
       },
       "original": {
@@ -2559,11 +2559,11 @@
     "pangea-aws": {
       "flake": false,
       "locked": {
-        "lastModified": 1779429314,
-        "narHash": "sha256-sZFZrSaivzxgKNp7hvxIXVoh6yEGhodKfXDelO/sH10=",
+        "lastModified": 1779456725,
+        "narHash": "sha256-gROHTvWD5YaE76g572sHRWxoghQY18mltLF9U+EOcYI=",
         "owner": "pleme-io",
         "repo": "pangea-aws",
-        "rev": "be93d01eb7a7f4c941c6daa8c1bbd5501c69ff38",
+        "rev": "a62e36d35c9042f91c78a8fbd393f5118399423d",
         "type": "github"
       },
       "original": {
@@ -2575,11 +2575,11 @@
     "pangea-azure": {
       "flake": false,
       "locked": {
-        "lastModified": 1779429324,
-        "narHash": "sha256-/kpRr8WrN69YsErpBE0PBfYSvRkE9jGTtvjXicpBnck=",
+        "lastModified": 1779456734,
+        "narHash": "sha256-nPrMmkXAQpwBhARk6Xrp2hLDXTnUWaS2ZwK2SAWtypQ=",
         "owner": "pleme-io",
         "repo": "pangea-azure",
-        "rev": "069224a728a55d8abdf80c25e656a63e0c117cc0",
+        "rev": "9789fa932140c8be19e59b8ffc72e1290dc572d5",
         "type": "github"
       },
       "original": {
@@ -2591,11 +2591,11 @@
     "pangea-cloudflare": {
       "flake": false,
       "locked": {
-        "lastModified": 1779429332,
-        "narHash": "sha256-JrZxuHGHrrxhHdFDSekM2h9FF6BDtUeqHrG8W+dIK0I=",
+        "lastModified": 1779456741,
+        "narHash": "sha256-60j9v06U2cAhztq2k2Q/QP/zgCNF8YxHvKdR6cxWkyE=",
         "owner": "pleme-io",
         "repo": "pangea-cloudflare",
-        "rev": "e5d3db5ab989e675da937803059077dce8e71e96",
+        "rev": "d8cf31a268cc1d53d31a34527aac5debcf33d877",
         "type": "github"
       },
       "original": {
@@ -2607,11 +2607,11 @@
     "pangea-core": {
       "flake": false,
       "locked": {
-        "lastModified": 1779429355,
-        "narHash": "sha256-nmLseozLkp/PyZB5g2QAfWicbyLVCDkIGt0GyNM32wk=",
+        "lastModified": 1779456762,
+        "narHash": "sha256-cdrwfI4S6GlYsnZhWZV3aV1d5B5XkA0ilTo5nMy65kk=",
         "owner": "pleme-io",
         "repo": "pangea-core",
-        "rev": "494d64bbd156906959a1a6d955f5c0828f8e737b",
+        "rev": "3e68e931a35287b36ce3aaa5b42db1b9d8bda480",
         "type": "github"
       },
       "original": {
@@ -2623,11 +2623,11 @@
     "pangea-datadog": {
       "flake": false,
       "locked": {
-        "lastModified": 1779429370,
-        "narHash": "sha256-wi0iNKZGpX9NQcNGouvRxrXhlUze60k4ss1dbFP64x4=",
+        "lastModified": 1779456777,
+        "narHash": "sha256-Gr73ZpLimxTbx2xUcdl8P5m7g7KenqwSe39BEy3TBOY=",
         "owner": "pleme-io",
         "repo": "pangea-datadog",
-        "rev": "cc1c7b4932ef9e35c66d9a72ed45ae6271fee3a5",
+        "rev": "73207a7664b43361a42dd0c487554632f42832bc",
         "type": "github"
       },
       "original": {
@@ -2639,11 +2639,11 @@
     "pangea-gcp": {
       "flake": false,
       "locked": {
-        "lastModified": 1779429404,
-        "narHash": "sha256-BJNUKV9EWkU22MiD8pus+LxPnyT9eldN5TsHVcrmlpY=",
+        "lastModified": 1779456807,
+        "narHash": "sha256-NKjeU6YrLpznXXy7OIMCxtOAl7xfLiILZPdGnIkOyAw=",
         "owner": "pleme-io",
         "repo": "pangea-gcp",
-        "rev": "aa16d73c9cd637de137cec6d1ad2cdee0baf360c",
+        "rev": "923b489d46bf3012d3df5504757f24f3900e1b16",
         "type": "github"
       },
       "original": {
@@ -2655,11 +2655,11 @@
     "pangea-github": {
       "flake": false,
       "locked": {
-        "lastModified": 1779429413,
-        "narHash": "sha256-jffDNFfMRCBgGKc8EHDg6KGSkyLJciRAnuR2ScS6lf4=",
+        "lastModified": 1779456814,
+        "narHash": "sha256-61deNj6377adC12JYt4trekn+IDUSir5+wdv6lNoJig=",
         "owner": "pleme-io",
         "repo": "pangea-github",
-        "rev": "dcad27f6a5fda3959e5b57ac25936de5465449bc",
+        "rev": "e618d84084bbdf66374393e43b84a0907cc0a5ef",
         "type": "github"
       },
       "original": {
@@ -2671,11 +2671,11 @@
     "pangea-hcloud": {
       "flake": false,
       "locked": {
-        "lastModified": 1779429438,
-        "narHash": "sha256-r+FJkbgkSdqxHLsN8JV9rrJiPu5MOmkX2Ojgrb5NS/o=",
+        "lastModified": 1779456838,
+        "narHash": "sha256-wX3lnvdUFhf7jA8M3/6cjs7ndd/T278JB/VsDKyPubc=",
         "owner": "pleme-io",
         "repo": "pangea-hcloud",
-        "rev": "0fd7014960af60e96371cddd24fec9c07b45be05",
+        "rev": "2ffe01c2440ec45f85385de933dff093936ebce1",
         "type": "github"
       },
       "original": {
@@ -2687,11 +2687,11 @@
     "pangea-kubernetes": {
       "flake": false,
       "locked": {
-        "lastModified": 1779425231,
-        "narHash": "sha256-Yk27rMKZdWfQmIjFfY+gUP2PualZbbEHxSQKc9M1m3Q=",
+        "lastModified": 1779451074,
+        "narHash": "sha256-jfmitltlHxr1P1jAyQ7pfSpHoON46QvaLEnmP1933YE=",
         "owner": "pleme-io",
         "repo": "pangea-kubernetes",
-        "rev": "38f546ff8d72158262a22cdd59aea88fe9cf8f71",
+        "rev": "b30479b81bac1535c7bcc5868f0a0c692c420eae",
         "type": "github"
       },
       "original": {
@@ -2719,11 +2719,11 @@
     "pangea-splunk": {
       "flake": false,
       "locked": {
-        "lastModified": 1779425489,
-        "narHash": "sha256-E9BsVT4n0+hMauOPrMSIiR8mbKKXnnkMJ7fHaYswD48=",
+        "lastModified": 1779451148,
+        "narHash": "sha256-5bIdYYDFpM+4GFWn6PE33x0yi1z2s7zM04RtM4qgoAA=",
         "owner": "pleme-io",
         "repo": "pangea-splunk",
-        "rev": "093043036750a72d26b24600d14efff04d65dd3f",
+        "rev": "10b5e1aa37e4024223ad063724da38ca29bf207b",
         "type": "github"
       },
       "original": {
@@ -2735,11 +2735,11 @@
     "pangea-spot": {
       "flake": false,
       "locked": {
-        "lastModified": 1779425498,
-        "narHash": "sha256-IVpSYst3cv8Ah+zL5ajgGtGrsD6l/5ejtgFOPuOG7xs=",
+        "lastModified": 1779451156,
+        "narHash": "sha256-tJcLRfa0Es5pyXKc7Ew5t9GX5Fn9dR8stpwnJsSLx5k=",
         "owner": "pleme-io",
         "repo": "pangea-spot",
-        "rev": "f88c9535eee15fa5ba5cbd0c793ee9b191d64698",
+        "rev": "ee4ffddb2fe96f6e9d44515afbc2ef6b88e2bb08",
         "type": "github"
       },
       "original": {
