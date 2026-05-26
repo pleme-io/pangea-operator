@@ -5,6 +5,7 @@
 //! AmiTest, and ImagePipeline.
 
 pub mod architecture_gem_controller;
+pub mod conflict;
 pub mod error_policy;
 pub mod finalizer;
 pub mod fleet_status_controller;

@@ -244,6 +244,7 @@ async fn reconcile_flow(
                             reactive_policy: None,
                             import_policy: None,
                             import_hints: Default::default(),
+                            conflict_policy: None,
                             output_bindings: Default::default(),
                         },
                     );

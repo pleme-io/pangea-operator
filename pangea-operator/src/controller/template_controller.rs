@@ -1292,7 +1292,7 @@ async fn handle_applying(
     // creating a duplicate. Imported addresses are tracked so the
     // cycle receipt can mark them Outcome::Imported (instead of
     // whatever the post-import plan would derive).
-    let imported_addresses = run_import_prepass(
+    let mut imported_addresses = run_import_prepass(
         template,
         state,
         &workspace.path,
@@ -1344,6 +1344,59 @@ async fn handle_applying(
             .executor
             .apply(&workspace.path, None, true)
             .await?;
+    }
+
+    // Post-apply conflict resolution — the typed, cascading
+    // ConflictResolutionPolicy layer. When the pre-apply import sweep
+    // didn't adopt everything (e.g. `tofu show -json` came back empty on
+    // a huge plan, or a resource was created out-of-band between plan and
+    // apply), the apply 422s on "already exists" / "already protected".
+    // Rather than failing the cycle, classify each conflict against the
+    // policy and, for `import`-resolution conflicts, adopt the resource
+    // via `tofu import` then re-apply — up to `maxRounds`. Gated on the
+    // same autoOnConflict signal the prepass uses (or an explicit
+    // `spec.conflictPolicy.enabled`), so it fires on the existing
+    // pleme-io-opensource CR with no spec change. This is the convergence
+    // guarantee that does NOT depend on the prepass succeeding.
+    if !result.success {
+        if let Some(outcome) = crate::controller::conflict::resolve_conflicts_post_apply(
+            template,
+            state,
+            &workspace.path,
+            &plan_path,
+            &workspace.main_tf_path(),
+            result.clone(),
+        )
+        .await
+        {
+            let imported_n = outcome.imported.len();
+            imported_addresses.extend(outcome.imported);
+            result = outcome.result;
+            if result.success {
+                info!(
+                    imported = imported_n,
+                    rounds = outcome.rounds,
+                    "conflict-resolution: apply converged after adopting out-of-band resources"
+                );
+                record_event(
+                    template,
+                    state,
+                    EventType::Normal,
+                    "ConflictResolved",
+                    &format!(
+                        "Adopted {imported_n} out-of-band resource(s) via import + re-apply ({} round(s))",
+                        outcome.rounds
+                    ),
+                )
+                .await;
+            } else if imported_n > 0 {
+                warn!(
+                    imported = imported_n,
+                    rounds = outcome.rounds,
+                    "conflict-resolution: imported resources but apply still failing — surfacing real error"
+                );
+            }
+        }
     }
 
     if result.success {
@@ -1634,10 +1687,37 @@ async fn run_import_prepass(
     // action it could import. prior_drifts is kept as a fallback
     // path for callers that don't have a plan file available.
     let plan_json = match state.executor.show_plan(workspace_path, plan_path).await {
-        Ok(r) if r.success => r.stdout,
-        _ => String::new(),
+        Ok(r) if r.success && !r.stdout.is_empty() => r.stdout,
+        Ok(r) => {
+            // NON-SILENT: a non-success or empty `tofu show -json` is the
+            // exact failure that silently disabled auto-import and stuck
+            // the pleme-io-opensource posture for ~17 days. Surface it
+            // loudly so the mechanism is visible in the operator log. The
+            // executor read-to-end fix should keep this from firing on
+            // large plans; the post-apply conflict catch covers the gap
+            // if it does fire.
+            warn!(
+                success = r.success,
+                exit_code = r.exit_code,
+                stdout_len = r.stdout.len(),
+                stderr = %truncate_for_status(&r.stderr),
+                "import prepass: `tofu show -json` returned no usable plan JSON — \
+                 falling back to prior drift details (typically 0 creates). Pre-apply \
+                 import is disabled this cycle; conflicts will be caught post-apply."
+            );
+            String::new()
+        }
+        Err(e) => {
+            warn!(
+                error = %e,
+                "import prepass: `tofu show -json` errored — pre-apply import disabled \
+                 this cycle (post-apply conflict catch covers)."
+            );
+            String::new()
+        }
     };
     let plan_create_addresses = extract_create_addresses_from_plan(&plan_json);
+    let plan_creates_n = plan_create_addresses.len();
     let create_addresses_owned: Vec<String> = if !plan_create_addresses.is_empty() {
         plan_create_addresses
     } else {
@@ -1647,6 +1727,13 @@ async fn run_import_prepass(
             .map(|d| d.address.clone())
             .collect()
     };
+    info!(
+        plan_json_len = plan_json.len(),
+        plan_creates = plan_creates_n,
+        total_create_addresses = create_addresses_owned.len(),
+        source = if plan_creates_n > 0 { "plan" } else { "prior_drifts" },
+        "import prepass: create-action discovery"
+    );
     if create_addresses_owned.is_empty() {
         return Vec::new();
     }

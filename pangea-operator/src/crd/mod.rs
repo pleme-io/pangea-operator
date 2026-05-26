@@ -28,7 +28,8 @@ pub use architecture_gem::{
     FailureEscalation, PhaseTimeoutPolicy, ReactiveAction, ReactivePolicy, VerifiedBlockedPolicy,
 };
 pub use infrastructure_template::{
-    AwsCredentials, CloudflareCredentials, ComplianceStatus, Condition, ConfigMapRef, CycleSummary,
+    AwsCredentials, CloudflareCredentials, ComplianceStatus, Condition, ConfigMapRef,
+    ConflictKind, ConflictResolution, ConflictResolutionPolicy, ConflictRule, CycleSummary,
     DriftDetail, GitHubCredentials, GitRepositoryRef, ImportPolicy, InfrastructureTemplate,
     InfrastructureTemplateSpec, InfrastructureTemplateStatus, Outcome, OutputBinding,
     OutputSecretRef, Phase, PolicyDecision, PolicyEvaluation, PolicyMatch, PolicyRule,

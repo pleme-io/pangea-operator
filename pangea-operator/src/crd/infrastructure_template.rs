@@ -223,6 +223,29 @@ pub struct InfrastructureTemplateSpec {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub import_hints: BTreeMap<String, String>,
 
+    /// Typed, cascading conflict-resolution policy — the operator's
+    /// answer to "apply hit a provider conflict (the resource already
+    /// exists / is already protected) that the pre-apply import sweep
+    /// didn't catch." Rather than failing the cycle, the operator
+    /// classifies each conflict and, for `import`-resolution conflicts,
+    /// adopts the out-of-band resource via `tofu import` then re-applies
+    /// (up to `maxRounds`).
+    ///
+    /// Two layers, general + specific:
+    ///   - GENERAL (default): unset → a bundled policy
+    ///     (`alreadyExists` + `alreadyProtected` → `import`, everything
+    ///     else → `fail`, 3 rounds) that fires automatically whenever
+    ///     `importPolicy.autoOnConflict` is true. Existing templates
+    ///     self-heal conflicts with NO spec change.
+    ///   - SPECIFIC: set `rules` to override per resource-type + kind
+    ///     (first match wins), `defaultResolution` for the unmatched
+    ///     fallback, and `enabled` to force on/off independent of
+    ///     `autoOnConflict`.
+    ///
+    /// Default: unset → bundled policy gated on `autoOnConflict`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conflict_policy: Option<ConflictResolutionPolicy>,
+
     /// Publish selected `status.outputs` to user-defined K8s Secrets
     /// after every successful apply. Each binding picks a single
     /// output address and writes it to a named Secret/key in any
@@ -606,6 +629,131 @@ pub struct ImportPolicy {
     /// Empty map = fall through to operator-bundled defaults.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub natural_ids: BTreeMap<String, String>,
+}
+
+/// Typed classification of a provider conflict surfaced by a failed
+/// `tofu apply`. The operator's conflict classifier
+/// (`controller::conflict::classify_apply_conflicts`) maps OpenTofu's
+/// diagnostic text onto these kinds; the [`ConflictResolutionPolicy`]
+/// then decides what to do per kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ConflictKind {
+    /// The resource already exists in the provider (HTTP 409/422
+    /// "already exists" / "name already taken"). The canonical case:
+    /// an out-of-band resource the pre-apply import sweep didn't adopt.
+    AlreadyExists,
+    /// The resource (or a sub-resource it manages) is already in the
+    /// target protected/locked state (e.g. a branch is "already
+    /// protected").
+    AlreadyProtected,
+    /// Any other apply failure. Never auto-resolved by the bundled
+    /// default — surfaced as a real error unless a rule says otherwise.
+    Other,
+}
+
+/// What the operator does about a classified conflict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ConflictResolution {
+    /// Adopt the existing resource into state via `tofu import`, then
+    /// re-apply. Converges the posture without recreating.
+    Import,
+    /// Leave the resource as-is; don't import, don't fail the round on
+    /// its account. Use for resources whose conflict is expected/benign.
+    Skip,
+    /// Surface the conflict as a real apply failure (current behaviour).
+    Fail,
+}
+
+/// One typed conflict-resolution rule — the *specific* layer. Evaluated
+/// top-to-bottom; the first rule whose `resourceTypes` (empty = any) and
+/// `kinds` (empty = any) match the conflict wins.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictRule {
+    /// Tofu resource types this rule matches (e.g. `github_repository`).
+    /// Empty = match any resource type.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resource_types: Vec<String>,
+
+    /// Conflict kinds this rule matches. Empty = match any kind.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kinds: Vec<ConflictKind>,
+
+    /// What to do when this rule matches.
+    pub resolution: ConflictResolution,
+}
+
+/// Typed, configurable conflict-resolution policy.
+///
+/// Two layers, general + specific (see [`ConflictResolutionPolicy::bundled_default`]):
+///   - GENERAL: the bundled default adopts `alreadyExists` /
+///     `alreadyProtected` via import and fails everything else; it fires
+///     automatically when `importPolicy.autoOnConflict` is true.
+///   - SPECIFIC: author `rules` to override per (resourceType, kind),
+///     `defaultResolution` for the unmatched fallback, and `enabled` to
+///     force the whole mechanism on/off independent of `autoOnConflict`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictResolutionPolicy {
+    /// Master switch. `Some(true)`/`Some(false)` forces the post-apply
+    /// conflict catch on/off. `None` (default) inherits from
+    /// `importPolicy.autoOnConflict` — so templates already opting into
+    /// auto-import get the convergence guarantee with no extra config.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+
+    /// Specific per-(resourceType, kind) rules, first match wins.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rules: Vec<ConflictRule>,
+
+    /// Resolution for conflicts no `rules` entry matched. Defaults to
+    /// `fail` (never silently paper over an unrecognized conflict).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_resolution: Option<ConflictResolution>,
+
+    /// Max import→re-apply rounds before giving up (clamped to 1..=10).
+    /// Default 3.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_rounds: Option<u32>,
+}
+
+impl ConflictResolutionPolicy {
+    /// The bundled general-case policy: adopt `alreadyExists` +
+    /// `alreadyProtected` via import, fail everything else, 3 rounds.
+    /// `enabled: None` so it inherits `importPolicy.autoOnConflict`.
+    pub fn bundled_default() -> Self {
+        Self {
+            enabled: None,
+            rules: vec![ConflictRule {
+                resource_types: Vec::new(),
+                kinds: vec![ConflictKind::AlreadyExists, ConflictKind::AlreadyProtected],
+                resolution: ConflictResolution::Import,
+            }],
+            default_resolution: Some(ConflictResolution::Fail),
+            max_rounds: Some(3),
+        }
+    }
+
+    /// Resolve the action for a `(resource_type, kind)` conflict: first
+    /// matching rule wins, else `default_resolution`, else `Fail`.
+    pub fn resolution_for(&self, resource_type: &str, kind: ConflictKind) -> ConflictResolution {
+        for rule in &self.rules {
+            let type_ok = rule.resource_types.is_empty()
+                || rule.resource_types.iter().any(|t| t == resource_type);
+            let kind_ok = rule.kinds.is_empty() || rule.kinds.contains(&kind);
+            if type_ok && kind_ok {
+                return rule.resolution;
+            }
+        }
+        self.default_resolution.unwrap_or(ConflictResolution::Fail)
+    }
+
+    /// Round budget, clamped to a sane 1..=10.
+    pub fn rounds(&self) -> u32 {
+        self.max_rounds.unwrap_or(3).clamp(1, 10)
+    }
 }
 
 /// Status of an InfrastructureTemplate.
