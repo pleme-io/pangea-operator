@@ -222,13 +222,15 @@ fn combined_output(result: &TofuResult) -> String {
 /// to the rendered `main.tf.json` config (literal values) when `show`
 /// yields nothing.
 async fn gather_attrs(
+    template: &InfrastructureTemplate,
     state: &ControllerState,
     work_dir: &Path,
     plan_path: &Path,
     main_tf_path: &Path,
 ) -> BTreeMap<String, serde_json::Value> {
-    let _ = state.executor.plan(work_dir, Some(plan_path), &[]).await;
-    let plan_json = match state.executor.show_plan(work_dir, plan_path).await {
+    let executor = state.executor_for(template);
+    let _ = executor.plan(work_dir, Some(plan_path), &[]).await;
+    let plan_json = match executor.show_plan(work_dir, plan_path).await {
         Ok(r) if r.success && !r.stdout.is_empty() => r.stdout,
         _ => String::new(),
     };
@@ -264,6 +266,12 @@ pub async fn resolve_conflicts_post_apply(
     if !is_enabled(template, &policy) {
         return None;
     }
+
+    // Per-CR executor selection — a CR with `spec.executor: magma` runs
+    // the conflict-resolution import + re-apply loop through MagmaExecutor;
+    // everything else stays on the shared tofu executor. Mirrors the
+    // selection every phase handler in template_controller now makes.
+    let executor = state.executor_for(template);
 
     let max_rounds = policy.rounds();
     let variables = template.spec.variables.clone().unwrap_or_default();
@@ -313,7 +321,7 @@ pub async fn resolve_conflicts_post_apply(
             "conflict-resolution: adopting out-of-band resources via tofu import, then re-applying"
         );
 
-        let attrs_by_addr = gather_attrs(state, work_dir, plan_path, main_tf_path).await;
+        let attrs_by_addr = gather_attrs(template, state, work_dir, plan_path, main_tf_path).await;
 
         let mut imported_this_round = 0usize;
         for (addr, _kind) in &want {
@@ -345,7 +353,7 @@ pub async fn resolve_conflicts_post_apply(
                     continue;
                 }
             };
-            match state.executor.import(work_dir, addr, &import_id).await {
+            match executor.import(work_dir, addr, &import_id).await {
                 Ok(r) if r.success => {
                     imported_all.push(addr.clone());
                     imported_this_round += 1;
@@ -368,7 +376,7 @@ pub async fn resolve_conflicts_post_apply(
 
         // Re-apply with a fresh plan (plan_file=None) — the imports
         // mutated state, so any cached plan is stale.
-        match state.executor.apply(work_dir, None, true).await {
+        match executor.apply(work_dir, None, true).await {
             Ok(r) => result = r,
             Err(e) => {
                 warn!(error = %e, "conflict-resolution: re-apply errored");

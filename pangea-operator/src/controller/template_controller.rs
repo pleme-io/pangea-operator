@@ -895,6 +895,7 @@ async fn handle_initializing(
 ) -> Result<ReconcileAction> {
     info!("Template in Initializing phase");
     let _phase_timer = state.metrics.record_phase_duration("initializing");
+    let executor = state.executor_for(template);
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
 
@@ -958,7 +959,7 @@ async fn handle_initializing(
     }
 
     // Run tofu init
-    let result = state.executor.init(&workspace.path, &[]).await?;
+    let result = executor.init(&workspace.path, &[]).await?;
 
     if result.success {
         info!("tofu init completed successfully");
@@ -992,13 +993,13 @@ async fn handle_planning(
 ) -> Result<ReconcileAction> {
     info!("Template in Planning phase");
     let _phase_timer = state.metrics.record_phase_duration("planning");
+    let executor = state.executor_for(template);
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
     let plan_path = workspace.plan_path();
 
     // Run tofu plan
-    let result = state
-        .executor
+    let result = executor
         .plan(&workspace.path, Some(&plan_path), &[])
         .await?;
 
@@ -1014,7 +1015,7 @@ async fn handle_planning(
     // Drift details are capped at 50 entries so the K8s status object
     // stays tractable; full per-plan list is available via GraphQL.
     let (summary, raw_drifts) = if plan_path.exists() {
-        let show_result = state.executor.show_plan(&workspace.path, &plan_path).await?;
+        let show_result = executor.show_plan(&workspace.path, &plan_path).await?;
         if show_result.success {
             match Plan::from_json(&show_result.stdout) {
                 Ok(plan) => {
@@ -1269,6 +1270,7 @@ async fn handle_applying(
 ) -> Result<ReconcileAction> {
     info!("Template in Applying phase");
     let _phase_timer = state.metrics.record_phase_duration("applying");
+    let executor = state.executor_for(template);
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
     let plan_path = workspace.plan_path();
@@ -1310,8 +1312,7 @@ async fn handle_applying(
         None
     };
 
-    let mut result = state
-        .executor
+    let mut result = executor
         .apply(&workspace.path, plan_file, true)
         .await?;
 
@@ -1340,8 +1341,7 @@ async fn handle_applying(
         )
         .await;
         let _ = tokio::fs::remove_file(&plan_path).await;
-        result = state
-            .executor
+        result = executor
             .apply(&workspace.path, None, true)
             .await?;
     }
@@ -1403,7 +1403,7 @@ async fn handle_applying(
         info!(duration_secs = result.duration.as_secs_f64(), "tofu apply completed successfully");
 
         // Fetch outputs
-        let outputs = match state.executor.output(&workspace.path).await {
+        let outputs = match executor.output(&workspace.path).await {
             Ok(output_result) if output_result.success => {
                 serde_json::from_str(&output_result.stdout).ok()
             }
@@ -1667,6 +1667,8 @@ async fn run_import_prepass(
         bundled_natural_ids, parse_planned_attrs, resolve_natural_id, substitute_with_planned,
     };
 
+    let executor = state.executor_for(template);
+
     let auto_import = template
         .spec
         .import_policy
@@ -1686,7 +1688,7 @@ async fn run_import_prepass(
     // bypasses the cap entirely so the prepass sees every create-
     // action it could import. prior_drifts is kept as a fallback
     // path for callers that don't have a plan file available.
-    let plan_json = match state.executor.show_plan(workspace_path, plan_path).await {
+    let plan_json = match executor.show_plan(workspace_path, plan_path).await {
         Ok(r) if r.success && !r.stdout.is_empty() => r.stdout,
         Ok(r) => {
             // NON-SILENT: a non-success or empty `tofu show -json` is the
@@ -1910,7 +1912,8 @@ async fn try_tofu_import(
         source = %source_label,
         "Running tofu import for create-action"
     );
-    match state.executor.import(workspace_path, addr, import_id).await {
+    let executor = state.executor_for(template);
+    match executor.import(workspace_path, addr, import_id).await {
         Ok(r) if r.success => {
             record_event(
                 template,
@@ -2012,6 +2015,7 @@ async fn handle_ready(
     template: &InfrastructureTemplate,
     state: &ControllerState,
 ) -> Result<ReconcileAction> {
+    let executor = state.executor_for(template);
     let interval = parse_duration(&template.spec.refresh_interval)
         .unwrap_or(DEFAULT_REQUEUE_INTERVAL);
 
@@ -2037,15 +2041,14 @@ async fn handle_ready(
     // fails we fall back to the boolean has_changes signal — better
     // a missed fingerprint than a controller wedge.
     let drift_plan_path = workspace.path.join("_drift_plan.tfplan");
-    let result = state
-        .executor
+    let result = executor
         .plan(&workspace.path, Some(&drift_plan_path), &[])
         .await?;
 
     update_drift_check_timestamp(template, state).await?;
 
     let drift_details: Vec<crate::crd::DriftDetail> = if result.has_changes() && drift_plan_path.exists() {
-        let show = state.executor.show_plan(&workspace.path, &drift_plan_path).await?;
+        let show = executor.show_plan(&workspace.path, &drift_plan_path).await?;
         if show.success {
             match Plan::from_json(&show.stdout) {
                 Ok(plan) => plan
@@ -2349,12 +2352,13 @@ async fn handle_destroying(
     }
 
     info!("Template in Destroying phase");
+    let executor = state.executor_for(template);
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
 
     // Only run destroy if workspace has been initialized
     if workspace.file_exists(".terraform") {
-        let result = state.executor.destroy(&workspace.path, true).await?;
+        let result = executor.destroy(&workspace.path, true).await?;
 
         if !result.success {
             let err_msg = format!("tofu destroy failed: {}", result.stderr);
