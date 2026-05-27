@@ -51,7 +51,7 @@ pub use compliance_binding_controller::ComplianceBindingController;
 pub use dashboard_controller::DashboardController;
 pub use operator_policy_controller::OperatorPolicyController;
 
-use crate::backend::{PostgresStateBackend, StateBackend, StateStore};
+use crate::backend::StateBackend;
 use crate::error::Result;
 use crate::executor::{
     ExecutorBackend, ExecutorConfig, IacExecutor, PackerExecutor, TofuExecutor, WorkspaceManager,
@@ -229,18 +229,16 @@ impl ControllerState {
             return Arc::clone(&self.executor);
         };
 
-        // Per-CR state key. MUST match the keys the tofu reconcile
-        // path uses so magma reads the same PG rows:
-        //   * schema_name   = PangeaNamespace::schema_name()
-        //                     = "{schemaPrefix}{namespace}" (default
-        //                       prefix "pangea_"); derived from
-        //                       `spec.pangeaNamespace`.
-        //   * template_name = the CR name (`name_any()`), matching
-        //                     `BackendConfigGenerator` + `StateStore`
-        //                     / `SchemaManager::ensure_state_table`
-        //                     (table `{schema}.{template}_states`).
-        //   * state_name    = "default" (the OpenTofu default
-        //                     workspace name).
+        // Per-CR state key. MUST match the keys tofu's pg backend
+        // (BackendConfigGenerator) uses so magma reads tofu's SAME live
+        // rows — no data migration:
+        //   * schema_name   = "pangea_{spec.pangeaNamespace}"
+        //                     (PangeaNamespace::schema_name(), default
+        //                      prefix "pangea_").
+        //   * template_name = the CR name (`name_any()`).
+        //   * state_name    = "default" (OpenTofu default workspace).
+        // TofuPgStateBackend turns these into the live OpenTofu pg
+        // table `"{schema}_{template}_states".states` (verified live).
         let schema_name = format!("pangea_{}", template.spec.pangea_namespace);
         let template_name = template.name_any();
         let state_name = "default".to_string();
@@ -281,8 +279,15 @@ impl ControllerState {
     /// one shared `Arc<PgPool>`.
     pub fn with_db_pool(mut self, pool: sqlx::PgPool) -> Self {
         let shared = Arc::new(pool);
-        let store = Arc::new(StateStore::new(Arc::clone(&shared)));
-        self.state_backend = Some(Arc::new(PostgresStateBackend::new(store)));
+        // magma reads/writes tofu's LIVE OpenTofu pg-backend state in
+        // place — schema "{ns}_{cr}_states", table `states`, text data —
+        // so NO data migration is needed. magma is tofu state-format
+        // compatible; BackendShape::Tofu (set in executor_for) decodes
+        // these bytes directly. Verified vs the live pangea_state DB
+        // 2026-05-27. (magma-backend has no native pg impl; the
+        // operator-provided AsyncStateStore is the canonical hookup.)
+        self.state_backend =
+            Some(Arc::new(crate::backend::TofuPgStateBackend::new(Arc::clone(&shared))));
         // `db_pool` wraps the pool itself; reuse the same Arc'd pool.
         self.db_pool = Some(Arc::new(RwLock::new((*shared).clone())));
         self
