@@ -264,8 +264,18 @@ impl ControllerState {
     #[cfg(not(feature = "executor_magma"))]
     fn magma_executor_for(
         &self,
-        _template: &crate::crd::InfrastructureTemplate,
+        template: &crate::crd::InfrastructureTemplate,
     ) -> Arc<dyn IacExecutor> {
+        use kube::ResourceExt;
+        // Loud, not silent: a spec.executor=magma CR on an operator built
+        // WITHOUT executor_magma must not quietly run tofu (that masked a
+        // non-cutover during the 2026-05-27 canary). Surface it every time.
+        tracing::warn!(
+            template = %template.name_any(),
+            "spec.executor=magma but this operator was built WITHOUT the \
+             executor_magma feature — running tofu. Rebuild the image with \
+             executor_magma (and regenerate Cargo.nix) to enable magma."
+        );
         Arc::clone(&self.executor)
     }
 

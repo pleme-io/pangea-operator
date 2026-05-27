@@ -411,6 +411,31 @@ rec {
           "serde" = [ "dep:serde" ];
         };
       };
+      "arrayref" = rec {
+        crateName = "arrayref";
+        version = "0.3.9";
+        edition = "2015";
+        sha256 = "1jzyp0nvp10dmahaq9a2rnxqdd5wxgbvp8xaibps3zai8c9fi8kn";
+        authors = [
+          "David Roundy <roundyd@physics.oregonstate.edu>"
+        ];
+
+      };
+      "arrayvec" = rec {
+        crateName = "arrayvec";
+        version = "0.7.6";
+        edition = "2018";
+        sha256 = "0l1fz4ccgv6pm609rif37sl5nv5k6lbzi7kkppgzqzh1vwix20kw";
+        authors = [
+          "bluss"
+        ];
+        features = {
+          "borsh" = [ "dep:borsh" ];
+          "default" = [ "std" ];
+          "serde" = [ "dep:serde" ];
+          "zeroize" = [ "dep:zeroize" ];
+        };
+      };
       "ascii_utils" = rec {
         crateName = "ascii_utils";
         version = "0.9.3";
@@ -1034,6 +1059,80 @@ rec {
         ];
 
       };
+      "aws-lc-rs" = rec {
+        crateName = "aws-lc-rs";
+        version = "1.17.0";
+        edition = "2021";
+        links = "aws_lc_rs_1_17_0_sys";
+        sha256 = "003d69lq9qf12bj4j6csy3nrvilwa30yd9x9blx7h1f27vyg3hjy";
+        libName = "aws_lc_rs";
+        authors = [
+          "AWS-LibCrypto"
+        ];
+        dependencies = [
+          {
+            name = "aws-lc-sys";
+            packageId = "aws-lc-sys";
+            optional = true;
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "zeroize";
+            packageId = "zeroize";
+          }
+        ];
+        features = {
+          "asan" = [ "aws-lc-sys?/asan" "aws-lc-fips-sys?/asan" ];
+          "aws-lc-sys" = [ "dep:aws-lc-sys" ];
+          "bindgen" = [ "aws-lc-sys?/bindgen" "aws-lc-fips-sys?/bindgen" ];
+          "default" = [ "aws-lc-sys" "alloc" "ring-io" "ring-sig-verify" ];
+          "fips" = [ "dep:aws-lc-fips-sys" ];
+          "legacy-des" = [ "aws-lc-sys?/all-bindings" ];
+          "non-fips" = [ "aws-lc-sys" ];
+          "prebuilt-nasm" = [ "aws-lc-sys?/prebuilt-nasm" ];
+          "ring-io" = [ "dep:untrusted" ];
+          "ring-sig-verify" = [ "dep:untrusted" ];
+        };
+        resolvedDefaultFeatures = [ "aws-lc-sys" "prebuilt-nasm" ];
+      };
+      "aws-lc-sys" = rec {
+        crateName = "aws-lc-sys";
+        version = "0.41.0";
+        edition = "2021";
+        links = "aws_lc_0_41_0";
+        sha256 = "1x735y1qny5v2gzpl928z1ppddb906nl1n8d2yv3mfc5rrwrfbqs";
+        build = "builder/main.rs";
+        libName = "aws_lc_sys";
+        authors = [
+          "AWS-LC"
+        ];
+        buildDependencies = [
+          {
+            name = "cc";
+            packageId = "cc";
+            features = [ "parallel" ];
+          }
+          {
+            name = "cmake";
+            packageId = "cmake";
+          }
+          {
+            name = "dunce";
+            packageId = "dunce";
+          }
+          {
+            name = "fs_extra";
+            packageId = "fs_extra";
+          }
+        ];
+        features = {
+          "bindgen" = [ "dep:bindgen" ];
+          "default" = [ "all-bindings" ];
+          "fips" = [ "dep:bindgen" ];
+          "ssl" = [ "bindgen" "all-bindings" ];
+        };
+        resolvedDefaultFeatures = [ "prebuilt-nasm" ];
+      };
       "axum 0.7.9" = rec {
         crateName = "axum";
         version = "0.7.9";
@@ -1612,7 +1711,7 @@ rec {
           }
           {
             name = "itertools";
-            packageId = "itertools 0.13.0";
+            packageId = "itertools";
             usesDefaultFeatures = false;
           }
           {
@@ -1678,6 +1777,58 @@ rec {
           "serde_core" = [ "dep:serde_core" ];
         };
         resolvedDefaultFeatures = [ "serde" "serde_core" "std" ];
+      };
+      "blake3" = rec {
+        crateName = "blake3";
+        version = "1.8.5";
+        edition = "2024";
+        sha256 = "1khz6wq61fnr0gl1kmy4bxadc7gbcv4gbq05z4jdjhr8wqs3ra0a";
+        authors = [
+          "Jack O'Connor <oconnor663@gmail.com>"
+          "Samuel Neves"
+        ];
+        dependencies = [
+          {
+            name = "arrayref";
+            packageId = "arrayref";
+          }
+          {
+            name = "arrayvec";
+            packageId = "arrayvec";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "cfg-if";
+            packageId = "cfg-if";
+          }
+          {
+            name = "constant_time_eq";
+            packageId = "constant_time_eq";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "cpufeatures";
+            packageId = "cpufeatures 0.3.0";
+            target = { target, features }: (("x86" == target."arch" or null) || ("x86_64" == target."arch" or null));
+          }
+        ];
+        buildDependencies = [
+          {
+            name = "cc";
+            packageId = "cc";
+          }
+        ];
+        features = {
+          "default" = [ "std" ];
+          "digest" = [ "dep:digest" ];
+          "mmap" = [ "std" "dep:memmap2" ];
+          "rayon" = [ "dep:rayon-core" ];
+          "serde" = [ "dep:serde" ];
+          "std" = [ "constant_time_eq/std" ];
+          "traits-preview" = [ "dep:digest" ];
+          "zeroize" = [ "dep:zeroize" "arrayvec/zeroize" ];
+        };
+        resolvedDefaultFeatures = [ "default" "std" ];
       };
       "block-buffer" = rec {
         crateName = "block-buffer";
@@ -1812,6 +1963,19 @@ rec {
             packageId = "find-msvc-tools";
           }
           {
+            name = "jobserver";
+            packageId = "jobserver";
+            optional = true;
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+            optional = true;
+            usesDefaultFeatures = false;
+            target = { target, features }: (target."unix" or false);
+          }
+          {
             name = "shlex";
             packageId = "shlex";
           }
@@ -1819,6 +1983,7 @@ rec {
         features = {
           "parallel" = [ "dep:libc" "dep:jobserver" ];
         };
+        resolvedDefaultFeatures = [ "parallel" ];
       };
       "cexpr" = rec {
         crateName = "cexpr";
@@ -1876,6 +2041,12 @@ rec {
             features = [ "fallback" ];
           }
           {
+            name = "js-sys";
+            packageId = "js-sys";
+            optional = true;
+            target = { target, features }: (("wasm32" == target."arch" or null) && (!(("emscripten" == target."os" or null) || ("wasi" == target."os" or null))));
+          }
+          {
             name = "num-traits";
             packageId = "num-traits";
             usesDefaultFeatures = false;
@@ -1885,6 +2056,12 @@ rec {
             packageId = "serde";
             optional = true;
             usesDefaultFeatures = false;
+          }
+          {
+            name = "wasm-bindgen";
+            packageId = "wasm-bindgen";
+            optional = true;
+            target = { target, features }: (("wasm32" == target."arch" or null) && (!(("emscripten" == target."os" or null) || ("wasi" == target."os" or null))));
           }
           {
             name = "windows-link";
@@ -1914,7 +2091,7 @@ rec {
           "winapi" = [ "windows-link" ];
           "windows-link" = [ "dep:windows-link" ];
         };
-        resolvedDefaultFeatures = [ "alloc" "clock" "iana-time-zone" "now" "serde" "std" "winapi" "windows-link" ];
+        resolvedDefaultFeatures = [ "alloc" "clock" "default" "iana-time-zone" "js-sys" "now" "oldtime" "serde" "std" "wasm-bindgen" "wasmbind" "winapi" "windows-link" ];
       };
       "clang-sys" = rec {
         crateName = "clang-sys";
@@ -2104,6 +2281,22 @@ rec {
         sha256 = "13cxw9m2rqvplgazgkq2awms0rgf34myc19bz6gywfngi762imx1";
 
       };
+      "cmake" = rec {
+        crateName = "cmake";
+        version = "0.1.58";
+        edition = "2021";
+        sha256 = "0y06zxw5sv1p5vvpp5rz1qwbrq7ccawrl09nqy5ahx1a5418mxy0";
+        authors = [
+          "Alex Crichton <alex@alexcrichton.com>"
+        ];
+        dependencies = [
+          {
+            name = "cc";
+            packageId = "cc";
+          }
+        ];
+
+      };
       "colorchoice" = rec {
         crateName = "colorchoice";
         version = "1.0.4";
@@ -2126,7 +2319,7 @@ rec {
           }
           {
             name = "windows-sys";
-            packageId = "windows-sys 0.59.0";
+            packageId = "windows-sys 0.48.0";
             target = { target, features }: (target."windows" or false);
             features = [ "Win32_Foundation" "Win32_System_Console" ];
           }
@@ -2213,6 +2406,19 @@ rec {
           "arbitrary" = [ "dep:arbitrary" ];
         };
       };
+      "constant_time_eq" = rec {
+        crateName = "constant_time_eq";
+        version = "0.4.2";
+        edition = "2024";
+        sha256 = "16zamq60dq80k3rqlzh9j9cpjhishmh924lnwbplgrnmkkvfylix";
+        authors = [
+          "Cesar Eduardo Barros <cesarb@cesarb.eti.br>"
+        ];
+        features = {
+          "default" = [ "std" ];
+        };
+        resolvedDefaultFeatures = [ "std" ];
+      };
       "core-foundation 0.10.1" = rec {
         crateName = "core-foundation";
         version = "0.10.1";
@@ -2288,7 +2494,7 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" "link" ];
       };
-      "cpufeatures" = rec {
+      "cpufeatures 0.2.17" = rec {
         crateName = "cpufeatures";
         version = "0.2.17";
         edition = "2018";
@@ -2302,6 +2508,42 @@ rec {
             packageId = "libc";
             usesDefaultFeatures = false;
             target = { target, features }: (target.name == "aarch64-linux-android");
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+            usesDefaultFeatures = false;
+            target = { target, features }: (("aarch64" == target."arch" or null) && ("linux" == target."os" or null));
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+            usesDefaultFeatures = false;
+            target = { target, features }: (("aarch64" == target."arch" or null) && ("apple" == target."vendor" or null));
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+            usesDefaultFeatures = false;
+            target = { target, features }: (("loongarch64" == target."arch" or null) && ("linux" == target."os" or null));
+          }
+        ];
+
+      };
+      "cpufeatures 0.3.0" = rec {
+        crateName = "cpufeatures";
+        version = "0.3.0";
+        edition = "2024";
+        sha256 = "00fjhygsqmh4kbxxlb99mcsbspxcai6hjydv4c46pwb67wwl2alb";
+        authors = [
+          "RustCrypto Developers"
+        ];
+        dependencies = [
+          {
+            name = "libc";
+            packageId = "libc";
+            usesDefaultFeatures = false;
+            target = { target, features }: (("aarch64" == target."arch" or null) && ("android" == target."os" or null));
           }
           {
             name = "libc";
@@ -2794,6 +3036,35 @@ rec {
         };
         resolvedDefaultFeatures = [ "alloc" "oid" "pem" "std" "zeroize" ];
       };
+      "deranged" = rec {
+        crateName = "deranged";
+        version = "0.5.8";
+        edition = "2021";
+        sha256 = "0711df3w16vx80k55ivkwzwswziinj4dz05xci3rvmn15g615n3w";
+        authors = [
+          "Jacob Pratt <jacob@jhpratt.dev>"
+        ];
+        dependencies = [
+          {
+            name = "powerfmt";
+            packageId = "powerfmt";
+            optional = true;
+            usesDefaultFeatures = false;
+          }
+        ];
+        features = {
+          "macros" = [ "dep:deranged-macros" ];
+          "num" = [ "dep:num-traits" ];
+          "powerfmt" = [ "dep:powerfmt" ];
+          "quickcheck" = [ "dep:quickcheck" "alloc" ];
+          "rand" = [ "rand08" "rand09" "rand010" ];
+          "rand010" = [ "dep:rand010" ];
+          "rand08" = [ "dep:rand08" ];
+          "rand09" = [ "dep:rand09" ];
+          "serde" = [ "dep:serde_core" ];
+        };
+        resolvedDefaultFeatures = [ "default" "powerfmt" ];
+      };
       "derive_builder" = rec {
         crateName = "derive_builder";
         version = "0.20.2";
@@ -3095,6 +3366,16 @@ rec {
           "clap" = [ "dep:clap" ];
           "cli" = [ "clap" ];
         };
+      };
+      "dunce" = rec {
+        crateName = "dunce";
+        version = "1.0.5";
+        edition = "2021";
+        sha256 = "04y8wwv3vvcqaqmqzssi6k0ii9gs6fpz96j5w9nky2ccsl23axwj";
+        authors = [
+          "Kornel <kornel@geekhood.net>"
+        ];
+
       };
       "dyn-clone" = rec {
         crateName = "dyn-clone";
@@ -3433,7 +3714,20 @@ rec {
         libName = "find_msvc_tools";
 
       };
-      "fixedbitset" = rec {
+      "fixedbitset 0.4.2" = rec {
+        crateName = "fixedbitset";
+        version = "0.4.2";
+        edition = "2015";
+        sha256 = "101v41amgv5n9h4hcghvrbfk5vrncx1jwm35rn5szv4rk55i7rqc";
+        authors = [
+          "bluss"
+        ];
+        features = {
+          "default" = [ "std" ];
+          "serde" = [ "dep:serde" ];
+        };
+      };
+      "fixedbitset 0.5.7" = rec {
         crateName = "fixedbitset";
         version = "0.5.7";
         edition = "2021";
@@ -3555,6 +3849,16 @@ rec {
           "std" = [ "alloc" "percent-encoding/std" ];
         };
         resolvedDefaultFeatures = [ "alloc" "default" "std" ];
+      };
+      "fs_extra" = rec {
+        crateName = "fs_extra";
+        version = "1.3.0";
+        edition = "2018";
+        sha256 = "075i25z70j2mz9r7i9p9r521y8xdj81q7skslyb7zhqnnw33fw22";
+        authors = [
+          "Denis Kurilenko <webdesus@gmail.com>"
+        ];
+
       };
       "futures" = rec {
         crateName = "futures";
@@ -5699,31 +6003,11 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" ];
       };
-      "itertools 0.13.0" = rec {
+      "itertools" = rec {
         crateName = "itertools";
         version = "0.13.0";
         edition = "2018";
         sha256 = "11hiy3qzl643zcigknclh446qb9zlg4dpdzfkjaa9q9fqpgyfgj1";
-        authors = [
-          "bluss"
-        ];
-        dependencies = [
-          {
-            name = "either";
-            packageId = "either";
-            usesDefaultFeatures = false;
-          }
-        ];
-        features = {
-          "default" = [ "use_std" ];
-          "use_std" = [ "use_alloc" "either/use_std" ];
-        };
-      };
-      "itertools 0.14.0" = rec {
-        crateName = "itertools";
-        version = "0.14.0";
-        edition = "2018";
-        sha256 = "118j6l1vs2mx65dqhwyssbrxpawa90886m3mzafdvyip41w2q69b";
         authors = [
           "bluss"
         ];
@@ -5751,6 +6035,29 @@ rec {
         features = {
           "no-panic" = [ "dep:no-panic" ];
         };
+      };
+      "jobserver" = rec {
+        crateName = "jobserver";
+        version = "0.1.34";
+        edition = "2021";
+        sha256 = "0cwx0fllqzdycqn4d6nb277qx5qwnmjdxdl0lxkkwssx77j3vyws";
+        authors = [
+          "Alex Crichton <alex@alexcrichton.com>"
+        ];
+        dependencies = [
+          {
+            name = "getrandom";
+            packageId = "getrandom 0.3.4";
+            target = { target, features }: (target."windows" or false);
+            features = [ "std" ];
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+            target = { target, features }: (target."unix" or false);
+          }
+        ];
+
       };
       "js-sys" = rec {
         crateName = "js-sys";
@@ -6555,7 +6862,7 @@ rec {
           "rustc-std-workspace-core" = [ "dep:rustc-std-workspace-core" ];
           "use_std" = [ "std" ];
         };
-        resolvedDefaultFeatures = [ "default" "std" ];
+        resolvedDefaultFeatures = [ "default" "extra_traits" "std" ];
       };
       "libloading" = rec {
         crateName = "libloading";
@@ -6668,7 +6975,7 @@ rec {
         };
         resolvedDefaultFeatures = [ "pkg-config" "unlock_notify" "vcpkg" ];
       };
-      "linux-raw-sys" = rec {
+      "linux-raw-sys 0.11.0" = rec {
         crateName = "linux-raw-sys";
         version = "0.11.0";
         edition = "2021";
@@ -6683,6 +6990,23 @@ rec {
           "rustc-dep-of-std" = [ "core" "no_std" ];
         };
         resolvedDefaultFeatures = [ "auxvec" "elf" "errno" "general" "ioctl" "no_std" ];
+      };
+      "linux-raw-sys 0.4.15" = rec {
+        crateName = "linux-raw-sys";
+        version = "0.4.15";
+        edition = "2021";
+        sha256 = "1aq7r2g7786hyxhv40spzf2nhag5xbw2axxc1k8z5k1dsgdm4v6j";
+        libName = "linux_raw_sys";
+        authors = [
+          "Dan Gohman <dev@sunfishcode.online>"
+        ];
+        features = {
+          "compiler_builtins" = [ "dep:compiler_builtins" ];
+          "core" = [ "dep:core" ];
+          "default" = [ "std" "general" "errno" ];
+          "rustc-dep-of-std" = [ "core" "compiler_builtins" "no_std" ];
+        };
+        resolvedDefaultFeatures = [ "elf" "errno" "general" "ioctl" "no_std" ];
       };
       "litemap" = rec {
         crateName = "litemap";
@@ -6867,6 +7191,1205 @@ rec {
         libName = "lru_slab";
         authors = [
           "Benjamin Saunders <ben.e.saunders@gmail.com>"
+        ];
+
+      };
+      "magma-apply" = rec {
+        crateName = "magma-apply";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/magma";
+          rev = "d05e3fa457185d292d1db8093995495ef6835c27";
+          sha256 = "1iv6s7cvwq8j9gdym2q8n17hr53h0la45xsnv8kdl5z2yv0bpg2s";
+        };
+        libName = "magma_apply";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "async-trait";
+            packageId = "async-trait";
+          }
+          {
+            name = "chrono";
+            packageId = "chrono";
+            features = [ "serde" ];
+          }
+          {
+            name = "futures";
+            packageId = "futures";
+          }
+          {
+            name = "hex";
+            packageId = "hex";
+          }
+          {
+            name = "magma-attest";
+            packageId = "magma-attest";
+          }
+          {
+            name = "magma-config";
+            packageId = "magma-config";
+          }
+          {
+            name = "magma-graph";
+            packageId = "magma-graph";
+          }
+          {
+            name = "magma-plan";
+            packageId = "magma-plan";
+          }
+          {
+            name = "magma-plugin";
+            packageId = "magma-plugin";
+          }
+          {
+            name = "magma-state";
+            packageId = "magma-state";
+          }
+          {
+            name = "magma-types";
+            packageId = "magma-types";
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "shigoto";
+            packageId = "shigoto";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 2.0.17";
+          }
+          {
+            name = "tokio";
+            packageId = "tokio";
+            features = [ "rt-multi-thread" "macros" "sync" "time" "process" "io-util" "net" "signal" "fs" ];
+          }
+          {
+            name = "tracing";
+            packageId = "tracing";
+          }
+          {
+            name = "uuid";
+            packageId = "uuid";
+            features = [ "v4" "serde" ];
+          }
+        ];
+
+      };
+      "magma-attest" = rec {
+        crateName = "magma-attest";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/magma";
+          rev = "d05e3fa457185d292d1db8093995495ef6835c27";
+          sha256 = "1iv6s7cvwq8j9gdym2q8n17hr53h0la45xsnv8kdl5z2yv0bpg2s";
+        };
+        libName = "magma_attest";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "blake3";
+            packageId = "blake3";
+          }
+          {
+            name = "chrono";
+            packageId = "chrono";
+            features = [ "serde" ];
+          }
+          {
+            name = "hex";
+            packageId = "hex";
+          }
+          {
+            name = "magma-types";
+            packageId = "magma-types";
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 2.0.17";
+          }
+        ];
+
+      };
+      "magma-backend" = rec {
+        crateName = "magma-backend";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/magma";
+          rev = "d05e3fa457185d292d1db8093995495ef6835c27";
+          sha256 = "1iv6s7cvwq8j9gdym2q8n17hr53h0la45xsnv8kdl5z2yv0bpg2s";
+        };
+        libName = "magma_backend";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "async-trait";
+            packageId = "async-trait";
+          }
+          {
+            name = "magma-types";
+            packageId = "magma-types";
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 2.0.17";
+          }
+          {
+            name = "tokio";
+            packageId = "tokio";
+            features = [ "rt-multi-thread" "macros" "sync" "time" "process" "io-util" "net" "signal" "fs" ];
+          }
+          {
+            name = "tracing";
+            packageId = "tracing";
+          }
+          {
+            name = "uuid";
+            packageId = "uuid";
+            features = [ "v4" "serde" ];
+          }
+        ];
+
+      };
+      "magma-bundle" = rec {
+        crateName = "magma-bundle";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/magma";
+          rev = "d05e3fa457185d292d1db8093995495ef6835c27";
+          sha256 = "1iv6s7cvwq8j9gdym2q8n17hr53h0la45xsnv8kdl5z2yv0bpg2s";
+        };
+        libName = "magma_bundle";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "blake3";
+            packageId = "blake3";
+          }
+          {
+            name = "chrono";
+            packageId = "chrono";
+            features = [ "serde" ];
+          }
+          {
+            name = "hex";
+            packageId = "hex";
+          }
+          {
+            name = "magma-converge";
+            packageId = "magma-converge";
+          }
+          {
+            name = "magma-drift";
+            packageId = "magma-drift";
+          }
+          {
+            name = "magma-fsm";
+            packageId = "magma-fsm";
+          }
+          {
+            name = "magma-stream";
+            packageId = "magma-stream";
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 2.0.17";
+          }
+        ];
+
+      };
+      "magma-config" = rec {
+        crateName = "magma-config";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/magma";
+          rev = "d05e3fa457185d292d1db8093995495ef6835c27";
+          sha256 = "1iv6s7cvwq8j9gdym2q8n17hr53h0la45xsnv8kdl5z2yv0bpg2s";
+        };
+        libName = "magma_config";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "magma-types";
+            packageId = "magma-types";
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 2.0.17";
+          }
+          {
+            name = "tracing";
+            packageId = "tracing";
+          }
+        ];
+
+      };
+      "magma-converge" = rec {
+        crateName = "magma-converge";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/magma";
+          rev = "d05e3fa457185d292d1db8093995495ef6835c27";
+          sha256 = "1iv6s7cvwq8j9gdym2q8n17hr53h0la45xsnv8kdl5z2yv0bpg2s";
+        };
+        libName = "magma_converge";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "async-trait";
+            packageId = "async-trait";
+          }
+          {
+            name = "blake3";
+            packageId = "blake3";
+          }
+          {
+            name = "chrono";
+            packageId = "chrono";
+            features = [ "serde" ];
+          }
+          {
+            name = "hex";
+            packageId = "hex";
+          }
+          {
+            name = "magma-apply";
+            packageId = "magma-apply";
+          }
+          {
+            name = "magma-backend";
+            packageId = "magma-backend";
+          }
+          {
+            name = "magma-config";
+            packageId = "magma-config";
+          }
+          {
+            name = "magma-plan";
+            packageId = "magma-plan";
+          }
+          {
+            name = "magma-state";
+            packageId = "magma-state";
+          }
+          {
+            name = "magma-types";
+            packageId = "magma-types";
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 2.0.17";
+          }
+          {
+            name = "tokio";
+            packageId = "tokio";
+            features = [ "rt-multi-thread" "macros" "sync" "time" "process" "io-util" "net" "signal" "fs" ];
+          }
+          {
+            name = "tracing";
+            packageId = "tracing";
+          }
+        ];
+        devDependencies = [
+          {
+            name = "tokio";
+            packageId = "tokio";
+            features = [ "rt-multi-thread" "macros" "sync" "time" "process" "io-util" "net" "signal" "fs" ];
+          }
+        ];
+
+      };
+      "magma-drift" = rec {
+        crateName = "magma-drift";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/magma";
+          rev = "d05e3fa457185d292d1db8093995495ef6835c27";
+          sha256 = "1iv6s7cvwq8j9gdym2q8n17hr53h0la45xsnv8kdl5z2yv0bpg2s";
+        };
+        libName = "magma_drift";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "blake3";
+            packageId = "blake3";
+          }
+          {
+            name = "chrono";
+            packageId = "chrono";
+            features = [ "serde" ];
+          }
+          {
+            name = "hex";
+            packageId = "hex";
+          }
+          {
+            name = "magma-converge";
+            packageId = "magma-converge";
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 2.0.17";
+          }
+        ];
+
+      };
+      "magma-flow" = rec {
+        crateName = "magma-flow";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/magma";
+          rev = "d05e3fa457185d292d1db8093995495ef6835c27";
+          sha256 = "1iv6s7cvwq8j9gdym2q8n17hr53h0la45xsnv8kdl5z2yv0bpg2s";
+        };
+        libName = "magma_flow";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "hex";
+            packageId = "hex";
+          }
+          {
+            name = "magma-backend";
+            packageId = "magma-backend";
+          }
+          {
+            name = "magma-config";
+            packageId = "magma-config";
+          }
+          {
+            name = "magma-pangea";
+            packageId = "magma-pangea";
+          }
+          {
+            name = "magma-plan";
+            packageId = "magma-plan";
+          }
+          {
+            name = "magma-types";
+            packageId = "magma-types";
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 2.0.17";
+          }
+          {
+            name = "tokio";
+            packageId = "tokio";
+            features = [ "rt-multi-thread" "macros" "sync" "time" "process" "io-util" "net" "signal" "fs" ];
+          }
+          {
+            name = "tracing";
+            packageId = "tracing";
+          }
+        ];
+
+      };
+      "magma-fsm" = rec {
+        crateName = "magma-fsm";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/magma";
+          rev = "d05e3fa457185d292d1db8093995495ef6835c27";
+          sha256 = "1iv6s7cvwq8j9gdym2q8n17hr53h0la45xsnv8kdl5z2yv0bpg2s";
+        };
+        libName = "magma_fsm";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "chrono";
+            packageId = "chrono";
+            features = [ "serde" ];
+          }
+          {
+            name = "magma-converge";
+            packageId = "magma-converge";
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 2.0.17";
+          }
+        ];
+
+      };
+      "magma-graph" = rec {
+        crateName = "magma-graph";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/magma";
+          rev = "d05e3fa457185d292d1db8093995495ef6835c27";
+          sha256 = "1iv6s7cvwq8j9gdym2q8n17hr53h0la45xsnv8kdl5z2yv0bpg2s";
+        };
+        libName = "magma_graph";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "magma-types";
+            packageId = "magma-types";
+          }
+          {
+            name = "petgraph";
+            packageId = "petgraph 0.6.5";
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 2.0.17";
+          }
+        ];
+
+      };
+      "magma-operator-backend" = rec {
+        crateName = "magma-operator-backend";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/magma";
+          rev = "d05e3fa457185d292d1db8093995495ef6835c27";
+          sha256 = "1iv6s7cvwq8j9gdym2q8n17hr53h0la45xsnv8kdl5z2yv0bpg2s";
+        };
+        libName = "magma_operator_backend";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "async-trait";
+            packageId = "async-trait";
+          }
+          {
+            name = "magma-backend";
+            packageId = "magma-backend";
+          }
+          {
+            name = "magma-state";
+            packageId = "magma-state";
+          }
+          {
+            name = "magma-types";
+            packageId = "magma-types";
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 2.0.17";
+          }
+          {
+            name = "uuid";
+            packageId = "uuid";
+            features = [ "v4" "serde" ];
+          }
+        ];
+
+      };
+      "magma-pangea" = rec {
+        crateName = "magma-pangea";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/magma";
+          rev = "d05e3fa457185d292d1db8093995495ef6835c27";
+          sha256 = "1iv6s7cvwq8j9gdym2q8n17hr53h0la45xsnv8kdl5z2yv0bpg2s";
+        };
+        libName = "magma_pangea";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "async-trait";
+            packageId = "async-trait";
+          }
+          {
+            name = "magma-config";
+            packageId = "magma-config";
+          }
+          {
+            name = "magma-plan";
+            packageId = "magma-plan";
+          }
+          {
+            name = "magma-state";
+            packageId = "magma-state";
+          }
+          {
+            name = "magma-types";
+            packageId = "magma-types";
+          }
+          {
+            name = "petgraph";
+            packageId = "petgraph 0.6.5";
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 2.0.17";
+          }
+          {
+            name = "tokio";
+            packageId = "tokio";
+            features = [ "rt-multi-thread" "macros" "sync" "time" "process" "io-util" "net" "signal" "fs" ];
+          }
+          {
+            name = "tracing";
+            packageId = "tracing";
+          }
+        ];
+        features = {
+          "magnus" = [ "dep:pangea-ruby-eval" ];
+        };
+        resolvedDefaultFeatures = [ "default" ];
+      };
+      "magma-plan" = rec {
+        crateName = "magma-plan";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/magma";
+          rev = "d05e3fa457185d292d1db8093995495ef6835c27";
+          sha256 = "1iv6s7cvwq8j9gdym2q8n17hr53h0la45xsnv8kdl5z2yv0bpg2s";
+        };
+        libName = "magma_plan";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "async-trait";
+            packageId = "async-trait";
+          }
+          {
+            name = "chrono";
+            packageId = "chrono";
+            features = [ "serde" ];
+          }
+          {
+            name = "magma-attest";
+            packageId = "magma-attest";
+          }
+          {
+            name = "magma-config";
+            packageId = "magma-config";
+          }
+          {
+            name = "magma-graph";
+            packageId = "magma-graph";
+          }
+          {
+            name = "magma-plugin";
+            packageId = "magma-plugin";
+          }
+          {
+            name = "magma-state";
+            packageId = "magma-state";
+          }
+          {
+            name = "magma-types";
+            packageId = "magma-types";
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 2.0.17";
+          }
+          {
+            name = "tracing";
+            packageId = "tracing";
+          }
+          {
+            name = "uuid";
+            packageId = "uuid";
+            features = [ "v4" "serde" ];
+          }
+        ];
+        devDependencies = [
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "uuid";
+            packageId = "uuid";
+            features = [ "v4" "serde" ];
+          }
+        ];
+
+      };
+      "magma-plugin" = rec {
+        crateName = "magma-plugin";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/magma";
+          rev = "d05e3fa457185d292d1db8093995495ef6835c27";
+          sha256 = "1iv6s7cvwq8j9gdym2q8n17hr53h0la45xsnv8kdl5z2yv0bpg2s";
+        };
+        libName = "magma_plugin";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "async-trait";
+            packageId = "async-trait";
+          }
+          {
+            name = "base64";
+            packageId = "base64";
+          }
+          {
+            name = "futures";
+            packageId = "futures";
+          }
+          {
+            name = "http";
+            packageId = "http";
+          }
+          {
+            name = "hyper-util";
+            packageId = "hyper-util";
+            features = [ "tokio" ];
+          }
+          {
+            name = "magma-protocol";
+            packageId = "magma-protocol";
+          }
+          {
+            name = "magma-types";
+            packageId = "magma-types";
+          }
+          {
+            name = "rcgen";
+            packageId = "rcgen";
+          }
+          {
+            name = "rustls";
+            packageId = "rustls";
+            features = [ "ring" ];
+          }
+          {
+            name = "rustls-pemfile";
+            packageId = "rustls-pemfile";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 2.0.17";
+          }
+          {
+            name = "tokio";
+            packageId = "tokio";
+            features = [ "rt-multi-thread" "macros" "sync" "time" "process" "io-util" "net" "signal" "fs" ];
+          }
+          {
+            name = "tokio-rustls";
+            packageId = "tokio-rustls";
+          }
+          {
+            name = "tonic";
+            packageId = "tonic";
+            features = [ "transport" "tls" "tls-webpki-roots" ];
+          }
+          {
+            name = "tower";
+            packageId = "tower 0.5.2";
+            features = [ "util" ];
+          }
+          {
+            name = "tracing";
+            packageId = "tracing";
+          }
+          {
+            name = "which";
+            packageId = "which";
+          }
+        ];
+
+      };
+      "magma-protocol" = rec {
+        crateName = "magma-protocol";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/magma";
+          rev = "d05e3fa457185d292d1db8093995495ef6835c27";
+          sha256 = "1iv6s7cvwq8j9gdym2q8n17hr53h0la45xsnv8kdl5z2yv0bpg2s";
+        };
+        libName = "magma_protocol";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "prost";
+            packageId = "prost";
+          }
+          {
+            name = "prost-types";
+            packageId = "prost-types";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 2.0.17";
+          }
+          {
+            name = "tokio";
+            packageId = "tokio";
+            features = [ "rt-multi-thread" "macros" "sync" "time" "process" "io-util" "net" "signal" "fs" ];
+          }
+          {
+            name = "tonic";
+            packageId = "tonic";
+            features = [ "transport" "tls" "tls-webpki-roots" ];
+          }
+        ];
+        buildDependencies = [
+          {
+            name = "prost-build";
+            packageId = "prost-build";
+          }
+          {
+            name = "protoc-bin-vendored";
+            packageId = "protoc-bin-vendored";
+          }
+          {
+            name = "tonic-build";
+            packageId = "tonic-build";
+          }
+        ];
+
+      };
+      "magma-rubygems" = rec {
+        crateName = "magma-rubygems";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/magma";
+          rev = "d05e3fa457185d292d1db8093995495ef6835c27";
+          sha256 = "1iv6s7cvwq8j9gdym2q8n17hr53h0la45xsnv8kdl5z2yv0bpg2s";
+        };
+        libName = "magma_rubygems";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "blake3";
+            packageId = "blake3";
+          }
+          {
+            name = "hex";
+            packageId = "hex";
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 2.0.17";
+          }
+        ];
+
+      };
+      "magma-state" = rec {
+        crateName = "magma-state";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/magma";
+          rev = "d05e3fa457185d292d1db8093995495ef6835c27";
+          sha256 = "1iv6s7cvwq8j9gdym2q8n17hr53h0la45xsnv8kdl5z2yv0bpg2s";
+        };
+        libName = "magma_state";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "chrono";
+            packageId = "chrono";
+            features = [ "serde" ];
+          }
+          {
+            name = "magma-backend";
+            packageId = "magma-backend";
+          }
+          {
+            name = "magma-types";
+            packageId = "magma-types";
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 2.0.17";
+          }
+          {
+            name = "tokio";
+            packageId = "tokio";
+            features = [ "rt-multi-thread" "macros" "sync" "time" "process" "io-util" "net" "signal" "fs" ];
+          }
+          {
+            name = "tracing";
+            packageId = "tracing";
+          }
+          {
+            name = "uuid";
+            packageId = "uuid";
+            features = [ "v4" "serde" ];
+          }
+        ];
+
+      };
+      "magma-stream" = rec {
+        crateName = "magma-stream";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/magma";
+          rev = "d05e3fa457185d292d1db8093995495ef6835c27";
+          sha256 = "1iv6s7cvwq8j9gdym2q8n17hr53h0la45xsnv8kdl5z2yv0bpg2s";
+        };
+        libName = "magma_stream";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "async-trait";
+            packageId = "async-trait";
+          }
+          {
+            name = "blake3";
+            packageId = "blake3";
+          }
+          {
+            name = "chrono";
+            packageId = "chrono";
+            features = [ "serde" ];
+          }
+          {
+            name = "hex";
+            packageId = "hex";
+          }
+          {
+            name = "magma-converge";
+            packageId = "magma-converge";
+          }
+          {
+            name = "magma-drift";
+            packageId = "magma-drift";
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 2.0.17";
+          }
+          {
+            name = "tokio";
+            packageId = "tokio";
+            features = [ "rt-multi-thread" "macros" "sync" "time" "process" "io-util" "net" "signal" "fs" ];
+          }
+          {
+            name = "tracing";
+            packageId = "tracing";
+          }
+        ];
+
+      };
+      "magma-test-laws" = rec {
+        crateName = "magma-test-laws";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/magma";
+          rev = "d05e3fa457185d292d1db8093995495ef6835c27";
+          sha256 = "1iv6s7cvwq8j9gdym2q8n17hr53h0la45xsnv8kdl5z2yv0bpg2s";
+        };
+        libName = "magma_test_laws";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "magma-apply";
+            packageId = "magma-apply";
+            optional = true;
+          }
+          {
+            name = "magma-config";
+            packageId = "magma-config";
+            optional = true;
+          }
+          {
+            name = "magma-converge";
+            packageId = "magma-converge";
+          }
+          {
+            name = "magma-flow";
+            packageId = "magma-flow";
+            optional = true;
+          }
+          {
+            name = "magma-plan";
+            packageId = "magma-plan";
+            optional = true;
+          }
+          {
+            name = "magma-state";
+            packageId = "magma-state";
+            optional = true;
+          }
+          {
+            name = "magma-types";
+            packageId = "magma-types";
+            optional = true;
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "tokio";
+            packageId = "tokio";
+            features = [ "rt-multi-thread" "macros" "sync" "time" "process" "io-util" "net" "signal" "fs" ];
+          }
+        ];
+        features = {
+          "architecture-laws" = [ "dep:magma-config" ];
+          "backend-laws" = [ "dep:magma-backend" "dep:magma-types" "dep:magma-state" ];
+          "chain-laws" = [ "dep:magma-flow" ];
+          "preflight" = [ "architecture-laws" "workspace-laws" "chain-laws" ];
+          "strategies" = [ "dep:proptest" "dep:magma-stream" "dep:magma-fsm" ];
+          "workspace-laws" = [ "dep:magma-config" "dep:magma-plan" "dep:magma-apply" "dep:magma-state" "dep:magma-types" ];
+        };
+        resolvedDefaultFeatures = [ "architecture-laws" "chain-laws" "default" "preflight" "workspace-laws" ];
+      };
+      "magma-types" = rec {
+        crateName = "magma-types";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/magma";
+          rev = "d05e3fa457185d292d1db8093995495ef6835c27";
+          sha256 = "1iv6s7cvwq8j9gdym2q8n17hr53h0la45xsnv8kdl5z2yv0bpg2s";
+        };
+        libName = "magma_types";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "chrono";
+            packageId = "chrono";
+            features = [ "serde" ];
+          }
+          {
+            name = "schemars";
+            packageId = "schemars";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 2.0.17";
+          }
+          {
+            name = "uuid";
+            packageId = "uuid";
+            features = [ "v4" "serde" ];
+          }
         ];
 
       };
@@ -7319,6 +8842,17 @@ rec {
           "zeroize" = [ "dep:zeroize" ];
         };
         resolvedDefaultFeatures = [ "i128" "prime" "rand" "u64_digit" "zeroize" ];
+      };
+      "num-conv" = rec {
+        crateName = "num-conv";
+        version = "0.2.2";
+        edition = "2021";
+        sha256 = "0hg4f9bwmy7cwpxdkm165dmkfc8jhkkayci234jsmi5ssb33j5sj";
+        libName = "num_conv";
+        authors = [
+          "Jacob Pratt <jacob@jhpratt.dev>"
+        ];
+
       };
       "num-integer" = rec {
         crateName = "num-integer";
@@ -8071,6 +9605,11 @@ rec {
             packageId = "futures";
           }
           {
+            name = "hex";
+            packageId = "hex";
+            optional = true;
+          }
+          {
             name = "k8s-openapi";
             packageId = "k8s-openapi";
             features = [ "v1_31" ];
@@ -8084,6 +9623,77 @@ rec {
             name = "libc";
             packageId = "libc";
             target = { target, features }: (target."unix" or false);
+          }
+          {
+            name = "magma-apply";
+            packageId = "magma-apply";
+            optional = true;
+          }
+          {
+            name = "magma-backend";
+            packageId = "magma-backend";
+            optional = true;
+          }
+          {
+            name = "magma-bundle";
+            packageId = "magma-bundle";
+            optional = true;
+          }
+          {
+            name = "magma-config";
+            packageId = "magma-config";
+            optional = true;
+          }
+          {
+            name = "magma-converge";
+            packageId = "magma-converge";
+            optional = true;
+          }
+          {
+            name = "magma-drift";
+            packageId = "magma-drift";
+            optional = true;
+          }
+          {
+            name = "magma-fsm";
+            packageId = "magma-fsm";
+            optional = true;
+          }
+          {
+            name = "magma-operator-backend";
+            packageId = "magma-operator-backend";
+            optional = true;
+          }
+          {
+            name = "magma-plan";
+            packageId = "magma-plan";
+            optional = true;
+          }
+          {
+            name = "magma-rubygems";
+            packageId = "magma-rubygems";
+            optional = true;
+          }
+          {
+            name = "magma-state";
+            packageId = "magma-state";
+            optional = true;
+          }
+          {
+            name = "magma-stream";
+            packageId = "magma-stream";
+            optional = true;
+          }
+          {
+            name = "magma-test-laws";
+            packageId = "magma-test-laws";
+            optional = true;
+            features = [ "preflight" ];
+          }
+          {
+            name = "magma-types";
+            packageId = "magma-types";
+            optional = true;
           }
           {
             name = "once_cell";
@@ -8275,8 +9885,9 @@ rec {
         features = {
           "async-graphql" = [ "dep:async-graphql" ];
           "async-graphql-axum" = [ "dep:async-graphql-axum" ];
-          "default" = [ "graphql" "grpc" ];
+          "default" = [ "graphql" "grpc" "executor_magma" ];
           "embedded_ruby" = [ "dep:pangea-ruby-eval" ];
+          "executor_magma" = [ "dep:magma-backend" "dep:magma-config" "dep:magma-plan" "dep:magma-apply" "dep:magma-state" "dep:magma-types" "dep:magma-operator-backend" "dep:magma-test-laws" "dep:magma-drift" "dep:magma-converge" "dep:magma-bundle" "dep:magma-fsm" "dep:magma-rubygems" "dep:magma-stream" "dep:hex" ];
           "graphql" = [ "async-graphql" "async-graphql-axum" ];
           "grpc" = [ "tonic" "prost" ];
           "prost" = [ "dep:prost" ];
@@ -8284,7 +9895,7 @@ rec {
           "tonic" = [ "dep:tonic" ];
           "tonic-build" = [ "dep:tonic-build" ];
         };
-        resolvedDefaultFeatures = [ "async-graphql" "async-graphql-axum" "default" "embedded_ruby" "graphql" "grpc" "prost" "prost-build" "tonic" "tonic-build" ];
+        resolvedDefaultFeatures = [ "async-graphql" "async-graphql-axum" "default" "embedded_ruby" "executor_magma" "graphql" "grpc" "prost" "prost-build" "tonic" "tonic-build" ];
       };
       "pangea-ruby-eval" = rec {
         crateName = "pangea-ruby-eval";
@@ -8685,7 +10296,39 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" ];
       };
-      "petgraph" = rec {
+      "petgraph 0.6.5" = rec {
+        crateName = "petgraph";
+        version = "0.6.5";
+        edition = "2018";
+        sha256 = "1ns7mbxidnn2pqahbbjccxkrqkrll2i5rbxx43ns6rh6fn3cridl";
+        authors = [
+          "bluss"
+          "mitchmindtree"
+        ];
+        dependencies = [
+          {
+            name = "fixedbitset";
+            packageId = "fixedbitset 0.4.2";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "indexmap";
+            packageId = "indexmap 2.12.1";
+          }
+        ];
+        features = {
+          "all" = [ "unstable" "quickcheck" "matrix_graph" "stable_graph" "graphmap" "rayon" ];
+          "default" = [ "graphmap" "stable_graph" "matrix_graph" ];
+          "quickcheck" = [ "dep:quickcheck" ];
+          "rayon" = [ "dep:rayon" "indexmap/rayon" ];
+          "serde" = [ "dep:serde" ];
+          "serde-1" = [ "serde" "serde_derive" ];
+          "serde_derive" = [ "dep:serde_derive" ];
+          "unstable" = [ "generate" ];
+        };
+        resolvedDefaultFeatures = [ "default" "graphmap" "matrix_graph" "stable_graph" ];
+      };
+      "petgraph 0.7.1" = rec {
         crateName = "petgraph";
         version = "0.7.1";
         edition = "2018";
@@ -8697,7 +10340,7 @@ rec {
         dependencies = [
           {
             name = "fixedbitset";
-            packageId = "fixedbitset";
+            packageId = "fixedbitset 0.5.7";
             usesDefaultFeatures = false;
           }
           {
@@ -8891,6 +10534,20 @@ rec {
           "zerovec" = [ "dep:zerovec" ];
         };
         resolvedDefaultFeatures = [ "zerovec" ];
+      };
+      "powerfmt" = rec {
+        crateName = "powerfmt";
+        version = "0.2.0";
+        edition = "2021";
+        sha256 = "14ckj2xdpkhv3h6l5sdmb9f1d57z8hbfpdldjc2vl5givq2y77j3";
+        authors = [
+          "Jacob Pratt <jacob@jhpratt.dev>"
+        ];
+        features = {
+          "default" = [ "std" "macros" ];
+          "macros" = [ "dep:powerfmt-macros" ];
+          "std" = [ "alloc" ];
+        };
       };
       "ppv-lite86" = rec {
         crateName = "ppv-lite86";
@@ -9303,11 +10960,11 @@ rec {
         dependencies = [
           {
             name = "heck";
-            packageId = "heck 0.5.0";
+            packageId = "heck 0.4.1";
           }
           {
             name = "itertools";
-            packageId = "itertools 0.14.0";
+            packageId = "itertools";
             usesDefaultFeatures = false;
             features = [ "use_alloc" ];
           }
@@ -9326,7 +10983,7 @@ rec {
           }
           {
             name = "petgraph";
-            packageId = "petgraph";
+            packageId = "petgraph 0.7.1";
             usesDefaultFeatures = false;
           }
           {
@@ -9388,7 +11045,7 @@ rec {
           }
           {
             name = "itertools";
-            packageId = "itertools 0.14.0";
+            packageId = "itertools";
           }
           {
             name = "proc-macro2";
@@ -9448,6 +11105,140 @@ rec {
           "with-bytes" = [ "bytes" ];
           "with-serde" = [ "serde" "serde_derive" ];
         };
+      };
+      "protoc-bin-vendored" = rec {
+        crateName = "protoc-bin-vendored";
+        version = "3.2.0";
+        edition = "2021";
+        crateBin = [];
+        sha256 = "1yk7b9j5y5syk9z6rrw913x4y2h9c0v5i1l1y2snd0n96ggq3hyi";
+        libName = "protoc_bin_vendored";
+        authors = [
+          "Stepan Koltsov <stepan.koltsov@gmail.com>"
+        ];
+        dependencies = [
+          {
+            name = "protoc-bin-vendored-linux-aarch_64";
+            packageId = "protoc-bin-vendored-linux-aarch_64";
+          }
+          {
+            name = "protoc-bin-vendored-linux-ppcle_64";
+            packageId = "protoc-bin-vendored-linux-ppcle_64";
+          }
+          {
+            name = "protoc-bin-vendored-linux-s390_64";
+            packageId = "protoc-bin-vendored-linux-s390_64";
+          }
+          {
+            name = "protoc-bin-vendored-linux-x86_32";
+            packageId = "protoc-bin-vendored-linux-x86_32";
+          }
+          {
+            name = "protoc-bin-vendored-linux-x86_64";
+            packageId = "protoc-bin-vendored-linux-x86_64";
+          }
+          {
+            name = "protoc-bin-vendored-macos-aarch_64";
+            packageId = "protoc-bin-vendored-macos-aarch_64";
+          }
+          {
+            name = "protoc-bin-vendored-macos-x86_64";
+            packageId = "protoc-bin-vendored-macos-x86_64";
+          }
+          {
+            name = "protoc-bin-vendored-win32";
+            packageId = "protoc-bin-vendored-win32";
+          }
+        ];
+
+      };
+      "protoc-bin-vendored-linux-aarch_64" = rec {
+        crateName = "protoc-bin-vendored-linux-aarch_64";
+        version = "3.2.0";
+        edition = "2021";
+        sha256 = "0k0sgvry35w360h77a6g2fg1jyrpwbyldrppg75f7fdm956xyl63";
+        libName = "protoc_bin_vendored_linux_aarch_64";
+        authors = [
+          "Stepan Koltsov <stepan.koltsov@gmail.com>"
+        ];
+
+      };
+      "protoc-bin-vendored-linux-ppcle_64" = rec {
+        crateName = "protoc-bin-vendored-linux-ppcle_64";
+        version = "3.2.0";
+        edition = "2021";
+        sha256 = "03244917l2klk6h26y26slzpjpgb2x804grrqssijkr4qzk66nm5";
+        libName = "protoc_bin_vendored_linux_ppcle_64";
+        authors = [
+          "Stepan Koltsov <stepan.koltsov@gmail.com>"
+        ];
+
+      };
+      "protoc-bin-vendored-linux-s390_64" = rec {
+        crateName = "protoc-bin-vendored-linux-s390_64";
+        version = "3.2.0";
+        edition = "2021";
+        sha256 = "1c7k6b629n7shd76ykjabd58xvm4ck10f2ikslsyk222vdjmbfhx";
+        libName = "protoc_bin_vendored_linux_s390_64";
+        authors = [
+          "Stepan Koltsov <stepan.koltsov@gmail.com>"
+        ];
+
+      };
+      "protoc-bin-vendored-linux-x86_32" = rec {
+        crateName = "protoc-bin-vendored-linux-x86_32";
+        version = "3.2.0";
+        edition = "2021";
+        sha256 = "1xcwvzdnrvhirnk8fjkswrjj6ap0x2mcq7fpij3bfa7f4i5pfm48";
+        libName = "protoc_bin_vendored_linux_x86_32";
+        authors = [
+          "Stepan Koltsov <stepan.koltsov@gmail.com>"
+        ];
+
+      };
+      "protoc-bin-vendored-linux-x86_64" = rec {
+        crateName = "protoc-bin-vendored-linux-x86_64";
+        version = "3.2.0";
+        edition = "2021";
+        sha256 = "0y2xgvgl38m2zqvc619yp1phlqq39d615kk4lh7p5pw0cma0g2xk";
+        libName = "protoc_bin_vendored_linux_x86_64";
+        authors = [
+          "Stepan Koltsov <stepan.koltsov@gmail.com>"
+        ];
+
+      };
+      "protoc-bin-vendored-macos-aarch_64" = rec {
+        crateName = "protoc-bin-vendored-macos-aarch_64";
+        version = "3.2.0";
+        edition = "2021";
+        sha256 = "14l03ngh1akdf2d4ld0k69h4scjxhblgx6fry58jwcff4scql9w9";
+        libName = "protoc_bin_vendored_macos_aarch_64";
+        authors = [
+          "Stepan Koltsov <stepan.koltsov@gmail.com>"
+        ];
+
+      };
+      "protoc-bin-vendored-macos-x86_64" = rec {
+        crateName = "protoc-bin-vendored-macos-x86_64";
+        version = "3.2.0";
+        edition = "2021";
+        sha256 = "0mlp55v3356l0l34hqavg7ahds2j0s7qipm4sxqr9yyclznmyx41";
+        libName = "protoc_bin_vendored_macos_x86_64";
+        authors = [
+          "Stepan Koltsov <stepan.koltsov@gmail.com>"
+        ];
+
+      };
+      "protoc-bin-vendored-win32" = rec {
+        crateName = "protoc-bin-vendored-win32";
+        version = "3.2.0";
+        edition = "2021";
+        sha256 = "18wairb735zfw3g7m5sbmjdj8r9yka9ww7s97r91lhm6miv7j1lm";
+        libName = "protoc_bin_vendored_win32";
+        authors = [
+          "Stepan Koltsov <stepan.koltsov@gmail.com>"
+        ];
+
       };
       "quinn" = rec {
         crateName = "quinn";
@@ -10000,6 +11791,60 @@ rec {
         sha256 = "0yhi13m7dxkyxr0srbf30ki70mlv4md4kqkgsm8j3rr1grmav9yc";
         libName = "rb_sys_env";
 
+      };
+      "rcgen" = rec {
+        crateName = "rcgen";
+        version = "0.13.2";
+        edition = "2021";
+        sha256 = "18l0rz228pvnc44bjmvq8cchhh5d2rrkk98y9lqvan9243jnkrkm";
+        dependencies = [
+          {
+            name = "pem";
+            packageId = "pem";
+            optional = true;
+          }
+          {
+            name = "ring";
+            packageId = "ring";
+            optional = true;
+          }
+          {
+            name = "rustls-pki-types";
+            packageId = "rustls-pki-types";
+            rename = "pki-types";
+          }
+          {
+            name = "time";
+            packageId = "time";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "yasna";
+            packageId = "yasna";
+            features = [ "time" "std" ];
+          }
+        ];
+        devDependencies = [
+          {
+            name = "ring";
+            packageId = "ring";
+          }
+          {
+            name = "rustls-pki-types";
+            packageId = "rustls-pki-types";
+            rename = "pki-types";
+          }
+        ];
+        features = {
+          "aws_lc_rs" = [ "crypto" "dep:aws-lc-rs" "aws-lc-rs/aws-lc-sys" ];
+          "default" = [ "crypto" "pem" "ring" ];
+          "fips" = [ "crypto" "dep:aws-lc-rs" "aws-lc-rs/fips" ];
+          "pem" = [ "dep:pem" ];
+          "ring" = [ "crypto" "dep:ring" ];
+          "x509-parser" = [ "dep:x509-parser" ];
+          "zeroize" = [ "dep:zeroize" ];
+        };
+        resolvedDefaultFeatures = [ "crypto" "default" "pem" "ring" ];
       };
       "redox_syscall 0.5.18" = rec {
         crateName = "redox_syscall";
@@ -10851,7 +12696,118 @@ rec {
         ];
 
       };
-      "rustix" = rec {
+      "rustix 0.38.44" = rec {
+        crateName = "rustix";
+        version = "0.38.44";
+        edition = "2021";
+        sha256 = "0m61v0h15lf5rrnbjhcb9306bgqrhskrqv7i1n0939dsw8dbrdgx";
+        authors = [
+          "Dan Gohman <dev@sunfishcode.online>"
+          "Jakub Konka <kubkon@jakubkonka.com>"
+        ];
+        dependencies = [
+          {
+            name = "bitflags";
+            packageId = "bitflags";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "errno";
+            packageId = "errno";
+            rename = "libc_errno";
+            optional = true;
+            usesDefaultFeatures = false;
+            target = { target, features }: ((!(target."rustix_use_libc" or false)) && (!(target."miri" or false)) && ("linux" == target."os" or null) && (("little" == target."endian" or null) || ("s390x" == target."arch" or null)) && (("arm" == target."arch" or null) || (("aarch64" == target."arch" or null) && ("64" == target."pointer_width" or null)) || ("riscv64" == target."arch" or null) || ((target."rustix_use_experimental_asm" or false) && ("powerpc64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("s390x" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips32r6" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64r6" == target."arch" or null)) || ("x86" == target."arch" or null) || (("x86_64" == target."arch" or null) && ("64" == target."pointer_width" or null))));
+          }
+          {
+            name = "errno";
+            packageId = "errno";
+            rename = "libc_errno";
+            usesDefaultFeatures = false;
+            target = { target, features }: ((!(target."windows" or false)) && ((target."rustix_use_libc" or false) || (target."miri" or false) || (!(("linux" == target."os" or null) && (("little" == target."endian" or null) || ("s390x" == target."arch" or null)) && (("arm" == target."arch" or null) || (("aarch64" == target."arch" or null) && ("64" == target."pointer_width" or null)) || ("riscv64" == target."arch" or null) || ((target."rustix_use_experimental_asm" or false) && ("powerpc64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("s390x" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips32r6" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64r6" == target."arch" or null)) || ("x86" == target."arch" or null) || (("x86_64" == target."arch" or null) && ("64" == target."pointer_width" or null)))))));
+          }
+          {
+            name = "errno";
+            packageId = "errno";
+            rename = "libc_errno";
+            usesDefaultFeatures = false;
+            target = { target, features }: (target."windows" or false);
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+            optional = true;
+            usesDefaultFeatures = false;
+            target = { target, features }: ((!(target."rustix_use_libc" or false)) && (!(target."miri" or false)) && ("linux" == target."os" or null) && (("little" == target."endian" or null) || ("s390x" == target."arch" or null)) && (("arm" == target."arch" or null) || (("aarch64" == target."arch" or null) && ("64" == target."pointer_width" or null)) || ("riscv64" == target."arch" or null) || ((target."rustix_use_experimental_asm" or false) && ("powerpc64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("s390x" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips32r6" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64r6" == target."arch" or null)) || ("x86" == target."arch" or null) || (("x86_64" == target."arch" or null) && ("64" == target."pointer_width" or null))));
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+            usesDefaultFeatures = false;
+            target = { target, features }: ((!(target."windows" or false)) && ((target."rustix_use_libc" or false) || (target."miri" or false) || (!(("linux" == target."os" or null) && (("little" == target."endian" or null) || ("s390x" == target."arch" or null)) && (("arm" == target."arch" or null) || (("aarch64" == target."arch" or null) && ("64" == target."pointer_width" or null)) || ("riscv64" == target."arch" or null) || ((target."rustix_use_experimental_asm" or false) && ("powerpc64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("s390x" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips32r6" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64r6" == target."arch" or null)) || ("x86" == target."arch" or null) || (("x86_64" == target."arch" or null) && ("64" == target."pointer_width" or null)))))));
+          }
+          {
+            name = "linux-raw-sys";
+            packageId = "linux-raw-sys 0.4.15";
+            usesDefaultFeatures = false;
+            target = { target, features }: ((("android" == target."os" or null) || ("linux" == target."os" or null)) && ((target."rustix_use_libc" or false) || (target."miri" or false) || (!(("linux" == target."os" or null) && (("little" == target."endian" or null) || ("s390x" == target."arch" or null)) && (("arm" == target."arch" or null) || (("aarch64" == target."arch" or null) && ("64" == target."pointer_width" or null)) || ("riscv64" == target."arch" or null) || ((target."rustix_use_experimental_asm" or false) && ("powerpc64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("s390x" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips32r6" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64r6" == target."arch" or null)) || ("x86" == target."arch" or null) || (("x86_64" == target."arch" or null) && ("64" == target."pointer_width" or null)))))));
+            features = [ "general" "ioctl" "no_std" ];
+          }
+          {
+            name = "linux-raw-sys";
+            packageId = "linux-raw-sys 0.4.15";
+            usesDefaultFeatures = false;
+            target = { target, features }: ((!(target."rustix_use_libc" or false)) && (!(target."miri" or false)) && ("linux" == target."os" or null) && (("little" == target."endian" or null) || ("s390x" == target."arch" or null)) && (("arm" == target."arch" or null) || (("aarch64" == target."arch" or null) && ("64" == target."pointer_width" or null)) || ("riscv64" == target."arch" or null) || ((target."rustix_use_experimental_asm" or false) && ("powerpc64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("s390x" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips32r6" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64r6" == target."arch" or null)) || ("x86" == target."arch" or null) || (("x86_64" == target."arch" or null) && ("64" == target."pointer_width" or null))));
+            features = [ "general" "errno" "ioctl" "no_std" "elf" ];
+          }
+          {
+            name = "windows-sys";
+            packageId = "windows-sys 0.59.0";
+            target = { target, features }: (target."windows" or false);
+            features = [ "Win32_Foundation" "Win32_Networking_WinSock" "Win32_NetworkManagement_IpHelper" "Win32_System_Threading" ];
+          }
+        ];
+        devDependencies = [
+          {
+            name = "errno";
+            packageId = "errno";
+            rename = "libc_errno";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+          }
+        ];
+        features = {
+          "all-apis" = [ "event" "fs" "io_uring" "mm" "mount" "net" "param" "pipe" "process" "procfs" "pty" "rand" "runtime" "shm" "stdio" "system" "termios" "thread" "time" ];
+          "compiler_builtins" = [ "dep:compiler_builtins" ];
+          "core" = [ "dep:core" ];
+          "default" = [ "std" "use-libc-auxv" ];
+          "io_uring" = [ "event" "fs" "net" "linux-raw-sys/io_uring" ];
+          "itoa" = [ "dep:itoa" ];
+          "libc" = [ "dep:libc" ];
+          "libc-extra-traits" = [ "libc?/extra_traits" ];
+          "libc_errno" = [ "dep:libc_errno" ];
+          "linux_latest" = [ "linux_4_11" ];
+          "net" = [ "linux-raw-sys/net" "linux-raw-sys/netlink" "linux-raw-sys/if_ether" "linux-raw-sys/xdp" ];
+          "once_cell" = [ "dep:once_cell" ];
+          "param" = [ "fs" ];
+          "process" = [ "linux-raw-sys/prctl" ];
+          "procfs" = [ "once_cell" "itoa" "fs" ];
+          "pty" = [ "itoa" "fs" ];
+          "runtime" = [ "linux-raw-sys/prctl" ];
+          "rustc-dep-of-std" = [ "core" "rustc-std-workspace-alloc" "compiler_builtins" "linux-raw-sys/rustc-dep-of-std" "bitflags/rustc-dep-of-std" "compiler_builtins?/rustc-dep-of-std" ];
+          "rustc-std-workspace-alloc" = [ "dep:rustc-std-workspace-alloc" ];
+          "shm" = [ "fs" ];
+          "std" = [ "bitflags/std" "alloc" "libc?/std" "libc_errno?/std" "libc-extra-traits" ];
+          "system" = [ "linux-raw-sys/system" ];
+          "thread" = [ "linux-raw-sys/prctl" ];
+          "use-libc" = [ "libc_errno" "libc" "libc-extra-traits" ];
+        };
+        resolvedDefaultFeatures = [ "alloc" "fs" "libc-extra-traits" "std" ];
+      };
+      "rustix 1.1.3" = rec {
         crateName = "rustix";
         version = "1.1.3";
         edition = "2021";
@@ -10903,14 +12859,14 @@ rec {
           }
           {
             name = "linux-raw-sys";
-            packageId = "linux-raw-sys";
+            packageId = "linux-raw-sys 0.11.0";
             usesDefaultFeatures = false;
             target = { target, features }: ((("linux" == target."os" or null) || ("android" == target."os" or null)) && ((target."rustix_use_libc" or false) || (target."miri" or false) || (!(("linux" == target."os" or null) && (("little" == target."endian" or null) || (("s390x" == target."arch" or null) || ("powerpc" == target."arch" or null))) && (("arm" == target."arch" or null) || (("aarch64" == target."arch" or null) && ("64" == target."pointer_width" or null)) || ("riscv64" == target."arch" or null) || ((target."rustix_use_experimental_asm" or false) && ("powerpc" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("powerpc64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("s390x" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips32r6" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64r6" == target."arch" or null)) || ("x86" == target."arch" or null) || (("x86_64" == target."arch" or null) && ("64" == target."pointer_width" or null)))))));
             features = [ "general" "ioctl" "no_std" ];
           }
           {
             name = "linux-raw-sys";
-            packageId = "linux-raw-sys";
+            packageId = "linux-raw-sys 0.11.0";
             usesDefaultFeatures = false;
             target = { target, features }: ((!(target."rustix_use_libc" or false)) && (!(target."miri" or false)) && ("linux" == target."os" or null) && (("little" == target."endian" or null) || (("s390x" == target."arch" or null) || ("powerpc" == target."arch" or null))) && (("arm" == target."arch" or null) || (("aarch64" == target."arch" or null) && ("64" == target."pointer_width" or null)) || ("riscv64" == target."arch" or null) || ((target."rustix_use_experimental_asm" or false) && ("powerpc" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("powerpc64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("s390x" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips32r6" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64r6" == target."arch" or null)) || ("x86" == target."arch" or null) || (("x86_64" == target."arch" or null) && ("64" == target."pointer_width" or null))));
             features = [ "auxvec" "general" "errno" "ioctl" "no_std" "elf" ];
@@ -10964,6 +12920,12 @@ rec {
         edition = "2021";
         sha256 = "13xxk2qqchibd7pr0laqq6pzayx9xm4rb45d8rz68kvxday58gsk";
         dependencies = [
+          {
+            name = "aws-lc-rs";
+            packageId = "aws-lc-rs";
+            optional = true;
+            usesDefaultFeatures = false;
+          }
           {
             name = "log";
             packageId = "log";
@@ -11025,7 +12987,7 @@ rec {
           "std" = [ "webpki/std" "pki-types/std" "once_cell/std" ];
           "zlib" = [ "dep:zlib-rs" ];
         };
-        resolvedDefaultFeatures = [ "log" "logging" "ring" "std" "tls12" ];
+        resolvedDefaultFeatures = [ "aws-lc-rs" "aws_lc_rs" "default" "log" "logging" "prefer-post-quantum" "ring" "std" "tls12" ];
       };
       "rustls-native-certs 0.7.3" = rec {
         crateName = "rustls-native-certs";
@@ -11147,6 +13109,12 @@ rec {
         libName = "webpki";
         dependencies = [
           {
+            name = "aws-lc-rs";
+            packageId = "aws-lc-rs";
+            optional = true;
+            usesDefaultFeatures = false;
+          }
+          {
             name = "ring";
             packageId = "ring";
             optional = true;
@@ -11172,7 +13140,7 @@ rec {
           "ring" = [ "dep:ring" ];
           "std" = [ "alloc" "pki-types/std" ];
         };
-        resolvedDefaultFeatures = [ "alloc" "ring" "std" ];
+        resolvedDefaultFeatures = [ "alloc" "aws-lc-rs" "ring" "std" ];
       };
       "rustversion" = rec {
         crateName = "rustversion";
@@ -11827,7 +13795,7 @@ rec {
           }
           {
             name = "cpufeatures";
-            packageId = "cpufeatures";
+            packageId = "cpufeatures 0.2.17";
             target = { target, features }: (("aarch64" == target."arch" or null) || ("x86" == target."arch" or null) || ("x86_64" == target."arch" or null));
           }
           {
@@ -11866,7 +13834,7 @@ rec {
           }
           {
             name = "cpufeatures";
-            packageId = "cpufeatures";
+            packageId = "cpufeatures 0.2.17";
             target = { target, features }: (("aarch64" == target."arch" or null) || ("x86_64" == target."arch" or null) || ("x86" == target."arch" or null));
           }
           {
@@ -11923,6 +13891,322 @@ rec {
           "default" = [ "std" ];
         };
         resolvedDefaultFeatures = [ "default" "std" ];
+      };
+      "shigoto" = rec {
+        crateName = "shigoto";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/shigoto";
+          rev = "d8b154f7c40e58dc0a4d98f08a6d847122471181";
+          sha256 = "1xy0qhxii4f5lf725fpcym5iiwgbl3ns9bwzmabwiaq975m7cirh";
+        };
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "shigoto-budget";
+            packageId = "shigoto-budget";
+          }
+          {
+            name = "shigoto-dag";
+            packageId = "shigoto-dag";
+          }
+          {
+            name = "shigoto-emit";
+            packageId = "shigoto-emit";
+          }
+          {
+            name = "shigoto-gate";
+            packageId = "shigoto-gate";
+          }
+          {
+            name = "shigoto-retry";
+            packageId = "shigoto-retry";
+          }
+          {
+            name = "shigoto-scheduler";
+            packageId = "shigoto-scheduler";
+          }
+          {
+            name = "shigoto-types";
+            packageId = "shigoto-types";
+          }
+        ];
+
+      };
+      "shigoto-budget" = rec {
+        crateName = "shigoto-budget";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/shigoto";
+          rev = "d8b154f7c40e58dc0a4d98f08a6d847122471181";
+          sha256 = "1xy0qhxii4f5lf725fpcym5iiwgbl3ns9bwzmabwiaq975m7cirh";
+        };
+        libName = "shigoto_budget";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "shigoto-types";
+            packageId = "shigoto-types";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 2.0.17";
+          }
+        ];
+
+      };
+      "shigoto-dag" = rec {
+        crateName = "shigoto-dag";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/shigoto";
+          rev = "d8b154f7c40e58dc0a4d98f08a6d847122471181";
+          sha256 = "1xy0qhxii4f5lf725fpcym5iiwgbl3ns9bwzmabwiaq975m7cirh";
+        };
+        libName = "shigoto_dag";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "petgraph";
+            packageId = "petgraph 0.6.5";
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "shigoto-types";
+            packageId = "shigoto-types";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 2.0.17";
+          }
+        ];
+
+      };
+      "shigoto-emit" = rec {
+        crateName = "shigoto-emit";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/shigoto";
+          rev = "d8b154f7c40e58dc0a4d98f08a6d847122471181";
+          sha256 = "1xy0qhxii4f5lf725fpcym5iiwgbl3ns9bwzmabwiaq975m7cirh";
+        };
+        libName = "shigoto_emit";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "async-trait";
+            packageId = "async-trait";
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "shigoto-types";
+            packageId = "shigoto-types";
+          }
+          {
+            name = "tracing";
+            packageId = "tracing";
+          }
+        ];
+
+      };
+      "shigoto-gate" = rec {
+        crateName = "shigoto-gate";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/shigoto";
+          rev = "d8b154f7c40e58dc0a4d98f08a6d847122471181";
+          sha256 = "1xy0qhxii4f5lf725fpcym5iiwgbl3ns9bwzmabwiaq975m7cirh";
+        };
+        libName = "shigoto_gate";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "shigoto-dag";
+            packageId = "shigoto-dag";
+          }
+          {
+            name = "shigoto-types";
+            packageId = "shigoto-types";
+          }
+        ];
+
+      };
+      "shigoto-retry" = rec {
+        crateName = "shigoto-retry";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/shigoto";
+          rev = "d8b154f7c40e58dc0a4d98f08a6d847122471181";
+          sha256 = "1xy0qhxii4f5lf725fpcym5iiwgbl3ns9bwzmabwiaq975m7cirh";
+        };
+        libName = "shigoto_retry";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "shigoto-types";
+            packageId = "shigoto-types";
+          }
+        ];
+
+      };
+      "shigoto-scheduler" = rec {
+        crateName = "shigoto-scheduler";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/shigoto";
+          rev = "d8b154f7c40e58dc0a4d98f08a6d847122471181";
+          sha256 = "1xy0qhxii4f5lf725fpcym5iiwgbl3ns9bwzmabwiaq975m7cirh";
+        };
+        libName = "shigoto_scheduler";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "anyhow";
+            packageId = "anyhow";
+          }
+          {
+            name = "async-trait";
+            packageId = "async-trait";
+          }
+          {
+            name = "chrono";
+            packageId = "chrono";
+            features = [ "serde" ];
+          }
+          {
+            name = "shigoto-budget";
+            packageId = "shigoto-budget";
+          }
+          {
+            name = "shigoto-dag";
+            packageId = "shigoto-dag";
+          }
+          {
+            name = "shigoto-emit";
+            packageId = "shigoto-emit";
+          }
+          {
+            name = "shigoto-gate";
+            packageId = "shigoto-gate";
+          }
+          {
+            name = "shigoto-retry";
+            packageId = "shigoto-retry";
+          }
+          {
+            name = "shigoto-types";
+            packageId = "shigoto-types";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 2.0.17";
+          }
+          {
+            name = "tokio";
+            packageId = "tokio";
+            features = [ "rt-multi-thread" "macros" "sync" "time" ];
+          }
+          {
+            name = "tracing";
+            packageId = "tracing";
+          }
+        ];
+
+      };
+      "shigoto-types" = rec {
+        crateName = "shigoto-types";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/shigoto";
+          rev = "d8b154f7c40e58dc0a4d98f08a6d847122471181";
+          sha256 = "1xy0qhxii4f5lf725fpcym5iiwgbl3ns9bwzmabwiaq975m7cirh";
+        };
+        libName = "shigoto_types";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "async-trait";
+            packageId = "async-trait";
+          }
+          {
+            name = "chrono";
+            packageId = "chrono";
+            features = [ "serde" ];
+          }
+          {
+            name = "schemars";
+            packageId = "schemars";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 2.0.17";
+          }
+        ];
+
       };
       "shlex" = rec {
         crateName = "shlex";
@@ -13514,7 +15798,7 @@ rec {
           }
           {
             name = "rustix";
-            packageId = "rustix";
+            packageId = "rustix 1.1.3";
             target = { target, features }: ((target."unix" or false) || ("wasi" == target."os" or null));
             features = [ "fs" ];
           }
@@ -13542,7 +15826,7 @@ rec {
         dependencies = [
           {
             name = "rustix";
-            packageId = "rustix";
+            packageId = "rustix 1.1.3";
             target = { target, features }: (target."unix" or false);
             features = [ "termios" ];
           }
@@ -13662,6 +15946,80 @@ rec {
             name = "cfg-if";
             packageId = "cfg-if";
           }
+        ];
+        features = {
+        };
+      };
+      "time" = rec {
+        crateName = "time";
+        version = "0.3.47";
+        edition = "2024";
+        sha256 = "0b7g9ly2iabrlgizliz6v5x23yq5d6bpp0mqz6407z1s526d8fvl";
+        authors = [
+          "Jacob Pratt <open-source@jhpratt.dev>"
+          "Time contributors"
+        ];
+        dependencies = [
+          {
+            name = "deranged";
+            packageId = "deranged";
+            features = [ "powerfmt" ];
+          }
+          {
+            name = "num-conv";
+            packageId = "num-conv";
+          }
+          {
+            name = "powerfmt";
+            packageId = "powerfmt";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "serde_core";
+            packageId = "serde_core";
+            optional = true;
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "time-core";
+            packageId = "time-core";
+          }
+        ];
+        devDependencies = [
+          {
+            name = "num-conv";
+            packageId = "num-conv";
+          }
+        ];
+        features = {
+          "alloc" = [ "serde_core?/alloc" ];
+          "default" = [ "std" ];
+          "formatting" = [ "dep:itoa" "std" "time-macros?/formatting" ];
+          "large-dates" = [ "time-core/large-dates" "time-macros?/large-dates" ];
+          "local-offset" = [ "std" "dep:libc" "dep:num_threads" ];
+          "macros" = [ "dep:time-macros" ];
+          "parsing" = [ "time-macros?/parsing" ];
+          "quickcheck" = [ "dep:quickcheck" "alloc" "deranged/quickcheck" ];
+          "rand" = [ "rand08" "rand09" ];
+          "rand08" = [ "dep:rand08" "deranged/rand08" ];
+          "rand09" = [ "dep:rand09" "deranged/rand09" ];
+          "serde" = [ "dep:serde_core" "time-macros?/serde" "deranged/serde" ];
+          "serde-human-readable" = [ "serde" "formatting" "parsing" ];
+          "serde-well-known" = [ "serde" "formatting" "parsing" ];
+          "std" = [ "alloc" ];
+          "wasm-bindgen" = [ "dep:js-sys" ];
+        };
+        resolvedDefaultFeatures = [ "alloc" "std" ];
+      };
+      "time-core" = rec {
+        crateName = "time-core";
+        version = "0.1.8";
+        edition = "2024";
+        sha256 = "1jidl426mw48i7hjj4hs9vxgd9lwqq4vyalm4q8d7y4iwz7y353n";
+        libName = "time_core";
+        authors = [
+          "Jacob Pratt <open-source@jhpratt.dev>"
+          "Time contributors"
         ];
         features = {
         };
@@ -13913,7 +16271,7 @@ rec {
           "tls12" = [ "rustls/tls12" ];
           "zlib" = [ "rustls/zlib" ];
         };
-        resolvedDefaultFeatures = [ "logging" "ring" "tls12" ];
+        resolvedDefaultFeatures = [ "aws_lc_rs" "default" "logging" "ring" "tls12" ];
       };
       "tokio-stream" = rec {
         crateName = "tokio-stream";
@@ -14418,6 +16776,11 @@ rec {
             features = [ "std" ];
           }
           {
+            name = "rustls-pemfile";
+            packageId = "rustls-pemfile";
+            optional = true;
+          }
+          {
             name = "socket2";
             packageId = "socket2 0.5.10";
             optional = true;
@@ -14428,6 +16791,13 @@ rec {
             packageId = "tokio";
             optional = true;
             usesDefaultFeatures = false;
+          }
+          {
+            name = "tokio-rustls";
+            packageId = "tokio-rustls";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "logging" "tls12" "ring" ];
           }
           {
             name = "tokio-stream";
@@ -14451,6 +16821,11 @@ rec {
           {
             name = "tracing";
             packageId = "tracing";
+          }
+          {
+            name = "webpki-roots";
+            packageId = "webpki-roots 0.26.11";
+            optional = true;
           }
         ];
         devDependencies = [
@@ -14480,7 +16855,7 @@ rec {
           "transport" = [ "server" "channel" ];
           "zstd" = [ "dep:zstd" ];
         };
-        resolvedDefaultFeatures = [ "channel" "codegen" "default" "prost" "router" "server" "transport" ];
+        resolvedDefaultFeatures = [ "channel" "codegen" "default" "prost" "router" "server" "tls" "tls-webpki-roots" "transport" ];
       };
       "tonic-build" = rec {
         crateName = "tonic-build";
@@ -16568,6 +18943,43 @@ rec {
         ];
 
       };
+      "which" = rec {
+        crateName = "which";
+        version = "6.0.3";
+        edition = "2021";
+        sha256 = "07yg74dsq644hq5a35546c9mja6rsjdsg92rykr9hkflxf7r5vml";
+        authors = [
+          "Harry Fei <tiziyuanfang@gmail.com>"
+        ];
+        dependencies = [
+          {
+            name = "either";
+            packageId = "either";
+          }
+          {
+            name = "home";
+            packageId = "home";
+            target = { target, features }: ((target."windows" or false) || (target."unix" or false) || ("redox" == target."os" or null));
+          }
+          {
+            name = "rustix";
+            packageId = "rustix 0.38.44";
+            usesDefaultFeatures = false;
+            target = { target, features }: ((target."unix" or false) || ("wasi" == target."os" or null) || ("redox" == target."os" or null));
+            features = [ "fs" "std" ];
+          }
+          {
+            name = "winsafe";
+            packageId = "winsafe";
+            target = { target, features }: (target."windows" or false);
+            features = [ "kernel" ];
+          }
+        ];
+        features = {
+          "regex" = [ "dep:regex" ];
+          "tracing" = [ "dep:tracing" ];
+        };
+      };
       "whoami" = rec {
         crateName = "whoami";
         version = "1.6.1";
@@ -17020,7 +19432,7 @@ rec {
           "Win32_Web" = [ "Win32" ];
           "Win32_Web_InternetExplorer" = [ "Win32_Web" ];
         };
-        resolvedDefaultFeatures = [ "Win32" "Win32_Foundation" "Win32_Globalization" "Win32_System" "Win32_System_Com" "Win32_UI" "Win32_UI_Shell" "default" ];
+        resolvedDefaultFeatures = [ "Win32" "Win32_Foundation" "Win32_Globalization" "Win32_System" "Win32_System_Com" "Win32_System_Console" "Win32_UI" "Win32_UI_Shell" "default" ];
       };
       "windows-sys 0.52.0" = rec {
         crateName = "windows-sys";
@@ -17527,7 +19939,7 @@ rec {
           "Win32_Web" = [ "Win32" ];
           "Win32_Web_InternetExplorer" = [ "Win32_Web" ];
         };
-        resolvedDefaultFeatures = [ "Win32" "Win32_Foundation" "Win32_Storage" "Win32_Storage_FileSystem" "Win32_System" "Win32_System_Console" "Win32_UI" "Win32_UI_Input" "Win32_UI_Input_KeyboardAndMouse" "default" ];
+        resolvedDefaultFeatures = [ "Win32" "Win32_Foundation" "Win32_NetworkManagement" "Win32_NetworkManagement_IpHelper" "Win32_Networking" "Win32_Networking_WinSock" "Win32_Storage" "Win32_Storage_FileSystem" "Win32_System" "Win32_System_Console" "Win32_System_Threading" "Win32_UI" "Win32_UI_Input" "Win32_UI_Input_KeyboardAndMouse" "default" ];
       };
       "windows-sys 0.60.2" = rec {
         crateName = "windows-sys";
@@ -18441,6 +20853,32 @@ rec {
         };
         resolvedDefaultFeatures = [ "alloc" "default" "std" ];
       };
+      "winsafe" = rec {
+        crateName = "winsafe";
+        version = "0.0.19";
+        edition = "2021";
+        sha256 = "0169xy9mjma8dys4m8v4x0xhw2gkbhv2v1wsbvcjl9bhnxxd2dfi";
+        authors = [
+          "Rodrigo Cesar de Freitas Dias <rcesar@gmail.com>"
+        ];
+        features = {
+          "comctl" = [ "ole" ];
+          "dshow" = [ "oleaut" ];
+          "dwm" = [ "uxtheme" ];
+          "dxgi" = [ "ole" ];
+          "gdi" = [ "user" ];
+          "gui" = [ "comctl" "shell" "uxtheme" ];
+          "mf" = [ "oleaut" ];
+          "ole" = [ "user" ];
+          "oleaut" = [ "ole" ];
+          "shell" = [ "oleaut" ];
+          "taskschd" = [ "oleaut" ];
+          "user" = [ "kernel" ];
+          "uxtheme" = [ "gdi" "ole" ];
+          "version" = [ "kernel" ];
+        };
+        resolvedDefaultFeatures = [ "kernel" ];
+      };
       "wiremock" = rec {
         crateName = "wiremock";
         version = "0.6.5";
@@ -18575,6 +21013,30 @@ rec {
           "std" = [ "alloc" ];
         };
         resolvedDefaultFeatures = [ "alloc" "default" "std" ];
+      };
+      "yasna" = rec {
+        crateName = "yasna";
+        version = "0.5.2";
+        edition = "2018";
+        sha256 = "1ka4ixrplnrfqyl1kymdj8cwpdp2k0kdr73b57hilcn1kiab6yz1";
+        authors = [
+          "Masaki Hara <ackie.h.gmai@gmail.com>"
+        ];
+        dependencies = [
+          {
+            name = "time";
+            packageId = "time";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "std" ];
+          }
+        ];
+        features = {
+          "bit-vec" = [ "dep:bit-vec" ];
+          "num-bigint" = [ "dep:num-bigint" ];
+          "time" = [ "dep:time" ];
+        };
+        resolvedDefaultFeatures = [ "default" "std" "time" ];
       };
       "yoke" = rec {
         crateName = "yoke";

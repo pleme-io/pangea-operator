@@ -334,7 +334,12 @@
           src = self;
           architecture = arch;
           serviceType = "graphql";
-          rootFeatures = [ "default" "embedded_ruby" ];
+          # executor_magma listed EXPLICITLY (not only via `default`) so
+          # the embedded image always compiles MagmaExecutor in. A stale
+          # Cargo.nix once dropped it from default and the operator
+          # silently ran tofu for spec.executor=magma CRs (caught by the
+          # rio-health-check canary 2026-05-27). Explicit = unmissable.
+          rootFeatures = [ "default" "embedded_ruby" "executor_magma" ];
           # Pre-bundled gems live in the runtime closure via gemWs.env;
           # operator's main.rs sees RUBYLIB at process start, embedded
           # CRuby's ruby_init() reads it, $LOAD_PATH includes every
