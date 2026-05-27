@@ -82,6 +82,14 @@ impl Config {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install a single process-wide rustls CryptoProvider FIRST. The
+    // executor_magma deps (tonic → rustls) feature-unify BOTH aws-lc-rs
+    // and ring, so rustls 0.23 can no longer auto-select and panics at
+    // first TLS use ("Could not automatically determine the
+    // process-level CryptoProvider from Rustls crate features"). Pick
+    // aws-lc-rs explicitly. Idempotent — ignore the already-installed Err.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     let config = Config::from_env();
 
     // Handle CRD generation

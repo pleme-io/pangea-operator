@@ -9756,6 +9756,10 @@ rec {
             features = [ "rustls-tls" "json" ];
           }
           {
+            name = "rustls";
+            packageId = "rustls";
+          }
+          {
             name = "schemars";
             packageId = "schemars";
             target = { target, features }: (target."unix" or false);
