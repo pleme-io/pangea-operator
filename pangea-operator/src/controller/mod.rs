@@ -51,6 +51,7 @@ pub use compliance_binding_controller::ComplianceBindingController;
 pub use dashboard_controller::DashboardController;
 pub use operator_policy_controller::OperatorPolicyController;
 
+use crate::backend::{PostgresStateBackend, StateBackend, StateStore};
 use crate::error::Result;
 use crate::executor::{
     ExecutorBackend, ExecutorConfig, IacExecutor, PackerExecutor, TofuExecutor, WorkspaceManager,
@@ -73,19 +74,30 @@ pub struct ControllerState {
     pub db_pool: Option<Arc<RwLock<sqlx::PgPool>>>,
 
     /// IaC executor for running infrastructure commands. Polymorphic
-    /// over `Arc<dyn IacExecutor>` so the same controller can dispatch
-    /// to either `TofuExecutor` (subprocess, default) or
-    /// `MagmaExecutor` (in-process, opt-in per-CR via
-    /// `spec.executor: magma`). Per
-    /// `theory/MAGMA-OPERATOR-BACKEND.md` §VI. Use
-    /// `executor_for(spec)` to pick per-CR.
+    /// over `Arc<dyn IacExecutor>`. This field holds the always-built
+    /// `TofuExecutor` (subprocess) — it is the explicit fallback when
+    /// magma is the resolved backend but unavailable (feature off or
+    /// no state backend). Per `theory/MAGMA-OPERATOR-BACKEND.md` §VI
+    /// and `docs/design/0005-autonomic-convergence-on-magma.md`. Use
+    /// `executor_for(template)` to pick the per-CR backend (magma by
+    /// default, tofu on explicit opt-out).
     pub executor: Arc<dyn IacExecutor>,
 
     /// The operator-wide default backend choice, derived from the
-    /// `PANGEA_EXECUTOR` env var at startup. `executor_for(spec)`
-    /// uses this as the fallback when a CR doesn't set its own
-    /// `spec.executor`.
+    /// `PANGEA_EXECUTOR` env var at startup (falls back to `Magma`).
+    /// `executor_for(template)` uses this as the fallback when a CR
+    /// doesn't set its own `spec.executor`.
     pub default_backend: ExecutorBackend,
+
+    /// Shared state backend (OpenTofu state in PostgreSQL via the
+    /// operator's `StateStore`). `Some` once a PG pool is wired in
+    /// (`with_db_pool`); `None` otherwise. The magma executor reads
+    /// and writes the SAME tofu-format state rows through this
+    /// backend (keyed by the per-CR schema/template/state triple),
+    /// so a per-CR magma↔tofu switch never forks state. When `None`,
+    /// `executor_for` cannot build a `MagmaExecutor` and falls back
+    /// to tofu.
+    pub state_backend: Option<Arc<dyn StateBackend>>,
 
     /// Packer executor for running AMI build commands.
     pub packer_executor: Arc<PackerExecutor>,
@@ -118,8 +130,8 @@ impl ControllerState {
         executor_config: ExecutorConfig,
         compiler_backend: Arc<dyn crate::ruby::CompilerBackend>,
     ) -> Result<Self> {
-        // Default backend selection: env var → tofu fallback. The
-        // CR-level override happens in `executor_for(spec)`.
+        // Default backend selection: env var → magma default. The
+        // CR-level override happens in `executor_for(template)`.
         let default_backend = ExecutorBackend::resolve(
             None,
             std::env::var("PANGEA_EXECUTOR").ok().as_deref(),
@@ -149,6 +161,7 @@ impl ControllerState {
             db_pool: None,
             executor,
             default_backend,
+            state_backend: None,
             packer_executor,
             workspace_manager,
             compiler_backend,
@@ -159,26 +172,119 @@ impl ControllerState {
 
     /// Resolve which `IacExecutor` impl handles a CR. Honors the
     /// CR's `spec.executor` first, then `default_backend` (which
-    /// itself came from `PANGEA_EXECUTOR` or `tofu` fallback). M0.12.
+    /// itself came from `PANGEA_EXECUTOR` or the `Magma` default).
     ///
-    /// For M0.12 step 2 every CR returns the same `Arc<dyn IacExecutor>`
-    /// (the operator's single shared instance). M0.12.x lands the
-    /// MagmaExecutor instance alongside, with selection routing here.
-    pub fn executor_for(&self, spec: &crate::crd::InfrastructureTemplateSpec) -> Arc<dyn IacExecutor> {
-        let _chosen = ExecutorBackend::resolve(
-            spec.executor.as_deref(),
+    /// Routing:
+    ///   * Resolved == `Magma`, the `executor_magma` feature is on,
+    ///     AND a state backend is available → build a fresh
+    ///     `MagmaExecutor` whose state backend is the operator's
+    ///     `PostgresStateBackend`, encoded in `BackendShape::Tofu`
+    ///     so it reads/writes the SAME state bytes tofu writes, keyed
+    ///     by the per-CR `(schema, template, state)` triple.
+    ///   * Otherwise (resolved == `Tofu`, feature off, or no state
+    ///     backend) → the always-built shared `TofuExecutor`. Never
+    ///     panics: a missing backend silently falls back to tofu.
+    ///
+    /// Per `theory/MAGMA-OPERATOR-BACKEND.md` §VI and
+    /// `docs/design/0005-autonomic-convergence-on-magma.md`.
+    pub fn executor_for(
+        &self,
+        template: &crate::crd::InfrastructureTemplate,
+    ) -> Arc<dyn IacExecutor> {
+        let chosen = ExecutorBackend::resolve(
+            template.spec.executor.as_deref(),
             Some(self.default_backend.label()),
         );
-        // The polymorphic switch lands in M0.12.x once a magma
-        // executor instance is wired in alongside the tofu one.
-        // Both backends are already feature-compiled; the wiring is
-        // a follow-up that owns the lifecycle.
+
+        match chosen {
+            ExecutorBackend::Magma => self.magma_executor_for(template),
+            ExecutorBackend::Tofu => Arc::clone(&self.executor),
+        }
+    }
+
+    /// Build a magma-backed `IacExecutor` for this CR, or fall back
+    /// to the shared tofu executor when magma is unavailable.
+    ///
+    /// When the `executor_magma` feature is OFF this is a thin
+    /// shim that always returns the tofu executor, so the resolver
+    /// above compiles and behaves identically in a tofu-only build.
+    #[cfg(feature = "executor_magma")]
+    fn magma_executor_for(
+        &self,
+        template: &crate::crd::InfrastructureTemplate,
+    ) -> Arc<dyn IacExecutor> {
+        use crate::executor::{MagmaExecutor, MagmaExecutorConfig};
+        use kube::ResourceExt;
+        use magma_operator_backend::BackendShape;
+
+        // Magma needs the shared state backend to read/write the
+        // existing tofu-format state. No backend → fall back to tofu
+        // (never panic).
+        let Some(state_backend) = self.state_backend.clone() else {
+            tracing::warn!(
+                template = %template.name_any(),
+                "executor=magma requested but no state backend is wired in; \
+                 falling back to tofu",
+            );
+            return Arc::clone(&self.executor);
+        };
+
+        // Per-CR state key. MUST match the keys the tofu reconcile
+        // path uses so magma reads the same PG rows:
+        //   * schema_name   = PangeaNamespace::schema_name()
+        //                     = "{schemaPrefix}{namespace}" (default
+        //                       prefix "pangea_"); derived from
+        //                       `spec.pangeaNamespace`.
+        //   * template_name = the CR name (`name_any()`), matching
+        //                     `BackendConfigGenerator` + `StateStore`
+        //                     / `SchemaManager::ensure_state_table`
+        //                     (table `{schema}.{template}_states`).
+        //   * state_name    = "default" (the OpenTofu default
+        //                     workspace name).
+        let schema_name = format!("pangea_{}", template.spec.pangea_namespace);
+        let template_name = template.name_any();
+        let state_name = "default".to_string();
+
+        let cfg = MagmaExecutorConfig {
+            state_backend,
+            schema_name,
+            template_name,
+            state_name,
+            // tofu-format bytes so magma + tofu read the same state.
+            backend_shape:   BackendShape::Tofu,
+            plan_checkpoint: true,
+            preflight_laws:  true,
+            drift_policy:    magma_drift::DriftPolicy::conservative_default(),
+            audit_log_path:  None,
+        };
+
+        Arc::new(MagmaExecutor::new(cfg)) as Arc<dyn IacExecutor>
+    }
+
+    /// Tofu-only build: magma is not compiled in, so any resolved
+    /// `Magma` choice degrades to the shared tofu executor.
+    #[cfg(not(feature = "executor_magma"))]
+    fn magma_executor_for(
+        &self,
+        _template: &crate::crd::InfrastructureTemplate,
+    ) -> Arc<dyn IacExecutor> {
         Arc::clone(&self.executor)
     }
 
     /// Set the database pool.
+    ///
+    /// Also constructs the shared `StateBackend` (a
+    /// `PostgresStateBackend` over the operator's `StateStore`) from
+    /// the same pool, so `executor_for` can build a `MagmaExecutor`
+    /// that reads/writes the existing tofu-format state rows. Both
+    /// the `db_pool` handle and the `state_backend` are derived from
+    /// one shared `Arc<PgPool>`.
     pub fn with_db_pool(mut self, pool: sqlx::PgPool) -> Self {
-        self.db_pool = Some(Arc::new(RwLock::new(pool)));
+        let shared = Arc::new(pool);
+        let store = Arc::new(StateStore::new(Arc::clone(&shared)));
+        self.state_backend = Some(Arc::new(PostgresStateBackend::new(store)));
+        // `db_pool` wraps the pool itself; reuse the same Arc'd pool.
+        self.db_pool = Some(Arc::new(RwLock::new((*shared).clone())));
         self
     }
 }
