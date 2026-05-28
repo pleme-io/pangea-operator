@@ -993,67 +993,105 @@ async fn handle_planning(
 ) -> Result<ReconcileAction> {
     info!("Template in Planning phase");
     let _phase_timer = state.metrics.record_phase_duration("planning");
-    let executor = state.executor_for(template);
+
+    // Slice 2c: phase handlers speak the typed `WorkspaceRunner`
+    // surface — one call returns both the unified `CycleArtifact`
+    // (for status enrichment + magma drift detail) AND the raw
+    // tofu-show-JSON (for the legacy `Plan::from_json` path that
+    // produces per-attribute DriftDetail entries the policy engine
+    // consumes). No double-call to the executor.
+    let runner = state.executor_runner_for(template);
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
-    let plan_path = workspace.plan_path();
 
-    // Run tofu plan
-    let result = executor
-        .plan(&workspace.path, Some(&plan_path), &[])
-        .await?;
+    let plan_result = runner.plan(&workspace).await?;
 
-    if !result.success {
-        let err_msg = format!("tofu plan failed: {}", result.stderr);
+    if !plan_result.success {
+        let err_msg = format!("plan failed: {}", plan_result.raw_stderr);
         warn!(%err_msg);
         update_phase_with_error(template, Phase::Failed, &err_msg, state).await?;
         record_event(template, state, EventType::Warning, "PlanFailed", &err_msg).await;
         return Ok(ReconcileAction::Requeue(ERROR_REQUEUE_INTERVAL));
     }
 
-    // Parse plan output for resource summary + per-resource drift detail.
-    // Drift details are capped at 50 entries so the K8s status object
-    // stays tractable; full per-plan list is available via GraphQL.
-    let (summary, raw_drifts) = if plan_path.exists() {
-        let show_result = executor.show_plan(&workspace.path, &plan_path).await?;
-        if show_result.success {
-            match Plan::from_json(&show_result.stdout) {
-                Ok(plan) => {
-                    let s = plan.summary();
-                    let details: Vec<crate::crd::DriftDetail> = plan
-                        .drift_details(50)
-                        .into_iter()
-                        .map(|d| crate::crd::DriftDetail {
-                            address: d.address,
-                            action: d.action,
-                            risk: d.risk,
-                            attributes: d.attributes,
-                            policy_decision: None,
-                            matched_policy: None,
-                        })
-                        .collect();
-                    info!(
-                        added = s.added,
-                        changed = s.changed,
-                        destroyed = s.destroyed,
-                        drift_count = details.len(),
-                        "Plan analysis complete"
-                    );
-                    (Some(s), details)
-                }
-                Err(e) => {
-                    warn!(error = %e, "Failed to parse plan JSON, continuing without summary");
-                    (None, Vec::new())
-                }
+    // Two-path drift extraction (same final shape):
+    //   1. **Tofu path** — `raw_show_json` populated: use legacy
+    //      `Plan::from_json`. Carries per-attribute drift detail the
+    //      policy engine reads.
+    //   2. **Magma path** — `raw_show_json` empty, `artifact` populated:
+    //      derive `PlanSummary` + `DriftDetail` from
+    //      `CycleArtifact.resource_changes`. Today the per-attribute
+    //      block is empty (the bundle has before/after but
+    //      `TypedResourceChange` doesn't surface them yet — a follow-up
+    //      slice extends this). Net effect for magma cycles that
+    //      previously had `Plan::from_json` silently failing (magma's
+    //      show_plan emits magma-shape JSON tofu can't parse): the
+    //      policy engine now sees the resources it should.
+    // Drift details capped at 50 so the status object stays tractable.
+    let (summary, raw_drifts) = if !plan_result.raw_show_json.is_empty() {
+        match Plan::from_json(&plan_result.raw_show_json) {
+            Ok(plan) => {
+                let s = plan.summary();
+                let details: Vec<crate::crd::DriftDetail> = plan
+                    .drift_details(50)
+                    .into_iter()
+                    .map(|d| crate::crd::DriftDetail {
+                        address: d.address,
+                        action: d.action,
+                        risk: d.risk,
+                        attributes: d.attributes,
+                        policy_decision: None,
+                        matched_policy: None,
+                    })
+                    .collect();
+                info!(
+                    runner = runner.name(),
+                    added = s.added,
+                    changed = s.changed,
+                    destroyed = s.destroyed,
+                    drift_count = details.len(),
+                    "Plan analysis complete (tofu path: Plan::from_json)"
+                );
+                (Some(s), details)
             }
-        } else {
-            (None, Vec::new())
+            Err(e) => {
+                warn!(error = %e, "Failed to parse plan JSON, continuing without summary");
+                (None, Vec::new())
+            }
         }
+    } else if let Some(art) = plan_result.artifact.as_ref() {
+        // Magma path: derive equivalent shapes from the typed artifact.
+        let (added, changed, destroyed, total) = art.summary_counts();
+        let s = crate::executor::PlanSummary {
+            added,
+            changed,
+            destroyed,
+            total,
+            has_changes: added > 0 || changed > 0 || destroyed > 0,
+            // changes_by_type left empty — magma's CycleArtifact doesn't
+            // carry per-type buckets today; a follow-up slice can wire
+            // these from `resource_changes` if a consumer needs them.
+            changes_by_type: std::collections::HashMap::new(),
+        };
+        let details = art.drift_details(50);
+        info!(
+            runner = runner.name(),
+            added = s.added,
+            changed = s.changed,
+            destroyed = s.destroyed,
+            drift_count = details.len(),
+            "Plan analysis complete (magma path: CycleArtifact)"
+        );
+        (Some(s), details)
     } else {
+        warn!(
+            runner = runner.name(),
+            "Plan succeeded but produced no analyzable output (no show-JSON, no artifact)"
+        );
         (None, Vec::new())
     };
 
-    let has_changes = result.has_changes();
+    let has_changes = plan_result.has_changes;
 
     // Resolve the cascade root: if the template has its own
     // `defaultDecision` set, it wins; otherwise inherit the parent
@@ -1147,6 +1185,7 @@ async fn handle_planning(
             template,
             state,
             Some(&workspace.path),
+                plan_result.artifact.clone(), // slice 2c: runner-provided artifact threads through cycle receipt
             &[],
             plan_text.clone(),
             CycleResult::NoChanges,
@@ -1172,6 +1211,7 @@ async fn handle_planning(
                 template,
                 state,
                 Some(&workspace.path),
+                plan_result.artifact.clone(), // slice 2c: runner-provided artifact threads through cycle receipt
                 &policy_outcome.annotated_drifts,
                 plan_text.clone(),
                 CycleResult::PolicyGated(PolicyDecision::Refuse),
@@ -1215,7 +1255,7 @@ async fn handle_planning(
                 record_event(template, state, EventType::Normal, "PlanApproved", "Plan approved by user").await;
                 Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
             } else {
-                let plan_content = result.stdout.as_str();
+                let plan_content = plan_result.raw_stdout.as_str();
                 let plan_hash = format!("{:016x}", content_hash(plan_content));
                 info!(
                     plan_hash,
@@ -1231,6 +1271,7 @@ async fn handle_planning(
                     template,
                     state,
                     Some(&workspace.path),
+                plan_result.artifact.clone(), // slice 2c: runner-provided artifact threads through cycle receipt
                     &policy_outcome.annotated_drifts,
                     plan_text.clone(),
                     CycleResult::PolicyGated(PolicyDecision::RequireApproval),
@@ -1462,6 +1503,7 @@ async fn handle_applying(
             template,
             state,
             Some(&workspace.path),
+                None, // artifact: caller-provided pre-computed CycleArtifact (slice 2c migrates handle_planning to pass it)
             &prior_drifts,
             prior_plan_summary,
             CycleResult::AppliedSuccess { imported_addresses: imported_addresses.clone() },
@@ -1550,6 +1592,7 @@ async fn handle_applying(
             template,
             state,
             Some(&workspace.path),
+                None, // artifact: caller-provided pre-computed CycleArtifact (slice 2c migrates handle_planning to pass it)
             &prior_drifts,
             prior_plan_summary,
             CycleResult::AppliedFailure(err_msg.clone()),

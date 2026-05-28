@@ -57,34 +57,46 @@ use crate::executor::workspace::Workspace;
 
 /// Result of a `WorkspaceRunner::plan` call.
 ///
-/// The `artifact` is the unified post-plan shape both executors
-/// populate; the rest is per-executor "raw output" retained for the
-/// callers that still need it (the import prepass reads the raw JSON
-/// to extract create-addresses for tofu's natural-id substitution;
-/// conflict.rs reads `stdout`/`stderr` substrings).
-///
-/// As slice 2c migrates verb-level callers onto `CycleArtifact`, the
-/// raw fields can be removed.
+/// Carries every flavor of output the controller's existing callers
+/// need so the migration doesn't double-call the executor:
+///   * `artifact` — typed unified shape for the new status fields.
+///   * `raw_show_json` — the `tofu show -json` output (tofu side) for
+///     the legacy `Plan::from_json` → `DriftDetail` path that
+///     `evaluate_policy` consumes. Empty on the magma side (magma
+///     doesn't produce show-JSON; the equivalent live in `artifact`).
+///   * `raw_stdout` — the underlying executor's plan stdout. Kept for
+///     verb-level callers (`conflict.rs` reads substrings, the import
+///     prepass reads show-plan output via the inner `IacExecutor`).
+///   * `plan_file` — path to the on-disk plan artifact.
+///   * `has_changes` — mirrors tofu's `-detailed-exitcode == 2`.
 #[derive(Debug)]
 pub struct PlanResult {
     /// Unified typed plan output — action distribution + per-resource
     /// changes + severities + (magma) lifecycle phase + (magma)
-    /// bundle ref. Always populated when the plan succeeded; `None`
-    /// when the executor produced no artifact (rare: plan errored
-    /// before classification, or the on-disk file is missing).
+    /// bundle ref. `None` only when the executor produced no
+    /// artifact (rare: plan errored before classification).
     pub artifact: Option<CycleArtifact>,
     /// Path to the on-disk plan file (`tfplan` binary for tofu,
-    /// `magma-bundle.json` for magma). `None` when the executor
-    /// doesn't checkpoint to a fixed path.
+    /// `magma-bundle.json` for magma).
     pub plan_file: Option<PathBuf>,
-    /// Raw stdout from the underlying executor. Retained for the
-    /// verb-level callers that haven't migrated yet (the import
-    /// prepass, conflict resolver). New code should consume
-    /// `artifact` instead.
+    /// Raw stdout from the underlying executor's `plan` call.
     pub raw_stdout: String,
+    /// The `tofu show -json <plan_file>` output. The tofu runner
+    /// computes it inline (one show_plan call) so callers needing
+    /// the legacy `Plan::from_json` path don't have to issue a
+    /// second show_plan. Empty on the magma side — magma doesn't
+    /// emit tofu-format show-JSON; consumers wanting per-resource
+    /// detail should use `artifact.resource_changes` instead.
+    pub raw_show_json: String,
     /// Did the plan report changes? Mirrors tofu's `-detailed-exitcode
     /// == 2`. True when at least one resource has a non-no-op action.
     pub has_changes: bool,
+    /// True iff the underlying executor's plan call succeeded
+    /// (exit_code 0 or 2 — both mean "plan ran"; 1 means error).
+    pub success: bool,
+    /// stderr from the executor's plan call. Used by error-path
+    /// callers that need to surface diagnostics.
+    pub raw_stderr: String,
 }
 
 /// Result of a `WorkspaceRunner::apply` (or `destroy`) call. Shape
@@ -218,21 +230,28 @@ impl WorkspaceRunner for TofuWorkspaceRunner {
     async fn plan(&self, workspace: &Workspace) -> Result<PlanResult> {
         let plan_path = workspace.plan_path();
         let plan = self.inner.plan(&workspace.path, Some(&plan_path), &[]).await?;
-        // `-detailed-exitcode == 2` means "changes pending"
+        // `-detailed-exitcode == 2` means "changes pending". 0 means
+        // success no changes; 1 means error.
         let has_changes = plan.exit_code == 2;
-        // Run `tofu show -json <tfplan>` to get the typed JSON.
-        // This is what `handle_planning` already does today; the
-        // runner just centralizes it.
-        let show = match self.inner.show_plan(&workspace.path, &plan_path).await {
+        let plan_success = plan.exit_code == 0 || plan.exit_code == 2;
+        // Run `tofu show -json <tfplan>` once to get the typed JSON.
+        // Carry both the parsed artifact AND the raw stdout — the
+        // legacy `Plan::from_json` consumers (drift_details, policy
+        // evaluation) need the raw form until they migrate to the
+        // typed `CycleArtifact.resource_changes` path.
+        let raw_show_json = match self.inner.show_plan(&workspace.path, &plan_path).await {
             Ok(r)  => r.stdout,
             Err(_) => String::new(),
         };
-        let artifact = CycleArtifact::from_tofu_plan_show_json(&show);
+        let artifact = CycleArtifact::from_tofu_plan_show_json(&raw_show_json);
         Ok(PlanResult {
             artifact,
             plan_file: Some(plan_path),
             raw_stdout: plan.stdout,
+            raw_show_json,
             has_changes,
+            success: plan_success,
+            raw_stderr: plan.stderr,
         })
     }
 
@@ -307,6 +326,7 @@ impl WorkspaceRunner for MagmaWorkspaceRunner {
         let plan_path = workspace.path.join("magma-plan.json");
         let plan = self.inner.plan(&workspace.path, Some(&plan_path), &[]).await?;
         let has_changes = plan.exit_code == 2;
+        let plan_success = plan.exit_code == 0 || plan.exit_code == 2;
         // Magma writes magma-bundle.json into the workspace dir as
         // part of plan. Read it via the unified reader; the returned
         // artifact carries action distribution + per-resource changes
@@ -316,7 +336,13 @@ impl WorkspaceRunner for MagmaWorkspaceRunner {
             artifact,
             plan_file: Some(plan_path),
             raw_stdout: plan.stdout,
+            // Magma doesn't emit tofu-format show-JSON. Consumers that
+            // need per-resource detail should read `artifact.resource_changes`
+            // instead of `Plan::from_json`. Empty here.
+            raw_show_json: String::new(),
             has_changes,
+            success: plan_success,
+            raw_stderr: plan.stderr,
         })
     }
 

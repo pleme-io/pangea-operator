@@ -205,9 +205,8 @@ pub fn truncate_for_status(s: &str) -> String {
 
 /// Patch `status.lastCycle` + bump `status.cycleCount`. Also echoes
 /// the running executor + backend to top-level `status.executor` +
-/// `status.backend`, and (when `work_dir` is Some) reads
-/// `magma-bundle.json` to derive `lastCycle.actionDistribution` +
-/// `lastCycle.bundleRef`.
+/// `status.backend`, and populates `lastCycle.actionDistribution` +
+/// `lastCycle.bundleRef` from the cycle artifact.
 ///
 /// Skips the patch entirely if the receipt is content-equal to the
 /// prior one (only the timestamps differ) — keeps reconcile-loop
@@ -216,14 +215,25 @@ pub fn truncate_for_status(s: &str) -> String {
 /// fields too (a cycle that changed bundle but nothing else still
 /// patches; a cycle that changed nothing including the bundle skips).
 ///
+/// ## Artifact resolution
+///
+/// `artifact` is the caller's pre-computed `CycleArtifact` (from
+/// `WorkspaceRunner::plan` or `apply`). When `None`, falls back to
+/// reading `magma-bundle.json` from `work_dir` (the slice 1a
+/// behavior, preserved for back-compat with un-migrated callers).
+///
+/// When BOTH are provided: caller wins (pre-computed artifact is
+/// closer to the truth than a follow-up file read, and it works for
+/// tofu cycles which have no bundle on disk).
+///
 /// `work_dir` is optional: pass `Some(&workspace.path)` when the
-/// reconcile path has the workspace in hand (planning/applying);
-/// `None` is acceptable but means the bundle-derived fields stay
-/// `None` for the cycle.
+/// reconcile path has the workspace in hand; `None` is acceptable
+/// but means the bundle fallback skips (artifact-only mode).
 pub async fn record_reconcile_cycle(
     template: &InfrastructureTemplate,
     state: &ControllerState,
     work_dir: Option<&Path>,
+    artifact: Option<CycleArtifact>,
     drifts: &[DriftDetail],
     plan_summary: Option<String>,
     result: CycleResult,
@@ -252,14 +262,21 @@ pub async fn record_reconcile_cycle(
     let executor_name = Some(executor.name().to_string());
     let backend_descriptor = executor.backend_descriptor();
 
-    // Read the magma-bundle.json if the caller passed a workspace
-    // dir. Always best-effort: a missing or malformed bundle leaves
-    // the artifact as None on the cycle (tofu cycles hit this path
-    // today — slice 2c will route tofu cycles through the tofu
-    // reader instead via WorkspaceRunner).
-    let cycle_artifact = match work_dir {
-        Some(dir) => read_cycle_artifact(dir).await,
-        None      => None,
+    // Artifact resolution:
+    //   1. Caller-provided pre-computed `artifact` wins (the
+    //      WorkspaceRunner already extracted it from the executor's
+    //      native output — works uniformly for tofu + magma).
+    //   2. Fall back to reading `magma-bundle.json` from `work_dir`
+    //      (the slice-1a path; preserves back-compat for callers
+    //      that haven't migrated to runner-provided artifacts).
+    //   3. None if neither — cycle records without bundle-derived
+    //      fields populated.
+    let cycle_artifact = match artifact {
+        Some(a) => Some(a),
+        None    => match work_dir {
+            Some(dir) => read_cycle_artifact(dir).await,
+            None      => None,
+        },
     };
 
     let new_cycle = build_reconcile_cycle(

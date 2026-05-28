@@ -194,6 +194,39 @@ pub fn action_to_severity(action: &PlanAction) -> Severity {
     }
 }
 
+/// Convert a `PlanAction` back to a terraform-vocabulary action
+/// string. Used by `CycleArtifact::drift_details` to populate
+/// `DriftDetail.action` in the operator's existing shape. Inverse of
+/// `PlanAction::parse` for the well-known verbs; `Other(s)` round-trips
+/// as `s`.
+pub fn plan_action_to_terraform_str(action: &PlanAction) -> &str {
+    match action {
+        PlanAction::NoOp        => "no-op",
+        PlanAction::Create      => "create",
+        PlanAction::Update      => "update",
+        PlanAction::Delete      => "delete",
+        PlanAction::Replace     => "replace",
+        PlanAction::Other(s)    => s.as_str(),
+    }
+}
+
+/// Map a `Severity` to the operator's existing "risk" vocabulary used
+/// by `DriftDetail.risk`. The risk vocabulary predates `Severity` and
+/// is what current dashboards + policy rules read; the mapping
+/// preserves backward-compatible semantics:
+///
+///   * `Cosmetic`   → `"safe"`
+///   * `Functional` → `"modify"`
+///   * `Breaking`   → `"destroy"` (the existing "loses or interrupts
+///                    state" bucket)
+pub fn severity_to_risk(severity: Severity) -> &'static str {
+    match severity {
+        Severity::Cosmetic   => "safe",
+        Severity::Functional => "modify",
+        Severity::Breaking   => "destroy",
+    }
+}
+
 /// Aggregate severity counts across all resource changes in a cycle.
 /// The CR-status-facing rollup; counts everything in
 /// `CycleArtifact.resource_changes`. Sum equals
@@ -246,6 +279,66 @@ impl CycleArtifact {
             }
         }
         d
+    }
+
+    /// Project `action_distribution` into the (added, changed,
+    /// destroyed, total) tuple the operator's existing `PlanSummary`
+    /// + `ResourceSummary` types use. Adopts the existing convention:
+    ///   * `added`     = create count
+    ///   * `changed`   = update + replace count (replace is net "still
+    ///                   declared after the cycle", same user-facing
+    ///                   semantic as update)
+    ///   * `destroyed` = delete count
+    ///   * `total`     = changes + no-ops + other (every classified
+    ///                   resource in the plan)
+    ///
+    /// Lets the magma-side cycle path produce the same legacy
+    /// `PlanSummary.format()` string the tofu path produces, without
+    /// going through `Plan::from_json`.
+    pub fn summary_counts(&self) -> (u32, u32, u32, u32) {
+        let d = &self.action_distribution;
+        let added     = d.create;
+        let changed   = d.update.saturating_add(d.replace);
+        let destroyed = d.delete;
+        // Total = every classified resource (no-ops + changes + other).
+        let total     = d.no_op
+            .saturating_add(d.create)
+            .saturating_add(d.update)
+            .saturating_add(d.delete)
+            .saturating_add(d.replace)
+            .saturating_add(d.other);
+        (added, changed, destroyed, total)
+    }
+
+    /// Produce `DriftDetail` entries from `resource_changes`, capped
+    /// at `cap`. The operator's existing policy engine
+    /// (`evaluate_policy`) consumes `Vec<DriftDetail>` — this is the
+    /// magma-side equivalent of the tofu path's
+    /// `Plan::drift_details(cap)`.
+    ///
+    /// Only non-no-op changes are emitted; matched (no-op) resources
+    /// roll up into `summary.matched` rather than into per-resource
+    /// drift. `attributes` is empty for now — the per-attribute
+    /// detail magma carries in its bundle's before/after blocks
+    /// will be wired through in a follow-up slice (slice 2.18 or
+    /// later) that extends `TypedResourceChange` with optional
+    /// attribute deltas. `policy_decision` + `matched_policy` are
+    /// populated by the policy engine downstream; this function
+    /// leaves them None.
+    pub fn drift_details(&self, cap: usize) -> Vec<crate::crd::DriftDetail> {
+        self.resource_changes
+            .iter()
+            .filter(|c| !matches!(c.action, PlanAction::NoOp))
+            .take(cap)
+            .map(|c| crate::crd::DriftDetail {
+                address:         c.address.clone(),
+                action:          plan_action_to_terraform_str(&c.action).to_string(),
+                risk:            severity_to_risk(c.severity).to_string(),
+                attributes:      Vec::new(),
+                policy_decision: None,
+                matched_policy:  None,
+            })
+            .collect()
     }
 
     /// Parse the JSON tofu emits via `tofu show -json <tfplan>` into
@@ -514,6 +607,78 @@ mod tests {
         // count (the JSON shape we expect isn't there).
         assert!(CycleArtifact::from_tofu_plan_show_json("{}").is_none());
         assert!(CycleArtifact::from_tofu_plan_show_json("not json").is_none());
+    }
+
+    // ── summary_counts + drift_details (slice 2c converters) ───────
+
+    #[test]
+    fn summary_counts_projects_distribution_to_legacy_shape() {
+        let art = CycleArtifact {
+            action_distribution: ActionDistribution {
+                no_op: 100, create: 5, update: 3, delete: 2, replace: 1, other: 0,
+            },
+            resource_changes: vec![],
+            artifact_ref: None,
+            severities: None,
+            lifecycle_phase: None,
+        };
+        let (added, changed, destroyed, total) = art.summary_counts();
+        assert_eq!(added,     5);
+        assert_eq!(changed,   4, "update(3) + replace(1) = 4");
+        assert_eq!(destroyed, 2);
+        assert_eq!(total,     111, "100 no-op + 5 + 3 + 2 + 1 = 111");
+    }
+
+    #[test]
+    fn drift_details_skips_no_ops_and_respects_cap() {
+        let changes = vec![
+            change("a", PlanAction::NoOp,   Severity::Cosmetic),
+            change("b", PlanAction::Create, Severity::Functional),
+            change("c", PlanAction::Update, Severity::Functional),
+            change("d", PlanAction::Delete, Severity::Breaking),
+            change("e", PlanAction::NoOp,   Severity::Cosmetic),
+        ];
+        let art = CycleArtifact {
+            action_distribution: ActionDistribution::default(),
+            resource_changes: changes,
+            artifact_ref: None,
+            severities: None,
+            lifecycle_phase: None,
+        };
+        let drifts = art.drift_details(50);
+        // No-ops filtered out — 3 entries (b, c, d).
+        assert_eq!(drifts.len(), 3);
+        assert_eq!(drifts[0].address, "b");
+        assert_eq!(drifts[0].action,  "create");
+        assert_eq!(drifts[0].risk,    "modify");  // Functional → modify
+        assert_eq!(drifts[1].address, "c");
+        assert_eq!(drifts[2].address, "d");
+        assert_eq!(drifts[2].risk,    "destroy"); // Breaking → destroy
+
+        // Cap honored.
+        let capped = art.drift_details(2);
+        assert_eq!(capped.len(), 2);
+    }
+
+    #[test]
+    fn drift_details_emits_terraform_vocab_for_known_actions() {
+        let changes = vec![
+            change("a", PlanAction::Create,  Severity::Functional),
+            change("b", PlanAction::Update,  Severity::Functional),
+            change("c", PlanAction::Delete,  Severity::Breaking),
+            change("d", PlanAction::Replace, Severity::Breaking),
+            change("e", PlanAction::Other("read".into()), Severity::Functional),
+        ];
+        let art = CycleArtifact {
+            action_distribution: ActionDistribution::default(),
+            resource_changes: changes,
+            artifact_ref: None,
+            severities: None,
+            lifecycle_phase: None,
+        };
+        let drifts = art.drift_details(50);
+        let actions: Vec<&str> = drifts.iter().map(|d| d.action.as_str()).collect();
+        assert_eq!(actions, vec!["create", "update", "delete", "replace", "read"]);
     }
 
     // ── Equivalence (the slice-2 acceptance property) ──────────────
