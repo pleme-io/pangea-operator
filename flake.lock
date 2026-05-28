@@ -2223,11 +2223,11 @@
     "pangea-core": {
       "flake": false,
       "locked": {
-        "lastModified": 1779934112,
-        "narHash": "sha256-MW61+hdVIPmrZZ27j2g6ujCmXjt7iigSe5eN9ENR2Kw=",
+        "lastModified": 1779939129,
+        "narHash": "sha256-bZvpr7bPIpZl0Lv+sEls5+05EZseIxWJOhOndXTF6I0=",
         "owner": "pleme-io",
         "repo": "pangea-core",
-        "rev": "250189615260f75d99afc94cc458df43ccc566d7",
+        "rev": "896e8907f7819fca0152b9d2c333c144b4569a85",
         "type": "github"
       },
       "original": {
