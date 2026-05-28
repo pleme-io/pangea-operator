@@ -96,18 +96,39 @@ pub struct CompileContext {
     pub purge_feature_prefixes: Vec<String>,
 }
 
-/// Result of `CompileContext::validate`. Returned to the caller
-/// alongside the compile result so violations are observable +
-/// auditable without panicking.
+/// Result of `CompileContext::validate` + detector runs. Returned
+/// to the caller alongside the compile result so violations are
+/// observable + auditable without panicking.
+///
+/// Dual surface (compounds on `Conflict` typed shape):
+///   * `messages` — flat strings, suitable for `tracing::warn!` +
+///     legacy consumers. One per warning, includes `detector:<name>`
+///     prefix when sourced from a `ConflictDetector`.
+///   * `conflicts` — typed `Conflict` entries. The structured view
+///     that round-4 consumers (`.status.anomalies[]`, k8s Events,
+///     GraphQL subscriptions, Prometheus counters by detector
+///     label) read without parsing the message strings.
+///
+/// Both populated for every warning produced by a detector. Manifest
+/// validation messages (duplicate load_paths, non-absolute prefixes)
+/// land only in `messages` — they're shape-of-input issues, not
+/// emitted by a detector. Callers wanting JUST the
+/// detector-sourced typed view filter to `conflicts`.
 #[derive(Debug, Clone, Default)]
 pub struct ContextWarnings {
     /// Validation messages — non-fatal, but a signal that the
     /// manifest may be misconfigured.
     pub messages: Vec<String>,
+    /// Typed conflicts from every `ConflictDetector` that ran. The
+    /// structured view that survives serialization for downstream
+    /// consumers (events, status fields, GraphQL).
+    pub conflicts: Vec<Conflict>,
 }
 
 impl ContextWarnings {
-    pub fn is_empty(&self) -> bool { self.messages.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.messages.is_empty() && self.conflicts.is_empty()
+    }
 }
 
 /// One load-path conflict — a single logical Ruby file (e.g.
@@ -355,6 +376,215 @@ pub fn detect_load_path_conflicts(
         .collect()
 }
 
+/// Source classification for one `$LOAD_PATH` candidate. Drives
+/// `plan_load_paths` decisions: a `WorkspaceRepo` entry is
+/// authoritative for its own files, so an overlapping `GemBroadcast`
+/// entry gets scheduled for feature-purge (its `$LOADED_FEATURES`
+/// entries are dropped so the workspace's copy re-loads).
+///
+/// This is the **plan step** of the controller detection axis:
+///   Detect (LoadPathConflictDetector) → Plan (plan_load_paths) → Apply (CompileContext)
+/// Today the apply step purges blindly via a hardcoded path prefix.
+/// With this enum + planner, the purge directives are DERIVED from
+/// the labeled inputs — owner.rs no longer hardcodes
+/// `/var/pangea/gems/pangea-architectures-main/`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoadPathSource {
+    /// The workspace's own `_repo/lib` — primary, authoritative for
+    /// this compile. Always wins resolution over overlapping
+    /// `GemBroadcast` entries.
+    WorkspaceRepo,
+    /// A broadcast gem cache (e.g. `pangea-architectures-main`). If
+    /// it overlaps with a `WorkspaceRepo` under any namespace prefix,
+    /// the planner schedules its absolute path as a
+    /// `purge_feature_prefix` so the workspace's copy re-loads from
+    /// its own lib (Ruby's `require` dedups by absolute path).
+    GemBroadcast {
+        /// Name of the gem this path serves (e.g.
+        /// `"pangea-architectures"`). Used as `category` evidence on
+        /// any `Conflict` the planner emits.
+        gem_name: String,
+    },
+    /// Anything else — system Ruby, bundled stdlib, user-installed
+    /// extensions. Treated as trusted; not subject to drop or purge.
+    Other,
+}
+
+/// A `$LOAD_PATH` candidate with its source label, ready for planning.
+///
+/// Built at the controller layer where the caller knows whether each
+/// path is the workspace clone, a broadcast gem, or something else.
+/// The planner consumes a slice of these to produce a `LoadPathPlan`.
+#[derive(Debug, Clone)]
+pub struct LoadPathEntry {
+    pub path: PathBuf,
+    pub source: LoadPathSource,
+}
+
+impl LoadPathEntry {
+    /// Convenience constructor — the most common case at the call
+    /// site (controller passes a workspace's `_repo/lib`).
+    pub fn workspace(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into(), source: LoadPathSource::WorkspaceRepo }
+    }
+    pub fn gem(path: impl Into<PathBuf>, gem_name: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            source: LoadPathSource::GemBroadcast { gem_name: gem_name.into() },
+        }
+    }
+    pub fn other(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into(), source: LoadPathSource::Other }
+    }
+}
+
+/// Output of `plan_load_paths`. The de-duplicated install order, the
+/// purge directives derived from overlap detection, and the structured
+/// `Conflict` shapes naming each overlap.
+///
+/// `install_order` feeds `CompileContext.load_paths`.
+/// `purge_feature_prefixes` feeds `CompileContext.purge_feature_prefixes`.
+/// `conflicts` feeds `ContextWarnings.conflicts` so the planner's
+/// findings show up in the same structured surface as the detector's.
+#[derive(Debug, Clone, Default)]
+pub struct LoadPathPlan {
+    /// Final `$LOAD_PATH` priority order. `WorkspaceRepo` entries
+    /// first (winning resolution), then `GemBroadcast`, then `Other`,
+    /// preserving relative order within each tier.
+    pub install_order: Vec<PathBuf>,
+    /// Absolute path prefixes to drop from `$LOADED_FEATURES`. One
+    /// per overlapping `GemBroadcast` entry. Each ends with `/` so
+    /// the prefix match catches every file under the gem's lib root.
+    pub purge_feature_prefixes: Vec<String>,
+    /// Structured findings — one per overlap detected. Routed through
+    /// `ContextWarnings.conflicts` for status/event/metric consumers.
+    pub conflicts: Vec<Conflict>,
+}
+
+/// Pure planner: given labeled `$LOAD_PATH` candidates, produce a
+/// `LoadPathPlan` that installs them in priority order + schedules
+/// feature-purge for overlapping `GemBroadcast` paths.
+///
+/// ## The pattern this closes (detection axis fix step)
+///
+/// `LoadPathConflictDetector` surfaces overlaps AFTER the manifest
+/// is applied — by then the workspace shield's purge has already
+/// hardcoded a specific gem path. This planner pulls that decision
+/// UP into a pure function: the controller labels each path by
+/// source, the planner derives the purge directives, the manifest
+/// applies them. Adding a new gem broadcast site doesn't require
+/// editing owner.rs's hardcoded prefix list — the planner adapts.
+///
+/// ## Algorithm
+///
+/// 1. Split entries by source tier: workspace, gem, other.
+/// 2. Concat for `install_order` in tier priority (workspace first).
+/// 3. For each gem path, scan its lib for files that overlap any
+///    workspace path under the `namespace_prefixes`. Overlaps drive
+///    `purge_feature_prefixes` (the gem's root with trailing `/`)
+///    plus a `Conflict` per logical file.
+///
+/// ## Cost
+///
+/// `O((W + G) × F)` where W/G are workspace + gem path counts and F
+/// is the file count under `namespace_prefixes`. For pangea-operator
+/// today: W=1, G=1, F~150 → tens of µs. Negligible vs compile time.
+pub fn plan_load_paths(
+    entries: &[LoadPathEntry],
+    namespace_prefixes: &[&str],
+) -> LoadPathPlan {
+    let workspace: Vec<&LoadPathEntry> = entries
+        .iter()
+        .filter(|e| matches!(e.source, LoadPathSource::WorkspaceRepo))
+        .collect();
+    let gem: Vec<&LoadPathEntry> = entries
+        .iter()
+        .filter(|e| matches!(e.source, LoadPathSource::GemBroadcast { .. }))
+        .collect();
+    let other: Vec<&LoadPathEntry> = entries
+        .iter()
+        .filter(|e| matches!(e.source, LoadPathSource::Other))
+        .collect();
+
+    // Priority order: workspace > gem > other, preserving relative
+    // order within each tier. Mirrors Ruby's `$LOAD_PATH` semantics
+    // where earlier entries win.
+    let install_order: Vec<PathBuf> = workspace
+        .iter()
+        .chain(gem.iter())
+        .chain(other.iter())
+        .map(|e| e.path.clone())
+        .collect();
+
+    // For each gem path, run the conflict detector against the
+    // workspace paths. Any overlap means the gem entry would be
+    // shadowed — schedule its lib root for $LOADED_FEATURES purge so
+    // the workspace's copy re-loads from priority head, AND emit a
+    // structured Conflict so consumers see WHY the purge was scheduled.
+    let workspace_paths: Vec<PathBuf> = workspace.iter().map(|e| e.path.clone()).collect();
+    let mut purge_set: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
+    let mut conflicts: Vec<Conflict> = Vec::new();
+
+    for gem_entry in &gem {
+        let gem_name = match &gem_entry.source {
+            LoadPathSource::GemBroadcast { gem_name } => gem_name.clone(),
+            _ => continue,
+        };
+        // Detect overlap by treating workspace as `existing_load_path`
+        // and the single gem path as `new_paths`. Any returned
+        // conflict means the gem has a file already exposed by the
+        // workspace.
+        let overlaps = detect_load_path_conflicts(
+            &workspace_paths,
+            std::slice::from_ref(&gem_entry.path),
+            namespace_prefixes,
+        );
+        if overlaps.is_empty() {
+            continue;
+        }
+        // Schedule the gem's lib root as a purge prefix. Trailing
+        // slash so the prefix match is unambiguous (a sibling dir
+        // named `pangea-architectures-main-extras` wouldn't match).
+        let mut prefix = gem_entry.path.display().to_string();
+        if !prefix.ends_with('/') {
+            prefix.push('/');
+        }
+        purge_set.insert(PathBuf::from(&prefix));
+
+        // Emit one Conflict per overlapping logical file. Same shape
+        // as the detector's so consumers don't branch on source.
+        for lpc in overlaps {
+            conflicts.push(Conflict {
+                detector: "load_path_planner",
+                category: lpc.logical_path.clone(),
+                message: format!(
+                    "gem '{}' lib '{}' overlaps workspace; scheduled for feature purge — logical: '{}'",
+                    gem_name,
+                    gem_entry.path.display(),
+                    lpc.logical_path,
+                ),
+                evidence: serde_json::json!({
+                    "gem_name": gem_name,
+                    "gem_path": gem_entry.path.display().to_string(),
+                    "logical_path": lpc.logical_path,
+                    "shadowing_path": lpc.shadowing_path.display().to_string(),
+                    "shadowed_paths": lpc.shadowed_paths
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>(),
+                }),
+            });
+        }
+    }
+
+    let purge_feature_prefixes: Vec<String> = purge_set
+        .into_iter()
+        .map(|p| p.display().to_string())
+        .collect();
+
+    LoadPathPlan { install_order, purge_feature_prefixes, conflicts }
+}
+
 /// Convert a Ruby module-style name (`Pangea::Architectures`) to the
 /// conventional Ruby `require` path (`pangea/architectures`).
 ///
@@ -453,6 +683,31 @@ impl CompileContext {
     {
         self.purge_feature_prefixes = prefixes.into_iter().map(Into::into).collect();
         self
+    }
+
+    /// Build a `CompileContext` from a `LoadPathPlan`. The plan's
+    /// `install_order` becomes `load_paths`; its
+    /// `purge_feature_prefixes` become the manifest's. Caller adds
+    /// env + purge_modules separately via the with_ builders.
+    ///
+    /// This is the **fix step** of the controller detection axis for
+    /// load-path conflicts: the controller labels paths by source,
+    /// the planner derives the apply directives, the manifest
+    /// transactionally applies them. The hardcoded purge prefix in
+    /// owner.rs goes away — the planner adapts to whichever gems
+    /// happen to broadcast.
+    ///
+    /// The plan's `conflicts` are NOT consumed here; the caller is
+    /// expected to fold them into `ContextWarnings` after compile
+    /// (the plan ran ahead of `compile_in_context`'s detector step,
+    /// so its findings flow through the same audit surface).
+    pub fn from_plan(plan: &LoadPathPlan) -> Self {
+        Self {
+            load_paths: plan.install_order.clone(),
+            env: Vec::new(),
+            purge_modules: Vec::new(),
+            purge_feature_prefixes: plan.purge_feature_prefixes.clone(),
+        }
     }
 
     /// The default detector set used by `compile_in_context` when no
@@ -735,7 +990,10 @@ impl RubyEvaluator {
             .collect();
         for detector in detectors {
             for c in detector.detect(ctx, &current_load_path) {
+                // Dual-surface: flat message string for legacy
+                // consumers + typed Conflict for structured consumers.
                 warnings.messages.push(format!("detector:{}: {}", c.detector, c.message));
+                warnings.conflicts.push(c);
             }
         }
 
@@ -1207,6 +1465,151 @@ mod tests {
         // Digits don't trigger snake-case insertion; they're treated
         // as lowercase-adjacent.
         assert_eq!(module_name_to_require_path("Magma2::Plan"), "magma2/plan");
+    }
+
+    // ── plan_load_paths ──────────────────────────────────────────────
+    //
+    // The planner is pure — no Ruby state, no live $LOAD_PATH access.
+    // Drives the fix step of the detection axis: typed source labels
+    // in → de-duplicated install order + derived purge directives out.
+
+    /// Helper — build a minimal `pangea/<name>.rb` skeleton inside `root`.
+    fn make_pangea_rb(root: &Path, name: &str) {
+        let dir = root.join("pangea");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("{name}.rb")), "module Pangea; end\n").unwrap();
+    }
+
+    #[test]
+    fn planner_no_gem_no_overlap_no_purge() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path().join("ws_lib");
+        std::fs::create_dir_all(&ws).unwrap();
+        make_pangea_rb(&ws, "architectures");
+
+        let plan = plan_load_paths(
+            &[LoadPathEntry::workspace(&ws)],
+            &["pangea/"],
+        );
+        assert_eq!(plan.install_order, vec![ws]);
+        assert!(plan.purge_feature_prefixes.is_empty());
+        assert!(plan.conflicts.is_empty());
+    }
+
+    #[test]
+    fn planner_workspace_priority_then_gem_then_other() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path().join("ws_lib");
+        let gem = tmp.path().join("gem_lib");
+        let other = tmp.path().join("other_lib");
+        for p in [&ws, &gem, &other] {
+            std::fs::create_dir_all(p).unwrap();
+        }
+
+        let plan = plan_load_paths(
+            &[
+                // Intentionally NOT in tier order — planner sorts.
+                LoadPathEntry::gem(&gem, "pangea-architectures"),
+                LoadPathEntry::other(&other),
+                LoadPathEntry::workspace(&ws),
+            ],
+            &["pangea/"],
+        );
+        assert_eq!(plan.install_order, vec![ws, gem, other]);
+    }
+
+    #[test]
+    fn planner_detects_overlap_and_schedules_purge() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path().join("ws_lib");
+        let gem = tmp.path().join("gem_lib");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::create_dir_all(&gem).unwrap();
+        // Same logical file under both — the canonical pleme-io-opensource
+        // case at the heart of the cluster's degraded state today.
+        make_pangea_rb(&ws, "cluster_config_loader");
+        make_pangea_rb(&gem, "cluster_config_loader");
+
+        let plan = plan_load_paths(
+            &[
+                LoadPathEntry::workspace(&ws),
+                LoadPathEntry::gem(&gem, "pangea-architectures"),
+            ],
+            &["pangea/"],
+        );
+
+        // Both paths kept in install order — gem is fallback for
+        // files the workspace doesn't override.
+        assert_eq!(plan.install_order.len(), 2);
+
+        // Gem's lib root is scheduled for $LOADED_FEATURES purge so
+        // workspace's copy re-loads from priority head.
+        assert_eq!(plan.purge_feature_prefixes.len(), 1);
+        assert!(plan.purge_feature_prefixes[0].starts_with(&gem.display().to_string()));
+        assert!(plan.purge_feature_prefixes[0].ends_with('/'));
+
+        // One structured Conflict naming the overlap. Same shape as
+        // LoadPathConflictDetector's emissions for unified consumption.
+        assert_eq!(plan.conflicts.len(), 1);
+        let c = &plan.conflicts[0];
+        assert_eq!(c.detector, "load_path_planner");
+        assert_eq!(c.category, "pangea/cluster_config_loader");
+        assert!(c.evidence["gem_name"].as_str() == Some("pangea-architectures"));
+    }
+
+    #[test]
+    fn planner_only_purges_overlapping_gems_not_disjoint_ones() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path().join("ws_lib");
+        let gem_overlap = tmp.path().join("gem_overlap");
+        let gem_disjoint = tmp.path().join("gem_disjoint");
+        for p in [&ws, &gem_overlap, &gem_disjoint] {
+            std::fs::create_dir_all(p).unwrap();
+        }
+        make_pangea_rb(&ws, "platform");
+        make_pangea_rb(&gem_overlap, "platform"); // overlaps
+        make_pangea_rb(&gem_disjoint, "resources"); // disjoint
+
+        let plan = plan_load_paths(
+            &[
+                LoadPathEntry::workspace(&ws),
+                LoadPathEntry::gem(&gem_overlap, "pangea-architectures"),
+                LoadPathEntry::gem(&gem_disjoint, "pangea-resources"),
+            ],
+            &["pangea/"],
+        );
+
+        assert_eq!(plan.purge_feature_prefixes.len(), 1);
+        assert!(plan.purge_feature_prefixes[0].starts_with(&gem_overlap.display().to_string()));
+        assert!(plan.conflicts.iter().all(|c| {
+            c.evidence["gem_name"].as_str() == Some("pangea-architectures")
+        }));
+    }
+
+    #[test]
+    fn from_plan_carries_install_order_and_purge_prefixes() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path().join("ws_lib");
+        let gem = tmp.path().join("gem_lib");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::create_dir_all(&gem).unwrap();
+        make_pangea_rb(&ws, "platform");
+        make_pangea_rb(&gem, "platform");
+
+        let plan = plan_load_paths(
+            &[
+                LoadPathEntry::workspace(&ws),
+                LoadPathEntry::gem(&gem, "pangea-architectures"),
+            ],
+            &["pangea/"],
+        );
+        let ctx = CompileContext::from_plan(&plan);
+
+        // Manifest derived from plan, not hardcoded — owner.rs can
+        // drop its literal "/var/pangea/gems/pangea-architectures-main/"
+        // once it consumes the plan instead.
+        assert_eq!(ctx.load_paths, plan.install_order);
+        assert_eq!(ctx.purge_feature_prefixes, plan.purge_feature_prefixes);
     }
 }
 
