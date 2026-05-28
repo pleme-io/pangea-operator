@@ -132,6 +132,144 @@ pub struct LoadPathConflict {
     pub shadowed_paths: Vec<PathBuf>,
 }
 
+/// One conflict surfaced by a `ConflictDetector` — the typed shape
+/// that flows from any detector through `compile_in_context` into the
+/// caller's audit log (today: `tracing::warn!`; slice 4: k8s Events
+/// + `.status.anomalies[]`).
+///
+/// Detectors emit `Conflict`s; the controller routes them. This is
+/// the unified shape so a future microservice or GraphQL stream
+/// consumes one schema regardless of which detector fired.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Conflict {
+    /// Stable detector identifier — `"load_path_double_load"`,
+    /// `"tf_address_collision"`, etc. Used as a label in metrics +
+    /// event reasons + dashboard filters.
+    pub detector: &'static str,
+
+    /// The logical subject of the conflict — the thing observed to
+    /// be in trouble. For load-path conflicts: the logical Ruby file
+    /// path. For terraform-address conflicts: the resource address.
+    /// For env shadowing: the var name. Stable enough to deduplicate
+    /// + count.
+    pub category: String,
+
+    /// Human-readable summary. Suitable for logs + events; the
+    /// `evidence` field carries the structured form for programmatic
+    /// consumers.
+    pub message: String,
+
+    /// Structured evidence — the specific paths, addresses, or
+    /// fields involved. `serde_json::Value` so future sinks
+    /// (GraphQL, REST APIs) can transform freely; today's tracing
+    /// renders it inline.
+    pub evidence: serde_json::Value,
+}
+
+/// Trait — a detector that surfaces conflicts in a `CompileContext`'s
+/// resulting state. Pure function: given the manifest + current
+/// `$LOAD_PATH`, return a list of conflicts. Detectors are stateless
+/// + reusable across compile requests.
+///
+/// ## The seam this trait exists for
+///
+/// pangea does a lot of preprocessing + DSL processing. Each one has
+/// its own bug-class risk surface — file double-load (the canonical
+/// case, fixed here), Terraform address collisions, gem version
+/// mismatches, env-var shadowing, provider-source drift. Each can be
+/// expressed as a detector: pure scan over inputs, typed conflicts
+/// out.
+///
+/// New detectors slot in by:
+///   1. Define a struct implementing `ConflictDetector`.
+///   2. Add it to the default detector list (or pass via the
+///      explicit-detector entry point).
+/// 3. Future bug-class regressions get caught at apply time, named
+///    + classified, before they become cryptic downstream errors.
+///
+/// All detectors emit the same `Conflict` shape so the audit
+/// surface (today tracing; future Events + status fields + GraphQL
+/// subscriptions) reads one schema.
+pub trait ConflictDetector: Send + Sync {
+    /// Stable identifier. Used as `Conflict.detector` and as the
+    /// detector's tracing/metric label.
+    fn name(&self) -> &'static str;
+
+    /// Run the detector against the manifest + the current live
+    /// `$LOAD_PATH` (for detectors that need it). Returns typed
+    /// conflicts; empty = no findings. MUST be pure (no Ruby
+    /// state mutation, no I/O beyond what the inputs imply).
+    fn detect(
+        &self,
+        ctx: &CompileContext,
+        existing_load_path: &[PathBuf],
+    ) -> Vec<Conflict>;
+}
+
+/// First-class `ConflictDetector` for the load-path double-load
+/// pattern. Wraps `detect_load_path_conflicts` in the trait shape +
+/// converts the typed `LoadPathConflict` into the unified `Conflict`.
+///
+/// The default detector for every workspace compile via
+/// `CompileContext::default_detectors`. Future detectors plug in
+/// alongside it.
+pub struct LoadPathConflictDetector {
+    /// Which namespace prefixes to scan (`["pangea/"]` for the
+    /// pangea-operator surface). Filtering keeps scan cost bounded
+    /// — `O(L × F)` where F is files under the prefix.
+    pub namespace_prefixes: Vec<String>,
+}
+
+impl LoadPathConflictDetector {
+    /// Default detector configured for the pangea-operator surface —
+    /// scans the `pangea/` namespace, which covers every gem with a
+    /// double-load risk (pangea-architectures, pangea-resources,
+    /// pangea-core's submodules).
+    pub fn pangea() -> Self {
+        Self { namespace_prefixes: vec!["pangea/".to_string()] }
+    }
+}
+
+impl ConflictDetector for LoadPathConflictDetector {
+    fn name(&self) -> &'static str {
+        "load_path_double_load"
+    }
+
+    fn detect(
+        &self,
+        ctx: &CompileContext,
+        existing_load_path: &[PathBuf],
+    ) -> Vec<Conflict> {
+        let prefixes: Vec<&str> = self.namespace_prefixes.iter().map(String::as_str).collect();
+        detect_load_path_conflicts(existing_load_path, &ctx.load_paths, &prefixes)
+            .into_iter()
+            .map(|lpc| Conflict {
+                detector: "load_path_double_load",
+                category: lpc.logical_path.clone(),
+                message: format!(
+                    "'{}' reachable via {} paths — winner: {}, shadowed: [{}]",
+                    lpc.logical_path,
+                    lpc.shadowed_paths.len() + 1,
+                    lpc.shadowing_path.display(),
+                    lpc.shadowed_paths
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                evidence: serde_json::json!({
+                    "logical_path": lpc.logical_path,
+                    "shadowing_path": lpc.shadowing_path.display().to_string(),
+                    "shadowed_paths": lpc.shadowed_paths
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>(),
+                }),
+            })
+            .collect()
+    }
+}
+
 /// Scan `$LOAD_PATH` for logical Ruby files reachable via >1 absolute
 /// path under any of `namespace_prefixes`.
 ///
@@ -315,6 +453,20 @@ impl CompileContext {
     {
         self.purge_feature_prefixes = prefixes.into_iter().map(Into::into).collect();
         self
+    }
+
+    /// The default detector set used by `compile_in_context` when no
+    /// explicit detectors are provided. Currently a single detector
+    /// (`LoadPathConflictDetector::pangea`) covering the canonical
+    /// double-load pattern; future bug-class detectors land here as
+    /// they're added.
+    ///
+    /// Held as `Box<dyn ConflictDetector>` so the list is open for
+    /// extension without changing the constructor's signature. Per-CR
+    /// custom detector sets go through
+    /// `compile_in_context_with_detectors` instead of overriding here.
+    pub fn default_detectors() -> Vec<Box<dyn ConflictDetector>> {
+        vec![Box::new(LoadPathConflictDetector::pangea())]
     }
 
     /// Check structural invariants on the manifest. Returns
@@ -509,7 +661,28 @@ impl RubyEvaluator {
         Ok(())
     }
 
-    /// Apply a `CompileContext` as a transaction + run `f` inside it.
+    /// Apply a `CompileContext` as a transaction with the default
+    /// detector set (`CompileContext::default_detectors`). Convenience
+    /// wrapper around `compile_in_context_with_detectors` for the
+    /// common case.
+    pub fn compile_in_context<F, T>(
+        &self,
+        ctx: &CompileContext,
+        f: F,
+    ) -> Result<(T, ContextWarnings), EvalError>
+    where
+        F: FnOnce(&Self) -> Result<T, EvalError>,
+    {
+        let detectors = CompileContext::default_detectors();
+        let detector_refs: Vec<&dyn ConflictDetector> =
+            detectors.iter().map(|d| d.as_ref()).collect();
+        self.compile_in_context_with_detectors(ctx, &detector_refs, f)
+    }
+
+    /// Apply a `CompileContext` as a transaction with an explicit
+    /// detector list. Use this when the call site wants to customize
+    /// which detectors run (test code; future per-CR detector
+    /// overrides via spec.compileDetectors).
     ///
     /// This is the structured-defense entry point. Steps in order:
     ///
@@ -536,9 +709,10 @@ impl RubyEvaluator {
     /// Returns `(T, ContextWarnings)` — the body's result plus every
     /// observable violation the apply detected. Caller logs or
     /// surfaces the warnings; they're the audit trail.
-    pub fn compile_in_context<F, T>(
+    pub fn compile_in_context_with_detectors<F, T>(
         &self,
         ctx: &CompileContext,
+        detectors: &[&dyn ConflictDetector],
         f: F,
     ) -> Result<(T, ContextWarnings), EvalError>
     where
@@ -547,34 +721,22 @@ impl RubyEvaluator {
         // Step 1: manifest validation.
         let mut warnings = ctx.validate();
 
-        // Step 2: load-path conflict detection. Scans the resulting
-        // $LOAD_PATH (existing + ctx.load_paths) for any logical
-        // Ruby file reachable via >1 absolute path under known-
-        // shadowable namespaces. Pure function — no side effects.
-        let current_load_path: Vec<String> = self
+        // Step 2: run every configured ConflictDetector. Each detector
+        // is a typed scan over the resulting $LOAD_PATH + manifest;
+        // findings flow into `warnings` with `detector:<name>` prefix
+        // so log/metric/event consumers can filter by class.
+        let current_load_path: Vec<PathBuf> = self
             .ruby
             .eval::<RArray>("$LOAD_PATH")
             .map_err(|e| EvalError::Other(format!("$LOAD_PATH capture: {e}")))?
             .into_iter()
             .filter_map(|v| String::try_convert(v).ok())
+            .map(PathBuf::from)
             .collect();
-        let conflicts = detect_load_path_conflicts(
-            &current_load_path.iter().map(PathBuf::from).collect::<Vec<_>>(),
-            &ctx.load_paths,
-            &["pangea/"],
-        );
-        for c in &conflicts {
-            warnings.messages.push(format!(
-                "load-path conflict: '{}' resolvable via {} paths — winner: {}, shadowed: [{}]",
-                c.logical_path,
-                c.shadowed_paths.len() + 1,
-                c.shadowing_path.display(),
-                c.shadowed_paths
-                    .iter()
-                    .map(|p| p.display().to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
+        for detector in detectors {
+            for c in detector.detect(ctx, &current_load_path) {
+                warnings.messages.push(format!("detector:{}: {}", c.detector, c.message));
+            }
         }
 
         // Steps 3-7 happen INSIDE the with_load_paths bracket so
