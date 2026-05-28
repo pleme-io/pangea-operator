@@ -133,6 +133,16 @@ pub struct ControllerState {
     /// `.status.anomalies[]`. See
     /// `project_controller_detection_axis.md` (known-unknowns axis).
     pub anomaly_tracker: Arc<dyn anomaly_tracker::RecurrenceObserver>,
+
+    /// Registry of escalation-action handlers — one impl per
+    /// `EscalationAction` variant. Read by `handle_compile_failure`
+    /// (and future failure paths) to dispatch the recovery action
+    /// behind a trait. Slice-5 RefreshSource / ReloadGems /
+    /// RecycleWorkers handlers slot in by replacing the no-op impls
+    /// in `EscalationHandlerRegistry::pangea_default()`; the trait
+    /// shape stays so call sites don't change.
+    /// See `project_escalation_ladder.md`.
+    pub escalation_handlers: Arc<escalation_handlers::EscalationHandlerRegistry>,
 }
 
 impl ControllerState {
@@ -181,6 +191,9 @@ impl ControllerState {
             routing_client: Arc::new(routing::RoutingClient::from_env()),
             operator_policy: Arc::new(operator_policy_cache::OperatorPolicyCache::new_permissive()),
             anomaly_tracker: Arc::new(anomaly_tracker::InMemoryRecurrenceTracker::new()),
+            escalation_handlers: Arc::new(
+                escalation_handlers::EscalationHandlerRegistry::pangea_default(),
+            ),
         })
     }
 

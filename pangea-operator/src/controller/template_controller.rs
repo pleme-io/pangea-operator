@@ -880,34 +880,65 @@ async fn handle_compile_failure(
             recommended_action.label(), recommended_action.depth(),
             duration_unready.as_secs(),
         );
-        // PauseAndAlert rung executes here: the recovery ladder's
-        // deepest rung shorts to status.autoSuspended=true so the
-        // motor stops burning cycles on a template that has resisted
-        // every shallower remediation. The reconcile entry checks
-        // auto_suspended and halts further work; humans clear via
-        // `kubectl patch ... --type=merge -p '{"status":{"autoSuspended":false}}'
-        // --subresource status`. This is the typed handler the
-        // ladder's surface-only wire promised in commit d002082.
-        let pause = recommended_action ==
-            crate::controller::escalation::EscalationAction::PauseAndAlert;
-        let patch = if pause {
-            serde_json::json!({
-                "status": {
-                    "phase": "Failed",
-                    "consecutiveCompileFailures": next,
-                    "lastError": escalation_msg.clone(),
-                    "autoSuspended": true,
-                },
-            })
-        } else {
-            serde_json::json!({
-                "status": {
-                    "phase": "Failed",
-                    "consecutiveCompileFailures": next,
-                    "lastError": escalation_msg.clone(),
-                },
-            })
+        // Dispatch the recovery action via the EscalationHandlerRegistry
+        // trait. The handler returns the desired status delta + event
+        // payload; we merge with our own escalation patch (phase,
+        // counter, lastError) and apply once. Slice-5 RefreshSource /
+        // ReloadGems / RecycleWorkers handlers slot in by replacing
+        // their no-op execute(); the call site stays identical.
+        let ctx = crate::controller::escalation_handlers::EscalationContext {
+            template,
+            action: recommended_action,
+            duration_unready,
+            consecutive_failures: next,
+            last_error: err_msg.to_string(),
+            error_signature: signature.clone(),
         };
+        let handler = state.escalation_handlers.handler_for(recommended_action);
+        let outcome = match handler.execute(&ctx).await {
+            Ok(o) => o,
+            Err(e) => {
+                // Handler failed — surface it but proceed with the
+                // base escalation patch (phase=Failed + lastError).
+                // Recovery handlers are NOT critical-path: even if
+                // RefreshSource fails to invalidate a cache, the
+                // escalation still records the attempt.
+                warn!(
+                    error = %e,
+                    action = recommended_action.label(),
+                    "Escalation handler execute failed; continuing with base patch"
+                );
+                crate::controller::escalation_handlers::EscalationOutcome {
+                    status_patch: serde_json::json!({}),
+                    event_reason: "EscalationLadderHandlerError",
+                    event_message: format!(
+                        "Recovery action '{}' handler failed: {e}",
+                        recommended_action.label()
+                    ),
+                }
+            }
+        };
+
+        // Merge the handler's status patch with the base escalation
+        // patch. The handler's fields (e.g. autoSuspended=true from
+        // PauseAndAlertHandler) take precedence on conflict; the base
+        // patch supplies the always-set fields (phase, count, error).
+        let mut patch = serde_json::json!({
+            "status": {
+                "phase": "Failed",
+                "consecutiveCompileFailures": next,
+                "lastError": escalation_msg.clone(),
+            },
+        });
+        if let (Some(merged_status), Some(handler_status)) = (
+            patch.get_mut("status").and_then(|s| s.as_object_mut()),
+            outcome.status_patch.get("status").and_then(|s| s.as_object()),
+        ) {
+            for (k, v) in handler_status {
+                merged_status.insert(k.clone(), v.clone());
+            }
+        }
+
         if let Err(e) =
             crate::controller::status_patch::patch_status(template, &state.client, patch).await
         {
@@ -917,8 +948,8 @@ async fn handle_compile_failure(
             template,
             state,
             EventType::Warning,
-            if pause { "EscalationLadderPause" } else { "CompileFailureEscalated" },
-            &escalation_msg,
+            outcome.event_reason,
+            &format!("{}\n\n{}", escalation_msg, outcome.event_message),
         )
         .await;
     } else {
