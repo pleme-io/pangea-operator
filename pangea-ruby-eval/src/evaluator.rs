@@ -765,11 +765,75 @@ impl RubyEvaluator {
             ev.with_load_paths(&ctx.load_paths, |ev| {
                 ev.purge_for_workspace_compile(&purge_modules_vec, &purge_prefixes_vec)?;
                 ev.restore_purged_modules(&purge_modules_vec)?;
+                // Patches that must be in place before the workspace's
+                // types.rb autoload fires (which `restore_purged_modules`
+                // typically triggers via the re-require). dry-types
+                // 1.9.1's Enum#default raise breaks pangea-architectures'
+                // attribute? + default+enum chain — see
+                // `install_dry_types_compat_patch` doc.
+                ev.install_dry_types_compat_patch()?;
                 f(ev)
             })
         })?;
 
         Ok((result, warnings))
+    }
+
+    /// Install dependency-side compatibility patches that need to be
+    /// in place before any workspace's pangea-architectures types.rb
+    /// loads.
+    ///
+    /// ## dry-types 1.9.1 ↔ pangea-architectures conflict
+    ///
+    /// `dry-types` 1.9.1 made `Dry::Types::Enum#default` strictly
+    /// raise — the body is now `raise ".enum(*values).default(value)
+    /// is not supported. Call .default(value).enum(*values) instead"`
+    /// regardless of caller intent. The message is misleading:
+    /// `pangea-architectures/lib/pangea/architectures/types.rb`
+    /// already uses `.default(:x).enum(:a,:b)` order (correct per
+    /// the message), but `dry-struct`'s `attribute? :foo, <type>`
+    /// handler internally calls `.default(*)` on the type to wire
+    /// optional-attribute semantics. When `<type>` is the
+    /// Enum-wrapped result of `.default().enum()`, that call hits
+    /// the strict raise → compile fails with
+    /// "Attribute :branch_protection has already been defined" or
+    /// similar misleading errors.
+    ///
+    /// This isn't a pangea-architectures bug; it's a dry-types
+    /// regression that breaks a previously-supported composition.
+    /// Until upstream loosens (or dry-struct stops calling .default
+    /// on Enums), the operator absorbs it by reverting `Enum#default`
+    /// to a no-op that returns `self`. The Enum still carries its
+    /// constraints; the .default(:x) on the inner type carries the
+    /// default value. Net behavior: identical to dry-types ≤1.8.x,
+    /// where this pattern was supported by design.
+    ///
+    /// Idempotent: re-applies every compile-isolation transition.
+    /// Cheap (a single class_eval).
+    pub fn install_dry_types_compat_patch(&self) -> Result<(), EvalError> {
+        let src = r#"
+            begin
+              require 'dry/types/enum' if defined?(Dry::Types)
+              if defined?(Dry::Types::Enum)
+                Dry::Types::Enum.class_eval do
+                  # Revert to the pre-1.9.1 behavior: ignore .default(*)
+                  # calls on Enum types. The .default(:x).enum(:a,:b)
+                  # chain works again. attribute? + default + enum
+                  # works again.
+                  define_method(:default) { |*_args, **_kwargs, &_block| self }
+                end
+              end
+            rescue LoadError
+              # dry-types not yet loaded; the patch fires on the next
+              # purge_for_workspace_compile call.
+            end
+            nil
+        "#;
+        let _: Value = self
+            .ruby
+            .eval(src)
+            .map_err(|e| EvalError::RubyException(format!("install_dry_types_compat_patch: {e}")))?;
+        Ok(())
     }
 
     /// Re-`require` each purged module from its conventional Ruby
