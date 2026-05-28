@@ -800,6 +800,19 @@ async fn handle_compile_failure(
         depth = recommended_action.depth(),
         "escalation ladder recommendation"
     );
+    // Surface the recommendation in Prometheus so dashboards can
+    // answer "how many templates are above depth 2 right now" + plot
+    // selection histograms. Companion to the log + lastError surfaces.
+    state
+        .metrics
+        .escalation_recommended_depth
+        .with_label_values(&[&namespace, &name])
+        .set(recommended_action.depth() as i64);
+    state
+        .metrics
+        .escalation_actions_total
+        .with_label_values(&[&namespace, &name, recommended_action.label()])
+        .inc();
 
     // Item J observability: bump rate counter + set current-count gauge
     // so Grafana can alert on "stuck-Compiling" before the settling
