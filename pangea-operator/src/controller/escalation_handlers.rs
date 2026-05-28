@@ -163,32 +163,88 @@ impl EscalationActionHandler for PauseAndAlertHandler {
     }
 }
 
-/// TODO (slice-5): drop the workspace's cached `_repo` clone and
-/// re-pull from `spec.source.gitRepository`. Needs `WorkspaceManager`
-/// access via `ControllerState`. Until the implementation lands, the
-/// handler is registered as a no-op + emits an Event naming what it
-/// WOULD do, so dashboards can count "RefreshSource would have
-/// fired" even before behaviorally enabled.
-pub struct RefreshSourceHandler;
+/// Trait — drop the workspace's cached `_repo` clone so the next
+/// reconcile re-pulls source. The seam lets tests inject a fake
+/// invalidator without `WorkspaceManager` setup; production wires
+/// `Arc<WorkspaceManager>` via its blanket impl below.
+#[async_trait]
+pub trait WorkspaceCacheInvalidator: Send + Sync {
+    /// Invalidate the cached workspace for (namespace, name). MUST be
+    /// idempotent — calling twice with the same key is no harm.
+    async fn invalidate(&self, namespace: &str, name: &str) -> anyhow::Result<()>;
+}
+
+/// Blanket impl — production wires the real `WorkspaceManager`.
+/// `delete_workspace` is idempotent (it checks existence first),
+/// matching the trait's contract.
+#[async_trait]
+impl WorkspaceCacheInvalidator for crate::executor::WorkspaceManager {
+    async fn invalidate(&self, namespace: &str, name: &str) -> anyhow::Result<()> {
+        self.delete_workspace(namespace, name)
+            .await
+            .map_err(|e| anyhow::anyhow!("WorkspaceManager::delete_workspace: {e}"))
+    }
+}
+
+/// Slice-5 first real handler: drop the workspace's cached `_repo`
+/// clone via the `WorkspaceCacheInvalidator` trait. Next reconcile
+/// re-pulls source, eliminating the "the source moved but our clone
+/// is stale" failure mode at depth 1 of the ladder.
+///
+/// Construct with `RefreshSourceHandler::new(invalidator)`; the
+/// registry's default builder accepts the invalidator as a
+/// constructor arg.
+pub struct RefreshSourceHandler {
+    invalidator: Arc<dyn WorkspaceCacheInvalidator>,
+}
+
+impl RefreshSourceHandler {
+    pub fn new(invalidator: Arc<dyn WorkspaceCacheInvalidator>) -> Self {
+        Self { invalidator }
+    }
+}
 
 #[async_trait]
 impl EscalationActionHandler for RefreshSourceHandler {
     fn action(&self) -> EscalationAction { EscalationAction::RefreshSource }
 
     async fn execute(&self, ctx: &EscalationContext<'_>) -> anyhow::Result<EscalationOutcome> {
-        // Slice-5 will populate this:
-        //   state.workspace_manager.drop_clone(&template.namespace, &template.name).await?;
-        //   force-refresh on next reconcile picks up source changes.
-        Ok(EscalationOutcome {
-            status_patch: serde_json::json!({}),
-            event_reason: "EscalationLadderRefreshSource",
-            event_message: format!(
-                "Recovery ladder: RefreshSource (depth 1, after {}s unready). Source-clone \
-                 invalidation deferred to slice-5; this event records the recommendation \
-                 so dashboards count the would-fire.",
-                ctx.duration_unready.as_secs(),
-            ),
-        })
+        let namespace = ctx.template.metadata.namespace
+            .as_deref()
+            .unwrap_or_default();
+        let name = ctx.template.metadata.name
+            .as_deref()
+            .unwrap_or_default();
+
+        // Invalidate via the trait. On failure we still emit the
+        // Event (so operators see the attempt) but propagate the
+        // error so the caller's handler-error path fires.
+        match self.invalidator.invalidate(namespace, name).await {
+            Ok(()) => Ok(EscalationOutcome {
+                status_patch: serde_json::json!({}),
+                event_reason: "EscalationLadderRefreshSource",
+                event_message: format!(
+                    "Recovery ladder: RefreshSource (depth 1, after {}s unready). \
+                     Workspace clone invalidated; next reconcile will re-pull source.",
+                    ctx.duration_unready.as_secs(),
+                ),
+            }),
+            Err(e) => Err(anyhow::anyhow!(
+                "RefreshSource invalidation failed for {namespace}/{name}: {e}"
+            )),
+        }
+    }
+}
+
+/// No-op invalidator — succeeds without touching disk. Useful for
+/// tests + as the default when production hasn't wired the real
+/// `WorkspaceManager` yet.
+pub struct NoopInvalidator;
+
+#[async_trait]
+impl WorkspaceCacheInvalidator for NoopInvalidator {
+    async fn invalidate(&self, _namespace: &str, _name: &str) -> anyhow::Result<()> {
+        Ok(())
     }
 }
 
@@ -253,16 +309,25 @@ pub struct EscalationHandlerRegistry {
 
 impl EscalationHandlerRegistry {
     /// Default registry — one implementation per action variant.
-    /// Slice-5 swaps the no-op `RefreshSource` / `ReloadGems` /
-    /// `RecycleWorkers` impls with real ones; the trait shape stays.
-    pub fn pangea_default() -> Self {
+    /// Slice-5: `RefreshSource` requires a `WorkspaceCacheInvalidator`
+    /// (production wires `Arc<WorkspaceManager>`); `ReloadGems` +
+    /// `RecycleWorkers` remain no-op stubs until their dependencies
+    /// land.
+    pub fn pangea_default(invalidator: Arc<dyn WorkspaceCacheInvalidator>) -> Self {
         Self {
             retry: Arc::new(RetryHandler),
-            refresh_source: Arc::new(RefreshSourceHandler),
+            refresh_source: Arc::new(RefreshSourceHandler::new(invalidator)),
             reload_gems: Arc::new(ReloadGemsHandler),
             recycle_workers: Arc::new(RecycleWorkersHandler),
             pause_and_alert: Arc::new(PauseAndAlertHandler),
         }
+    }
+
+    /// Test/no-op registry — wires a noop invalidator that always
+    /// succeeds without touching disk. Use in unit tests that don't
+    /// need the real workspace lifecycle.
+    pub fn pangea_default_noop() -> Self {
+        Self::pangea_default(Arc::new(NoopInvalidator))
     }
 
     /// Dispatch: pick the handler for the given action. Total over
@@ -282,6 +347,7 @@ impl EscalationHandlerRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
     /// Build a minimal context for handler tests. Most handlers don't
     /// touch `template` (slice-5 will). Using a stub `template` is
@@ -347,13 +413,20 @@ mod tests {
     async fn slice5_handlers_emit_record_event_no_status_change_yet() {
         // The shallower-but-not-yet-implemented handlers emit only an
         // Event recording the recommendation. Behavioral change lands
-        // in slice-5. This test pins the "record-only" contract so a
-        // slice-5 refactor that introduces a status field is caught.
-        let h = RefreshSourceHandler;
+        // in slice-5. This test pins the "record-only" contract for
+        // the still-stubbed handlers.
+        let h = RefreshSourceHandler::new(Arc::new(NoopInvalidator));
         let ctx = minimal_ctx(EscalationAction::RefreshSource);
         let outcome = h.execute(&ctx).await.unwrap();
+        // RefreshSource now has a real impl — invalidate succeeded via
+        // NoopInvalidator. Status patch stays empty (refresh doesn't
+        // mutate status); event reason carries the recommendation.
         assert_eq!(outcome.status_patch, serde_json::json!({}));
         assert_eq!(outcome.event_reason, "EscalationLadderRefreshSource");
+        assert!(
+            outcome.event_message.contains("Workspace clone invalidated"),
+            "RefreshSource event message must reflect the action taken"
+        );
 
         let h = ReloadGemsHandler;
         let ctx = minimal_ctx(EscalationAction::ReloadGems);
@@ -369,12 +442,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn refresh_source_handler_propagates_invalidator_failure() {
+        // When the invalidator fails (disk error, perm issue, race),
+        // RefreshSourceHandler MUST return Err so the caller's
+        // handler-error path logs + proceeds with the base escalation
+        // patch. Without this, a stuck invalidation would silently
+        // succeed and the operator would never retry the cleanup.
+
+        struct FailingInvalidator;
+        #[async_trait]
+        impl WorkspaceCacheInvalidator for FailingInvalidator {
+            async fn invalidate(&self, _ns: &str, _name: &str) -> anyhow::Result<()> {
+                Err(anyhow::anyhow!("simulated disk failure"))
+            }
+        }
+
+        let h = RefreshSourceHandler::new(Arc::new(FailingInvalidator));
+        let ctx = minimal_ctx(EscalationAction::RefreshSource);
+        let err = h.execute(&ctx).await.expect_err("handler must surface error");
+        assert!(err.to_string().contains("simulated disk failure"));
+    }
+
+    #[tokio::test]
+    async fn refresh_source_handler_calls_invalidator_with_template_identity() {
+        // Verifies the handler passes the CORRECT (namespace, name)
+        // pair from the template — the trait dispatch must not lose
+        // identity, or invalidations would hit the wrong workspace.
+
+        struct CapturingInvalidator {
+            captured: Arc<Mutex<Option<(String, String)>>>,
+        }
+        #[async_trait]
+        impl WorkspaceCacheInvalidator for CapturingInvalidator {
+            async fn invalidate(&self, ns: &str, name: &str) -> anyhow::Result<()> {
+                *self.captured.lock().unwrap() = Some((ns.to_string(), name.to_string()));
+                Ok(())
+            }
+        }
+
+        let captured = Arc::new(Mutex::new(None));
+        let inv = Arc::new(CapturingInvalidator { captured: captured.clone() });
+        let h = RefreshSourceHandler::new(inv);
+        let ctx = minimal_ctx(EscalationAction::RefreshSource);
+        h.execute(&ctx).await.unwrap();
+
+        let captured = captured.lock().unwrap().clone().expect("invalidate called");
+        assert_eq!(captured.0, "test-ns");
+        assert_eq!(captured.1, "test-template");
+    }
+
+    #[tokio::test]
     async fn registry_dispatches_each_action_to_its_handler() {
         // The registry must route every variant to a handler whose
         // `.action()` matches the dispatch key. Catches accidental
         // wiring (e.g. registering RetryHandler under the
         // PauseAndAlert slot, which would silently break recovery).
-        let reg = EscalationHandlerRegistry::pangea_default();
+        let reg = EscalationHandlerRegistry::pangea_default_noop();
         for action in [
             EscalationAction::Retry,
             EscalationAction::RefreshSource,

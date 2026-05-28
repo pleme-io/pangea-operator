@@ -120,7 +120,7 @@ async fn three_axis_composition_persistent_failure_reaches_pause_and_alert() {
     assert_eq!(summary.typed_detector, None);
 
     // ── Handler axis: dispatch by trait, verify outcome shape ────────
-    let registry = EscalationHandlerRegistry::pangea_default();
+    let registry = EscalationHandlerRegistry::pangea_default_noop();
     let template = stub_template();
     let ctx = EscalationContext {
         template: &template,
@@ -179,7 +179,7 @@ async fn three_axis_composition_short_duration_keeps_handler_no_op() {
     // where someone makes Retry mutate state (against the "Retry is
     // a no-op" contract).
 
-    let registry = EscalationHandlerRegistry::pangea_default();
+    let registry = EscalationHandlerRegistry::pangea_default_noop();
     let template = stub_template();
     let ctx = EscalationContext {
         template: &template,
@@ -212,7 +212,7 @@ async fn three_axis_composition_action_label_round_trips_through_summary() {
         let rec = tracker.observe("k", "s");
         let summary = AnomalySummary::compose(&rec, action.label(), action.depth(), None);
 
-        let registry = EscalationHandlerRegistry::pangea_default();
+        let registry = EscalationHandlerRegistry::pangea_default_noop();
         let handler = registry.handler_for(action);
 
         assert_eq!(handler.action().label(), summary.recommended_action,

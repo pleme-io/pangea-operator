@@ -199,13 +199,15 @@ impl ControllerState {
             default_backend,
             state_backend: None,
             packer_executor,
-            workspace_manager,
+            workspace_manager: workspace_manager.clone(),
             compiler_backend,
             routing_client: Arc::new(routing::RoutingClient::from_env()),
             operator_policy: Arc::new(operator_policy_cache::OperatorPolicyCache::new_permissive()),
             anomaly_tracker: Arc::new(anomaly_tracker::InMemoryRecurrenceTracker::new()),
             escalation_handlers: Arc::new(
-                escalation_handlers::EscalationHandlerRegistry::pangea_default(),
+                escalation_handlers::EscalationHandlerRegistry::pangea_default(
+                    workspace_manager.clone(),
+                ),
             ),
             anomaly_emitter: anomaly_emitter_arc,
         })
