@@ -1146,6 +1146,7 @@ async fn handle_planning(
         record_reconcile_cycle(
             template,
             state,
+            Some(&workspace.path),
             &[],
             plan_text.clone(),
             CycleResult::NoChanges,
@@ -1170,6 +1171,7 @@ async fn handle_planning(
             record_reconcile_cycle(
                 template,
                 state,
+                Some(&workspace.path),
                 &policy_outcome.annotated_drifts,
                 plan_text.clone(),
                 CycleResult::PolicyGated(PolicyDecision::Refuse),
@@ -1228,6 +1230,7 @@ async fn handle_planning(
                 record_reconcile_cycle(
                     template,
                     state,
+                    Some(&workspace.path),
                     &policy_outcome.annotated_drifts,
                     plan_text.clone(),
                     CycleResult::PolicyGated(PolicyDecision::RequireApproval),
@@ -1458,6 +1461,7 @@ async fn handle_applying(
         record_reconcile_cycle(
             template,
             state,
+            Some(&workspace.path),
             &prior_drifts,
             prior_plan_summary,
             CycleResult::AppliedSuccess { imported_addresses: imported_addresses.clone() },
@@ -1545,6 +1549,7 @@ async fn handle_applying(
         record_reconcile_cycle(
             template,
             state,
+            Some(&workspace.path),
             &prior_drifts,
             prior_plan_summary,
             CycleResult::AppliedFailure(err_msg.clone()),
@@ -2673,6 +2678,8 @@ mod cycle_tests {
             20,
             Some("+0 ~0 -0".to_string()),
             None,
+            None,
+            None,
             CycleResult::NoChanges,
         );
         assert_eq!(cycle.summary.matched, 20);
@@ -2694,6 +2701,8 @@ mod cycle_tests {
             &drifts,
             20,
             Some("+1 ~1 -1".to_string()),
+            None,
+            None,
             None,
             CycleResult::AppliedSuccess { imported_addresses: vec![] },
         );
@@ -2719,6 +2728,8 @@ mod cycle_tests {
             &drifts,
             10,
             Some("+2 ~0 -0".to_string()),
+            None,
+            None,
             None,
             CycleResult::AppliedSuccess {
                 imported_addresses: vec!["cf_dns_record.foo".to_string()],
@@ -2746,6 +2757,8 @@ mod cycle_tests {
             20,
             None,
             None,
+            None,
+            None,
             CycleResult::AppliedFailure(err.clone()),
         );
         assert_eq!(cycle.summary.failed, 1);
@@ -2762,6 +2775,8 @@ mod cycle_tests {
             Utc::now(),
             &drifts,
             20,
+            None,
+            None,
             None,
             None,
             CycleResult::PolicyGated(PolicyDecision::Refuse),
@@ -2786,6 +2801,7 @@ mod cycle_tests {
                 ..Default::default()
             },
             outcomes: vec![],
+            ..Default::default()
         };
         assert!(cycle_content_equal(&mk(1, now), &mk(2, later)));
     }
@@ -2804,6 +2820,7 @@ mod cycle_tests {
                 ..Default::default()
             },
             outcomes: vec![],
+            ..Default::default()
         };
         assert!(!cycle_content_equal(&mk(20), &mk(19)));
     }
@@ -2853,6 +2870,8 @@ mod cycle_tests {
             Utc::now(),
             &drifts,
             500,
+            None,
+            None,
             None,
             None,
             CycleResult::AppliedSuccess { imported_addresses: vec![] },

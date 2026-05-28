@@ -931,6 +931,31 @@ pub struct InfrastructureTemplateStatus {
     /// `VerifiedBlocked`. Empty when no escalation has fired.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_escalation_reason: Option<String>,
+
+    /// Echo of the IaC executor the operator selected at runtime for
+    /// this template's reconcile path. `"magma"` or `"tofu"`.
+    ///
+    /// Before this field existed the only way to answer "what's the
+    /// operator actually running for this CR?" was to grep its startup
+    /// logs for `Wiring Postgres pool for magma state backend` etc.
+    /// The operator's own declaration belongs in CR status, queryable
+    /// via `kubectl get itr X -o jsonpath='{.status.executor}'`.
+    ///
+    /// Updated on every cycle (idempotent — `record_reconcile_cycle`'s
+    /// content-equality guard suppresses no-op patches), so a flip
+    /// caused by feature-flag or backend-availability change shows up
+    /// on the next reconcile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executor: Option<String>,
+
+    /// Echo of the state backend the operator wired for this cycle.
+    /// `"pg/<db_name>"` for Postgres-backed state (the magma path's
+    /// canonical case), `"local"` for filesystem, `None` for stateless
+    /// executors. Today this is inferable only from main.rs startup
+    /// log lines — the CR doesn't say where its state lives. Adding
+    /// it here closes that loop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
 }
 
 /// Receipt for one reconcile cycle. Surfaces the answer to "what did
@@ -983,6 +1008,114 @@ pub struct ReconcileCycle {
     /// payloads unbounded. Capped at 100 entries.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub outcomes: Vec<ResourceOutcome>,
+
+    /// Echo of the IaC executor that ran THIS cycle. Preserves
+    /// "magma planned this" even after a future flip of
+    /// `status.executor`. Mirrors `status.executor` at cycle-record
+    /// time; `None` for cycles written by operator versions before
+    /// the field landed (backward-compatible deserialize).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executor: Option<String>,
+
+    /// Distribution of plan action verbs across ALL planned changes
+    /// (including no-op). The compact answer to "what would this cycle
+    /// actually do?" — replaces having to `kubectl exec` into the pod
+    /// + parse `magma-bundle.json plan.changes` by hand.
+    ///
+    /// Different from `summary` above: `summary` is post-decision
+    /// (matched / updated / created / …) and rolls up untouched
+    /// resources into `matched`. This is pre-decision (the action
+    /// verb the plan emitted for each resource, no-op included), so
+    /// it preserves the distinction between "1054 resources, none
+    /// changed" (`noOp: 1054`) and "1054 resources, none managed yet"
+    /// (`create: 1054`).
+    ///
+    /// `None` for tofu cycles + for cycles where the bundle wasn't
+    /// available (cleanup races, executor wrote no bundle).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action_distribution: Option<ActionDistribution>,
+
+    /// Reference to the `magma-bundle.json` artifact this cycle
+    /// produced. Today the bundle lives in the operator pod's emptyDir
+    /// at `/var/pangea/workspaces/<ns>/<name>/magma-bundle.json` and
+    /// is only readable via `kubectl exec`. Carrying its `bundleId` +
+    /// `sha256` here lets observers verify the bundle they fetched
+    /// matches the cycle they read about. A follow-up slice publishes
+    /// the bundle as a ConfigMap and extends this struct with
+    /// `name`/`namespace` fields.
+    ///
+    /// `None` for tofu cycles + cycles whose bundle couldn't be
+    /// read (parse error, missing file).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle_ref: Option<BundleRef>,
+}
+
+/// Distribution of plan action verbs across the changes a cycle's
+/// plan emitted. One bucket per terraform action; `other` catches
+/// future tofu vocab additions (read, forget, …) so a new verb never
+/// silently drops out of the rollup.
+///
+/// The sum of all buckets equals the total `plan.changes` entry count
+/// — i.e. equals the managed-resource count for the workspace. For a
+/// fully-converged workspace `noOp` equals that total + everything
+/// else is zero.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionDistribution {
+    /// Resources the plan classified as no-op — declared state already
+    /// matches actual state, no apply action.
+    #[serde(default)]
+    pub no_op: u32,
+    /// Resources the plan would create on apply.
+    #[serde(default)]
+    pub create: u32,
+    /// Resources the plan would update in-place on apply.
+    #[serde(default)]
+    pub update: u32,
+    /// Resources the plan would destroy on apply.
+    #[serde(default)]
+    pub delete: u32,
+    /// Resources the plan would destroy + recreate (terraform's
+    /// `replace` action).
+    #[serde(default)]
+    pub replace: u32,
+    /// Catch-all for action verbs not bucketed above (terraform's
+    /// `read`, `forget`, future additions). Keeps the rollup faithful
+    /// even when the upstream vocab grows.
+    #[serde(default)]
+    pub other: u32,
+}
+
+/// Reference to the magma-bundle.json artifact a cycle produced.
+///
+/// Carries the bundle's identity (`bundle_id` from the bundle itself)
+/// + size. A follow-up slice publishes bundles as ConfigMaps and
+/// extends this struct with `configMapName` + `configMapNamespace`
+/// so observers can fetch the bundle without `kubectl exec`-ing the
+/// operator pod.
+///
+/// The `bundle_id` is already a BLAKE3 over the bundle's canonical
+/// representation (produced by magma_bundle when the bundle is
+/// minted), so it doubles as the artifact's content fingerprint —
+/// no separate file digest is needed at this layer.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BundleRef {
+    /// Bundle kind discriminator from `magma-bundle.json.kind` — today
+    /// always `"terraform"`; future executors (pulumi, opentofu,
+    /// kubernetes) get their own discriminator.
+    pub kind: String,
+    /// Stable bundle identifier — the `bundle_id` field from
+    /// `magma-bundle.json` (BLAKE3 over the bundle's canonical
+    /// representation). Lets observers correlate cycles to bundles
+    /// across compaction/cleanup AND verify the bundle they fetched
+    /// matches the cycle they read about (the bundle_id is the
+    /// content hash).
+    pub bundle_id: String,
+    /// Bundle file size in bytes — UX hint ("is this a 1KB null
+    /// bundle or a 3MB serious one?") and capacity-planning input for
+    /// the future ConfigMap-publication slice (etcd value-size budget).
+    pub size_bytes: u64,
 }
 
 /// Aggregate counts for one cycle. Sum of all variants equals total
@@ -1613,6 +1746,7 @@ mod tests {
                 action: Some("update".into()),
                 message: None,
             }],
+            ..Default::default()
         };
         let json = serde_json::to_string(&cycle).expect("serializes");
         assert!(json.contains("cycle"));

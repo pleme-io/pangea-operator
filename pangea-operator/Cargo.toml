@@ -53,6 +53,12 @@ executor_magma = [
 # Shared types
 pangea-types = { workspace = true, features = ["server"] }
 
+# Direct rustls dep solely so main() can install a process-wide
+# CryptoProvider. The executor_magma deps (tonic → rustls) bring BOTH
+# aws-lc-rs and ring; rustls 0.23 then can't auto-pick and panics. We
+# call rustls::crypto::aws_lc_rs::default_provider().install_default().
+rustls = "0.23"
+
 # In-process Ruby evaluator (feature-gated; see [features].embedded_ruby).
 pangea-ruby-eval = { path = "../pangea-ruby-eval", optional = true }
 

@@ -360,6 +360,21 @@ impl<S> IacExecutor for MagmaExecutor<S>
 where
     S: StateBackend + ?Sized,
 {
+    fn name(&self) -> &'static str {
+        "magma"
+    }
+
+    /// Magma owns its state backend directly via the `StateBackend`
+    /// trait; the canonical pleme-io deployment wires Postgres, so
+    /// report `pg/<schema>` where schema is the PG schema this
+    /// executor reads/writes (one schema per pangea namespace). The
+    /// schema is the load-bearing key — `pangea_state.<schema>` is
+    /// the table — and is what an observer needs to query state by
+    /// hand.
+    fn backend_descriptor(&self) -> Option<String> {
+        Some(format!("pg/{}", self.cfg.schema_name))
+    }
+
     async fn init(&self, _work_dir: &Path, _extra_args: &[&str]) -> Result<TofuResult> {
         let started = Instant::now();
         Ok(ok_tofu_result(

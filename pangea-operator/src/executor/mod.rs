@@ -18,6 +18,13 @@ pub mod variable_resolver;
 // startup or per-CR.
 #[cfg(feature = "executor_magma")]
 pub mod magma;
+// Bundle reader — NOT feature-gated. The CR-status fields it produces
+// (`ActionDistribution`, `BundleRef`) are always part of the schema so
+// YAML consumers / dashboards don't have a feature-conditional shape;
+// in non-magma builds the reader simply returns None on every call
+// (no magma-bundle.json on disk). See memory/project_operator_
+// observability_backlog.md for why this lives here.
+pub mod magma_bundle;
 
 pub use backend_select::ExecutorBackend;
 pub use iac_executor::IacExecutor;

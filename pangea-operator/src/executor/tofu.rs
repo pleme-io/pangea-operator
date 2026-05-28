@@ -419,6 +419,21 @@ impl TofuExecutor {
 /// `&dyn IacExecutor`.
 #[async_trait]
 impl IacExecutor for TofuExecutor {
+    fn name(&self) -> &'static str {
+        "tofu"
+    }
+
+    /// TofuExecutor shells out to the `tofu` CLI; its actual state
+    /// backend is whatever the workspace's `main.tf.json` declares
+    /// (typically the operator's pg-state-backend, but configurable
+    /// per-workspace). The executor itself doesn't know — that's a
+    /// property of the rendered config, not of this struct — so we
+    /// return None rather than guess. Magma, by contrast, owns its
+    /// state backend directly and returns `pg/<schema>`.
+    fn backend_descriptor(&self) -> Option<String> {
+        None
+    }
+
     async fn init(&self, work_dir: &Path, extra_args: &[&str]) -> Result<TofuResult> {
         TofuExecutor::init(self, work_dir, extra_args).await
     }

@@ -15,6 +15,7 @@
 use chrono::{DateTime, Utc};
 use kube::ResourceExt;
 use std::collections::HashSet;
+use std::path::Path;
 use tracing::{debug, info};
 
 use crate::controller::ControllerState;
@@ -23,6 +24,7 @@ use crate::crd::{
     ResourceOutcome,
 };
 use crate::error::Result;
+use crate::executor::magma_bundle::{read_bundle_artifacts, BundleArtifacts};
 
 /// What triggered the cycle emission — drives outcome derivation when
 /// translating drift_details into per-resource ResourceOutcome entries.
@@ -54,6 +56,18 @@ pub enum CycleResult {
 /// `total` is the total managed-resource count; `total - drifts.len()`
 /// becomes `summary.matched`. `next_cycle` is the cycle number for
 /// THIS cycle (caller has already incremented `status.cycle_count`).
+///
+/// `executor_name` is the IaC executor that ran this cycle
+/// (`"magma"` / `"tofu"`); recorded into `ReconcileCycle.executor` so
+/// the cycle history preserves which executor produced each receipt
+/// even after a future flip. `bundle_artifacts` carries
+/// magma-bundle-derived fields (action distribution + bundle_ref);
+/// `None` for tofu cycles or when the bundle wasn't readable.
+///
+/// Pure function — all I/O (executor lookup, bundle reading) happens
+/// in the caller `record_reconcile_cycle`, so this is the layer that
+/// gets the test coverage for "given these inputs, the receipt has
+/// these fields."
 pub fn build_reconcile_cycle(
     next_cycle: u64,
     started_at: DateTime<Utc>,
@@ -61,6 +75,8 @@ pub fn build_reconcile_cycle(
     total: u32,
     plan_summary: Option<String>,
     source_revision: Option<String>,
+    executor_name: Option<String>,
+    bundle_artifacts: Option<BundleArtifacts>,
     result: CycleResult,
 ) -> ReconcileCycle {
     let mut summary = CycleSummary::default();
@@ -126,6 +142,14 @@ pub fn build_reconcile_cycle(
     let untouched = total.saturating_sub(touched_count);
     summary.matched = summary.matched.saturating_add(untouched);
 
+    // Split bundle_artifacts into its two destination fields so each
+    // can be None independently (a bundle with a valid ref but missing
+    // plan.changes still records the ref).
+    let (action_distribution, bundle_ref) = match bundle_artifacts {
+        Some(a) => (a.action_distribution, a.bundle_ref),
+        None    => (None, None),
+    };
+
     ReconcileCycle {
         cycle: next_cycle,
         started_at,
@@ -134,6 +158,9 @@ pub fn build_reconcile_cycle(
         plan_summary,
         summary,
         outcomes,
+        executor: executor_name,
+        action_distribution,
+        bundle_ref,
     }
 }
 
@@ -168,13 +195,27 @@ pub fn truncate_for_status(s: &str) -> String {
     }
 }
 
-/// Patch `status.lastCycle` + bump `status.cycleCount`. Skips the
-/// patch entirely if the receipt is content-equal to the prior one
-/// (only the timestamps differ) — keeps reconcile-loop chatter off
-/// etcd for steady-state Ready→Ready flows.
+/// Patch `status.lastCycle` + bump `status.cycleCount`. Also echoes
+/// the running executor + backend to top-level `status.executor` +
+/// `status.backend`, and (when `work_dir` is Some) reads
+/// `magma-bundle.json` to derive `lastCycle.actionDistribution` +
+/// `lastCycle.bundleRef`.
+///
+/// Skips the patch entirely if the receipt is content-equal to the
+/// prior one (only the timestamps differ) — keeps reconcile-loop
+/// chatter off etcd for steady-state Ready→Ready flows. The
+/// content-equality guard now considers the new bundle/executor
+/// fields too (a cycle that changed bundle but nothing else still
+/// patches; a cycle that changed nothing including the bundle skips).
+///
+/// `work_dir` is optional: pass `Some(&workspace.path)` when the
+/// reconcile path has the workspace in hand (planning/applying);
+/// `None` is acceptable but means the bundle-derived fields stay
+/// `None` for the cycle.
 pub async fn record_reconcile_cycle(
     template: &InfrastructureTemplate,
     state: &ControllerState,
+    work_dir: Option<&Path>,
     drifts: &[DriftDetail],
     plan_summary: Option<String>,
     result: CycleResult,
@@ -195,6 +236,23 @@ pub async fn record_reconcile_cycle(
         .unwrap_or_else(Utc::now);
     let source_revision = prior_status.last_applied_revision.clone();
 
+    // Identify the executor that ran this cycle. `executor_for` is
+    // cheap (Arc clone for tofu, lightweight ctor for magma — no I/O)
+    // and idempotent, so calling it at cycle boundary is safe even if
+    // the planning phase already called it.
+    let executor = state.executor_for(template);
+    let executor_name = Some(executor.name().to_string());
+    let backend_descriptor = executor.backend_descriptor();
+
+    // Read the magma-bundle.json if the caller passed a workspace
+    // dir. Always best-effort: a missing or malformed bundle leaves
+    // the bundle-derived fields as None on the cycle (tofu cycles
+    // hit this path too — they have no bundle).
+    let bundle_artifacts = match work_dir {
+        Some(dir) => read_bundle_artifacts(dir).await,
+        None      => None,
+    };
+
     let new_cycle = build_reconcile_cycle(
         next_cycle,
         started_at,
@@ -202,11 +260,21 @@ pub async fn record_reconcile_cycle(
         total,
         plan_summary,
         source_revision,
+        executor_name.clone(),
+        bundle_artifacts,
         result,
     );
 
+    // Content-equality guard: skip the patch when the new cycle's
+    // observable content matches the prior cycle AND the top-level
+    // executor/backend echo also matches. Steady-state Ready→Ready
+    // flows still skip etcd churn; a cycle that flips executor or
+    // bundle still patches.
+    let runtime_identity_unchanged =
+        prior_status.executor.as_deref() == executor_name.as_deref()
+            && prior_status.backend.as_deref() == backend_descriptor.as_deref();
     if let Some(prev) = prior_status.last_cycle.as_ref() {
-        if cycle_content_equal(prev, &new_cycle) {
+        if cycle_content_equal(prev, &new_cycle) && runtime_identity_unchanged {
             debug!(
                 template = %name,
                 cycle = prior_cycle_count,
@@ -219,11 +287,20 @@ pub async fn record_reconcile_cycle(
     let mut new_status = prior_status;
     new_status.cycle_count = next_cycle;
     new_status.last_cycle = Some(new_cycle.clone());
+    new_status.executor = executor_name.clone();
+    new_status.backend = backend_descriptor.clone();
 
     let patch = serde_json::json!({
         "status": {
             "cycleCount": new_status.cycle_count,
-            "lastCycle": new_status.last_cycle,
+            "lastCycle":  new_status.last_cycle,
+            // Top-level executor + backend echo so observers can
+            // answer "what's running here?" with a single jsonpath
+            // (no grep on operator logs). Always sent (rather than
+            // skip-if-None) so a flip from magma to tofu propagates
+            // immediately on the next patched cycle.
+            "executor":   new_status.executor,
+            "backend":    new_status.backend,
         }
     });
     crate::controller::status_patch::patch_status(template, &state.client, patch)
@@ -232,22 +309,32 @@ pub async fn record_reconcile_cycle(
     info!(
         template = %name,
         cycle = next_cycle,
+        executor = executor.name(),
         matched = new_cycle.summary.matched,
         updated = new_cycle.summary.updated,
         created = new_cycle.summary.created,
         destroyed = new_cycle.summary.destroyed,
         drifted_uncorrected = new_cycle.summary.drifted_uncorrected,
         failed = new_cycle.summary.failed,
+        action_no_op  = new_cycle.action_distribution.as_ref().map(|a| a.no_op).unwrap_or(0),
+        action_create = new_cycle.action_distribution.as_ref().map(|a| a.create).unwrap_or(0),
+        action_update = new_cycle.action_distribution.as_ref().map(|a| a.update).unwrap_or(0),
+        action_delete = new_cycle.action_distribution.as_ref().map(|a| a.delete).unwrap_or(0),
+        bundle_id     = new_cycle.bundle_ref.as_ref().map(|b| b.bundle_id.as_str()).unwrap_or(""),
         "ReconcileCycle recorded"
     );
     Ok(())
 }
 
 /// Two cycles are content-equal when summary, source_revision,
-/// plan_summary, and outcomes match. Cycle number and timestamps are
-/// deliberately ignored — they always differ between successive
-/// reconciles, and skipping the patch when nothing else changed is
-/// the whole point (no etcd churn for Matched-only steady state).
+/// plan_summary, executor, action_distribution, bundle_ref, and
+/// outcomes match. Cycle number and timestamps are deliberately
+/// ignored — they always differ between successive reconciles, and
+/// skipping the patch when nothing else changed is the whole point
+/// (no etcd churn for Matched-only steady state). Adding the new
+/// observable fields to the comparison ensures that e.g. a bundle
+/// hash change between cycles forces a re-patch even when the
+/// summary stays the same.
 pub fn cycle_content_equal(a: &ReconcileCycle, b: &ReconcileCycle) -> bool {
     if a.summary.matched != b.summary.matched
         || a.summary.updated != b.summary.updated
@@ -261,6 +348,40 @@ pub fn cycle_content_equal(a: &ReconcileCycle, b: &ReconcileCycle) -> bool {
     }
     if a.source_revision != b.source_revision || a.plan_summary != b.plan_summary {
         return false;
+    }
+    if a.executor != b.executor {
+        return false;
+    }
+    // Bundle ref is compared by bundle_id (the content hash from
+    // magma; kind + size are implied or hint-only). A bundle_id flip
+    // is the canonical signal "magma ran a new plan."
+    match (a.bundle_ref.as_ref(), b.bundle_ref.as_ref()) {
+        (None, None) => {}
+        (Some(_), None) | (None, Some(_)) => return false,
+        (Some(x), Some(y)) => {
+            if x.bundle_id != y.bundle_id {
+                return false;
+            }
+        }
+    }
+    // ActionDistribution compared field-by-field — a no-op→create
+    // flip on identical resource counts must invalidate equality
+    // even when the post-decision summary still rolls them up the
+    // same way (because the user-facing distinction matters).
+    match (a.action_distribution.as_ref(), b.action_distribution.as_ref()) {
+        (None, None) => {}
+        (Some(_), None) | (None, Some(_)) => return false,
+        (Some(x), Some(y)) => {
+            if x.no_op != y.no_op
+                || x.create != y.create
+                || x.update != y.update
+                || x.delete != y.delete
+                || x.replace != y.replace
+                || x.other != y.other
+            {
+                return false;
+            }
+        }
     }
     if a.outcomes.len() != b.outcomes.len() {
         return false;
@@ -344,6 +465,7 @@ mod tests {
             plan_summary: Some("no changes".into()),
             summary: summary.clone(),
             outcomes: vec![],
+            ..Default::default()
         };
         let a = mk(1, Utc::now());
         let b = mk(2, Utc::now() + chrono::Duration::seconds(1));
@@ -363,6 +485,7 @@ mod tests {
                 plan_summary: None,
                 summary,
                 outcomes: vec![],
+                ..Default::default()
             }
         };
         assert!(!cycle_content_equal(&mk(7), &mk(8)));
