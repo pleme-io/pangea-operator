@@ -47,6 +47,10 @@ executor_magma = [
 # Shared types
 pangea-types = { workspace = true, features = ["server"] }
 
+# Typed-dispatcher catalog integration
+gen-platform = { workspace = true }
+gen-types = { workspace = true }
+
 # In-process Ruby evaluator (feature-gated; see [features].embedded_ruby).
 pangea-ruby-eval = { path = "../pangea-ruby-eval", optional = true }
 

@@ -118,13 +118,23 @@ pub struct BindingTarget {
 }
 
 /// Supported target resource kinds.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Display)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Display,
+         gen_platform::TypedDispatcher,
+         gen_platform::Discriminant,
+         gen_platform::IsVariant,
+         gen_platform::FromStrKind)]
 pub enum TargetKind {
     InfrastructureTemplate,
     InfrastructureFlow,
     ImagePipeline,
     PackerBuild,
 }
+
+// Fleet-wide dispatcher-catalog registration. NINTH consumer
+// class adopting gen-platform's typed-dispatcher catamorphism
+// (after gen / caixa / wasm-platform / cofre / shigoto / engenho /
+// magma / kura). See theory/UNIFIED-COMPUTING-MODEL.md §VI.
+gen_platform::register_dispatcher!("pangea.target-kind", TargetKind);
 
 /// Enforcement level applied to targets when compliance fails.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Display, Default)]

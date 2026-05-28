@@ -19,6 +19,11 @@ repository = "https://github.com/pleme-io/nexus"
 # Shared types
 pangea-types = { path = "pangea-types" }
 
+# Typed-dispatcher catalog integration
+# (theory/UNIFIED-COMPUTING-MODEL.md §VI).
+gen-platform = { path = "../gen/crates/gen-platform" }
+gen-types = { path = "../gen/crates/gen-types" }
+
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
