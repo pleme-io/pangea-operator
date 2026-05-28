@@ -770,6 +770,37 @@ async fn handle_compile_failure(
     let name = template.name_any();
     let namespace = template.namespace().unwrap_or_default();
 
+    // Time-graded recovery recommendation. Consult the escalation
+    // ladder against time-since-last-phase-change so operators
+    // (and slice-5 action handlers) see the recommended depth of
+    // intervention before the settlingPolicy threshold trips.
+    //
+    // The ladder is the FIX-AXIS sibling of the detection axis
+    // (project_escalation_ladder.md). For now it's surface-only —
+    // we log the recommendation + include it in lastError so it's
+    // visible in `kubectl get it`. Slice 5 wires actual handlers
+    // (RefreshSource → invalidate workspace clone; ReloadGems →
+    // gem cache invalidation; RecycleWorkers → pool kill+respawn;
+    // PauseAndAlert → set autoSuspended + Event).
+    let now = chrono::Utc::now();
+    let duration_unready = template
+        .status
+        .as_ref()
+        .and_then(|s| s.phase_entered_at.as_ref())
+        .map(|t| (now - *t).to_std().unwrap_or(std::time::Duration::ZERO))
+        .unwrap_or(std::time::Duration::ZERO);
+    let recommended_action = crate::controller::escalation::EscalationLadder::pangea_default()
+        .pick(duration_unready);
+    tracing::info!(
+        template = %name,
+        namespace = %namespace,
+        consecutive_failures = next,
+        duration_unready_s = duration_unready.as_secs(),
+        recommended_action = recommended_action.label(),
+        depth = recommended_action.depth(),
+        "escalation ladder recommendation"
+    );
+
     // Item J observability: bump rate counter + set current-count gauge
     // so Grafana can alert on "stuck-Compiling" before the settling
     // threshold trips. Prometheus path:
@@ -796,9 +827,12 @@ async fn handle_compile_failure(
         );
         let escalation_msg = format!(
             "Compile has failed {} consecutive times (settlingPolicy.maxConsecutiveDriftCycles={}). \
-             Last error: {}. Resolve the underlying compile issue (missing gem, syntax error, \
+             Last error: {}. Recovery ladder recommends '{}' (depth {}, after {}s unready). \
+             Resolve the underlying compile issue (missing gem, syntax error, \
              unresolved provider, etc.) and the next reconcile will resume.",
-            next, max, err_msg
+            next, max, err_msg,
+            recommended_action.label(), recommended_action.depth(),
+            duration_unready.as_secs(),
         );
         let patch = serde_json::json!({
             "status": {
