@@ -818,21 +818,33 @@ async fn handle_compile_failure(
     // into a stable signature + bump the in-process tracker. Same
     // logical error produces the same signature across runs, so
     // dashboards can answer "is this template stuck on ONE bug
-    // class repeated 100 times, or 100 distinct issues?". The
-    // typed Recurrence flows into the tracing emit as evidence;
-    // slice-N wires it through to status.anomalies[].
+    // class repeated 100 times, or 100 distinct issues?".
     let signature = crate::controller::anomaly_tracker::error_signature(err_msg);
     let recurrence_key = format!("{}/{}", namespace, name);
     let recurrence = state
         .anomaly_tracker
         .observe(&recurrence_key, &signature);
+
+    // Composite three-axis summary — one structured event for log
+    // analytics + (slice-4) `.status.anomalies[]` + Prometheus. Same
+    // shape regardless of whether a typed detector also fired, so
+    // consumers don't branch on source. The `typed_detector` field
+    // is `None` here (handle_compile_failure runs at the controller
+    // layer; the typed detectors fire inside pangea-ruby-eval). The
+    // detector's Conflict, when it exists, propagates separately
+    // through ContextWarnings.conflicts and gets folded into the
+    // summary at the slice-4 status surface.
+    let summary = crate::controller::anomaly_tracker::AnomalySummary::compose(
+        &recurrence,
+        recommended_action.label(),
+        recommended_action.depth(),
+        None,
+    );
     tracing::info!(
         template = %name,
         namespace = %namespace,
-        error_signature = %signature,
-        recurrence_count = recurrence.count,
-        recurrence_age_s = recurrence.age.as_secs(),
-        "anomaly recurrence observed"
+        summary = ?summary,
+        "anomaly observed"
     );
 
     // Item J observability: bump rate counter + set current-count gauge

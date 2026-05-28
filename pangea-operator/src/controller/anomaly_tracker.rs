@@ -147,6 +147,70 @@ pub fn error_signature(err_msg: &str) -> String {
     hash.to_hex().as_str()[..12].to_string()
 }
 
+/// Composed three-axis summary of one observed anomaly. Built at the
+/// call site by combining: (1) the recurrence observation, (2) the
+/// escalation ladder's recommended action, (3) the typed Conflict
+/// from any detector that fired.
+///
+/// One structured shape for ALL audit consumers (tracing today;
+/// `.status.anomalies[]` + k8s Event + Prometheus metric slice-4).
+/// Stable JSON serialization so log analytics can pivot on any field.
+///
+/// ## Why composite, not three separate
+///
+/// Detection + recurrence + escalation are three orthogonal axes; the
+/// same anomaly populates all three. Emitting them as three separate
+/// log lines forces consumers to join by (template, timestamp) — easy
+/// to lose lines in aggregation. The composite shape gives consumers
+/// one structured record per anomaly, joinable by all three axes.
+///
+/// Build via `AnomalySummary::compose(...)`; emit via
+/// `tracing::info!(?summary, "anomaly observed")` or wrap in a
+/// Conflict for the typed audit stream.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AnomalySummary {
+    /// Stable error signature (output of `error_signature`). Stable
+    /// across runs + processes — the join key for cross-pod views.
+    pub signature: String,
+    /// How many times this (key, signature) has been observed in this
+    /// process. >1 means recurrence.
+    pub recurrence_count: u32,
+    /// Seconds since the first observation. Co-bounded with the
+    /// escalation ladder's gate, but per-error rather than per-template.
+    pub recurrence_age_s: u64,
+    /// The escalation ladder's recommended action label (Retry /
+    /// RefreshSource / ReloadGems / RecycleWorkers / PauseAndAlert).
+    /// Matches `EscalationAction::label()`.
+    pub recommended_action: String,
+    /// Numeric depth of the recommended action (0..=4). For
+    /// dashboards: `histogram_quantile(0.95, anomaly_depth_bucket)`.
+    pub recommended_depth: u8,
+    /// Optional named detector — `Some("load_path_double_load")`
+    /// when a typed detector also fired for this anomaly; `None`
+    /// for opaque-recurring (unknown-knowns).
+    pub typed_detector: Option<String>,
+}
+
+impl AnomalySummary {
+    /// Compose from the three axes' outputs. Pure — no I/O, no state
+    /// mutation; both inputs are already-collected observations.
+    pub fn compose(
+        recurrence: &Recurrence,
+        recommended_action_label: &str,
+        recommended_action_depth: u8,
+        typed_detector: Option<&str>,
+    ) -> Self {
+        Self {
+            signature: recurrence.signature.clone(),
+            recurrence_count: recurrence.count,
+            recurrence_age_s: recurrence.age.as_secs(),
+            recommended_action: recommended_action_label.to_string(),
+            recommended_depth: recommended_action_depth,
+            typed_detector: typed_detector.map(str::to_string),
+        }
+    }
+}
+
 /// The strip step — pure string transform, exposed for tests + so
 /// the tracker can be debugged ("which canonical form did this
 /// signature come from?").
@@ -347,6 +411,65 @@ mod tests {
     fn tracker_peek_returns_none_for_unseen() {
         let t = InMemoryRecurrenceTracker::new();
         assert!(t.peek("template-a", "sig-x").is_none());
+    }
+
+    // ── AnomalySummary::compose ──────────────────────────────────────
+
+    #[test]
+    fn anomaly_summary_carries_all_three_axes() {
+        // Compose populates from all three orthogonal axes — the
+        // composite shape is the join point for the audit consumers.
+        let recurrence = Recurrence {
+            signature: "abc123".to_string(),
+            count: 42,
+            age: Duration::from_secs(900),
+        };
+        let s = AnomalySummary::compose(
+            &recurrence,
+            "ReloadGems",
+            2,
+            Some("load_path_double_load"),
+        );
+        assert_eq!(s.signature, "abc123");
+        assert_eq!(s.recurrence_count, 42);
+        assert_eq!(s.recurrence_age_s, 900);
+        assert_eq!(s.recommended_action, "ReloadGems");
+        assert_eq!(s.recommended_depth, 2);
+        assert_eq!(s.typed_detector.as_deref(), Some("load_path_double_load"));
+    }
+
+    #[test]
+    fn anomaly_summary_typed_detector_optional() {
+        // The opaque-recurring case (unknown known): no named detector
+        // fired; just the recurrence + escalation axes populated.
+        let recurrence = Recurrence {
+            signature: "xyz789".to_string(),
+            count: 1,
+            age: Duration::from_secs(0),
+        };
+        let s = AnomalySummary::compose(&recurrence, "Retry", 0, None);
+        assert_eq!(s.typed_detector, None);
+    }
+
+    #[test]
+    fn anomaly_summary_serializes_to_stable_json_shape() {
+        // Slice-4 status surfaces consume the JSON form. Field names
+        // are part of the contract — locking them here catches
+        // accidental refactors that would break dashboards / API
+        // clients.
+        let recurrence = Recurrence {
+            signature: "sig".to_string(),
+            count: 1,
+            age: Duration::from_secs(60),
+        };
+        let s = AnomalySummary::compose(&recurrence, "Retry", 0, None);
+        let j: serde_json::Value = serde_json::to_value(&s).unwrap();
+        assert!(j["signature"].is_string());
+        assert!(j["recurrence_count"].is_number());
+        assert!(j["recurrence_age_s"].is_number());
+        assert!(j["recommended_action"].is_string());
+        assert!(j["recommended_depth"].is_number());
+        assert!(j["typed_detector"].is_null());
     }
 
     #[test]
