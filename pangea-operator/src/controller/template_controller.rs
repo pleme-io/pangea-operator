@@ -834,13 +834,34 @@ async fn handle_compile_failure(
             recommended_action.label(), recommended_action.depth(),
             duration_unready.as_secs(),
         );
-        let patch = serde_json::json!({
-            "status": {
-                "phase": "Failed",
-                "consecutiveCompileFailures": next,
-                "lastError": escalation_msg.clone(),
-            },
-        });
+        // PauseAndAlert rung executes here: the recovery ladder's
+        // deepest rung shorts to status.autoSuspended=true so the
+        // motor stops burning cycles on a template that has resisted
+        // every shallower remediation. The reconcile entry checks
+        // auto_suspended and halts further work; humans clear via
+        // `kubectl patch ... --type=merge -p '{"status":{"autoSuspended":false}}'
+        // --subresource status`. This is the typed handler the
+        // ladder's surface-only wire promised in commit d002082.
+        let pause = recommended_action ==
+            crate::controller::escalation::EscalationAction::PauseAndAlert;
+        let patch = if pause {
+            serde_json::json!({
+                "status": {
+                    "phase": "Failed",
+                    "consecutiveCompileFailures": next,
+                    "lastError": escalation_msg.clone(),
+                    "autoSuspended": true,
+                },
+            })
+        } else {
+            serde_json::json!({
+                "status": {
+                    "phase": "Failed",
+                    "consecutiveCompileFailures": next,
+                    "lastError": escalation_msg.clone(),
+                },
+            })
+        };
         if let Err(e) =
             crate::controller::status_patch::patch_status(template, &state.client, patch).await
         {
@@ -850,7 +871,7 @@ async fn handle_compile_failure(
             template,
             state,
             EventType::Warning,
-            "CompileFailureEscalated",
+            if pause { "EscalationLadderPause" } else { "CompileFailureEscalated" },
             &escalation_msg,
         )
         .await;
