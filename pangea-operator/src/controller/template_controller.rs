@@ -2103,7 +2103,14 @@ async fn handle_ready(
     template: &InfrastructureTemplate,
     state: &ControllerState,
 ) -> Result<ReconcileAction> {
-    let executor = state.executor_for(template);
+    // Slice 2c part 3: drift check goes through the runner abstraction
+    // too. Same shape as handle_planning — one `runner.plan(workspace)`
+    // call returns both the raw show-JSON (for the legacy Plan-based
+    // drift detail extraction the settling fingerprint reads) and the
+    // typed `CycleArtifact` (for the unified surface). Closes the
+    // last phase handler that still spoke `IacExecutor` directly for
+    // its plan call.
+    let runner = state.executor_runner_for(template);
     let interval = parse_duration(&template.spec.refresh_interval)
         .unwrap_or(DEFAULT_REQUEUE_INTERVAL);
 
@@ -2124,42 +2131,42 @@ async fn handle_ready(
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
 
-    // We need structured drift data (for fingerprinting / settling)
-    // so save the plan to a side file and parse it. If JSON parsing
-    // fails we fall back to the boolean has_changes signal — better
-    // a missed fingerprint than a controller wedge.
-    let drift_plan_path = workspace.path.join("_drift_plan.tfplan");
-    let result = executor
-        .plan(&workspace.path, Some(&drift_plan_path), &[])
-        .await?;
+    let plan_result = runner.plan(&workspace).await?;
 
     update_drift_check_timestamp(template, state).await?;
 
-    let drift_details: Vec<crate::crd::DriftDetail> = if result.has_changes() && drift_plan_path.exists() {
-        let show = executor.show_plan(&workspace.path, &drift_plan_path).await?;
-        if show.success {
-            match Plan::from_json(&show.stdout) {
-                Ok(plan) => plan
-                    .drift_details(50)
-                    .into_iter()
-                    .map(|d| crate::crd::DriftDetail {
-                        address: d.address,
-                        action: d.action,
-                        risk: d.risk,
-                        attributes: d.attributes,
-                        policy_decision: None,
-                        matched_policy: None,
-                    })
-                    .collect(),
-                Err(e) => {
-                    warn!(error = %e, "Failed to parse drift plan JSON");
-                    Vec::new()
-                }
+    // Two-path drift extraction — identical shape to handle_planning's
+    // dispatch. Tofu uses `Plan::from_json` on the show-JSON for
+    // per-attribute drift detail (the settling fingerprint reads this);
+    // magma derives from the typed `CycleArtifact.resource_changes`
+    // (which the bundle reader populates with severities + actions).
+    // Either way, the drift_details list feeds the settling evaluator
+    // the same way it always did.
+    let drift_details: Vec<crate::crd::DriftDetail> = if !plan_result.has_changes {
+        Vec::new()
+    } else if !plan_result.raw_show_json.is_empty() {
+        match Plan::from_json(&plan_result.raw_show_json) {
+            Ok(plan) => plan
+                .drift_details(50)
+                .into_iter()
+                .map(|d| crate::crd::DriftDetail {
+                    address: d.address,
+                    action: d.action,
+                    risk: d.risk,
+                    attributes: d.attributes,
+                    policy_decision: None,
+                    matched_policy: None,
+                })
+                .collect(),
+            Err(e) => {
+                warn!(error = %e, runner = runner.name(), "Failed to parse drift plan JSON");
+                Vec::new()
             }
-        } else {
-            Vec::new()
         }
+    } else if let Some(art) = plan_result.artifact.as_ref() {
+        art.drift_details(50)
     } else {
+        warn!(runner = runner.name(), "Drift check produced no analyzable output");
         Vec::new()
     };
 

@@ -35,7 +35,7 @@ pub use infrastructure_template::{
     OutputBinding, OutputSecretRef, Phase, PolicyDecision, PolicyEvaluation, PolicyMatch,
     PolicyRule, ProfileResult, ProviderCredentials, ProviderKind, ReconcileCycle,
     ResourceOutcome, ResourceSummary, RetryPolicy, SecretRef, SettlingExhaustionAction,
-    SettlingPolicy, TemplateObjectRef, TemplateSource, VariableRef,
+    SettlingPolicy, SeverityRollup, TemplateObjectRef, TemplateSource, VariableRef,
 };
 
 // Re-export InfrastructureFlow types

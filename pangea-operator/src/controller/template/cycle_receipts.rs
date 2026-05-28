@@ -148,14 +148,22 @@ pub fn build_reconcile_cycle(
     // Split the unified CycleArtifact into its destination fields.
     // action_distribution is required on the artifact when present
     // (a CycleArtifact with no changes still has a zero-distribution,
-    // which is informative). artifact_ref is independently optional
-    // — tofu cycles don't populate it in slice 2a, magma cycles do.
-    //
-    // Currently only `action_distribution` + `bundle_ref` make it to
-    // status — slice 2.17 adds severities + resource_changes routing.
-    let (action_distribution, bundle_ref) = match cycle_artifact {
-        Some(a) => (Some(a.action_distribution), a.artifact_ref),
-        None    => (None, None),
+    // which is informative). The other fields are independently
+    // optional — tofu artifacts honestly don't carry bundle_ref or
+    // lifecycle_phase; magma does. Severities is populated by both
+    // when there are non-no-op changes.
+    let (action_distribution, bundle_ref, severity_rollup, lifecycle_phase) = match cycle_artifact {
+        Some(a) => (
+            Some(a.action_distribution),
+            a.artifact_ref,
+            a.severities.map(|s| crate::crd::SeverityRollup {
+                cosmetic:   s.cosmetic,
+                functional: s.functional,
+                breaking:   s.breaking,
+            }),
+            a.lifecycle_phase,
+        ),
+        None => (None, None, None, None),
     };
 
     ReconcileCycle {
@@ -169,6 +177,8 @@ pub fn build_reconcile_cycle(
         executor: executor_name,
         action_distribution,
         bundle_ref,
+        severity_rollup,
+        lifecycle_phase,
     }
 }
 
@@ -408,6 +418,26 @@ pub fn cycle_content_equal(a: &ReconcileCycle, b: &ReconcileCycle) -> bool {
                 return false;
             }
         }
+    }
+    // Severity rollup — a Functional→Breaking flip on identical
+    // counts must invalidate equality. The cycle's user-facing risk
+    // changed.
+    match (a.severity_rollup.as_ref(), b.severity_rollup.as_ref()) {
+        (None, None) => {}
+        (Some(_), None) | (None, Some(_)) => return false,
+        (Some(x), Some(y)) => {
+            if x.cosmetic != y.cosmetic
+                || x.functional != y.functional
+                || x.breaking != y.breaking
+            {
+                return false;
+            }
+        }
+    }
+    // Lifecycle phase — magma's FSM transitions are observable
+    // signals; surface changes.
+    if a.lifecycle_phase != b.lifecycle_phase {
+        return false;
     }
     if a.outcomes.len() != b.outcomes.len() {
         return false;

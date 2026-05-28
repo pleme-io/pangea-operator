@@ -1048,6 +1048,56 @@ pub struct ReconcileCycle {
     /// read (parse error, missing file).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bundle_ref: Option<BundleRef>,
+
+    /// Severity rollup across this cycle's resource changes —
+    /// `{cosmetic, functional, breaking}`. The user-facing answer to
+    /// "how scary is this plan?". Magma populates from its native
+    /// drift-classifier severities; tofu populates from the pure
+    /// `action_to_severity` mapping (Cosmetic for no-op, Functional
+    /// for create/update, Breaking for delete/replace). The sum
+    /// equals the total change count.
+    ///
+    /// `None` when this cycle had no per-resource changes to
+    /// classify (empty plan).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub severity_rollup: Option<SeverityRollup>,
+
+    /// Lifecycle FSM phase recorded in the magma bundle —
+    /// `"planning"`, `"applying"`, `"verifying"`, `"stable"`,
+    /// `"failed"`. Honestly absent (`None`) for tofu cycles: tofu has
+    /// no lifecycle FSM, so the operator never fabricates one.
+    /// Magma's lifecycle states surface here so observers can answer
+    /// "where did this cycle stop?" without exec-reading the bundle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle_phase: Option<String>,
+}
+
+/// Per-cycle severity rollup — counts of resource changes per
+/// severity bucket. Sum equals the total change count for the cycle.
+///
+/// Mirrors `executor::cycle_artifact::SeverityRollup` at the CRD type
+/// layer (so the schemars derive flows through to the CRD YAML
+/// without depending on the executor module). The two types
+/// round-trip via `SeverityRollup::from` conversions wired in
+/// `build_reconcile_cycle`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SeverityRollup {
+    /// Cosmetic changes — comment-level, no real effect (most no-ops
+    /// fall here when surfaced from magma; tofu surfaces them via the
+    /// pure action→severity mapping for no-op).
+    #[serde(default)]
+    pub cosmetic: u32,
+    /// Functional changes — resource updated, created, or
+    /// semantically-meaningful attributes change. The default bucket
+    /// for create/update.
+    #[serde(default)]
+    pub functional: u32,
+    /// Breaking changes — destroy, replace, or anything that loses
+    /// data / interrupts service. The bucket operators pay attention
+    /// to. Maps to magma's `critical` severity at the bundle boundary.
+    #[serde(default)]
+    pub breaking: u32,
 }
 
 /// Distribution of plan action verbs across the changes a cycle's

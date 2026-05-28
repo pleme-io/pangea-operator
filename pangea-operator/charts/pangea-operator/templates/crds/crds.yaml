@@ -902,6 +902,10 @@ spec:
                     description: Echo of the IaC executor that ran THIS cycle. Preserves "magma planned this" even after a future flip of `status.executor`. Mirrors `status.executor` at cycle-record time; `None` for cycles written by operator versions before the field landed (backward-compatible deserialize).
                     nullable: true
                     type: string
+                  lifecyclePhase:
+                    description: 'Lifecycle FSM phase recorded in the magma bundle — `"planning"`, `"applying"`, `"verifying"`, `"stable"`, `"failed"`. Honestly absent (`None`) for tofu cycles: tofu has no lifecycle FSM, so the operator never fabricates one. Magma''s lifecycle states surface here so observers can answer "where did this cycle stop?" without exec-reading the bundle.'
+                    nullable: true
+                    type: string
                   outcomes:
                     description: |-
                       Per-resource outcomes for resources the cycle TOUCHED — i.e. resources that the plan reported a change on (Created / Updated / Destroyed) or that the apply failed on (Failed) or that policy gated (Drifted).
@@ -941,6 +945,32 @@ spec:
                     description: 'Human-readable plan summary, mirroring tofu''s `Plan: +X ~Y -Z` shape. Same string as top-level `status.planSummary` at the moment this cycle ran.'
                     nullable: true
                     type: string
+                  severityRollup:
+                    description: |-
+                      Severity rollup across this cycle's resource changes — `{cosmetic, functional, breaking}`. The user-facing answer to "how scary is this plan?". Magma populates from its native drift-classifier severities; tofu populates from the pure `action_to_severity` mapping (Cosmetic for no-op, Functional for create/update, Breaking for delete/replace). The sum equals the total change count.
+
+                      `None` when this cycle had no per-resource changes to classify (empty plan).
+                    nullable: true
+                    properties:
+                      breaking:
+                        default: 0
+                        description: Breaking changes — destroy, replace, or anything that loses data / interrupts service. The bucket operators pay attention to. Maps to magma's `critical` severity at the bundle boundary.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      cosmetic:
+                        default: 0
+                        description: Cosmetic changes — comment-level, no real effect (most no-ops fall here when surfaced from magma; tofu surfaces them via the pure action→severity mapping for no-op).
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      functional:
+                        default: 0
+                        description: Functional changes — resource updated, created, or semantically-meaningful attributes change. The default bucket for create/update.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                    type: object
                   sourceRevision:
                     description: Source revision the cycle reconciled against — git commit SHA for git-sourced templates, content hash for inline / configmap. Mirrors `status.lastAppliedRevision` for the cycle that just landed; lets observers correlate cycles to source changes.
                     nullable: true
