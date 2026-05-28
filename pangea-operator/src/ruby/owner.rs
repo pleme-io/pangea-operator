@@ -634,7 +634,16 @@ fn run_capture_and_synthesize(
               raise "TerraformSynthesizer not loaded — bundle terraform-synthesizer or set PANGEA_COMPILER_BACKEND=http"
             end
           synth.instance_eval(&$pangea_captured_block)
-          synth.synthesis
+          out = synth.synthesis
+          # Finalize: auto-derive terraform.required_providers from the
+          # resources this workspace emitted, so the rendered config satisfies
+          # magma's preflight laws A2/A3 (every used provider declared). tofu's
+          # resolution is unchanged — the providers it inferred from the
+          # resource prefixes, now stated explicitly. Guarded for older
+          # pangea-core that predates the registry. See Pangea::ProviderRegistry
+          # + theory/EXECUTOR-MIGRATION.md.
+          Pangea::ProviderRegistry.inject_into_synthesis(out) if defined?(Pangea::ProviderRegistry)
+          out
         ensure
           if Object.method_defined?(:template, true) || Object.private_method_defined?(:template, true)
             Object.send(:remove_method, :template) rescue nil
