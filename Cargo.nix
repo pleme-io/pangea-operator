@@ -9589,6 +9589,10 @@ rec {
             features = [ "macros" "tokio" ];
           }
           {
+            name = "blake3";
+            packageId = "blake3";
+          }
+          {
             name = "chrono";
             packageId = "chrono";
             usesDefaultFeatures = false;
@@ -9940,6 +9944,12 @@ rec {
           {
             name = "tracing";
             packageId = "tracing";
+          }
+        ];
+        devDependencies = [
+          {
+            name = "tempfile";
+            packageId = "tempfile";
           }
         ];
 
