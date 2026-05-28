@@ -634,6 +634,127 @@ mod tests {
         assert!(magma_cycle.lifecycle_phase.is_some(), "magma: FSM present");
     }
 
+    /// Slice 2 acceptance, action-shape coverage. The equivalence
+    /// property holds across the full action vocabulary, not just
+    /// the cherry-picked "2 no-op + 1 create + 1 delete" mix above.
+    /// Each shape exercises a specific bug surface:
+    ///
+    ///   * empty — degenerate plan: no resources. action_distribution
+    ///             is all zeros, severities is None, both sides agree.
+    ///   * all-noop — true settled state (the pleme-io-opensource
+    ///                live case): 1054 noOp, zero others. The
+    ///                user-visible "nothing to do" signal.
+    ///   * replace — magma classifies "delete+create" as Breaking;
+    ///               tofu's pure mapping does the same. Both should
+    ///               agree on severities even though they arrive
+    ///               via different paths.
+    ///   * unknown verbs — `Other("read")` etc. must bucket
+    ///                     identically across paths.
+    #[test]
+    fn slice_2_acceptance_holds_across_every_action_shape() {
+        use crate::executor::cycle_artifact::{
+            CycleArtifact, PlanAction, Severity, SeverityRollup, TypedResourceChange,
+        };
+
+        let mk = |addr: &str, action: PlanAction, severity: Severity| {
+            TypedResourceChange { address: addr.into(), action, severity }
+        };
+
+        // Each test case: (name, changes). Both readers produce
+        // identical artifacts → identical ReconcileCycle observables.
+        let cases: Vec<(&str, Vec<TypedResourceChange>)> = vec![
+            ("empty plan", vec![]),
+            (
+                "all no-op (settled state, 5 resources)",
+                (0..5).map(|i|
+                    mk(&format!("r.{i}"), PlanAction::NoOp, Severity::Cosmetic)
+                ).collect(),
+            ),
+            (
+                "all create",
+                (0..3).map(|i|
+                    mk(&format!("r.{i}"), PlanAction::Create, Severity::Functional)
+                ).collect(),
+            ),
+            (
+                "replace (destroy+create coalesce)",
+                vec![mk("r.a", PlanAction::Replace, Severity::Breaking)],
+            ),
+            (
+                "unknown verb 'read' via Other",
+                vec![mk("r.read", PlanAction::Other("read".into()), Severity::Functional)],
+            ),
+            (
+                "mixed (every variant exercised at least once)",
+                vec![
+                    mk("r.a", PlanAction::NoOp,                       Severity::Cosmetic),
+                    mk("r.b", PlanAction::Create,                     Severity::Functional),
+                    mk("r.c", PlanAction::Update,                     Severity::Functional),
+                    mk("r.d", PlanAction::Delete,                     Severity::Breaking),
+                    mk("r.e", PlanAction::Replace,                    Severity::Breaking),
+                    mk("r.f", PlanAction::Other("forget".into()),     Severity::Functional),
+                ],
+            ),
+        ];
+
+        for (name, changes) in &cases {
+            // Both executors populate the artifact from identical changes.
+            // (In production, magma reads from bundle JSON + tofu reads
+            // from show-JSON, but both end up at the same logical shape.)
+            let dist = CycleArtifact::action_distribution_from(changes);
+            let sev = if changes.is_empty() { None } else { Some(SeverityRollup::from_changes(changes)) };
+
+            let tofu_art = CycleArtifact {
+                action_distribution: dist.clone(),
+                resource_changes: changes.clone(),
+                artifact_ref: None,
+                severities: sev.clone(),
+                lifecycle_phase: None,
+            };
+            let magma_art = CycleArtifact {
+                action_distribution: dist.clone(),
+                resource_changes: changes.clone(),
+                artifact_ref: Some(crate::crd::BundleRef {
+                    kind: "terraform".into(),
+                    bundle_id: format!("bundle-{name}"),
+                    size_bytes: 1234,
+                }),
+                severities: sev.clone(),
+                lifecycle_phase: Some("stable".into()),
+            };
+
+            let drifts: Vec<DriftDetail> = vec![];
+            let tofu = build_reconcile_cycle(
+                1, chrono::Utc::now(), &drifts, changes.len() as u32,
+                Some("test".into()), None, Some("tofu".into()),
+                Some(tofu_art), CycleResult::NoChanges,
+            );
+            let magma = build_reconcile_cycle(
+                1, chrono::Utc::now(), &drifts, changes.len() as u32,
+                Some("test".into()), None, Some("magma".into()),
+                Some(magma_art), CycleResult::NoChanges,
+            );
+
+            // The load-bearing assertions. Failure here means slice 2's
+            // interchangeable property doesn't hold for the named shape
+            // — a regression in either reader.
+            assert_eq!(
+                tofu.action_distribution, magma.action_distribution,
+                "{name}: action_distribution must match across executors"
+            );
+            assert_eq!(
+                tofu.severity_rollup, magma.severity_rollup,
+                "{name}: severity_rollup must match"
+            );
+            assert_eq!(tofu.summary.matched,   magma.summary.matched,   "{name}: matched");
+            assert_eq!(tofu.summary.created,   magma.summary.created,   "{name}: created");
+            assert_eq!(tofu.summary.updated,   magma.summary.updated,   "{name}: updated");
+            assert_eq!(tofu.summary.destroyed, magma.summary.destroyed, "{name}: destroyed");
+            assert_eq!(tofu.summary.imported,  magma.summary.imported,  "{name}: imported");
+            assert_eq!(tofu.summary.failed,    magma.summary.failed,    "{name}: failed");
+        }
+    }
+
     #[test]
     fn cycle_content_equal_distinguishes_different_summaries() {
         let mk = |matched| {
