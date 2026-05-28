@@ -15,6 +15,7 @@
 use chrono::{DateTime, Utc};
 use kube::ResourceExt;
 use std::collections::HashSet;
+use std::path::Path;
 use tracing::{debug, info};
 
 use crate::controller::ControllerState;
@@ -23,6 +24,8 @@ use crate::crd::{
     ResourceOutcome,
 };
 use crate::error::Result;
+use crate::executor::cycle_artifact::CycleArtifact;
+use crate::executor::magma_bundle::read_cycle_artifact;
 
 /// What triggered the cycle emission — drives outcome derivation when
 /// translating drift_details into per-resource ResourceOutcome entries.
@@ -54,6 +57,20 @@ pub enum CycleResult {
 /// `total` is the total managed-resource count; `total - drifts.len()`
 /// becomes `summary.matched`. `next_cycle` is the cycle number for
 /// THIS cycle (caller has already incremented `status.cycle_count`).
+///
+/// `executor_name` is the IaC executor that ran this cycle
+/// (`"magma"` / `"tofu"`); recorded into `ReconcileCycle.executor` so
+/// the cycle history preserves which executor produced each receipt
+/// even after a future flip. `cycle_artifact` carries the unified
+/// post-plan data both executors populate — action distribution +
+/// bundle ref + (slice 2b+) per-resource changes + severity rollup +
+/// lifecycle phase. `None` when no artifact was available (no plan
+/// has run yet, executor produced no on-disk output, etc.).
+///
+/// Pure function — all I/O (executor lookup, artifact reading) happens
+/// in the caller `record_reconcile_cycle`, so this is the layer that
+/// gets the test coverage for "given these inputs, the receipt has
+/// these fields."
 pub fn build_reconcile_cycle(
     next_cycle: u64,
     started_at: DateTime<Utc>,
@@ -61,6 +78,8 @@ pub fn build_reconcile_cycle(
     total: u32,
     plan_summary: Option<String>,
     source_revision: Option<String>,
+    executor_name: Option<String>,
+    cycle_artifact: Option<CycleArtifact>,
     result: CycleResult,
 ) -> ReconcileCycle {
     let mut summary = CycleSummary::default();
@@ -126,6 +145,27 @@ pub fn build_reconcile_cycle(
     let untouched = total.saturating_sub(touched_count);
     summary.matched = summary.matched.saturating_add(untouched);
 
+    // Split the unified CycleArtifact into its destination fields.
+    // action_distribution is required on the artifact when present
+    // (a CycleArtifact with no changes still has a zero-distribution,
+    // which is informative). The other fields are independently
+    // optional — tofu artifacts honestly don't carry bundle_ref or
+    // lifecycle_phase; magma does. Severities is populated by both
+    // when there are non-no-op changes.
+    let (action_distribution, bundle_ref, severity_rollup, lifecycle_phase) = match cycle_artifact {
+        Some(a) => (
+            Some(a.action_distribution),
+            a.artifact_ref,
+            a.severities.map(|s| crate::crd::SeverityRollup {
+                cosmetic:   s.cosmetic,
+                functional: s.functional,
+                breaking:   s.breaking,
+            }),
+            a.lifecycle_phase,
+        ),
+        None => (None, None, None, None),
+    };
+
     ReconcileCycle {
         cycle: next_cycle,
         started_at,
@@ -134,6 +174,11 @@ pub fn build_reconcile_cycle(
         plan_summary,
         summary,
         outcomes,
+        executor: executor_name,
+        action_distribution,
+        bundle_ref,
+        severity_rollup,
+        lifecycle_phase,
     }
 }
 
@@ -168,13 +213,37 @@ pub fn truncate_for_status(s: &str) -> String {
     }
 }
 
-/// Patch `status.lastCycle` + bump `status.cycleCount`. Skips the
-/// patch entirely if the receipt is content-equal to the prior one
-/// (only the timestamps differ) — keeps reconcile-loop chatter off
-/// etcd for steady-state Ready→Ready flows.
+/// Patch `status.lastCycle` + bump `status.cycleCount`. Also echoes
+/// the running executor + backend to top-level `status.executor` +
+/// `status.backend`, and populates `lastCycle.actionDistribution` +
+/// `lastCycle.bundleRef` from the cycle artifact.
+///
+/// Skips the patch entirely if the receipt is content-equal to the
+/// prior one (only the timestamps differ) — keeps reconcile-loop
+/// chatter off etcd for steady-state Ready→Ready flows. The
+/// content-equality guard now considers the new bundle/executor
+/// fields too (a cycle that changed bundle but nothing else still
+/// patches; a cycle that changed nothing including the bundle skips).
+///
+/// ## Artifact resolution
+///
+/// `artifact` is the caller's pre-computed `CycleArtifact` (from
+/// `WorkspaceRunner::plan` or `apply`). When `None`, falls back to
+/// reading `magma-bundle.json` from `work_dir` (the slice 1a
+/// behavior, preserved for back-compat with un-migrated callers).
+///
+/// When BOTH are provided: caller wins (pre-computed artifact is
+/// closer to the truth than a follow-up file read, and it works for
+/// tofu cycles which have no bundle on disk).
+///
+/// `work_dir` is optional: pass `Some(&workspace.path)` when the
+/// reconcile path has the workspace in hand; `None` is acceptable
+/// but means the bundle fallback skips (artifact-only mode).
 pub async fn record_reconcile_cycle(
     template: &InfrastructureTemplate,
     state: &ControllerState,
+    work_dir: Option<&Path>,
+    artifact: Option<CycleArtifact>,
     drifts: &[DriftDetail],
     plan_summary: Option<String>,
     result: CycleResult,
@@ -195,6 +264,31 @@ pub async fn record_reconcile_cycle(
         .unwrap_or_else(Utc::now);
     let source_revision = prior_status.last_applied_revision.clone();
 
+    // Identify the executor that ran this cycle. `executor_for` is
+    // cheap (Arc clone for tofu, lightweight ctor for magma — no I/O)
+    // and idempotent, so calling it at cycle boundary is safe even if
+    // the planning phase already called it.
+    let executor = state.executor_for(template);
+    let executor_name = Some(executor.name().to_string());
+    let backend_descriptor = executor.backend_descriptor();
+
+    // Artifact resolution:
+    //   1. Caller-provided pre-computed `artifact` wins (the
+    //      WorkspaceRunner already extracted it from the executor's
+    //      native output — works uniformly for tofu + magma).
+    //   2. Fall back to reading `magma-bundle.json` from `work_dir`
+    //      (the slice-1a path; preserves back-compat for callers
+    //      that haven't migrated to runner-provided artifacts).
+    //   3. None if neither — cycle records without bundle-derived
+    //      fields populated.
+    let cycle_artifact = match artifact {
+        Some(a) => Some(a),
+        None    => match work_dir {
+            Some(dir) => read_cycle_artifact(dir).await,
+            None      => None,
+        },
+    };
+
     let new_cycle = build_reconcile_cycle(
         next_cycle,
         started_at,
@@ -202,11 +296,21 @@ pub async fn record_reconcile_cycle(
         total,
         plan_summary,
         source_revision,
+        executor_name.clone(),
+        cycle_artifact,
         result,
     );
 
+    // Content-equality guard: skip the patch when the new cycle's
+    // observable content matches the prior cycle AND the top-level
+    // executor/backend echo also matches. Steady-state Ready→Ready
+    // flows still skip etcd churn; a cycle that flips executor or
+    // bundle still patches.
+    let runtime_identity_unchanged =
+        prior_status.executor.as_deref() == executor_name.as_deref()
+            && prior_status.backend.as_deref() == backend_descriptor.as_deref();
     if let Some(prev) = prior_status.last_cycle.as_ref() {
-        if cycle_content_equal(prev, &new_cycle) {
+        if cycle_content_equal(prev, &new_cycle) && runtime_identity_unchanged {
             debug!(
                 template = %name,
                 cycle = prior_cycle_count,
@@ -219,11 +323,20 @@ pub async fn record_reconcile_cycle(
     let mut new_status = prior_status;
     new_status.cycle_count = next_cycle;
     new_status.last_cycle = Some(new_cycle.clone());
+    new_status.executor = executor_name.clone();
+    new_status.backend = backend_descriptor.clone();
 
     let patch = serde_json::json!({
         "status": {
             "cycleCount": new_status.cycle_count,
-            "lastCycle": new_status.last_cycle,
+            "lastCycle":  new_status.last_cycle,
+            // Top-level executor + backend echo so observers can
+            // answer "what's running here?" with a single jsonpath
+            // (no grep on operator logs). Always sent (rather than
+            // skip-if-None) so a flip from magma to tofu propagates
+            // immediately on the next patched cycle.
+            "executor":   new_status.executor,
+            "backend":    new_status.backend,
         }
     });
     crate::controller::status_patch::patch_status(template, &state.client, patch)
@@ -232,22 +345,32 @@ pub async fn record_reconcile_cycle(
     info!(
         template = %name,
         cycle = next_cycle,
+        executor = executor.name(),
         matched = new_cycle.summary.matched,
         updated = new_cycle.summary.updated,
         created = new_cycle.summary.created,
         destroyed = new_cycle.summary.destroyed,
         drifted_uncorrected = new_cycle.summary.drifted_uncorrected,
         failed = new_cycle.summary.failed,
+        action_no_op  = new_cycle.action_distribution.as_ref().map(|a| a.no_op).unwrap_or(0),
+        action_create = new_cycle.action_distribution.as_ref().map(|a| a.create).unwrap_or(0),
+        action_update = new_cycle.action_distribution.as_ref().map(|a| a.update).unwrap_or(0),
+        action_delete = new_cycle.action_distribution.as_ref().map(|a| a.delete).unwrap_or(0),
+        bundle_id     = new_cycle.bundle_ref.as_ref().map(|b| b.bundle_id.as_str()).unwrap_or(""),
         "ReconcileCycle recorded"
     );
     Ok(())
 }
 
 /// Two cycles are content-equal when summary, source_revision,
-/// plan_summary, and outcomes match. Cycle number and timestamps are
-/// deliberately ignored — they always differ between successive
-/// reconciles, and skipping the patch when nothing else changed is
-/// the whole point (no etcd churn for Matched-only steady state).
+/// plan_summary, executor, action_distribution, bundle_ref, and
+/// outcomes match. Cycle number and timestamps are deliberately
+/// ignored — they always differ between successive reconciles, and
+/// skipping the patch when nothing else changed is the whole point
+/// (no etcd churn for Matched-only steady state). Adding the new
+/// observable fields to the comparison ensures that e.g. a bundle
+/// hash change between cycles forces a re-patch even when the
+/// summary stays the same.
 pub fn cycle_content_equal(a: &ReconcileCycle, b: &ReconcileCycle) -> bool {
     if a.summary.matched != b.summary.matched
         || a.summary.updated != b.summary.updated
@@ -260,6 +383,60 @@ pub fn cycle_content_equal(a: &ReconcileCycle, b: &ReconcileCycle) -> bool {
         return false;
     }
     if a.source_revision != b.source_revision || a.plan_summary != b.plan_summary {
+        return false;
+    }
+    if a.executor != b.executor {
+        return false;
+    }
+    // Bundle ref is compared by bundle_id (the content hash from
+    // magma; kind + size are implied or hint-only). A bundle_id flip
+    // is the canonical signal "magma ran a new plan."
+    match (a.bundle_ref.as_ref(), b.bundle_ref.as_ref()) {
+        (None, None) => {}
+        (Some(_), None) | (None, Some(_)) => return false,
+        (Some(x), Some(y)) => {
+            if x.bundle_id != y.bundle_id {
+                return false;
+            }
+        }
+    }
+    // ActionDistribution compared field-by-field — a no-op→create
+    // flip on identical resource counts must invalidate equality
+    // even when the post-decision summary still rolls them up the
+    // same way (because the user-facing distinction matters).
+    match (a.action_distribution.as_ref(), b.action_distribution.as_ref()) {
+        (None, None) => {}
+        (Some(_), None) | (None, Some(_)) => return false,
+        (Some(x), Some(y)) => {
+            if x.no_op != y.no_op
+                || x.create != y.create
+                || x.update != y.update
+                || x.delete != y.delete
+                || x.replace != y.replace
+                || x.other != y.other
+            {
+                return false;
+            }
+        }
+    }
+    // Severity rollup — a Functional→Breaking flip on identical
+    // counts must invalidate equality. The cycle's user-facing risk
+    // changed.
+    match (a.severity_rollup.as_ref(), b.severity_rollup.as_ref()) {
+        (None, None) => {}
+        (Some(_), None) | (None, Some(_)) => return false,
+        (Some(x), Some(y)) => {
+            if x.cosmetic != y.cosmetic
+                || x.functional != y.functional
+                || x.breaking != y.breaking
+            {
+                return false;
+            }
+        }
+    }
+    // Lifecycle phase — magma's FSM transitions are observable
+    // signals; surface changes.
+    if a.lifecycle_phase != b.lifecycle_phase {
         return false;
     }
     if a.outcomes.len() != b.outcomes.len() {
@@ -344,10 +521,238 @@ mod tests {
             plan_summary: Some("no changes".into()),
             summary: summary.clone(),
             outcomes: vec![],
+            ..Default::default()
         };
         let a = mk(1, Utc::now());
         let b = mk(2, Utc::now() + chrono::Duration::seconds(1));
         assert!(cycle_content_equal(&a, &b));
+    }
+
+    /// The slice-2 acceptance property at the cycle-receipt layer:
+    /// given the same logical workspace state (same resources, same
+    /// actions), both executors flow into a `ReconcileCycle` that
+    /// agrees on every observable except `executor` (legitimately
+    /// different) and `bundle_ref` / `lifecycle_phase` (different
+    /// artifact kinds; honest absence on the tofu side).
+    ///
+    /// Asserts at the seam where `cycle_artifact` is consumed by
+    /// `build_reconcile_cycle` — the same code path the live
+    /// controller takes. If this passes, magma and tofu cycles
+    /// produce equivalent CR status given equivalent input. The
+    /// load-bearing claim that justifies slice 2's
+    /// "interchangeable" framing.
+    #[test]
+    fn slice_2_acceptance_same_inputs_yield_equivalent_cycle_receipts() {
+        use crate::executor::cycle_artifact::{
+            CycleArtifact, PlanAction, Severity, SeverityRollup, TypedResourceChange,
+        };
+
+        let mk_change = |addr: &str, action: PlanAction, severity: Severity| {
+            TypedResourceChange { address: addr.into(), action, severity }
+        };
+
+        // A workspace with 4 changes: 2 no-op, 1 create, 1 delete.
+        // Same logical content; each executor populates from its
+        // native format.
+        let common_changes = vec![
+            mk_change("github_repository.a", PlanAction::NoOp,   Severity::Cosmetic),
+            mk_change("github_repository.b", PlanAction::NoOp,   Severity::Cosmetic),
+            mk_change("github_repository.c", PlanAction::Create, Severity::Functional),
+            mk_change("github_repository.d", PlanAction::Delete, Severity::Breaking),
+        ];
+
+        let tofu_art = CycleArtifact {
+            action_distribution: CycleArtifact::action_distribution_from(&common_changes),
+            resource_changes: common_changes.clone(),
+            artifact_ref: None,                                       // tofu side: slice 2a leaves None
+            severities: Some(SeverityRollup::from_changes(&common_changes)),
+            lifecycle_phase: None,                                    // tofu has no FSM
+        };
+
+        let magma_art = CycleArtifact {
+            action_distribution: CycleArtifact::action_distribution_from(&common_changes),
+            resource_changes: common_changes.clone(),
+            artifact_ref: Some(crate::crd::BundleRef {
+                kind: "terraform".into(),
+                bundle_id: "abc123".into(),
+                size_bytes: 4096,
+            }),
+            severities: Some(SeverityRollup::from_changes(&common_changes)),
+            lifecycle_phase: Some("stable".into()),
+        };
+
+        // Build via the same code path the live operator takes.
+        let drifts: Vec<DriftDetail> = vec![];
+
+        let tofu_cycle = build_reconcile_cycle(
+            42,
+            chrono::Utc::now(),
+            &drifts,
+            4,
+            Some("+1 ~0 -1".into()),
+            None,
+            Some("tofu".into()),
+            Some(tofu_art),
+            CycleResult::NoChanges,
+        );
+        let magma_cycle = build_reconcile_cycle(
+            42,
+            chrono::Utc::now(),
+            &drifts,
+            4,
+            Some("+1 ~0 -1".into()),
+            None,
+            Some("magma".into()),
+            Some(magma_art),
+            CycleResult::NoChanges,
+        );
+
+        // ── Equivalent observables ───────────────────────────────
+        assert_eq!(
+            tofu_cycle.action_distribution, magma_cycle.action_distribution,
+            "action_distribution must be identical across executors"
+        );
+        assert_eq!(
+            tofu_cycle.severity_rollup, magma_cycle.severity_rollup,
+            "severity_rollup must be identical (the pure action→severity \
+             mapping ensures tofu lands on the same buckets magma's \
+             classifier does for the same actions)"
+        );
+        // CycleSummary doesn't impl PartialEq so we compare field-wise.
+        assert_eq!(tofu_cycle.summary.matched,   magma_cycle.summary.matched);
+        assert_eq!(tofu_cycle.summary.created,   magma_cycle.summary.created);
+        assert_eq!(tofu_cycle.summary.updated,   magma_cycle.summary.updated);
+        assert_eq!(tofu_cycle.summary.destroyed, magma_cycle.summary.destroyed);
+        assert_eq!(tofu_cycle.summary.imported,  magma_cycle.summary.imported);
+        assert_eq!(tofu_cycle.summary.failed,    magma_cycle.summary.failed);
+
+        // ── Permit-by-design differences ─────────────────────────
+        assert_ne!(tofu_cycle.executor, magma_cycle.executor, "executor name legitimately differs");
+        assert!(tofu_cycle.bundle_ref.is_none(), "tofu side: no bundle ref in slice 2a (deferred)");
+        assert!(magma_cycle.bundle_ref.is_some(), "magma side: bundle ref present");
+        assert!(tofu_cycle.lifecycle_phase.is_none(), "tofu: no FSM (honest absence)");
+        assert!(magma_cycle.lifecycle_phase.is_some(), "magma: FSM present");
+    }
+
+    /// Slice 2 acceptance, action-shape coverage. The equivalence
+    /// property holds across the full action vocabulary, not just
+    /// the cherry-picked "2 no-op + 1 create + 1 delete" mix above.
+    /// Each shape exercises a specific bug surface:
+    ///
+    ///   * empty — degenerate plan: no resources. action_distribution
+    ///             is all zeros, severities is None, both sides agree.
+    ///   * all-noop — true settled state (the pleme-io-opensource
+    ///                live case): 1054 noOp, zero others. The
+    ///                user-visible "nothing to do" signal.
+    ///   * replace — magma classifies "delete+create" as Breaking;
+    ///               tofu's pure mapping does the same. Both should
+    ///               agree on severities even though they arrive
+    ///               via different paths.
+    ///   * unknown verbs — `Other("read")` etc. must bucket
+    ///                     identically across paths.
+    #[test]
+    fn slice_2_acceptance_holds_across_every_action_shape() {
+        use crate::executor::cycle_artifact::{
+            CycleArtifact, PlanAction, Severity, SeverityRollup, TypedResourceChange,
+        };
+
+        let mk = |addr: &str, action: PlanAction, severity: Severity| {
+            TypedResourceChange { address: addr.into(), action, severity }
+        };
+
+        // Each test case: (name, changes). Both readers produce
+        // identical artifacts → identical ReconcileCycle observables.
+        let cases: Vec<(&str, Vec<TypedResourceChange>)> = vec![
+            ("empty plan", vec![]),
+            (
+                "all no-op (settled state, 5 resources)",
+                (0..5).map(|i|
+                    mk(&format!("r.{i}"), PlanAction::NoOp, Severity::Cosmetic)
+                ).collect(),
+            ),
+            (
+                "all create",
+                (0..3).map(|i|
+                    mk(&format!("r.{i}"), PlanAction::Create, Severity::Functional)
+                ).collect(),
+            ),
+            (
+                "replace (destroy+create coalesce)",
+                vec![mk("r.a", PlanAction::Replace, Severity::Breaking)],
+            ),
+            (
+                "unknown verb 'read' via Other",
+                vec![mk("r.read", PlanAction::Other("read".into()), Severity::Functional)],
+            ),
+            (
+                "mixed (every variant exercised at least once)",
+                vec![
+                    mk("r.a", PlanAction::NoOp,                       Severity::Cosmetic),
+                    mk("r.b", PlanAction::Create,                     Severity::Functional),
+                    mk("r.c", PlanAction::Update,                     Severity::Functional),
+                    mk("r.d", PlanAction::Delete,                     Severity::Breaking),
+                    mk("r.e", PlanAction::Replace,                    Severity::Breaking),
+                    mk("r.f", PlanAction::Other("forget".into()),     Severity::Functional),
+                ],
+            ),
+        ];
+
+        for (name, changes) in &cases {
+            // Both executors populate the artifact from identical changes.
+            // (In production, magma reads from bundle JSON + tofu reads
+            // from show-JSON, but both end up at the same logical shape.)
+            let dist = CycleArtifact::action_distribution_from(changes);
+            let sev = if changes.is_empty() { None } else { Some(SeverityRollup::from_changes(changes)) };
+
+            let tofu_art = CycleArtifact {
+                action_distribution: dist.clone(),
+                resource_changes: changes.clone(),
+                artifact_ref: None,
+                severities: sev.clone(),
+                lifecycle_phase: None,
+            };
+            let magma_art = CycleArtifact {
+                action_distribution: dist.clone(),
+                resource_changes: changes.clone(),
+                artifact_ref: Some(crate::crd::BundleRef {
+                    kind: "terraform".into(),
+                    bundle_id: format!("bundle-{name}"),
+                    size_bytes: 1234,
+                }),
+                severities: sev.clone(),
+                lifecycle_phase: Some("stable".into()),
+            };
+
+            let drifts: Vec<DriftDetail> = vec![];
+            let tofu = build_reconcile_cycle(
+                1, chrono::Utc::now(), &drifts, changes.len() as u32,
+                Some("test".into()), None, Some("tofu".into()),
+                Some(tofu_art), CycleResult::NoChanges,
+            );
+            let magma = build_reconcile_cycle(
+                1, chrono::Utc::now(), &drifts, changes.len() as u32,
+                Some("test".into()), None, Some("magma".into()),
+                Some(magma_art), CycleResult::NoChanges,
+            );
+
+            // The load-bearing assertions. Failure here means slice 2's
+            // interchangeable property doesn't hold for the named shape
+            // — a regression in either reader.
+            assert_eq!(
+                tofu.action_distribution, magma.action_distribution,
+                "{name}: action_distribution must match across executors"
+            );
+            assert_eq!(
+                tofu.severity_rollup, magma.severity_rollup,
+                "{name}: severity_rollup must match"
+            );
+            assert_eq!(tofu.summary.matched,   magma.summary.matched,   "{name}: matched");
+            assert_eq!(tofu.summary.created,   magma.summary.created,   "{name}: created");
+            assert_eq!(tofu.summary.updated,   magma.summary.updated,   "{name}: updated");
+            assert_eq!(tofu.summary.destroyed, magma.summary.destroyed, "{name}: destroyed");
+            assert_eq!(tofu.summary.imported,  magma.summary.imported,  "{name}: imported");
+            assert_eq!(tofu.summary.failed,    magma.summary.failed,    "{name}: failed");
+        }
     }
 
     #[test]
@@ -363,6 +768,7 @@ mod tests {
                 plan_summary: None,
                 summary,
                 outcomes: vec![],
+                ..Default::default()
             }
         };
         assert!(!cycle_content_equal(&mk(7), &mk(8)));

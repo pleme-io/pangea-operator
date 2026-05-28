@@ -152,6 +152,45 @@ impl CompilerBackend for EmbeddedCompilerBackend {
             .await
             .map_err(|e| BackendError::Ruby(format!("gem cache: {e}")))?;
 
+        // Slice 2c+: defense-in-depth. Before broadcasting the gem's
+        // lib to every pool worker, run the load-path conflict
+        // detector against the OTHER cached gem libs we've already
+        // prepared. Catches the same bug class as the workspace
+        // shield (two paths exposing the same logical Ruby file)
+        // at an earlier site — if two architecture gems ship the
+        // same file, broadcasting the second one creates a latent
+        // double-load that won't surface until compile.
+        //
+        // Findings here are warnings only (don't refuse the
+        // broadcast); the workspace-compile shield is the
+        // authoritative guard. This emits early audit signal so
+        // the conflict is named at its source.
+        {
+            let prepared = self.prepared.lock().await;
+            let existing_libs: Vec<std::path::PathBuf> = prepared
+                .values()
+                .map(|p| p.gem_path.join("lib"))
+                .filter(|p| p.is_dir())
+                .collect();
+            let detector = pangea_ruby_eval::LoadPathConflictDetector::pangea();
+            // We pass entry.lib_path as the "new" path + existing
+            // cached libs as the "existing" $LOAD_PATH. Same trait
+            // shape, different site.
+            use pangea_ruby_eval::ConflictDetector;
+            let ctx = pangea_ruby_eval::CompileContext::new()
+                .with_load_paths(vec![entry.lib_path.clone()]);
+            for c in detector.detect(&ctx, &existing_libs) {
+                tracing::warn!(
+                    gem = %source.name,
+                    git_ref = %source.git_ref,
+                    detector = c.detector,
+                    category = %c.category,
+                    warning = %c.message,
+                    "prepare_gem load-path conflict — gem broadcast will create double-load risk"
+                );
+            }
+        }
+
         // Broadcast lib/ prepend to every pool worker — each VM has
         // its own $LOAD_PATH, so we have to fan out. The gem clone
         // itself happened once on the shared filesystem above; only

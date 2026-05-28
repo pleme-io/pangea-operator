@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncReadExt, BufReader};
 use tokio::process::Command;
 use tracing::{debug, error, info, warn};
 
@@ -283,23 +283,37 @@ impl TofuExecutor {
         let stdout_handle = child.stdout.take().unwrap();
         let stderr_handle = child.stderr.take().unwrap();
 
-        // Read output streams
+        // Read output streams to end.
+        //
+        // Read the ENTIRE stream into a buffer rather than line-by-line.
+        // The old `BufReader::lines()` + `while let Ok(Some(line))` had
+        // two failure modes that silently corrupted output:
+        //   1. `next_line()` returning `Err` (a mid-stream read error)
+        //      ends the loop with NO error surfaced — truncated output
+        //      masquerading as complete.
+        //   2. `tofu show -json` emits the whole plan as ONE line with no
+        //      trailing newline. For a large plan (pleme-io-opensource:
+        //      ~1000 resources, tens of MB) the line-buffered path was
+        //      the source of empty/truncated plan JSON, which silently
+        //      disabled the import prepass and 422-stormed the apply
+        //      (the stuck GitHub posture, 2026-05-08 → 2026-05-25).
+        // `read_to_end` is robust to both: it returns the full bytes or a
+        // real I/O error. JSON/diagnostics are UTF-8; lossy decode keeps
+        // us from dropping output on the rare invalid byte.
         let stdout_task = tokio::spawn(async move {
-            let mut lines = Vec::new();
-            let mut reader = BufReader::new(stdout_handle).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                lines.push(line);
+            let mut reader = BufReader::new(stdout_handle);
+            let mut buf = Vec::new();
+            if let Err(e) = reader.read_to_end(&mut buf).await {
+                warn!(error = %e, "error reading tofu stdout; output may be partial");
             }
-            lines.join("\n")
+            String::from_utf8_lossy(&buf).into_owned()
         });
 
         let stderr_task = tokio::spawn(async move {
-            let mut lines = Vec::new();
-            let mut reader = BufReader::new(stderr_handle).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                lines.push(line);
-            }
-            lines.join("\n")
+            let mut reader = BufReader::new(stderr_handle);
+            let mut buf = Vec::new();
+            let _ = reader.read_to_end(&mut buf).await;
+            String::from_utf8_lossy(&buf).into_owned()
         });
 
         // Wait with timeout
@@ -405,6 +419,21 @@ impl TofuExecutor {
 /// `&dyn IacExecutor`.
 #[async_trait]
 impl IacExecutor for TofuExecutor {
+    fn name(&self) -> &'static str {
+        "tofu"
+    }
+
+    /// TofuExecutor shells out to the `tofu` CLI; its actual state
+    /// backend is whatever the workspace's `main.tf.json` declares
+    /// (typically the operator's pg-state-backend, but configurable
+    /// per-workspace). The executor itself doesn't know — that's a
+    /// property of the rendered config, not of this struct — so we
+    /// return None rather than guess. Magma, by contrast, owns its
+    /// state backend directly and returns `pg/<schema>`.
+    fn backend_descriptor(&self) -> Option<String> {
+        None
+    }
+
     async fn init(&self, work_dir: &Path, extra_args: &[&str]) -> Result<TofuResult> {
         TofuExecutor::init(self, work_dir, extra_args).await
     }

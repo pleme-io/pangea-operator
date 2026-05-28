@@ -16,6 +16,12 @@ sha2 = "0.10"
 thiserror = { workspace = true }
 tracing = { workspace = true }
 
+[dev-dependencies]
+# Used by the CompileContext + detect_load_path_conflicts unit tests
+# (the structured-defense shield) — pure file-system fixtures that
+# don't need a Ruby interpreter.
+tempfile = "3"
+
 [lib]
 # Tests in this crate boot a CRuby interpreter via magnus::embed::init().
 # CRuby's GVL allows only one interpreter per process, so all tests in the

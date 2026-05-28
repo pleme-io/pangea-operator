@@ -6,7 +6,8 @@ metadata:
 spec:
   group: pangea.pleme.io
   names:
-    categories: []
+    categories:
+    - pangea
     kind: InfrastructureTemplate
     plural: infrastructuretemplates
     shortNames:
@@ -25,6 +26,24 @@ spec:
     - jsonPath: .status.resources.total
       name: Resources
       type: integer
+    - jsonPath: .status.cycleCount
+      name: Cycle
+      type: integer
+    - jsonPath: .status.lastCycle.summary.matched
+      name: Matched
+      type: integer
+    - jsonPath: .status.lastCycle.summary.updated
+      name: Updated
+      type: integer
+    - jsonPath: .status.lastCycle.summary.driftedUncorrected
+      name: Drifted
+      type: integer
+    - jsonPath: .status.conditions[?(@.type=='Healthy')].status
+      name: Healthy
+      type: string
+    - jsonPath: .status.autoSuspended
+      name: Suspended
+      type: boolean
     - jsonPath: .spec.destroyProtection
       name: Protected
       type: boolean
@@ -48,6 +67,65 @@ spec:
                 items:
                   type: string
                 type: array
+              conflictPolicy:
+                description: |-
+                  Typed, cascading conflict-resolution policy — the operator's answer to "apply hit a provider conflict (the resource already exists / is already protected) that the pre-apply import sweep didn't catch." Rather than failing the cycle, the operator classifies each conflict and, for `import`-resolution conflicts, adopts the out-of-band resource via `tofu import` then re-applies (up to `maxRounds`).
+
+                  Two layers, general + specific: - GENERAL (default): unset → a bundled policy (`alreadyExists` + `alreadyProtected` → `import`, everything else → `fail`, 3 rounds) that fires automatically whenever `importPolicy.autoOnConflict` is true. Existing templates self-heal conflicts with NO spec change. - SPECIFIC: set `rules` to override per resource-type + kind (first match wins), `defaultResolution` for the unmatched fallback, and `enabled` to force on/off independent of `autoOnConflict`.
+
+                  Default: unset → bundled policy gated on `autoOnConflict`.
+                nullable: true
+                properties:
+                  defaultResolution:
+                    description: Resolution for conflicts no `rules` entry matched. Defaults to `fail` (never silently paper over an unrecognized conflict).
+                    enum:
+                    - import
+                    - skip
+                    - fail
+                    nullable: true
+                    type: string
+                  enabled:
+                    description: Master switch. `Some(true)`/`Some(false)` forces the post-apply conflict catch on/off. `None` (default) inherits from `importPolicy.autoOnConflict` — so templates already opting into auto-import get the convergence guarantee with no extra config.
+                    nullable: true
+                    type: boolean
+                  maxRounds:
+                    description: Max import→re-apply rounds before giving up (clamped to 1..=10). Default 3.
+                    format: uint32
+                    minimum: 0.0
+                    nullable: true
+                    type: integer
+                  rules:
+                    description: Specific per-(resourceType, kind) rules, first match wins.
+                    items:
+                      description: One typed conflict-resolution rule — the *specific* layer. Evaluated top-to-bottom; the first rule whose `resourceTypes` (empty = any) and `kinds` (empty = any) match the conflict wins.
+                      properties:
+                        kinds:
+                          description: Conflict kinds this rule matches. Empty = match any kind.
+                          items:
+                            description: Typed classification of a provider conflict surfaced by a failed `tofu apply`. The operator's conflict classifier (`controller::conflict::classify_apply_conflicts`) maps OpenTofu's diagnostic text onto these kinds; the [`ConflictResolutionPolicy`] then decides what to do per kind.
+                            enum:
+                            - alreadyExists
+                            - alreadyProtected
+                            - other
+                            type: string
+                          type: array
+                        resolution:
+                          description: What to do when this rule matches.
+                          enum:
+                          - import
+                          - skip
+                          - fail
+                          type: string
+                        resourceTypes:
+                          description: Tofu resource types this rule matches (e.g. `github_repository`). Empty = match any resource type.
+                          items:
+                            type: string
+                          type: array
+                      required:
+                      - resolution
+                      type: object
+                    type: array
+                type: object
               defaultDecision:
                 description: |-
                   Decision applied to changes that match no rule in `policies`. If unset, defaults to `autoApply` — the operator aggressively settles drift on every change at every risk level. Set this to `refuse` to make the policy list strictly opt-in (only changes explicitly allowed by a rule may be applied), or to `requireApproval` to gate everything not explicitly auto-applied.
@@ -68,6 +146,86 @@ spec:
 
                   To actually destroy protected infrastructure, first set this to false, then delete the CR.
                 type: boolean
+              executor:
+                description: |-
+                  IaC backend to use for plan/apply on this CR. Accepts `tofu` (default — OpenTofu subprocess) or `magma` (in-process Rust library via the `executor_magma` feature). When unset, falls back to the operator-wide default from the `PANGEA_EXECUTOR` env var, then to `tofu`.
+
+                  Both backends coexist indefinitely; this field is the per-CR opt-in for magma during the burn-in period. Per `theory/MAGMA-OPERATOR-BACKEND.md` §VI.
+                nullable: true
+                type: string
+              importHints:
+                additionalProperties:
+                  type: string
+                description: |-
+                  Hints used by the operator to import out-of-band cloud resources into tofu state instead of creating duplicates.
+
+                  Keys are tofu resource addresses (e.g. `cloudflare_dns_record.foo`), values are import IDs (the provider-specific shape, e.g. `<zone_id>/<record_id>` for cloudflare DNS, role name for `aws_iam_role`, etc.). Values support `{{ .varName }}` substitution from `spec.variables` — e.g. `"{{ .cloudflare_zone_id }}/foo"` resolves `varName` against `spec.variables` (string-coerced) before passing to `tofu import`.
+
+                  Operator behavior: before each `tofu apply`, for every plan action with `action: create` whose resource address matches a key here, the operator runs `tofu import <addr> <substituted-id>`. After import the resource is in state, the apply becomes a no-op or update, and the cycle receipt records the resource as `Outcome::Imported` instead of `Outcome::Created`. This is the typed answer to "auto-import any state".
+
+                  Empty map (default) = no imports — every `create` action goes straight to the apply and creates a fresh resource as before. Hint values that fail substitution are skipped with a Warning event; hint imports that fail (e.g. ID doesn't match) leave the resource for the apply to handle.
+                type: object
+              importPolicy:
+                description: |-
+                  Automatic-import policy — when set with `autoOnConflict: true`, the operator runs `tofu import` for EVERY plan `create`-action whose resource-type has a natural-ID rule (declared in `naturalIds`, fallback to operator-bundled defaults), substituting against the planned attribute values from `tofu show -json plan`. Resources that already exist in the cloud provider get adopted into state instead of failing the apply with "already exists".
+
+                  This is the typed answer to "fully consume existing infrastructure into pangea-operator." `importHints` (per-address) takes precedence; `importPolicy.naturalIds` (per-resource-type) is the fallback; operator-bundled defaults (in `controller/import.rs::bundled_natural_ids`) fill the rest. Three layers — author-explicit, then per-template type-rules, then sensible cluster-wide defaults.
+
+                  Default: unset (no auto-import; existing `importHints` behaviour preserved).
+                nullable: true
+                properties:
+                  autoOnConflict:
+                    default: false
+                    description: Master switch. When `false` (default), no auto-import fires regardless of `naturalIds` or bundled defaults — you stay on today's per-address `importHints`-only behaviour. When `true`, every `create`-action is a candidate for auto-import.
+                    type: boolean
+                  naturalIds:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      Per-resource-type natural-ID extraction templates. Keys are terraform resource types (`github_repository`, `aws_iam_role`, etc.); values are substitution templates like `{{ .planned.name }}` or `{{ .planned.zone_id }}/{{ .planned.id }}`.
+
+                      Empty map = fall through to operator-bundled defaults.
+                    type: object
+                type: object
+              outputBindings:
+                description: |-
+                  Publish selected `status.outputs` to user-defined K8s Secrets after every successful apply. Each binding picks a single output address and writes it to a named Secret/key in any namespace the operator has reach to.
+
+                  X2 of the Crossplane-absorb plan — analog of Crossplane's `writeConnectionSecretToRef`, but per-binding (not all outputs to one secret) and with a typed `sensitive` flag. Idempotent via server-side apply: re-publishes only when the value actually changes.
+
+                  Empty (default) = no secret publication; consumers read `status.outputs` JSON directly.
+                items:
+                  description: One binding of a tofu output to a K8s Secret key. Authored by the user on `InfrastructureTemplate.spec.outputBindings`; consumed by `controller/template/output_bindings.rs::apply_output_bindings` after every successful apply.
+                  properties:
+                    output:
+                      description: 'Tofu output address — looked up against `status.outputs` after apply. Examples: - `cloudflare_pages_domain.varanda.id` - `aws_iam_role.deployer.arn` Outputs the tofu run did not produce are skipped with a log line; they don''t fail the reconcile (apply already succeeded by the time bindings publish).'
+                      type: string
+                    secretRef:
+                      description: Where to write the value.
+                      properties:
+                        key:
+                          description: Key within the Secret's `.data` map.
+                          type: string
+                        name:
+                          description: Secret name. Created if missing; updated via server-side apply if existing.
+                          type: string
+                        namespace:
+                          description: Secret namespace. Required — operators don't infer from the template's namespace because templates often produce outputs consumed in another namespace. The operator must have RBAC to write Secrets in this namespace (chart 0.8.12+ grants secrets create/update/patch cluster-wide).
+                          type: string
+                        sensitive:
+                          default: false
+                          description: When true, the operator stamps a `pangea.pleme.io/sensitive=true` label on the Secret. Doesn't change K8s storage behavior — etcd encryption is orthogonal — but surfaces author intent for downstream tooling (mounted-as-env policies, audit dashboards, ESO hand-off).
+                          type: boolean
+                      required:
+                      - key
+                      - name
+                      - namespace
+                      type: object
+                  required:
+                  - output
+                  - secretRef
+                  type: object
+                type: array
               pangeaNamespace:
                 description: Pangea namespace for state isolation. This determines the PostgreSQL schema used for state storage.
                 type: string
@@ -177,6 +335,143 @@ spec:
                         type: object
                     required:
                     - secretRef
+                    type: object
+                  github:
+                    description: 'GitHub credentials configuration. Used by templates that declare github_* providers (e.g. pangea-github''s `cloudflare_zero_trust_*` adjacent shapes — repos, runner groups, branch protection). Same shape as the cloudflare credentials block: a secretRef to a Secret containing a PAT.'
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the GitHub PAT.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
+                type: object
+              reactivePolicy:
+                description: 'Reactive policy — declarative responses to "things didn''t go to a good state". Innermost level of the cascade (gem → workspace → template). When unset at every cascade level, the operator applies sensible defaults: 5 consecutive failures → Alert, phase timeouts of 5m / 10m / 30m for Compiling / Planning / Applying → Alert, Verified=False for 10m → Alert. See the `ReactivePolicy` type in the shared `architecture_gem` module.'
+                nullable: true
+                properties:
+                  failureEscalation:
+                    description: What to do when consecutive Failed reconciles exceed threshold.
+                    nullable: true
+                    properties:
+                      maxConsecutiveFailures:
+                        default: 5
+                        description: Threshold. Default 5.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      onExhaustion:
+                        default: alert
+                        description: What to do when threshold is reached.
+                        enum:
+                        - alert
+                        - suspend
+                        - page
+                        type: string
+                      routing:
+                        description: Where to route the notification.
+                        nullable: true
+                        properties:
+                          githubIssueTemplate:
+                            description: GitHub issue template name. Operator opens an issue in the workspace's source repo.
+                            nullable: true
+                            type: string
+                          ntfyTopic:
+                            description: ntfy topic name (homelab convention — see pleme-io alertmanager-ntfy module).
+                            nullable: true
+                            type: string
+                          slackChannel:
+                            description: Slack channel (SaaS convention — Datadog/Splunk-paired clusters).
+                            nullable: true
+                            type: string
+                        type: object
+                    type: object
+                  phaseTimeout:
+                    description: What to do when stuck in a non-terminal phase too long.
+                    nullable: true
+                    properties:
+                      applying:
+                        default: 30m
+                        description: '`Applying` threshold. Default `30m`.'
+                        type: string
+                      compiling:
+                        default: 5m
+                        description: How long can `Compiling` last before escalating. Format same as refreshInterval (`5m`, `30s`, `1h`). Default `5m`.
+                        type: string
+                      onTimeout:
+                        default: alert
+                        description: What to do when the threshold is exceeded.
+                        enum:
+                        - alert
+                        - suspend
+                        - page
+                        type: string
+                      planning:
+                        default: 10m
+                        description: '`Planning` threshold. Default `10m`.'
+                        type: string
+                      routing:
+                        description: Where to route the notification.
+                        nullable: true
+                        properties:
+                          githubIssueTemplate:
+                            description: GitHub issue template name. Operator opens an issue in the workspace's source repo.
+                            nullable: true
+                            type: string
+                          ntfyTopic:
+                            description: ntfy topic name (homelab convention — see pleme-io alertmanager-ntfy module).
+                            nullable: true
+                            type: string
+                          slackChannel:
+                            description: Slack channel (SaaS convention — Datadog/Splunk-paired clusters).
+                            nullable: true
+                            type: string
+                        type: object
+                    type: object
+                  verifiedBlocked:
+                    description: What to do when `Verified=False` persists past timeout.
+                    nullable: true
+                    properties:
+                      onBlocked:
+                        default: alert
+                        description: What to do when the threshold is exceeded.
+                        enum:
+                        - alert
+                        - suspend
+                        - page
+                        type: string
+                      routing:
+                        description: Where to route the notification.
+                        nullable: true
+                        properties:
+                          githubIssueTemplate:
+                            description: GitHub issue template name. Operator opens an issue in the workspace's source repo.
+                            nullable: true
+                            type: string
+                          ntfyTopic:
+                            description: ntfy topic name (homelab convention — see pleme-io alertmanager-ntfy module).
+                            nullable: true
+                            type: string
+                          slackChannel:
+                            description: Slack channel (SaaS convention — Datadog/Splunk-paired clusters).
+                            nullable: true
+                            type: string
+                        type: object
+                      timeout:
+                        default: 10m
+                        description: How long can `Verified=False` persist. Default `10m`.
+                        type: string
                     type: object
                 type: object
               refreshInterval:
@@ -335,6 +630,14 @@ spec:
                 description: Hash of the approved plan. Set by the user to approve a pending plan. When this matches `pendingPlanHash`, the operator proceeds to apply.
                 nullable: true
                 type: string
+              autoSuspended:
+                default: false
+                description: Set to true by a ReactivePolicy `Suspend` action. The operator halts reconcile for this template until cleared. Cleared manually via `kubectl patch ... --subresource status -p '{"status":{"autoSuspended":false}}'` (or by deleting the CR and recreating it). See `lastEscalationReason` for why the auto-suspend triggered.
+                type: boolean
+              backend:
+                description: Echo of the state backend the operator wired for this cycle. `"pg/<db_name>"` for Postgres-backed state (the magma path's canonical case), `"local"` for filesystem, `None` for stateless executors. Today this is inferable only from main.rs startup log lines — the CR doesn't say where its state lives. Adding it here closes that loop.
+                nullable: true
+                type: string
               compliance:
                 description: Compliance check results.
                 nullable: true
@@ -428,10 +731,25 @@ spec:
                   - type
                   type: object
                 type: array
+              consecutiveCompileFailures:
+                default: 0
+                description: |-
+                  Number of consecutive Compiling-phase failures observed before any successful compile. Resets to zero on the first successful compile. Drives the same `SettlingPolicy.maxConsecutiveDrift Cycles` escalation as drift cycles — so a template that can't compile (missing gem, syntax error, broken DSL) eventually transitions to `phase=Failed` instead of looping in `phase=Compiling, cycleCount=0` forever.
+
+                  Why a separate counter: pre-2026-05, compile failures didn't increment `consecutive_drift_cycles` (because no cycle ever completes — cycle_count stays at 0), so settling policy never fired. Templates like `pleme-io-opensource` sat in Compiling for hours with `cannot load such file -- pangea-github`. This counter closes that gap by escalating compile failures independently of the drift-cycle path.
+                format: uint32
+                minimum: 0.0
+                type: integer
               consecutiveDriftCycles:
                 default: 0
                 description: State-settling counter. Counts consecutive drift cycles where applying a plan does NOT result in a clean drift check. Reset to zero when a Ready→Ready transition sees no drift. Drives `SettlingPolicy` escalation.
                 format: uint32
+                minimum: 0.0
+                type: integer
+              cycleCount:
+                default: 0
+                description: Monotonic cycle counter — bumped once per completed reconcile (every plan→apply pair, or every plan-only when no changes). Lets observers detect the operator's heartbeat without polling timestamps.
+                format: uint64
                 minimum: 0.0
                 type: integer
               driftDetails:
@@ -474,6 +792,15 @@ spec:
                   - risk
                   type: object
                 type: array
+              executor:
+                description: |-
+                  Echo of the IaC executor the operator selected at runtime for this template's reconcile path. `"magma"` or `"tofu"`.
+
+                  Before this field existed the only way to answer "what's the operator actually running for this CR?" was to grep its startup logs for `Wiring Postgres pool for magma state backend` etc. The operator's own declaration belongs in CR status, queryable via `kubectl get itr X -o jsonpath='{.status.executor}'`.
+
+                  Updated on every cycle (idempotent — `record_reconcile_cycle`'s content-equality guard suppresses no-op patches), so a flip caused by feature-flag or backend-availability change shows up on the next reconcile.
+                nullable: true
+                type: string
               failureCount:
                 default: 0
                 description: Number of consecutive failures.
@@ -489,6 +816,228 @@ spec:
                 description: Last successfully applied revision (content hash or git commit).
                 nullable: true
                 type: string
+              lastCycle:
+                description: 'Receipt for the most recent reconcile cycle: per-resource outcomes (Matched / Updated / Created / Destroyed / Imported / Drifted / Failed) plus aggregate counts. The shape the user reads to answer "what did the operator just do, and to what?"'
+                nullable: true
+                properties:
+                  actionDistribution:
+                    description: |-
+                      Distribution of plan action verbs across ALL planned changes (including no-op). The compact answer to "what would this cycle actually do?" — replaces having to `kubectl exec` into the pod + parse `magma-bundle.json plan.changes` by hand.
+
+                      Different from `summary` above: `summary` is post-decision (matched / updated / created / …) and rolls up untouched resources into `matched`. This is pre-decision (the action verb the plan emitted for each resource, no-op included), so it preserves the distinction between "1054 resources, none changed" (`noOp: 1054`) and "1054 resources, none managed yet" (`create: 1054`).
+
+                      `None` for tofu cycles + for cycles where the bundle wasn't available (cleanup races, executor wrote no bundle).
+                    nullable: true
+                    properties:
+                      create:
+                        default: 0
+                        description: Resources the plan would create on apply.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      delete:
+                        default: 0
+                        description: Resources the plan would destroy on apply.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      noOp:
+                        default: 0
+                        description: Resources the plan classified as no-op — declared state already matches actual state, no apply action.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      other:
+                        default: 0
+                        description: Catch-all for action verbs not bucketed above (terraform's `read`, `forget`, future additions). Keeps the rollup faithful even when the upstream vocab grows.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      replace:
+                        default: 0
+                        description: Resources the plan would destroy + recreate (terraform's `replace` action).
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      update:
+                        default: 0
+                        description: Resources the plan would update in-place on apply.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                    type: object
+                  bundleRef:
+                    description: |-
+                      Reference to the `magma-bundle.json` artifact this cycle produced. Today the bundle lives in the operator pod's emptyDir at `/var/pangea/workspaces/<ns>/<name>/magma-bundle.json` and is only readable via `kubectl exec`. Carrying its `bundleId` + `sha256` here lets observers verify the bundle they fetched matches the cycle they read about. A follow-up slice publishes the bundle as a ConfigMap and extends this struct with `name`/`namespace` fields.
+
+                      `None` for tofu cycles + cycles whose bundle couldn't be read (parse error, missing file).
+                    nullable: true
+                    properties:
+                      bundleId:
+                        description: Stable bundle identifier — the `bundle_id` field from `magma-bundle.json` (BLAKE3 over the bundle's canonical representation). Lets observers correlate cycles to bundles across compaction/cleanup AND verify the bundle they fetched matches the cycle they read about (the bundle_id is the content hash).
+                        type: string
+                      kind:
+                        description: Bundle kind discriminator from `magma-bundle.json.kind` — today always `"terraform"`; future executors (pulumi, opentofu, kubernetes) get their own discriminator.
+                        type: string
+                      sizeBytes:
+                        description: Bundle file size in bytes — UX hint ("is this a 1KB null bundle or a 3MB serious one?") and capacity-planning input for the future ConfigMap-publication slice (etcd value-size budget).
+                        format: uint64
+                        minimum: 0.0
+                        type: integer
+                    required:
+                    - bundleId
+                    - kind
+                    - sizeBytes
+                    type: object
+                  completedAt:
+                    description: When the cycle completed (after apply, or after plan-with-no-changes).
+                    format: date-time
+                    type: string
+                  cycle:
+                    description: Monotonic cycle number (mirrors `status.cycleCount` at the moment this cycle was emitted; redundant but lets observers snapshot the receipt with its cycle number atomically).
+                    format: uint64
+                    minimum: 0.0
+                    type: integer
+                  executor:
+                    description: Echo of the IaC executor that ran THIS cycle. Preserves "magma planned this" even after a future flip of `status.executor`. Mirrors `status.executor` at cycle-record time; `None` for cycles written by operator versions before the field landed (backward-compatible deserialize).
+                    nullable: true
+                    type: string
+                  lifecyclePhase:
+                    description: 'Lifecycle FSM phase recorded in the magma bundle — `"planning"`, `"applying"`, `"verifying"`, `"stable"`, `"failed"`. Honestly absent (`None`) for tofu cycles: tofu has no lifecycle FSM, so the operator never fabricates one. Magma''s lifecycle states surface here so observers can answer "where did this cycle stop?" without exec-reading the bundle.'
+                    nullable: true
+                    type: string
+                  outcomes:
+                    description: |-
+                      Per-resource outcomes for resources the cycle TOUCHED — i.e. resources that the plan reported a change on (Created / Updated / Destroyed) or that the apply failed on (Failed) or that policy gated (Drifted).
+
+                      Resources that had no planned change are NOT individually listed here (they're rolled up into `summary.matched`); listing every untouched resource per cycle would balloon status payloads unbounded. Capped at 100 entries.
+                    items:
+                      description: Per-resource cycle outcome. The typed answer to "what happened to THIS resource this cycle?".
+                      properties:
+                        action:
+                          description: Original tofu action category (`create`, `update`, `delete`, `replace`, `noop`) when known. Lets observers see the raw terraform shape behind the typed Outcome.
+                          nullable: true
+                          type: string
+                        address:
+                          description: Terraform resource address (e.g. `cloudflare_dns_record.foo`).
+                          type: string
+                        message:
+                          description: Optional context — for `Drifted` outcomes, the policy decision that gated the change; for `Failed`, the tofu error excerpt.
+                          nullable: true
+                          type: string
+                        outcome:
+                          description: What happened.
+                          enum:
+                          - Matched
+                          - Updated
+                          - Created
+                          - Destroyed
+                          - Imported
+                          - Drifted
+                          - Failed
+                          type: string
+                      required:
+                      - address
+                      - outcome
+                      type: object
+                    type: array
+                  planSummary:
+                    description: 'Human-readable plan summary, mirroring tofu''s `Plan: +X ~Y -Z` shape. Same string as top-level `status.planSummary` at the moment this cycle ran.'
+                    nullable: true
+                    type: string
+                  severityRollup:
+                    description: |-
+                      Severity rollup across this cycle's resource changes — `{cosmetic, functional, breaking}`. The user-facing answer to "how scary is this plan?". Magma populates from its native drift-classifier severities; tofu populates from the pure `action_to_severity` mapping (Cosmetic for no-op, Functional for create/update, Breaking for delete/replace). The sum equals the total change count.
+
+                      `None` when this cycle had no per-resource changes to classify (empty plan).
+                    nullable: true
+                    properties:
+                      breaking:
+                        default: 0
+                        description: Breaking changes — destroy, replace, or anything that loses data / interrupts service. The bucket operators pay attention to. Maps to magma's `critical` severity at the bundle boundary.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      cosmetic:
+                        default: 0
+                        description: Cosmetic changes — comment-level, no real effect (most no-ops fall here when surfaced from magma; tofu surfaces them via the pure action→severity mapping for no-op).
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      functional:
+                        default: 0
+                        description: Functional changes — resource updated, created, or semantically-meaningful attributes change. The default bucket for create/update.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                    type: object
+                  sourceRevision:
+                    description: Source revision the cycle reconciled against — git commit SHA for git-sourced templates, content hash for inline / configmap. Mirrors `status.lastAppliedRevision` for the cycle that just landed; lets observers correlate cycles to source changes.
+                    nullable: true
+                    type: string
+                  startedAt:
+                    description: When the cycle started (immediately after Verified gate).
+                    format: date-time
+                    type: string
+                  summary:
+                    default:
+                      created: 0
+                      destroyed: 0
+                      driftedUncorrected: 0
+                      failed: 0
+                      imported: 0
+                      matched: 0
+                      updated: 0
+                    description: Aggregate outcome counts for the cycle. `matched` = total managed resources minus everything that planned a change. Other counts are per-Outcome variant.
+                    properties:
+                      created:
+                        default: 0
+                        description: Resources newly created by this cycle's apply.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      destroyed:
+                        default: 0
+                        description: Resources destroyed by this cycle's apply.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      driftedUncorrected:
+                        default: 0
+                        description: Resources where drift was detected but NOT corrected (policy = requireApproval / refuse, or apply was skipped).
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      failed:
+                        default: 0
+                        description: Resources where the apply errored.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      imported:
+                        default: 0
+                        description: Resources adopted into state by `tofu import` (reserved — set to 0 until the import path lands in a follow-up).
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      matched:
+                        default: 0
+                        description: Resources whose declared state matched actual state — no plan action (`no-op`).
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      updated:
+                        default: 0
+                        description: Resources updated to declared state by this cycle's apply.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                    type: object
+                required:
+                - completedAt
+                - cycle
+                - startedAt
+                type: object
               lastDriftCheckAt:
                 description: Timestamp of the last drift check.
                 format: date-time
@@ -496,6 +1045,15 @@ spec:
                 type: string
               lastError:
                 description: Last error message if in Failed state.
+                nullable: true
+                type: string
+              lastEscalatedAt:
+                description: When the operator last emitted an escalation event for this template. Debounce signal — escalation actions don't re-fire every reconcile while the bad state persists; they fire once per entry into the bad state and then stay quiet until the state clears + re-enters.
+                format: date-time
+                nullable: true
+                type: string
+              lastEscalationReason:
+                description: Machine-readable reason for the last escalation. One of `FailureEscalation`, `PhaseTimeout:<phase>`, `VerifiedBlocked`. Empty when no escalation has fired.
                 nullable: true
                 type: string
               lastPlannedAt:
@@ -531,6 +1089,11 @@ spec:
                 - Drifted
                 - Failed
                 - Destroying
+                nullable: true
+                type: string
+              phaseEnteredAt:
+                description: When the current `phase` was entered. Reset on every phase transition. Used by ReactivePolicy.phaseTimeout to detect templates stuck in a non-terminal phase.
+                format: date-time
                 nullable: true
                 type: string
               planSummary:
@@ -612,6 +1175,11 @@ spec:
                 items:
                   type: string
                 type: array
+              verifiedBlockedSince:
+                description: First time the `Verified` condition flipped to False. Used by ReactivePolicy.verifiedBlocked to detect templates whose gate has been blocked too long. Cleared when Verified flips back to True.
+                format: date-time
+                nullable: true
+                type: string
             type: object
         required:
         - spec
@@ -629,7 +1197,8 @@ metadata:
 spec:
   group: pangea.pleme.io
   names:
-    categories: []
+    categories:
+    - pangea
     kind: PangeaNamespace
     plural: pangeanamespaces
     shortNames:
@@ -838,6 +1407,10 @@ spec:
                 description: Description of this Pangea namespace.
                 nullable: true
                 type: string
+              suspend:
+                default: false
+                description: When true, the namespace controller skips reconciliation entirely — no schema provisioning, no backend health verification, no status updates. Use to temporarily quiesce a single namespace without affecting siblings. Compose with the cluster-scoped `OperatorPolicy/default` for fleet-wide pause.
+                type: boolean
             required:
             - backend
             type: object
@@ -915,7 +1488,8 @@ metadata:
 spec:
   group: pangea.pleme.io
   names:
-    categories: []
+    categories:
+    - pangea
     kind: InfrastructureFlow
     plural: infrastructureflows
     shortNames:
@@ -1218,7 +1792,8 @@ metadata:
 spec:
   group: pangea.pleme.io
   names:
-    categories: []
+    categories:
+    - pangea
     kind: PackerBuild
     plural: packerbuilds
     shortNames:
@@ -1293,6 +1868,26 @@ spec:
                     properties:
                       secretRef:
                         description: Secret containing Cloudflare API token.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
+                  github:
+                    description: 'GitHub credentials configuration. Used by templates that declare github_* providers (e.g. pangea-github''s `cloudflare_zero_trust_*` adjacent shapes — repos, runner groups, branch protection). Same shape as the cloudflare credentials block: a secretRef to a Secret containing a PAT.'
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the GitHub PAT.
                         properties:
                           name:
                             description: Name of the Secret.
@@ -1529,7 +2124,8 @@ metadata:
 spec:
   group: pangea.pleme.io
   names:
-    categories: []
+    categories:
+    - pangea
     kind: AmiTest
     plural: amitests
     shortNames:
@@ -1642,6 +2238,26 @@ spec:
                     properties:
                       secretRef:
                         description: Secret containing Cloudflare API token.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
+                  github:
+                    description: 'GitHub credentials configuration. Used by templates that declare github_* providers (e.g. pangea-github''s `cloudflare_zero_trust_*` adjacent shapes — repos, runner groups, branch protection). Same shape as the cloudflare credentials block: a secretRef to a Secret containing a PAT.'
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the GitHub PAT.
                         properties:
                           name:
                             description: Name of the Secret.
@@ -1834,7 +2450,8 @@ metadata:
 spec:
   group: pangea.pleme.io
   names:
-    categories: []
+    categories:
+    - pangea
     kind: ImagePipeline
     plural: imagepipelines
     shortNames:
@@ -1904,6 +2521,26 @@ spec:
                         properties:
                           secretRef:
                             description: Secret containing Cloudflare API token.
+                            properties:
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                              namespace:
+                                description: Namespace of the Secret (defaults to same namespace as the resource).
+                                nullable: true
+                                type: string
+                            required:
+                            - name
+                            type: object
+                        required:
+                        - secretRef
+                        type: object
+                      github:
+                        description: 'GitHub credentials configuration. Used by templates that declare github_* providers (e.g. pangea-github''s `cloudflare_zero_trust_*` adjacent shapes — repos, runner groups, branch protection). Same shape as the cloudflare credentials block: a secretRef to a Secret containing a PAT.'
+                        nullable: true
+                        properties:
+                          secretRef:
+                            description: Secret containing the GitHub PAT.
                             properties:
                               name:
                                 description: Name of the Secret.
@@ -2244,6 +2881,26 @@ spec:
                         required:
                         - secretRef
                         type: object
+                      github:
+                        description: 'GitHub credentials configuration. Used by templates that declare github_* providers (e.g. pangea-github''s `cloudflare_zero_trust_*` adjacent shapes — repos, runner groups, branch protection). Same shape as the cloudflare credentials block: a secretRef to a Secret containing a PAT.'
+                        nullable: true
+                        properties:
+                          secretRef:
+                            description: Secret containing the GitHub PAT.
+                            properties:
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                              namespace:
+                                description: Namespace of the Secret (defaults to same namespace as the resource).
+                                nullable: true
+                                type: string
+                            required:
+                            - name
+                            type: object
+                        required:
+                        - secretRef
+                        type: object
                     type: object
                   suites:
                     description: Test suites to run (DAG-ordered).
@@ -2486,7 +3143,8 @@ metadata:
 spec:
   group: pangea.pleme.io
   names:
-    categories: []
+    categories:
+    - pangea
     kind: SynthesizerFormat
     plural: synthesizerformats
     shortNames:
@@ -2672,7 +3330,8 @@ metadata:
 spec:
   group: pangea.pleme.io
   names:
-    categories: []
+    categories:
+    - pangea
     kind: ComplianceSchedule
     plural: complianceschedules
     shortNames:
@@ -2790,6 +3449,26 @@ spec:
                     properties:
                       secretRef:
                         description: Secret containing Cloudflare API token.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
+                  github:
+                    description: 'GitHub credentials configuration. Used by templates that declare github_* providers (e.g. pangea-github''s `cloudflare_zero_trust_*` adjacent shapes — repos, runner groups, branch protection). Same shape as the cloudflare credentials block: a secretRef to a Secret containing a PAT.'
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the GitHub PAT.
                         properties:
                           name:
                             description: Name of the Secret.
@@ -3107,7 +3786,8 @@ metadata:
 spec:
   group: pangea.pleme.io
   names:
-    categories: []
+    categories:
+    - pangea
     kind: ComplianceBinding
     plural: compliancebindings
     shortNames:
@@ -3357,13 +4037,14 @@ metadata:
 spec:
   group: pangea.pleme.io
   names:
-    categories: []
+    categories:
+    - pangea
     kind: PangeaDashboard
     plural: pangeadashboards
     shortNames:
     - pd
     singular: pangeadashboard
-  scope: Cluster
+  scope: Namespaced
   versions:
   - additionalPrinterColumns:
     - jsonPath: .spec.folder
@@ -3442,6 +4123,10 @@ spec:
                     - ruby
                     type: object
                 type: object
+              suspend:
+                default: false
+                description: When true, the dashboard controller skips synthesis + Grafana publish entirely. Compose with the cluster-scoped `OperatorPolicy/default` for fleet-wide pause.
+                type: boolean
             required:
             - source
             type: object
@@ -3529,7 +4214,8 @@ metadata:
 spec:
   group: pangea.pleme.io
   names:
-    categories: []
+    categories:
+    - pangea
     kind: ArchitectureGem
     plural: architecturegems
     shortNames:
@@ -3625,6 +4311,123 @@ spec:
                     - alert
                     nullable: true
                     type: string
+                  reactive:
+                    description: Reactive policy — declarative responses to "things didn't go to a good state". Cascade root for downstream workspaces + templates. See `ReactivePolicy` for the shape.
+                    nullable: true
+                    properties:
+                      failureEscalation:
+                        description: What to do when consecutive Failed reconciles exceed threshold.
+                        nullable: true
+                        properties:
+                          maxConsecutiveFailures:
+                            default: 5
+                            description: Threshold. Default 5.
+                            format: uint32
+                            minimum: 0.0
+                            type: integer
+                          onExhaustion:
+                            default: alert
+                            description: What to do when threshold is reached.
+                            enum:
+                            - alert
+                            - suspend
+                            - page
+                            type: string
+                          routing:
+                            description: Where to route the notification.
+                            nullable: true
+                            properties:
+                              githubIssueTemplate:
+                                description: GitHub issue template name. Operator opens an issue in the workspace's source repo.
+                                nullable: true
+                                type: string
+                              ntfyTopic:
+                                description: ntfy topic name (homelab convention — see pleme-io alertmanager-ntfy module).
+                                nullable: true
+                                type: string
+                              slackChannel:
+                                description: Slack channel (SaaS convention — Datadog/Splunk-paired clusters).
+                                nullable: true
+                                type: string
+                            type: object
+                        type: object
+                      phaseTimeout:
+                        description: What to do when stuck in a non-terminal phase too long.
+                        nullable: true
+                        properties:
+                          applying:
+                            default: 30m
+                            description: '`Applying` threshold. Default `30m`.'
+                            type: string
+                          compiling:
+                            default: 5m
+                            description: How long can `Compiling` last before escalating. Format same as refreshInterval (`5m`, `30s`, `1h`). Default `5m`.
+                            type: string
+                          onTimeout:
+                            default: alert
+                            description: What to do when the threshold is exceeded.
+                            enum:
+                            - alert
+                            - suspend
+                            - page
+                            type: string
+                          planning:
+                            default: 10m
+                            description: '`Planning` threshold. Default `10m`.'
+                            type: string
+                          routing:
+                            description: Where to route the notification.
+                            nullable: true
+                            properties:
+                              githubIssueTemplate:
+                                description: GitHub issue template name. Operator opens an issue in the workspace's source repo.
+                                nullable: true
+                                type: string
+                              ntfyTopic:
+                                description: ntfy topic name (homelab convention — see pleme-io alertmanager-ntfy module).
+                                nullable: true
+                                type: string
+                              slackChannel:
+                                description: Slack channel (SaaS convention — Datadog/Splunk-paired clusters).
+                                nullable: true
+                                type: string
+                            type: object
+                        type: object
+                      verifiedBlocked:
+                        description: What to do when `Verified=False` persists past timeout.
+                        nullable: true
+                        properties:
+                          onBlocked:
+                            default: alert
+                            description: What to do when the threshold is exceeded.
+                            enum:
+                            - alert
+                            - suspend
+                            - page
+                            type: string
+                          routing:
+                            description: Where to route the notification.
+                            nullable: true
+                            properties:
+                              githubIssueTemplate:
+                                description: GitHub issue template name. Operator opens an issue in the workspace's source repo.
+                                nullable: true
+                                type: string
+                              ntfyTopic:
+                                description: ntfy topic name (homelab convention — see pleme-io alertmanager-ntfy module).
+                                nullable: true
+                                type: string
+                              slackChannel:
+                                description: Slack channel (SaaS convention — Datadog/Splunk-paired clusters).
+                                nullable: true
+                                type: string
+                            type: object
+                          timeout:
+                            default: 10m
+                            description: How long can `Verified=False` persist. Default `10m`.
+                            type: string
+                        type: object
+                    type: object
                   settlingPolicy:
                     description: Settling policy — what to do if the gem keeps drifting.
                     nullable: true
@@ -3653,7 +4456,7 @@ spec:
                 description: 'Where the gem source lives. M1 supports gitRepository only; future: published-gem (RubyGems.org) and OCI-artifact modes.'
                 properties:
                   gitRepository:
-                    description: Git repository — clone the gem at the given ref. Compiler sidecar bundles + requires from this path.
+                    description: Git repository — clone the gem at the given ref. Operator (embedded mode) clones into the gem cache + prepends to $LOAD_PATH (Ruby) or registers with the lisp/wasm evaluator per `kind`.
                     nullable: true
                     properties:
                       path:
@@ -3684,6 +4487,17 @@ spec:
                     - path
                     - url
                     type: object
+                  kind:
+                    default: Ruby
+                    description: |-
+                      Which evaluator runs this gem. `Ruby` is the default for backward compatibility — every existing ArchitectureGem CR continues to validate + reconcile unchanged.
+
+                      `Lisp` selects the terreno evaluator (theory/TERRENO.md M2); `Wasm` selects a typed wasmtime component. Both are reserved at the schema layer today; the operator's prepare_gem returns a typed `NotImplemented` condition until terreno-eval lands.
+                    enum:
+                    - Ruby
+                    - Lisp
+                    - Wasm
+                    type: string
                 type: object
               suspend:
                 default: false
@@ -3825,7 +4639,8 @@ metadata:
 spec:
   group: pangea.pleme.io
   names:
-    categories: []
+    categories:
+    - pangea
     kind: WorkspaceCatalog
     plural: workspacecatalogs
     shortNames:
@@ -3884,6 +4699,123 @@ spec:
                     - alert
                     nullable: true
                     type: string
+                  reactive:
+                    description: Reactive policy — declarative responses for templates under this workspace when they don't reach a good state. Inherits from gem-level; overrides per-field for templates that don't declare their own. See `ReactivePolicy`.
+                    nullable: true
+                    properties:
+                      failureEscalation:
+                        description: What to do when consecutive Failed reconciles exceed threshold.
+                        nullable: true
+                        properties:
+                          maxConsecutiveFailures:
+                            default: 5
+                            description: Threshold. Default 5.
+                            format: uint32
+                            minimum: 0.0
+                            type: integer
+                          onExhaustion:
+                            default: alert
+                            description: What to do when threshold is reached.
+                            enum:
+                            - alert
+                            - suspend
+                            - page
+                            type: string
+                          routing:
+                            description: Where to route the notification.
+                            nullable: true
+                            properties:
+                              githubIssueTemplate:
+                                description: GitHub issue template name. Operator opens an issue in the workspace's source repo.
+                                nullable: true
+                                type: string
+                              ntfyTopic:
+                                description: ntfy topic name (homelab convention — see pleme-io alertmanager-ntfy module).
+                                nullable: true
+                                type: string
+                              slackChannel:
+                                description: Slack channel (SaaS convention — Datadog/Splunk-paired clusters).
+                                nullable: true
+                                type: string
+                            type: object
+                        type: object
+                      phaseTimeout:
+                        description: What to do when stuck in a non-terminal phase too long.
+                        nullable: true
+                        properties:
+                          applying:
+                            default: 30m
+                            description: '`Applying` threshold. Default `30m`.'
+                            type: string
+                          compiling:
+                            default: 5m
+                            description: How long can `Compiling` last before escalating. Format same as refreshInterval (`5m`, `30s`, `1h`). Default `5m`.
+                            type: string
+                          onTimeout:
+                            default: alert
+                            description: What to do when the threshold is exceeded.
+                            enum:
+                            - alert
+                            - suspend
+                            - page
+                            type: string
+                          planning:
+                            default: 10m
+                            description: '`Planning` threshold. Default `10m`.'
+                            type: string
+                          routing:
+                            description: Where to route the notification.
+                            nullable: true
+                            properties:
+                              githubIssueTemplate:
+                                description: GitHub issue template name. Operator opens an issue in the workspace's source repo.
+                                nullable: true
+                                type: string
+                              ntfyTopic:
+                                description: ntfy topic name (homelab convention — see pleme-io alertmanager-ntfy module).
+                                nullable: true
+                                type: string
+                              slackChannel:
+                                description: Slack channel (SaaS convention — Datadog/Splunk-paired clusters).
+                                nullable: true
+                                type: string
+                            type: object
+                        type: object
+                      verifiedBlocked:
+                        description: What to do when `Verified=False` persists past timeout.
+                        nullable: true
+                        properties:
+                          onBlocked:
+                            default: alert
+                            description: What to do when the threshold is exceeded.
+                            enum:
+                            - alert
+                            - suspend
+                            - page
+                            type: string
+                          routing:
+                            description: Where to route the notification.
+                            nullable: true
+                            properties:
+                              githubIssueTemplate:
+                                description: GitHub issue template name. Operator opens an issue in the workspace's source repo.
+                                nullable: true
+                                type: string
+                              ntfyTopic:
+                                description: ntfy topic name (homelab convention — see pleme-io alertmanager-ntfy module).
+                                nullable: true
+                                type: string
+                              slackChannel:
+                                description: Slack channel (SaaS convention — Datadog/Splunk-paired clusters).
+                                nullable: true
+                                type: string
+                            type: object
+                          timeout:
+                            default: 10m
+                            description: How long can `Verified=False` persist. Default `10m`.
+                            type: string
+                        type: object
+                    type: object
                   reconcileInterval:
                     description: How often the operator runs `tofu plan` to detect drift.
                     nullable: true
@@ -4018,4 +4950,717 @@ spec:
     storage: true
     subresources:
       status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: operatorpolicies.pangea.pleme.io
+spec:
+  group: pangea.pleme.io
+  names:
+    categories:
+    - pangea
+    kind: OperatorPolicy
+    plural: operatorpolicies
+    shortNames:
+    - oppol
+    singular: operatorpolicy
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.globalSuspend
+      name: GlobalSuspend
+      type: boolean
+    - jsonPath: .spec.globalSuspendReason
+      name: Reason
+      type: string
+    - jsonPath: .status.reconcilesSkipped
+      name: Skipped
+      type: integer
+    - jsonPath: .status.workspaceOverrides
+      name: WorkspaceOverrides
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for OperatorPolicySpec via `CustomResource`
+        properties:
+          spec:
+            description: Cluster-scoped fleet-wide kill-switch for the operator's controllers.
+            properties:
+              controllerSuspend:
+                default:
+                  amiTest: false
+                  architectureGem: false
+                  complianceBinding: false
+                  complianceSchedule: false
+                  dashboard: false
+                  flow: false
+                  imagePipeline: false
+                  namespace: false
+                  packerBuild: false
+                  synthesizerFormat: false
+                  template: false
+                  workspaceCatalog: false
+                description: Per-controller suspend. Use to pause a specific controller while debugging without freezing the whole operator. `globalSuspend` dominates this field — if it's true, per-controller flags are not consulted.
+                properties:
+                  amiTest:
+                    default: false
+                    description: Pause `ami_test_controller`.
+                    type: boolean
+                  architectureGem:
+                    default: false
+                    description: Pause `architecture_gem_controller`.
+                    type: boolean
+                  complianceBinding:
+                    default: false
+                    description: Pause `compliance_binding_controller`.
+                    type: boolean
+                  complianceSchedule:
+                    default: false
+                    description: Pause `compliance_schedule_controller`.
+                    type: boolean
+                  dashboard:
+                    default: false
+                    description: Pause `dashboard_controller` (PangeaDashboard).
+                    type: boolean
+                  flow:
+                    default: false
+                    description: Pause `flow_controller` (InfrastructureFlow).
+                    type: boolean
+                  imagePipeline:
+                    default: false
+                    description: Pause `image_pipeline_controller`.
+                    type: boolean
+                  namespace:
+                    default: false
+                    description: Pause `namespace_controller` (PangeaNamespace).
+                    type: boolean
+                  packerBuild:
+                    default: false
+                    description: Pause `packer_build_controller`.
+                    type: boolean
+                  synthesizerFormat:
+                    default: false
+                    description: Pause `synthesizer_format_controller`.
+                    type: boolean
+                  template:
+                    default: false
+                    description: Pause `template_controller` (InfrastructureTemplate).
+                    type: boolean
+                  workspaceCatalog:
+                    default: false
+                    description: Pause `workspace_catalog_controller`.
+                    type: boolean
+                type: object
+              globalSuspend:
+                default: false
+                description: Master kill-switch. When true, every operator controller skips reconciliation entirely. Status counter `reconcilesSkipped` increments on every skipped reconcile so you can verify the pause is taking effect.
+                type: boolean
+              globalSuspendReason:
+                description: 'Operator-readable reason for the suspend, surfaced in: * structured logs on every skipped reconcile * Kubernetes Events with reason=`OperatorSuspended` * `kubectl describe operatorpolicy default` output'
+                nullable: true
+                type: string
+              workspaceSuspend:
+                default: {}
+                description: |-
+                  Per-workspace tri-state suspend. Specific overrides general: the resolution ladder for a single template is
 
+                  1. `workspaceSuspend.templates["<ns>/<name>"].state` 2. `workspaceSuspend.catalogs["<owner-catalog>"].state` (cascade — catalog Active carves the entire catalog out of a global pause, catalog Paused freezes everything under it) 3. `controllerSuspend.template` 4. `globalSuspend`
+
+                  stopping at the first non-`Inherit` decision. `Active` at any of layers 1–2 means "specifically configured to reconcile during a global pause" — a surgical carve-out. `Paused` at any of layers 1–2 freezes that workspace regardless of more general state.
+                properties:
+                  catalogs:
+                    additionalProperties:
+                      description: 'A single per-workspace decision: what state, optionally why.'
+                      properties:
+                        reason:
+                          description: Optional human-readable note, surfaced in skip logs and the `policy_skipped_total{reason=...}` metric label. Optional throughout the surface — pausing without a reason is allowed, dashboards display "(no reason given)".
+                          nullable: true
+                          type: string
+                        state:
+                          default: inherit
+                          description: Tri-state decision. Defaults to `Inherit`, which is equivalent to omitting the entry entirely.
+                          enum:
+                          - inherit
+                          - paused
+                          - active
+                          type: string
+                      type: object
+                    description: Per-catalog overrides keyed by `WorkspaceCatalog` name. Cascades to children unless a child template overrides.
+                    type: object
+                  templates:
+                    additionalProperties:
+                      description: 'A single per-workspace decision: what state, optionally why.'
+                      properties:
+                        reason:
+                          description: Optional human-readable note, surfaced in skip logs and the `policy_skipped_total{reason=...}` metric label. Optional throughout the surface — pausing without a reason is allowed, dashboards display "(no reason given)".
+                          nullable: true
+                          type: string
+                        state:
+                          default: inherit
+                          description: Tri-state decision. Defaults to `Inherit`, which is equivalent to omitting the entry entirely.
+                          enum:
+                          - inherit
+                          - paused
+                          - active
+                          type: string
+                      type: object
+                    description: Per-template overrides keyed `"<namespace>/<name>"`.
+                    type: object
+                type: object
+            type: object
+          status:
+            description: Status of an OperatorPolicy. The reconciler mirrors `spec` into `status.effective` after every spec change so consumers can observe the policy's resolved view without re-reading spec.
+            nullable: true
+            properties:
+              effective:
+                description: Effective view of the spec. Mirrors spec verbatim today; reserved for future computed fields (e.g., merged-from-multiple-sources).
+                nullable: true
+                properties:
+                  controllerSuspend:
+                    default:
+                      amiTest: false
+                      architectureGem: false
+                      complianceBinding: false
+                      complianceSchedule: false
+                      dashboard: false
+                      flow: false
+                      imagePipeline: false
+                      namespace: false
+                      packerBuild: false
+                      synthesizerFormat: false
+                      template: false
+                      workspaceCatalog: false
+                    description: Per-controller suspend. Use to pause a specific controller while debugging without freezing the whole operator. `globalSuspend` dominates this field — if it's true, per-controller flags are not consulted.
+                    properties:
+                      amiTest:
+                        default: false
+                        description: Pause `ami_test_controller`.
+                        type: boolean
+                      architectureGem:
+                        default: false
+                        description: Pause `architecture_gem_controller`.
+                        type: boolean
+                      complianceBinding:
+                        default: false
+                        description: Pause `compliance_binding_controller`.
+                        type: boolean
+                      complianceSchedule:
+                        default: false
+                        description: Pause `compliance_schedule_controller`.
+                        type: boolean
+                      dashboard:
+                        default: false
+                        description: Pause `dashboard_controller` (PangeaDashboard).
+                        type: boolean
+                      flow:
+                        default: false
+                        description: Pause `flow_controller` (InfrastructureFlow).
+                        type: boolean
+                      imagePipeline:
+                        default: false
+                        description: Pause `image_pipeline_controller`.
+                        type: boolean
+                      namespace:
+                        default: false
+                        description: Pause `namespace_controller` (PangeaNamespace).
+                        type: boolean
+                      packerBuild:
+                        default: false
+                        description: Pause `packer_build_controller`.
+                        type: boolean
+                      synthesizerFormat:
+                        default: false
+                        description: Pause `synthesizer_format_controller`.
+                        type: boolean
+                      template:
+                        default: false
+                        description: Pause `template_controller` (InfrastructureTemplate).
+                        type: boolean
+                      workspaceCatalog:
+                        default: false
+                        description: Pause `workspace_catalog_controller`.
+                        type: boolean
+                    type: object
+                  globalSuspend:
+                    default: false
+                    description: Master kill-switch. When true, every operator controller skips reconciliation entirely. Status counter `reconcilesSkipped` increments on every skipped reconcile so you can verify the pause is taking effect.
+                    type: boolean
+                  globalSuspendReason:
+                    description: 'Operator-readable reason for the suspend, surfaced in: * structured logs on every skipped reconcile * Kubernetes Events with reason=`OperatorSuspended` * `kubectl describe operatorpolicy default` output'
+                    nullable: true
+                    type: string
+                  workspaceSuspend:
+                    default: {}
+                    description: |-
+                      Per-workspace tri-state suspend. Specific overrides general: the resolution ladder for a single template is
+
+                      1. `workspaceSuspend.templates["<ns>/<name>"].state` 2. `workspaceSuspend.catalogs["<owner-catalog>"].state` (cascade — catalog Active carves the entire catalog out of a global pause, catalog Paused freezes everything under it) 3. `controllerSuspend.template` 4. `globalSuspend`
+
+                      stopping at the first non-`Inherit` decision. `Active` at any of layers 1–2 means "specifically configured to reconcile during a global pause" — a surgical carve-out. `Paused` at any of layers 1–2 freezes that workspace regardless of more general state.
+                    properties:
+                      catalogs:
+                        additionalProperties:
+                          description: 'A single per-workspace decision: what state, optionally why.'
+                          properties:
+                            reason:
+                              description: Optional human-readable note, surfaced in skip logs and the `policy_skipped_total{reason=...}` metric label. Optional throughout the surface — pausing without a reason is allowed, dashboards display "(no reason given)".
+                              nullable: true
+                              type: string
+                            state:
+                              default: inherit
+                              description: Tri-state decision. Defaults to `Inherit`, which is equivalent to omitting the entry entirely.
+                              enum:
+                              - inherit
+                              - paused
+                              - active
+                              type: string
+                          type: object
+                        description: Per-catalog overrides keyed by `WorkspaceCatalog` name. Cascades to children unless a child template overrides.
+                        type: object
+                      templates:
+                        additionalProperties:
+                          description: 'A single per-workspace decision: what state, optionally why.'
+                          properties:
+                            reason:
+                              description: Optional human-readable note, surfaced in skip logs and the `policy_skipped_total{reason=...}` metric label. Optional throughout the surface — pausing without a reason is allowed, dashboards display "(no reason given)".
+                              nullable: true
+                              type: string
+                            state:
+                              default: inherit
+                              description: Tri-state decision. Defaults to `Inherit`, which is equivalent to omitting the entry entirely.
+                              enum:
+                              - inherit
+                              - paused
+                              - active
+                              type: string
+                          type: object
+                        description: Per-template overrides keyed `"<namespace>/<name>"`.
+                        type: object
+                    type: object
+                type: object
+              lastChangedAt:
+                description: Wall-clock timestamp of the last spec change observed by the controller. Empty until the policy is first reconciled.
+                format: date-time
+                nullable: true
+                type: string
+              observedGeneration:
+                default: 0
+                description: Last `metadata.generation` the controller has reconciled.
+                format: int64
+                type: integer
+              reconcilesSkipped:
+                default: 0
+                description: |-
+                  Rolling counter — read this as the **last-snapshot** value, not the live count. Since the rio firefighting 2026-05-07 wave (see `operator_policy_controller::status_needs_patch`) the OperatorPolicy status PATCH is diff-gated on substantive changes only, so this field is updated only when something material on the policy itself changes (`observedGeneration`, `effective` spec, or the `workspaceOverrides` count). The in-memory atomic counter the controller reads from (`OperatorPolicyCache.skipped`) is sampled into here at write time; between writes, the field is frozen.
+
+                  **For the live count** (every increment as it happens), use the Prometheus counter `pangea_policy_skipped_total{controller, source, reason, target}`. It carries label dimensions this CR field can't (which controller skipped, which gate fired, which workspace) and is the canonical source for the chart 0.8.14 `PangeaControllerReconcileRateHigh` alert.
+
+                  At-a-glance usage (still useful for a single-shot manual check): `kubectl get operatorpolicy default -o jsonpath='{.status.reconcilesSkipped}'` Live rate (Prometheus): `sum by (controller) (rate(pangea_policy_skipped_total[1m]))`
+
+                  Resets to zero on operator restart (the in-memory counter is non-persistent; this field is overwritten by the next substantive PATCH).
+                format: uint64
+                minimum: 0.0
+                type: integer
+              workspaceOverrides:
+                default: 0
+                description: Number of `Active` workspace carve-outs currently in effect (templates + catalogs combined). Surfaced as a printer column so `kubectl get oppol` shows at a glance how many surgical exemptions exist while a global pause is in place. Counted directly from `spec.workspaceSuspend`; not a runtime gauge.
+                format: uint64
+                minimum: 0.0
+                type: integer
+            type: object
+        required:
+        - spec
+        title: OperatorPolicy
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: pangeafleetstatuses.pangea.pleme.io
+spec:
+  group: pangea.pleme.io
+  names:
+    categories:
+    - pangea
+    kind: PangeaFleetStatus
+    plural: pangeafleetstatuses
+    shortNames:
+    - pfs
+    singular: pangeafleetstatus
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.workspaceCatalogs.summary
+      name: WCats
+      type: string
+    - jsonPath: .status.infrastructureTemplates.total
+      name: Templates
+      type: integer
+    - jsonPath: .status.infrastructureTemplates.ready
+      name: Ready
+      type: integer
+    - jsonPath: .status.infrastructureTemplates.failed
+      name: Failed
+      type: integer
+    - jsonPath: .status.architectureGems.summary
+      name: Gems
+      type: string
+    - jsonPath: .status.pangeaNamespaces.total
+      name: Namespaces
+      type: integer
+    - jsonPath: .status.lastUpdatedAt
+      name: Updated
+      type: date
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for PangeaFleetStatusSpec via `CustomResource`
+        properties:
+          spec:
+            description: |-
+              Cluster-scoped operator-authored fleet aggregation singleton.
+
+              The operator self-creates `PangeaFleetStatus/default` at startup and refreshes its status periodically (every 30s) and on watch events from any tracked pangea CRD. Bypasses the OperatorPolicy kill-switch — fleet status is read-only observability and is especially useful while the operator is paused.
+            type: object
+          status:
+            description: Status fields populated by `fleet_status_controller`.
+            nullable: true
+            properties:
+              amiTests:
+                default:
+                  byPhase: {}
+                  total: 0
+                description: AmiTest rollup with per-phase histogram.
+                properties:
+                  byPhase:
+                    additionalProperties:
+                      format: uint32
+                      minimum: 0.0
+                      type: integer
+                    default: {}
+                    description: Per-phase histogram. Empty when total is zero.
+                    type: object
+                  total:
+                    default: 0
+                    description: Total CRs of this kind.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                type: object
+              architectureGems:
+                default:
+                  failed: 0
+                  loaded: 0
+                  summary: ''
+                  total: 0
+                description: ArchitectureGem rollup.
+                properties:
+                  failed:
+                    default: 0
+                    description: Gems whose `.status.phase == Failed`.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  loaded:
+                    default: 0
+                    description: Gems whose `.status.phase == Loaded`.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  summary:
+                    default: ''
+                    description: Pre-formatted "loaded/total" string for printer columns.
+                    type: string
+                  total:
+                    default: 0
+                    description: Total gems in the cluster.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                type: object
+              complianceBindings:
+                default:
+                  gated: 0
+                  total: 0
+                description: ComplianceBinding rollup. `gated` counts bindings whose status.complianceState is currently NonCompliant.
+                properties:
+                  gated:
+                    default: 0
+                    description: Bindings currently gating targets due to non-compliance.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  total:
+                    default: 0
+                    description: Total bindings in the cluster.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                type: object
+              complianceSchedules:
+                default:
+                  byPhase: {}
+                  total: 0
+                description: ComplianceSchedule rollup with per-phase histogram.
+                properties:
+                  byPhase:
+                    additionalProperties:
+                      format: uint32
+                      minimum: 0.0
+                      type: integer
+                    default: {}
+                    description: Per-phase histogram. Empty when total is zero.
+                    type: object
+                  total:
+                    default: 0
+                    description: Total CRs of this kind.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                type: object
+              conditions:
+                default: []
+                description: Standard conditions. The fleet-status controller emits `Updated=True` after a successful refresh.
+                items:
+                  description: Kubernetes-style condition.
+                  properties:
+                    lastTransitionTime:
+                      description: Last time the condition transitioned.
+                      format: date-time
+                      type: string
+                    message:
+                      description: Human-readable message.
+                      type: string
+                    reason:
+                      description: Machine-readable reason for the condition.
+                      type: string
+                    status:
+                      description: Status of the condition (True, False, Unknown).
+                      type: string
+                    type:
+                      description: Type of condition.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              imagePipelines:
+                default:
+                  byPhase: {}
+                  total: 0
+                description: ImagePipeline rollup with per-phase histogram.
+                properties:
+                  byPhase:
+                    additionalProperties:
+                      format: uint32
+                      minimum: 0.0
+                      type: integer
+                    default: {}
+                    description: Per-phase histogram. Empty when total is zero.
+                    type: object
+                  total:
+                    default: 0
+                    description: Total CRs of this kind.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                type: object
+              infrastructureFlows:
+                default:
+                  byPhase: {}
+                  total: 0
+                description: InfrastructureFlow rollup with per-phase histogram.
+                properties:
+                  byPhase:
+                    additionalProperties:
+                      format: uint32
+                      minimum: 0.0
+                      type: integer
+                    default: {}
+                    description: Per-phase histogram. Empty when total is zero.
+                    type: object
+                  total:
+                    default: 0
+                    description: Total CRs of this kind.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                type: object
+              infrastructureTemplates:
+                default:
+                  autoSuspended: 0
+                  byPhase: {}
+                  failed: 0
+                  ready: 0
+                  total: 0
+                description: InfrastructureTemplate rollup with per-phase histogram.
+                properties:
+                  autoSuspended:
+                    default: 0
+                    description: Templates whose `.status.autoSuspended` is true.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  byPhase:
+                    additionalProperties:
+                      format: uint32
+                      minimum: 0.0
+                      type: integer
+                    default: {}
+                    description: Per-phase histogram. Keys are phase names (Pending, Compiling, Initializing, Planning, Applying, Verifying, Verified, Ready, Drifted, Failed, Destroying). Counts include the dedicated fields above — this is the full distribution.
+                    type: object
+                  failed:
+                    default: 0
+                    description: Templates whose `.status.phase` is `Failed`.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  ready:
+                    default: 0
+                    description: Templates whose `.status.phase` is `Ready`.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  total:
+                    default: 0
+                    description: Total InfrastructureTemplates in the cluster.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                type: object
+              lastUpdatedAt:
+                description: When the controller last refreshed this status.
+                format: date-time
+                nullable: true
+                type: string
+              packerBuilds:
+                default:
+                  byPhase: {}
+                  total: 0
+                description: PackerBuild rollup with per-phase histogram.
+                properties:
+                  byPhase:
+                    additionalProperties:
+                      format: uint32
+                      minimum: 0.0
+                      type: integer
+                    default: {}
+                    description: Per-phase histogram. Empty when total is zero.
+                    type: object
+                  total:
+                    default: 0
+                    description: Total CRs of this kind.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                type: object
+              pangeaDashboards:
+                default:
+                  byPhase: {}
+                  total: 0
+                description: PangeaDashboard rollup with per-phase histogram.
+                properties:
+                  byPhase:
+                    additionalProperties:
+                      format: uint32
+                      minimum: 0.0
+                      type: integer
+                    default: {}
+                    description: Per-phase histogram. Empty when total is zero.
+                    type: object
+                  total:
+                    default: 0
+                    description: Total CRs of this kind.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                type: object
+              pangeaNamespaces:
+                default:
+                  ready: 0
+                  total: 0
+                description: PangeaNamespace rollup.
+                properties:
+                  ready:
+                    default: 0
+                    description: Namespaces whose `.status.backendReady == true`.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  total:
+                    default: 0
+                    description: Total namespaces in the cluster.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                type: object
+              synthesizerFormats:
+                default:
+                  byPhase: {}
+                  total: 0
+                description: SynthesizerFormat rollup with per-phase histogram.
+                properties:
+                  byPhase:
+                    additionalProperties:
+                      format: uint32
+                      minimum: 0.0
+                      type: integer
+                    default: {}
+                    description: Per-phase histogram. Empty when total is zero.
+                    type: object
+                  total:
+                    default: 0
+                    description: Total CRs of this kind.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                type: object
+              workspaceCatalogs:
+                default:
+                  summary: ''
+                  total: 0
+                  verified: 0
+                description: WorkspaceCatalog rollup.
+                properties:
+                  summary:
+                    default: ''
+                    description: Pre-formatted "verified/total" string for printer columns. Computed by the controller, not by users.
+                    type: string
+                  total:
+                    default: 0
+                    description: Total catalogs in the cluster.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  verified:
+                    default: 0
+                    description: Catalogs with `status.verified == true`.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                type: object
+            type: object
+        required:
+        - spec
+        title: PangeaFleetStatus
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

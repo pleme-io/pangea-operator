@@ -39,6 +39,23 @@ use std::path::Path;
 /// double-init must not corrupt state.
 #[async_trait]
 pub trait IacExecutor: Send + Sync + 'static {
+    /// Stable identifier for THIS executor — `"tofu"` for the
+    /// subprocess executor, `"magma"` for the typed-native executor,
+    /// `"recording"` for the test mock. Surfaced into CR status as
+    /// `status.executor` so observers can answer "what's actually
+    /// running here?" via a single `kubectl get` instead of grepping
+    /// the operator's startup logs. Stable enough to use as a metric
+    /// label.
+    fn name(&self) -> &'static str;
+
+    /// Short human-readable identifier for the state backend this
+    /// executor reads/writes. `"pg/<db_name>"` for Postgres-backed
+    /// state (the magma path's canonical case via the shared
+    /// `StateBackend` trait), `"local"` for filesystem-backed,
+    /// `None` for stateless executors (the test mock). Surfaced into
+    /// `status.backend`.
+    fn backend_descriptor(&self) -> Option<String>;
+
     /// `tofu init` — initialize backend + provider plugins.
     async fn init(&self, work_dir: &Path, extra_args: &[&str]) -> Result<TofuResult>;
 

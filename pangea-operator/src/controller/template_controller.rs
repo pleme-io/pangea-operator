@@ -770,6 +770,93 @@ async fn handle_compile_failure(
     let name = template.name_any();
     let namespace = template.namespace().unwrap_or_default();
 
+    // Time-graded recovery recommendation. Consult the escalation
+    // ladder against time-since-last-phase-change so operators
+    // (and slice-5 action handlers) see the recommended depth of
+    // intervention before the settlingPolicy threshold trips.
+    //
+    // The ladder is the FIX-AXIS sibling of the detection axis
+    // (project_escalation_ladder.md). For now it's surface-only —
+    // we log the recommendation + include it in lastError so it's
+    // visible in `kubectl get it`. Slice 5 wires actual handlers
+    // (RefreshSource → invalidate workspace clone; ReloadGems →
+    // gem cache invalidation; RecycleWorkers → pool kill+respawn;
+    // PauseAndAlert → set autoSuspended + Event).
+    let now = chrono::Utc::now();
+    // Duration since last_applied_at — the canonical "how long since
+    // we were last in a good (applied) state". phase_entered_at is
+    // wrong: phase resets to Compiling on every retry, so it stays
+    // tiny even when the template has been thrashing for hours.
+    // Fallback chain: last_applied_at (best) → phase_entered_at
+    // (acceptable for never-applied templates) → ZERO.
+    let duration_unready = template
+        .status
+        .as_ref()
+        .and_then(|s| {
+            s.last_applied_at
+                .as_ref()
+                .or(s.phase_entered_at.as_ref())
+        })
+        .map(|t| (now - *t).to_std().unwrap_or(std::time::Duration::ZERO))
+        .unwrap_or(std::time::Duration::ZERO);
+    let recommended_action = crate::controller::escalation::EscalationLadder::pangea_default()
+        .pick(duration_unready);
+    tracing::info!(
+        template = %name,
+        namespace = %namespace,
+        consecutive_failures = next,
+        duration_unready_s = duration_unready.as_secs(),
+        recommended_action = recommended_action.label(),
+        depth = recommended_action.depth(),
+        "escalation ladder recommendation"
+    );
+    // Surface the recommendation in Prometheus so dashboards can
+    // answer "how many templates are above depth 2 right now" + plot
+    // selection histograms. Companion to the log + lastError surfaces.
+    state
+        .metrics
+        .escalation_recommended_depth
+        .with_label_values(&[&namespace, &name])
+        .set(recommended_action.depth() as i64);
+    state
+        .metrics
+        .escalation_actions_total
+        .with_label_values(&[&namespace, &name, recommended_action.label()])
+        .inc();
+
+    // Anomaly recurrence — the known-unknowns axis. Hash the error
+    // into a stable signature + bump the in-process tracker. Same
+    // logical error produces the same signature across runs, so
+    // dashboards can answer "is this template stuck on ONE bug
+    // class repeated 100 times, or 100 distinct issues?".
+    let signature = crate::controller::anomaly_tracker::error_signature(err_msg);
+    let recurrence_key = format!("{}/{}", namespace, name);
+    let recurrence = state
+        .anomaly_tracker
+        .observe(&recurrence_key, &signature);
+
+    // Composite three-axis summary — one structured event for log
+    // analytics + (slice-4) `.status.anomalies[]` + Prometheus. Same
+    // shape regardless of whether a typed detector also fired, so
+    // consumers don't branch on source. The `typed_detector` field
+    // is `None` here (handle_compile_failure runs at the controller
+    // layer; the typed detectors fire inside pangea-ruby-eval). The
+    // detector's Conflict, when it exists, propagates separately
+    // through ContextWarnings.conflicts and gets folded into the
+    // summary at the slice-4 status surface.
+    let summary = crate::controller::anomaly_tracker::AnomalySummary::compose(
+        &recurrence,
+        recommended_action.label(),
+        recommended_action.depth(),
+        None,
+    );
+    tracing::info!(
+        template = %name,
+        namespace = %namespace,
+        summary = ?summary,
+        "anomaly observed"
+    );
+
     // Item J observability: bump rate counter + set current-count gauge
     // so Grafana can alert on "stuck-Compiling" before the settling
     // threshold trips. Prometheus path:
@@ -796,17 +883,72 @@ async fn handle_compile_failure(
         );
         let escalation_msg = format!(
             "Compile has failed {} consecutive times (settlingPolicy.maxConsecutiveDriftCycles={}). \
-             Last error: {}. Resolve the underlying compile issue (missing gem, syntax error, \
+             Last error: {}. Recovery ladder recommends '{}' (depth {}, after {}s unready). \
+             Resolve the underlying compile issue (missing gem, syntax error, \
              unresolved provider, etc.) and the next reconcile will resume.",
-            next, max, err_msg
+            next, max, err_msg,
+            recommended_action.label(), recommended_action.depth(),
+            duration_unready.as_secs(),
         );
-        let patch = serde_json::json!({
+        // Dispatch the recovery action via the EscalationHandlerRegistry
+        // trait. The handler returns the desired status delta + event
+        // payload; we merge with our own escalation patch (phase,
+        // counter, lastError) and apply once. Slice-5 RefreshSource /
+        // ReloadGems / RecycleWorkers handlers slot in by replacing
+        // their no-op execute(); the call site stays identical.
+        let ctx = crate::controller::escalation_handlers::EscalationContext {
+            template,
+            action: recommended_action,
+            duration_unready,
+            consecutive_failures: next,
+            last_error: err_msg.to_string(),
+            error_signature: signature.clone(),
+        };
+        let handler = state.escalation_handlers.handler_for(recommended_action);
+        let outcome = match handler.execute(&ctx).await {
+            Ok(o) => o,
+            Err(e) => {
+                // Handler failed — surface it but proceed with the
+                // base escalation patch (phase=Failed + lastError).
+                // Recovery handlers are NOT critical-path: even if
+                // RefreshSource fails to invalidate a cache, the
+                // escalation still records the attempt.
+                warn!(
+                    error = %e,
+                    action = recommended_action.label(),
+                    "Escalation handler execute failed; continuing with base patch"
+                );
+                crate::controller::escalation_handlers::EscalationOutcome {
+                    status_patch: serde_json::json!({}),
+                    event_reason: "EscalationLadderHandlerError",
+                    event_message: format!(
+                        "Recovery action '{}' handler failed: {e}",
+                        recommended_action.label()
+                    ),
+                }
+            }
+        };
+
+        // Merge the handler's status patch with the base escalation
+        // patch. The handler's fields (e.g. autoSuspended=true from
+        // PauseAndAlertHandler) take precedence on conflict; the base
+        // patch supplies the always-set fields (phase, count, error).
+        let mut patch = serde_json::json!({
             "status": {
                 "phase": "Failed",
                 "consecutiveCompileFailures": next,
                 "lastError": escalation_msg.clone(),
             },
         });
+        if let (Some(merged_status), Some(handler_status)) = (
+            patch.get_mut("status").and_then(|s| s.as_object_mut()),
+            outcome.status_patch.get("status").and_then(|s| s.as_object()),
+        ) {
+            for (k, v) in handler_status {
+                merged_status.insert(k.clone(), v.clone());
+            }
+        }
+
         if let Err(e) =
             crate::controller::status_patch::patch_status(template, &state.client, patch).await
         {
@@ -816,8 +958,8 @@ async fn handle_compile_failure(
             template,
             state,
             EventType::Warning,
-            "CompileFailureEscalated",
-            &escalation_msg,
+            outcome.event_reason,
+            &format!("{}\n\n{}", escalation_msg, outcome.event_message),
         )
         .await;
     } else {
@@ -895,6 +1037,7 @@ async fn handle_initializing(
 ) -> Result<ReconcileAction> {
     info!("Template in Initializing phase");
     let _phase_timer = state.metrics.record_phase_duration("initializing");
+    let executor = state.executor_for(template);
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
 
@@ -958,7 +1101,7 @@ async fn handle_initializing(
     }
 
     // Run tofu init
-    let result = state.executor.init(&workspace.path, &[]).await?;
+    let result = executor.init(&workspace.path, &[]).await?;
 
     if result.success {
         info!("tofu init completed successfully");
@@ -993,66 +1136,104 @@ async fn handle_planning(
     info!("Template in Planning phase");
     let _phase_timer = state.metrics.record_phase_duration("planning");
 
+    // Slice 2c: phase handlers speak the typed `WorkspaceRunner`
+    // surface — one call returns both the unified `CycleArtifact`
+    // (for status enrichment + magma drift detail) AND the raw
+    // tofu-show-JSON (for the legacy `Plan::from_json` path that
+    // produces per-attribute DriftDetail entries the policy engine
+    // consumes). No double-call to the executor.
+    let runner = state.executor_runner_for(template);
+
     let workspace = state.workspace_manager.get_workspace(template).await?;
-    let plan_path = workspace.plan_path();
 
-    // Run tofu plan
-    let result = state
-        .executor
-        .plan(&workspace.path, Some(&plan_path), &[])
-        .await?;
+    let plan_result = runner.plan(&workspace).await?;
 
-    if !result.success {
-        let err_msg = format!("tofu plan failed: {}", result.stderr);
+    if !plan_result.success {
+        let err_msg = format!("plan failed: {}", plan_result.raw_stderr);
         warn!(%err_msg);
         update_phase_with_error(template, Phase::Failed, &err_msg, state).await?;
         record_event(template, state, EventType::Warning, "PlanFailed", &err_msg).await;
         return Ok(ReconcileAction::Requeue(ERROR_REQUEUE_INTERVAL));
     }
 
-    // Parse plan output for resource summary + per-resource drift detail.
-    // Drift details are capped at 50 entries so the K8s status object
-    // stays tractable; full per-plan list is available via GraphQL.
-    let (summary, raw_drifts) = if plan_path.exists() {
-        let show_result = state.executor.show_plan(&workspace.path, &plan_path).await?;
-        if show_result.success {
-            match Plan::from_json(&show_result.stdout) {
-                Ok(plan) => {
-                    let s = plan.summary();
-                    let details: Vec<crate::crd::DriftDetail> = plan
-                        .drift_details(50)
-                        .into_iter()
-                        .map(|d| crate::crd::DriftDetail {
-                            address: d.address,
-                            action: d.action,
-                            risk: d.risk,
-                            attributes: d.attributes,
-                            policy_decision: None,
-                            matched_policy: None,
-                        })
-                        .collect();
-                    info!(
-                        added = s.added,
-                        changed = s.changed,
-                        destroyed = s.destroyed,
-                        drift_count = details.len(),
-                        "Plan analysis complete"
-                    );
-                    (Some(s), details)
-                }
-                Err(e) => {
-                    warn!(error = %e, "Failed to parse plan JSON, continuing without summary");
-                    (None, Vec::new())
-                }
+    // Two-path drift extraction (same final shape):
+    //   1. **Tofu path** — `raw_show_json` populated: use legacy
+    //      `Plan::from_json`. Carries per-attribute drift detail the
+    //      policy engine reads.
+    //   2. **Magma path** — `raw_show_json` empty, `artifact` populated:
+    //      derive `PlanSummary` + `DriftDetail` from
+    //      `CycleArtifact.resource_changes`. Today the per-attribute
+    //      block is empty (the bundle has before/after but
+    //      `TypedResourceChange` doesn't surface them yet — a follow-up
+    //      slice extends this). Net effect for magma cycles that
+    //      previously had `Plan::from_json` silently failing (magma's
+    //      show_plan emits magma-shape JSON tofu can't parse): the
+    //      policy engine now sees the resources it should.
+    // Drift details capped at 50 so the status object stays tractable.
+    let (summary, raw_drifts) = if !plan_result.raw_show_json.is_empty() {
+        match Plan::from_json(&plan_result.raw_show_json) {
+            Ok(plan) => {
+                let s = plan.summary();
+                let details: Vec<crate::crd::DriftDetail> = plan
+                    .drift_details(50)
+                    .into_iter()
+                    .map(|d| crate::crd::DriftDetail {
+                        address: d.address,
+                        action: d.action,
+                        risk: d.risk,
+                        attributes: d.attributes,
+                        policy_decision: None,
+                        matched_policy: None,
+                    })
+                    .collect();
+                info!(
+                    runner = runner.name(),
+                    added = s.added,
+                    changed = s.changed,
+                    destroyed = s.destroyed,
+                    drift_count = details.len(),
+                    "Plan analysis complete (tofu path: Plan::from_json)"
+                );
+                (Some(s), details)
             }
-        } else {
-            (None, Vec::new())
+            Err(e) => {
+                warn!(error = %e, "Failed to parse plan JSON, continuing without summary");
+                (None, Vec::new())
+            }
         }
+    } else if let Some(art) = plan_result.artifact.as_ref() {
+        // Magma path: derive equivalent shapes from the typed artifact.
+        let (added, changed, destroyed, total) = art.summary_counts();
+        let s = crate::executor::PlanSummary {
+            added,
+            changed,
+            destroyed,
+            total,
+            has_changes: added > 0 || changed > 0 || destroyed > 0,
+            // changes_by_type left empty — magma's CycleArtifact doesn't
+            // carry per-type buckets today; a follow-up slice can wire
+            // these from `resource_changes` if a consumer needs them.
+            changes_by_type: std::collections::HashMap::new(),
+        };
+        let details = art.drift_details(50);
+        info!(
+            runner = runner.name(),
+            added = s.added,
+            changed = s.changed,
+            destroyed = s.destroyed,
+            drift_count = details.len(),
+            "Plan analysis complete (magma path: CycleArtifact)"
+        );
+        (Some(s), details)
     } else {
+        warn!(
+            runner = runner.name(),
+            "Plan succeeded but produced no analyzable output (no show-JSON, no artifact)"
+        );
         (None, Vec::new())
     };
 
-    let has_changes = result.has_changes();
+    let has_changes = plan_result.has_changes;
 
     // Resolve the cascade root: if the template has its own
     // `defaultDecision` set, it wins; otherwise inherit the parent
@@ -1145,6 +1326,8 @@ async fn handle_planning(
         record_reconcile_cycle(
             template,
             state,
+            Some(&workspace.path),
+                plan_result.artifact.clone(), // slice 2c: runner-provided artifact threads through cycle receipt
             &[],
             plan_text.clone(),
             CycleResult::NoChanges,
@@ -1169,6 +1352,8 @@ async fn handle_planning(
             record_reconcile_cycle(
                 template,
                 state,
+                Some(&workspace.path),
+                plan_result.artifact.clone(), // slice 2c: runner-provided artifact threads through cycle receipt
                 &policy_outcome.annotated_drifts,
                 plan_text.clone(),
                 CycleResult::PolicyGated(PolicyDecision::Refuse),
@@ -1212,7 +1397,7 @@ async fn handle_planning(
                 record_event(template, state, EventType::Normal, "PlanApproved", "Plan approved by user").await;
                 Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
             } else {
-                let plan_content = result.stdout.as_str();
+                let plan_content = plan_result.raw_stdout.as_str();
                 let plan_hash = format!("{:016x}", content_hash(plan_content));
                 info!(
                     plan_hash,
@@ -1227,6 +1412,8 @@ async fn handle_planning(
                 record_reconcile_cycle(
                     template,
                     state,
+                    Some(&workspace.path),
+                plan_result.artifact.clone(), // slice 2c: runner-provided artifact threads through cycle receipt
                     &policy_outcome.annotated_drifts,
                     plan_text.clone(),
                     CycleResult::PolicyGated(PolicyDecision::RequireApproval),
@@ -1269,6 +1456,16 @@ async fn handle_applying(
 ) -> Result<ReconcileAction> {
     info!("Template in Applying phase");
     let _phase_timer = state.metrics.record_phase_duration("applying");
+    // Keep `executor` for the verb-level apply call (we don't migrate the
+    // full handle_applying to runner.apply in this slice — apply has
+    // tofu-specific self-heal paths the runner abstraction would have to
+    // grow to absorb cleanly; slice 2d does that). But we ALSO grab the
+    // runner so we can run a post-apply `runner.plan()` and thread the
+    // resulting `CycleArtifact` into the cycle receipt. That's what makes
+    // tofu cycles WITH CHANGES populate `actionDistribution` after apply —
+    // the post-apply re-plan reports the converged state.
+    let executor = state.executor_for(template);
+    let runner = state.executor_runner_for(template);
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
     let plan_path = workspace.plan_path();
@@ -1292,7 +1489,7 @@ async fn handle_applying(
     // creating a duplicate. Imported addresses are tracked so the
     // cycle receipt can mark them Outcome::Imported (instead of
     // whatever the post-import plan would derive).
-    let imported_addresses = run_import_prepass(
+    let mut imported_addresses = run_import_prepass(
         template,
         state,
         &workspace.path,
@@ -1310,8 +1507,7 @@ async fn handle_applying(
         None
     };
 
-    let mut result = state
-        .executor
+    let mut result = executor
         .apply(&workspace.path, plan_file, true)
         .await?;
 
@@ -1340,17 +1536,69 @@ async fn handle_applying(
         )
         .await;
         let _ = tokio::fs::remove_file(&plan_path).await;
-        result = state
-            .executor
+        result = executor
             .apply(&workspace.path, None, true)
             .await?;
+    }
+
+    // Post-apply conflict resolution — the typed, cascading
+    // ConflictResolutionPolicy layer. When the pre-apply import sweep
+    // didn't adopt everything (e.g. `tofu show -json` came back empty on
+    // a huge plan, or a resource was created out-of-band between plan and
+    // apply), the apply 422s on "already exists" / "already protected".
+    // Rather than failing the cycle, classify each conflict against the
+    // policy and, for `import`-resolution conflicts, adopt the resource
+    // via `tofu import` then re-apply — up to `maxRounds`. Gated on the
+    // same autoOnConflict signal the prepass uses (or an explicit
+    // `spec.conflictPolicy.enabled`), so it fires on the existing
+    // pleme-io-opensource CR with no spec change. This is the convergence
+    // guarantee that does NOT depend on the prepass succeeding.
+    if !result.success {
+        if let Some(outcome) = crate::controller::conflict::resolve_conflicts_post_apply(
+            template,
+            state,
+            &workspace.path,
+            &plan_path,
+            &workspace.main_tf_path(),
+            result.clone(),
+        )
+        .await
+        {
+            let imported_n = outcome.imported.len();
+            imported_addresses.extend(outcome.imported);
+            result = outcome.result;
+            if result.success {
+                info!(
+                    imported = imported_n,
+                    rounds = outcome.rounds,
+                    "conflict-resolution: apply converged after adopting out-of-band resources"
+                );
+                record_event(
+                    template,
+                    state,
+                    EventType::Normal,
+                    "ConflictResolved",
+                    &format!(
+                        "Adopted {imported_n} out-of-band resource(s) via import + re-apply ({} round(s))",
+                        outcome.rounds
+                    ),
+                )
+                .await;
+            } else if imported_n > 0 {
+                warn!(
+                    imported = imported_n,
+                    rounds = outcome.rounds,
+                    "conflict-resolution: imported resources but apply still failing — surfacing real error"
+                );
+            }
+        }
     }
 
     if result.success {
         info!(duration_secs = result.duration.as_secs_f64(), "tofu apply completed successfully");
 
         // Fetch outputs
-        let outputs = match state.executor.output(&workspace.path).await {
+        let outputs = match executor.output(&workspace.path).await {
             Ok(output_result) if output_result.success => {
                 serde_json::from_str(&output_result.stdout).ok()
             }
@@ -1402,9 +1650,34 @@ async fn handle_applying(
         }
 
         update_phase(template, Phase::Ready, state).await?;
+
+        // Slice 2c part-2: capture the post-apply state via the runner.
+        // For tofu, this is a fresh `tofu plan` that should report no
+        // changes (the apply converged the state). For magma, the
+        // bundle on disk reflects the post-apply state. Either way,
+        // threading this artifact into the cycle receipt gives the CR
+        // status its `actionDistribution` for the post-apply cycle.
+        //
+        // Best-effort: a runner.plan() failure here doesn't fail the
+        // apply (which already succeeded); we just lose the
+        // post-apply artifact and the cycle records without
+        // actionDistribution populated.
+        let post_apply_artifact = match runner.plan(&workspace).await {
+            Ok(r) => r.artifact,
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "post-apply runner.plan failed; cycle will record without actionDistribution"
+                );
+                None
+            }
+        };
+
         record_reconcile_cycle(
             template,
             state,
+            Some(&workspace.path),
+            post_apply_artifact,
             &prior_drifts,
             prior_plan_summary,
             CycleResult::AppliedSuccess { imported_addresses: imported_addresses.clone() },
@@ -1489,9 +1762,19 @@ async fn handle_applying(
         }
 
         update_phase_with_error(template, Phase::Failed, &err_msg, state).await?;
+
+        // Even on apply failure, capture the post-failure state via
+        // the runner — for tofu, this surfaces "what changed (or
+        // didn't) at the point of failure"; for magma, the bundle
+        // captures the lifecycle FSM's failed-phase. Best-effort:
+        // a runner.plan() failure here is silent.
+        let post_apply_artifact = runner.plan(&workspace).await.ok().and_then(|r| r.artifact);
+
         record_reconcile_cycle(
             template,
             state,
+            Some(&workspace.path),
+            post_apply_artifact,
             &prior_drifts,
             prior_plan_summary,
             CycleResult::AppliedFailure(err_msg.clone()),
@@ -1614,6 +1897,8 @@ async fn run_import_prepass(
         bundled_natural_ids, parse_planned_attrs, resolve_natural_id, substitute_with_planned,
     };
 
+    let executor = state.executor_for(template);
+
     let auto_import = template
         .spec
         .import_policy
@@ -1633,11 +1918,38 @@ async fn run_import_prepass(
     // bypasses the cap entirely so the prepass sees every create-
     // action it could import. prior_drifts is kept as a fallback
     // path for callers that don't have a plan file available.
-    let plan_json = match state.executor.show_plan(workspace_path, plan_path).await {
-        Ok(r) if r.success => r.stdout,
-        _ => String::new(),
+    let plan_json = match executor.show_plan(workspace_path, plan_path).await {
+        Ok(r) if r.success && !r.stdout.is_empty() => r.stdout,
+        Ok(r) => {
+            // NON-SILENT: a non-success or empty `tofu show -json` is the
+            // exact failure that silently disabled auto-import and stuck
+            // the pleme-io-opensource posture for ~17 days. Surface it
+            // loudly so the mechanism is visible in the operator log. The
+            // executor read-to-end fix should keep this from firing on
+            // large plans; the post-apply conflict catch covers the gap
+            // if it does fire.
+            warn!(
+                success = r.success,
+                exit_code = r.exit_code,
+                stdout_len = r.stdout.len(),
+                stderr = %truncate_for_status(&r.stderr),
+                "import prepass: `tofu show -json` returned no usable plan JSON — \
+                 falling back to prior drift details (typically 0 creates). Pre-apply \
+                 import is disabled this cycle; conflicts will be caught post-apply."
+            );
+            String::new()
+        }
+        Err(e) => {
+            warn!(
+                error = %e,
+                "import prepass: `tofu show -json` errored — pre-apply import disabled \
+                 this cycle (post-apply conflict catch covers)."
+            );
+            String::new()
+        }
     };
     let plan_create_addresses = extract_create_addresses_from_plan(&plan_json);
+    let plan_creates_n = plan_create_addresses.len();
     let create_addresses_owned: Vec<String> = if !plan_create_addresses.is_empty() {
         plan_create_addresses
     } else {
@@ -1647,6 +1959,13 @@ async fn run_import_prepass(
             .map(|d| d.address.clone())
             .collect()
     };
+    info!(
+        plan_json_len = plan_json.len(),
+        plan_creates = plan_creates_n,
+        total_create_addresses = create_addresses_owned.len(),
+        source = if plan_creates_n > 0 { "plan" } else { "prior_drifts" },
+        "import prepass: create-action discovery"
+    );
     if create_addresses_owned.is_empty() {
         return Vec::new();
     }
@@ -1823,7 +2142,8 @@ async fn try_tofu_import(
         source = %source_label,
         "Running tofu import for create-action"
     );
-    match state.executor.import(workspace_path, addr, import_id).await {
+    let executor = state.executor_for(template);
+    match executor.import(workspace_path, addr, import_id).await {
         Ok(r) if r.success => {
             record_event(
                 template,
@@ -1925,6 +2245,14 @@ async fn handle_ready(
     template: &InfrastructureTemplate,
     state: &ControllerState,
 ) -> Result<ReconcileAction> {
+    // Slice 2c part 3: drift check goes through the runner abstraction
+    // too. Same shape as handle_planning — one `runner.plan(workspace)`
+    // call returns both the raw show-JSON (for the legacy Plan-based
+    // drift detail extraction the settling fingerprint reads) and the
+    // typed `CycleArtifact` (for the unified surface). Closes the
+    // last phase handler that still spoke `IacExecutor` directly for
+    // its plan call.
+    let runner = state.executor_runner_for(template);
     let interval = parse_duration(&template.spec.refresh_interval)
         .unwrap_or(DEFAULT_REQUEUE_INTERVAL);
 
@@ -1945,43 +2273,42 @@ async fn handle_ready(
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
 
-    // We need structured drift data (for fingerprinting / settling)
-    // so save the plan to a side file and parse it. If JSON parsing
-    // fails we fall back to the boolean has_changes signal — better
-    // a missed fingerprint than a controller wedge.
-    let drift_plan_path = workspace.path.join("_drift_plan.tfplan");
-    let result = state
-        .executor
-        .plan(&workspace.path, Some(&drift_plan_path), &[])
-        .await?;
+    let plan_result = runner.plan(&workspace).await?;
 
     update_drift_check_timestamp(template, state).await?;
 
-    let drift_details: Vec<crate::crd::DriftDetail> = if result.has_changes() && drift_plan_path.exists() {
-        let show = state.executor.show_plan(&workspace.path, &drift_plan_path).await?;
-        if show.success {
-            match Plan::from_json(&show.stdout) {
-                Ok(plan) => plan
-                    .drift_details(50)
-                    .into_iter()
-                    .map(|d| crate::crd::DriftDetail {
-                        address: d.address,
-                        action: d.action,
-                        risk: d.risk,
-                        attributes: d.attributes,
-                        policy_decision: None,
-                        matched_policy: None,
-                    })
-                    .collect(),
-                Err(e) => {
-                    warn!(error = %e, "Failed to parse drift plan JSON");
-                    Vec::new()
-                }
+    // Two-path drift extraction — identical shape to handle_planning's
+    // dispatch. Tofu uses `Plan::from_json` on the show-JSON for
+    // per-attribute drift detail (the settling fingerprint reads this);
+    // magma derives from the typed `CycleArtifact.resource_changes`
+    // (which the bundle reader populates with severities + actions).
+    // Either way, the drift_details list feeds the settling evaluator
+    // the same way it always did.
+    let drift_details: Vec<crate::crd::DriftDetail> = if !plan_result.has_changes {
+        Vec::new()
+    } else if !plan_result.raw_show_json.is_empty() {
+        match Plan::from_json(&plan_result.raw_show_json) {
+            Ok(plan) => plan
+                .drift_details(50)
+                .into_iter()
+                .map(|d| crate::crd::DriftDetail {
+                    address: d.address,
+                    action: d.action,
+                    risk: d.risk,
+                    attributes: d.attributes,
+                    policy_decision: None,
+                    matched_policy: None,
+                })
+                .collect(),
+            Err(e) => {
+                warn!(error = %e, runner = runner.name(), "Failed to parse drift plan JSON");
+                Vec::new()
             }
-        } else {
-            Vec::new()
         }
+    } else if let Some(art) = plan_result.artifact.as_ref() {
+        art.drift_details(50)
     } else {
+        warn!(runner = runner.name(), "Drift check produced no analyzable output");
         Vec::new()
     };
 
@@ -2262,22 +2589,36 @@ async fn handle_destroying(
     }
 
     info!("Template in Destroying phase");
+    // Slice 2c part 4: the last phase handler that still spoke the raw
+    // `IacExecutor` migrates to the typed `WorkspaceRunner`. After this
+    // commit, EVERY phase handler (planning/applying/ready/destroying)
+    // consumes the same abstraction — `IacExecutor` is held directly
+    // only by the verb-level carve-outs (`run_import_prepass`,
+    // `conflict.rs`), as designed.
+    let runner = state.executor_runner_for(template);
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
 
     // Only run destroy if workspace has been initialized
     if workspace.file_exists(".terraform") {
-        let result = state.executor.destroy(&workspace.path, true).await?;
+        let r = runner.destroy(&workspace, true).await?;
 
-        if !result.success {
-            let err_msg = format!("tofu destroy failed: {}", result.stderr);
+        if !r.success {
+            // Combine stdout + stderr — tofu writes most diagnostics to
+            // stdout (same logic that lives in handle_applying's
+            // post-apply failure path).
+            let err_msg = format!(
+                "destroy failed (runner={}): {}",
+                runner.name(),
+                if r.raw_stdout.is_empty() { String::new() } else { r.raw_stdout.clone() }
+            );
             warn!(%err_msg);
             update_phase_with_error(template, Phase::Failed, &err_msg, state).await?;
             record_event(template, state, EventType::Warning, "DestroyFailed", &err_msg).await;
             return Ok(ReconcileAction::Requeue(ERROR_REQUEUE_INTERVAL));
         }
 
-        info!("tofu destroy completed successfully");
+        info!(runner = runner.name(), "destroy completed successfully");
         record_event(template, state, EventType::Normal, "Destroyed", "Infrastructure destroyed successfully").await;
     }
 
@@ -2582,6 +2923,8 @@ mod cycle_tests {
             20,
             Some("+0 ~0 -0".to_string()),
             None,
+            None,
+            None,
             CycleResult::NoChanges,
         );
         assert_eq!(cycle.summary.matched, 20);
@@ -2603,6 +2946,8 @@ mod cycle_tests {
             &drifts,
             20,
             Some("+1 ~1 -1".to_string()),
+            None,
+            None,
             None,
             CycleResult::AppliedSuccess { imported_addresses: vec![] },
         );
@@ -2628,6 +2973,8 @@ mod cycle_tests {
             &drifts,
             10,
             Some("+2 ~0 -0".to_string()),
+            None,
+            None,
             None,
             CycleResult::AppliedSuccess {
                 imported_addresses: vec!["cf_dns_record.foo".to_string()],
@@ -2655,6 +3002,8 @@ mod cycle_tests {
             20,
             None,
             None,
+            None,
+            None,
             CycleResult::AppliedFailure(err.clone()),
         );
         assert_eq!(cycle.summary.failed, 1);
@@ -2671,6 +3020,8 @@ mod cycle_tests {
             Utc::now(),
             &drifts,
             20,
+            None,
+            None,
             None,
             None,
             CycleResult::PolicyGated(PolicyDecision::Refuse),
@@ -2695,6 +3046,7 @@ mod cycle_tests {
                 ..Default::default()
             },
             outcomes: vec![],
+            ..Default::default()
         };
         assert!(cycle_content_equal(&mk(1, now), &mk(2, later)));
     }
@@ -2713,6 +3065,7 @@ mod cycle_tests {
                 ..Default::default()
             },
             outcomes: vec![],
+            ..Default::default()
         };
         assert!(!cycle_content_equal(&mk(20), &mk(19)));
     }
@@ -2762,6 +3115,8 @@ mod cycle_tests {
             Utc::now(),
             &drifts,
             500,
+            None,
+            None,
             None,
             None,
             CycleResult::AppliedSuccess { imported_addresses: vec![] },

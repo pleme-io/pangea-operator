@@ -232,6 +232,29 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
         let bytes = tokio::fs::read(&path).await.map_err(Error::Io)?;
         let value: serde_json::Value = serde_json::from_slice(&bytes)
             .map_err(|e| Error::MagmaExecution(format!("parse main.tf.json: {e}")))?;
+        Self::load_config_from_value(value)
+    }
+
+    /// Build a `magma_config::Config` directly from an in-memory JSON
+    /// value, skipping the disk round-trip.
+    ///
+    /// The in-process Ruby compile (`pangea-ruby-eval`) produces the
+    /// workspace's synthesis as `serde_json::Value` BEFORE
+    /// owner.rs writes it to `main.tf.json` for tofu compatibility +
+    /// debugging. For pure-magma paths (preview, smoke validation,
+    /// future GraphQL workspace-preview RPC) the file write is
+    /// gratuitous — magma's `Config::from_json` only needs the value.
+    ///
+    /// Sister to `load_config`: same final type, no I/O. Both routes
+    /// share the same parse error surface so callers see consistent
+    /// `Error::MagmaExecution` regardless of source.
+    ///
+    /// This is the first primitive of the in-memory exploit
+    /// (theory/IN-MEMORY-PIPELINE.md): both Ruby + magma live in
+    /// process, so workspace preview, equivalence tests, and future
+    /// customer-facing previews can run the full compile→plan
+    /// pipeline without touching disk or k8s state.
+    pub fn load_config_from_value(value: serde_json::Value) -> Result<magma_config::Config> {
         magma_config::Config::from_json(value)
             .map_err(|e| Error::MagmaExecution(format!("magma_config: {e}")))
     }
@@ -360,6 +383,21 @@ impl<S> IacExecutor for MagmaExecutor<S>
 where
     S: StateBackend + ?Sized,
 {
+    fn name(&self) -> &'static str {
+        "magma"
+    }
+
+    /// Magma owns its state backend directly via the `StateBackend`
+    /// trait; the canonical pleme-io deployment wires Postgres, so
+    /// report `pg/<schema>` where schema is the PG schema this
+    /// executor reads/writes (one schema per pangea namespace). The
+    /// schema is the load-bearing key — `pangea_state.<schema>` is
+    /// the table — and is what an observer needs to query state by
+    /// hand.
+    fn backend_descriptor(&self) -> Option<String> {
+        Some(format!("pg/{}", self.cfg.schema_name))
+    }
+
     async fn init(&self, _work_dir: &Path, _extra_args: &[&str]) -> Result<TofuResult> {
         let started = Instant::now();
         Ok(ok_tofu_result(

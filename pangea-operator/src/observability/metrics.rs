@@ -100,6 +100,27 @@ pub struct Metrics {
     /// settling policy escalates to Failed (default 5 cycles).
     pub consecutive_compile_failures: IntGaugeVec,
 
+    /// Current recommended escalation rung depth per template (0-4 per
+    /// EscalationAction::depth — Retry=0, RefreshSource=1, ReloadGems=2,
+    /// RecycleWorkers=3, PauseAndAlert=4). Set by `handle_compile_failure`
+    /// after the ladder's pick. Powers dashboards like "how many
+    /// templates are currently above depth 2", "which workspace has
+    /// been at depth 3 the longest".
+    ///
+    /// Pairs with `escalation_actions_total` (counter) for selection
+    /// histogram + `consecutive_compile_failures` for the orthogonal
+    /// settling signal. See `controller::escalation` +
+    /// `project_escalation_ladder.md`.
+    pub escalation_recommended_depth: IntGaugeVec,
+
+    /// Total times each escalation action was recommended, by template
+    /// + action label. Lets dashboards count "how often did each rung
+    /// fire" and answer "is the ladder converging or constantly
+    /// escalating".
+    /// Labels: namespace, name, action (Retry|RefreshSource|ReloadGems|
+    /// RecycleWorkers|PauseAndAlert).
+    pub escalation_actions_total: IntCounterVec,
+
     /// Per-workspace `Active` carve-out gauge. Set to 1 for each
     /// workspace whose effective `SuspensionDecision` is
     /// `Active { .. }` after running the precedence ladder; 0
@@ -404,6 +425,26 @@ impl Metrics {
         )
         .expect("metric can be created");
 
+        let escalation_recommended_depth = IntGaugeVec::new(
+            Opts::new(
+                "pangea_escalation_recommended_depth",
+                "Recommended escalation rung depth per template \
+                 (0=Retry, 1=RefreshSource, 2=ReloadGems, 3=RecycleWorkers, 4=PauseAndAlert) \
+                 (controller-detection-axis fix step)",
+            ),
+            &["namespace", "name"],
+        )
+        .expect("metric can be created");
+
+        let escalation_actions_total = IntCounterVec::new(
+            Opts::new(
+                "pangea_escalation_actions_total",
+                "Total times each escalation action was recommended by template+action",
+            ),
+            &["namespace", "name", "action"],
+        )
+        .expect("metric can be created");
+
         let consecutive_compile_failures = IntGaugeVec::new(
             Opts::new(
                 "pangea_template_consecutive_compile_failures",
@@ -563,6 +604,12 @@ impl Metrics {
             .register(Box::new(consecutive_compile_failures.clone()))
             .expect("metric can be registered");
         registry
+            .register(Box::new(escalation_recommended_depth.clone()))
+            .expect("metric can be registered");
+        registry
+            .register(Box::new(escalation_actions_total.clone()))
+            .expect("metric can be registered");
+        registry
             .register(Box::new(workspace_active_override.clone()))
             .expect("metric can be registered");
         registry
@@ -615,6 +662,8 @@ impl Metrics {
             policy_skipped_total,
             compile_failures_total,
             consecutive_compile_failures,
+            escalation_recommended_depth,
+            escalation_actions_total,
             workspace_active_override,
             controller_reconciliations_total,
             packer_builds_by_phase,

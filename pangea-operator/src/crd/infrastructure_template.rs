@@ -223,6 +223,29 @@ pub struct InfrastructureTemplateSpec {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub import_hints: BTreeMap<String, String>,
 
+    /// Typed, cascading conflict-resolution policy — the operator's
+    /// answer to "apply hit a provider conflict (the resource already
+    /// exists / is already protected) that the pre-apply import sweep
+    /// didn't catch." Rather than failing the cycle, the operator
+    /// classifies each conflict and, for `import`-resolution conflicts,
+    /// adopts the out-of-band resource via `tofu import` then re-applies
+    /// (up to `maxRounds`).
+    ///
+    /// Two layers, general + specific:
+    ///   - GENERAL (default): unset → a bundled policy
+    ///     (`alreadyExists` + `alreadyProtected` → `import`, everything
+    ///     else → `fail`, 3 rounds) that fires automatically whenever
+    ///     `importPolicy.autoOnConflict` is true. Existing templates
+    ///     self-heal conflicts with NO spec change.
+    ///   - SPECIFIC: set `rules` to override per resource-type + kind
+    ///     (first match wins), `defaultResolution` for the unmatched
+    ///     fallback, and `enabled` to force on/off independent of
+    ///     `autoOnConflict`.
+    ///
+    /// Default: unset → bundled policy gated on `autoOnConflict`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conflict_policy: Option<ConflictResolutionPolicy>,
+
     /// Publish selected `status.outputs` to user-defined K8s Secrets
     /// after every successful apply. Each binding picks a single
     /// output address and writes it to a named Secret/key in any
@@ -608,6 +631,131 @@ pub struct ImportPolicy {
     pub natural_ids: BTreeMap<String, String>,
 }
 
+/// Typed classification of a provider conflict surfaced by a failed
+/// `tofu apply`. The operator's conflict classifier
+/// (`controller::conflict::classify_apply_conflicts`) maps OpenTofu's
+/// diagnostic text onto these kinds; the [`ConflictResolutionPolicy`]
+/// then decides what to do per kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ConflictKind {
+    /// The resource already exists in the provider (HTTP 409/422
+    /// "already exists" / "name already taken"). The canonical case:
+    /// an out-of-band resource the pre-apply import sweep didn't adopt.
+    AlreadyExists,
+    /// The resource (or a sub-resource it manages) is already in the
+    /// target protected/locked state (e.g. a branch is "already
+    /// protected").
+    AlreadyProtected,
+    /// Any other apply failure. Never auto-resolved by the bundled
+    /// default — surfaced as a real error unless a rule says otherwise.
+    Other,
+}
+
+/// What the operator does about a classified conflict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ConflictResolution {
+    /// Adopt the existing resource into state via `tofu import`, then
+    /// re-apply. Converges the posture without recreating.
+    Import,
+    /// Leave the resource as-is; don't import, don't fail the round on
+    /// its account. Use for resources whose conflict is expected/benign.
+    Skip,
+    /// Surface the conflict as a real apply failure (current behaviour).
+    Fail,
+}
+
+/// One typed conflict-resolution rule — the *specific* layer. Evaluated
+/// top-to-bottom; the first rule whose `resourceTypes` (empty = any) and
+/// `kinds` (empty = any) match the conflict wins.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictRule {
+    /// Tofu resource types this rule matches (e.g. `github_repository`).
+    /// Empty = match any resource type.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resource_types: Vec<String>,
+
+    /// Conflict kinds this rule matches. Empty = match any kind.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kinds: Vec<ConflictKind>,
+
+    /// What to do when this rule matches.
+    pub resolution: ConflictResolution,
+}
+
+/// Typed, configurable conflict-resolution policy.
+///
+/// Two layers, general + specific (see [`ConflictResolutionPolicy::bundled_default`]):
+///   - GENERAL: the bundled default adopts `alreadyExists` /
+///     `alreadyProtected` via import and fails everything else; it fires
+///     automatically when `importPolicy.autoOnConflict` is true.
+///   - SPECIFIC: author `rules` to override per (resourceType, kind),
+///     `defaultResolution` for the unmatched fallback, and `enabled` to
+///     force the whole mechanism on/off independent of `autoOnConflict`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictResolutionPolicy {
+    /// Master switch. `Some(true)`/`Some(false)` forces the post-apply
+    /// conflict catch on/off. `None` (default) inherits from
+    /// `importPolicy.autoOnConflict` — so templates already opting into
+    /// auto-import get the convergence guarantee with no extra config.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+
+    /// Specific per-(resourceType, kind) rules, first match wins.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rules: Vec<ConflictRule>,
+
+    /// Resolution for conflicts no `rules` entry matched. Defaults to
+    /// `fail` (never silently paper over an unrecognized conflict).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_resolution: Option<ConflictResolution>,
+
+    /// Max import→re-apply rounds before giving up (clamped to 1..=10).
+    /// Default 3.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_rounds: Option<u32>,
+}
+
+impl ConflictResolutionPolicy {
+    /// The bundled general-case policy: adopt `alreadyExists` +
+    /// `alreadyProtected` via import, fail everything else, 3 rounds.
+    /// `enabled: None` so it inherits `importPolicy.autoOnConflict`.
+    pub fn bundled_default() -> Self {
+        Self {
+            enabled: None,
+            rules: vec![ConflictRule {
+                resource_types: Vec::new(),
+                kinds: vec![ConflictKind::AlreadyExists, ConflictKind::AlreadyProtected],
+                resolution: ConflictResolution::Import,
+            }],
+            default_resolution: Some(ConflictResolution::Fail),
+            max_rounds: Some(3),
+        }
+    }
+
+    /// Resolve the action for a `(resource_type, kind)` conflict: first
+    /// matching rule wins, else `default_resolution`, else `Fail`.
+    pub fn resolution_for(&self, resource_type: &str, kind: ConflictKind) -> ConflictResolution {
+        for rule in &self.rules {
+            let type_ok = rule.resource_types.is_empty()
+                || rule.resource_types.iter().any(|t| t == resource_type);
+            let kind_ok = rule.kinds.is_empty() || rule.kinds.contains(&kind);
+            if type_ok && kind_ok {
+                return rule.resolution;
+            }
+        }
+        self.default_resolution.unwrap_or(ConflictResolution::Fail)
+    }
+
+    /// Round budget, clamped to a sane 1..=10.
+    pub fn rounds(&self) -> u32 {
+        self.max_rounds.unwrap_or(3).clamp(1, 10)
+    }
+}
+
 /// Status of an InfrastructureTemplate.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -783,6 +931,31 @@ pub struct InfrastructureTemplateStatus {
     /// `VerifiedBlocked`. Empty when no escalation has fired.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_escalation_reason: Option<String>,
+
+    /// Echo of the IaC executor the operator selected at runtime for
+    /// this template's reconcile path. `"magma"` or `"tofu"`.
+    ///
+    /// Before this field existed the only way to answer "what's the
+    /// operator actually running for this CR?" was to grep its startup
+    /// logs for `Wiring Postgres pool for magma state backend` etc.
+    /// The operator's own declaration belongs in CR status, queryable
+    /// via `kubectl get itr X -o jsonpath='{.status.executor}'`.
+    ///
+    /// Updated on every cycle (idempotent — `record_reconcile_cycle`'s
+    /// content-equality guard suppresses no-op patches), so a flip
+    /// caused by feature-flag or backend-availability change shows up
+    /// on the next reconcile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executor: Option<String>,
+
+    /// Echo of the state backend the operator wired for this cycle.
+    /// `"pg/<db_name>"` for Postgres-backed state (the magma path's
+    /// canonical case), `"local"` for filesystem, `None` for stateless
+    /// executors. Today this is inferable only from main.rs startup
+    /// log lines — the CR doesn't say where its state lives. Adding
+    /// it here closes that loop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
 }
 
 /// Receipt for one reconcile cycle. Surfaces the answer to "what did
@@ -835,6 +1008,164 @@ pub struct ReconcileCycle {
     /// payloads unbounded. Capped at 100 entries.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub outcomes: Vec<ResourceOutcome>,
+
+    /// Echo of the IaC executor that ran THIS cycle. Preserves
+    /// "magma planned this" even after a future flip of
+    /// `status.executor`. Mirrors `status.executor` at cycle-record
+    /// time; `None` for cycles written by operator versions before
+    /// the field landed (backward-compatible deserialize).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executor: Option<String>,
+
+    /// Distribution of plan action verbs across ALL planned changes
+    /// (including no-op). The compact answer to "what would this cycle
+    /// actually do?" — replaces having to `kubectl exec` into the pod
+    /// + parse `magma-bundle.json plan.changes` by hand.
+    ///
+    /// Different from `summary` above: `summary` is post-decision
+    /// (matched / updated / created / …) and rolls up untouched
+    /// resources into `matched`. This is pre-decision (the action
+    /// verb the plan emitted for each resource, no-op included), so
+    /// it preserves the distinction between "1054 resources, none
+    /// changed" (`noOp: 1054`) and "1054 resources, none managed yet"
+    /// (`create: 1054`).
+    ///
+    /// `None` for tofu cycles + for cycles where the bundle wasn't
+    /// available (cleanup races, executor wrote no bundle).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action_distribution: Option<ActionDistribution>,
+
+    /// Reference to the `magma-bundle.json` artifact this cycle
+    /// produced. Today the bundle lives in the operator pod's emptyDir
+    /// at `/var/pangea/workspaces/<ns>/<name>/magma-bundle.json` and
+    /// is only readable via `kubectl exec`. Carrying its `bundleId` +
+    /// `sha256` here lets observers verify the bundle they fetched
+    /// matches the cycle they read about. A follow-up slice publishes
+    /// the bundle as a ConfigMap and extends this struct with
+    /// `name`/`namespace` fields.
+    ///
+    /// `None` for tofu cycles + cycles whose bundle couldn't be
+    /// read (parse error, missing file).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle_ref: Option<BundleRef>,
+
+    /// Severity rollup across this cycle's resource changes —
+    /// `{cosmetic, functional, breaking}`. The user-facing answer to
+    /// "how scary is this plan?". Magma populates from its native
+    /// drift-classifier severities; tofu populates from the pure
+    /// `action_to_severity` mapping (Cosmetic for no-op, Functional
+    /// for create/update, Breaking for delete/replace). The sum
+    /// equals the total change count.
+    ///
+    /// `None` when this cycle had no per-resource changes to
+    /// classify (empty plan).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub severity_rollup: Option<SeverityRollup>,
+
+    /// Lifecycle FSM phase recorded in the magma bundle —
+    /// `"planning"`, `"applying"`, `"verifying"`, `"stable"`,
+    /// `"failed"`. Honestly absent (`None`) for tofu cycles: tofu has
+    /// no lifecycle FSM, so the operator never fabricates one.
+    /// Magma's lifecycle states surface here so observers can answer
+    /// "where did this cycle stop?" without exec-reading the bundle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle_phase: Option<String>,
+}
+
+/// Per-cycle severity rollup — counts of resource changes per
+/// severity bucket. Sum equals the total change count for the cycle.
+///
+/// Mirrors `executor::cycle_artifact::SeverityRollup` at the CRD type
+/// layer (so the schemars derive flows through to the CRD YAML
+/// without depending on the executor module). The two types
+/// round-trip via `SeverityRollup::from` conversions wired in
+/// `build_reconcile_cycle`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SeverityRollup {
+    /// Cosmetic changes — comment-level, no real effect (most no-ops
+    /// fall here when surfaced from magma; tofu surfaces them via the
+    /// pure action→severity mapping for no-op).
+    #[serde(default)]
+    pub cosmetic: u32,
+    /// Functional changes — resource updated, created, or
+    /// semantically-meaningful attributes change. The default bucket
+    /// for create/update.
+    #[serde(default)]
+    pub functional: u32,
+    /// Breaking changes — destroy, replace, or anything that loses
+    /// data / interrupts service. The bucket operators pay attention
+    /// to. Maps to magma's `critical` severity at the bundle boundary.
+    #[serde(default)]
+    pub breaking: u32,
+}
+
+/// Distribution of plan action verbs across the changes a cycle's
+/// plan emitted. One bucket per terraform action; `other` catches
+/// future tofu vocab additions (read, forget, …) so a new verb never
+/// silently drops out of the rollup.
+///
+/// The sum of all buckets equals the total `plan.changes` entry count
+/// — i.e. equals the managed-resource count for the workspace. For a
+/// fully-converged workspace `noOp` equals that total + everything
+/// else is zero.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionDistribution {
+    /// Resources the plan classified as no-op — declared state already
+    /// matches actual state, no apply action.
+    #[serde(default)]
+    pub no_op: u32,
+    /// Resources the plan would create on apply.
+    #[serde(default)]
+    pub create: u32,
+    /// Resources the plan would update in-place on apply.
+    #[serde(default)]
+    pub update: u32,
+    /// Resources the plan would destroy on apply.
+    #[serde(default)]
+    pub delete: u32,
+    /// Resources the plan would destroy + recreate (terraform's
+    /// `replace` action).
+    #[serde(default)]
+    pub replace: u32,
+    /// Catch-all for action verbs not bucketed above (terraform's
+    /// `read`, `forget`, future additions). Keeps the rollup faithful
+    /// even when the upstream vocab grows.
+    #[serde(default)]
+    pub other: u32,
+}
+
+/// Reference to the magma-bundle.json artifact a cycle produced.
+///
+/// Carries the bundle's identity (`bundle_id` from the bundle itself)
+/// + size. A follow-up slice publishes bundles as ConfigMaps and
+/// extends this struct with `configMapName` + `configMapNamespace`
+/// so observers can fetch the bundle without `kubectl exec`-ing the
+/// operator pod.
+///
+/// The `bundle_id` is already a BLAKE3 over the bundle's canonical
+/// representation (produced by magma_bundle when the bundle is
+/// minted), so it doubles as the artifact's content fingerprint —
+/// no separate file digest is needed at this layer.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BundleRef {
+    /// Bundle kind discriminator from `magma-bundle.json.kind` — today
+    /// always `"terraform"`; future executors (pulumi, opentofu,
+    /// kubernetes) get their own discriminator.
+    pub kind: String,
+    /// Stable bundle identifier — the `bundle_id` field from
+    /// `magma-bundle.json` (BLAKE3 over the bundle's canonical
+    /// representation). Lets observers correlate cycles to bundles
+    /// across compaction/cleanup AND verify the bundle they fetched
+    /// matches the cycle they read about (the bundle_id is the
+    /// content hash).
+    pub bundle_id: String,
+    /// Bundle file size in bytes — UX hint ("is this a 1KB null
+    /// bundle or a 3MB serious one?") and capacity-planning input for
+    /// the future ConfigMap-publication slice (etcd value-size budget).
+    pub size_bytes: u64,
 }
 
 /// Aggregate counts for one cycle. Sum of all variants equals total
@@ -1465,6 +1796,7 @@ mod tests {
                 action: Some("update".into()),
                 message: None,
             }],
+            ..Default::default()
         };
         let json = serde_json::to_string(&cycle).expect("serializes");
         assert!(json.contains("cycle"));

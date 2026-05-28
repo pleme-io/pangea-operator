@@ -43,6 +43,7 @@ pub mod crd;
 pub mod controller;
 pub mod error;
 pub mod executor;
+pub mod executor_migration;
 pub mod observability;
 pub mod ruby;
 

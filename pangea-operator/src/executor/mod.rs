@@ -18,6 +18,22 @@ pub mod variable_resolver;
 // startup or per-CR.
 #[cfg(feature = "executor_magma")]
 pub mod magma;
+// Bundle reader — NOT feature-gated. The CR-status fields it produces
+// (`ActionDistribution`, `BundleRef`) are always part of the schema so
+// YAML consumers / dashboards don't have a feature-conditional shape;
+// in non-magma builds the reader simply returns None on every call
+// (no magma-bundle.json on disk). See memory/project_operator_
+// observability_backlog.md for why this lives here.
+pub mod magma_bundle;
+// Unified cycle artifact — the typed "what just happened" shape both
+// executors populate. Slice 2 of the observability program. Not
+// feature-gated; the type system stays uniform whether or not magma
+// is linked in. See module docs for the per-backend capability map.
+pub mod cycle_artifact;
+// WorkspaceRunner — the typed, executor-agnostic abstraction the
+// controller's phase handlers speak. Layered ON TOP of IacExecutor
+// (not a replacement). See module docs for the migration story.
+pub mod workspace_runner;
 
 pub use backend_select::ExecutorBackend;
 pub use iac_executor::IacExecutor;

@@ -6,6 +6,7 @@
 mod postgres;
 mod schema;
 mod state;
+mod tofu_pg_state_backend;
 pub mod state_backend;
 mod lock;
 mod config;
@@ -13,6 +14,7 @@ mod config;
 pub use postgres::PostgresBackend;
 pub use schema::SchemaManager;
 pub use state::StateStore;
+pub use tofu_pg_state_backend::TofuPgStateBackend;
 pub use state_backend::{InMemoryStateBackend, PostgresStateBackend, StateBackend};
 pub use lock::{StateLock, LockGuard};
 pub use config::{BackendConfigGenerator, AwsCredentialsConfig, CloudflareCredentialsConfig};

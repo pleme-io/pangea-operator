@@ -18,7 +18,7 @@ use pangea_operator::run_graphql_server;
 
 use kube::Client;
 use std::{env, net::SocketAddr, sync::Arc};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tsunagu::ShutdownController;
 
 /// Application configuration from environment variables.
@@ -82,6 +82,14 @@ impl Config {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install a single process-wide rustls CryptoProvider FIRST. The
+    // executor_magma deps (tonic → rustls) feature-unify BOTH aws-lc-rs
+    // and ring, so rustls 0.23 can no longer auto-select and panics at
+    // first TLS use ("Could not automatically determine the
+    // process-level CryptoProvider from Rustls crate features"). Pick
+    // aws-lc-rs explicitly. Idempotent — ignore the already-installed Err.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     let config = Config::from_env();
 
     // Handle CRD generation
@@ -186,6 +194,68 @@ async fn main() -> Result<()> {
         compiler_backend.clone(),
     )
     .await?;
+
+    // Wire the shared Postgres pool to the `pangea_state` DB so magma's
+    // state backend (`ControllerState::state_backend`) goes live. Without
+    // this, `state_backend` stays `None` and `executor_for` always falls
+    // back to tofu regardless of a CR's `spec.executor`. Connection params
+    // come from the standard libpq env names (PGHOST/PGPORT/PGUSER/
+    // PGDATABASE/PGPASSWORD); the deploy sets these. PGPASSWORD is the
+    // gate: with no password we never attempt a connection and magma
+    // simply falls back to tofu — identical to today's behavior. A
+    // connect failure logs + continues with the un-pooled `state` (never
+    // crashes the operator). See `ControllerState::with_db_pool` +
+    // docs/design/0005-autonomic-convergence-on-magma.md.
+    let state = match env::var("PGPASSWORD").ok().filter(|p| !p.is_empty()) {
+        None => {
+            info!("no PGPASSWORD; magma state backend not wired, magma falls back to tofu");
+            state
+        }
+        Some(pg_password) => {
+            let pg_host = env::var("PGHOST")
+                .unwrap_or_else(|_| "pangea-database-rw.pangea-system.svc.cluster.local".to_string());
+            let pg_port: u16 = env::var("PGPORT")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(5432);
+            let pg_user = env::var("PGUSER").unwrap_or_else(|_| "postgres".to_string());
+            let pg_database = env::var("PGDATABASE").unwrap_or_else(|_| "pangea_state".to_string());
+
+            let connect_options = sqlx::postgres::PgConnectOptions::new()
+                .host(&pg_host)
+                .port(pg_port)
+                .username(&pg_user)
+                .password(&pg_password)
+                .database(&pg_database);
+
+            info!(
+                pg_host = %pg_host,
+                pg_port,
+                pg_user = %pg_user,
+                pg_database = %pg_database,
+                "Wiring Postgres pool for magma state backend"
+            );
+
+            match sqlx::postgres::PgPoolOptions::new()
+                .max_connections(5)
+                .connect_with(connect_options)
+                .await
+            {
+                Ok(pool) => {
+                    info!("Connected to pangea_state; magma state backend wired");
+                    state.with_db_pool(pool)
+                }
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        "failed to connect to pangea_state; magma state backend not wired, \
+                         magma falls back to tofu"
+                    );
+                    state
+                }
+            }
+        }
+    };
 
     // Spawn health server (8080) — /healthz + /readyz; also serves
     // /metrics for back-compat with scrape configs that hit the

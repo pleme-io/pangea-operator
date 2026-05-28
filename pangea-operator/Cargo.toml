@@ -140,6 +140,17 @@ opentelemetry-otlp = { version = "0.26", features = ["tonic"] }
 opentelemetry_sdk = { version = "0.26", features = ["rt-tokio"] }
 prometheus = "0.13"
 
+# Stable cross-process hash for the anomaly_tracker module's
+# error_signature primitive. Already transitively present via magma;
+# adding as a direct dep so the source of truth is clear.
+blake3 = "1"
+
+# Direct rustls dep so main() can install a process-wide CryptoProvider.
+# The executor_magma deps (tonic → rustls) feature-unify BOTH aws-lc-rs
+# and ring, so rustls 0.23 can no longer auto-select; pick explicitly.
+rustls = "0.23"
+
+
 # Error handling
 thiserror.workspace = true
 anyhow.workspace = true

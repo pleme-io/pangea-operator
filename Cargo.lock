@@ -2976,6 +2976,7 @@ dependencies = [
  "async-graphql-axum",
  "async-trait",
  "axum 0.8.8",
+ "blake3",
  "chrono",
  "derive_builder",
  "futures",
@@ -3014,6 +3015,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rstest",
+ "rustls",
  "schemars",
  "serde",
  "serde_json",
@@ -3048,6 +3050,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2",
+ "tempfile",
  "thiserror 2.0.17",
  "tracing",
 ]

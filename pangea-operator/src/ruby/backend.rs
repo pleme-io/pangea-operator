@@ -88,11 +88,29 @@ pub struct CompileRequest {
     pub template_name: Option<String>,
 }
 
-/// Mirrors the `/compile` response shape — only the `terraform_json`
-/// field is consumed by the controller; we drop the rest.
+/// Mirrors the `/compile` response shape. Carries BOTH the
+/// pretty-serialized JSON string (for disk write + tofu/debug
+/// consumption) AND the in-memory typed value (for direct magma
+/// + future in-process consumers).
+///
+/// The dual surface is the core of the in-memory exploit
+/// (theory/IN-MEMORY-PIPELINE.md): pangea-ruby-eval produces the
+/// synthesis as `serde_json::Value` natively; serializing to a
+/// string is for disk/tofu, not magma. Callers that stay in-process
+/// (preview, magma-plan, equivalence tests) read `synthesis_value`
+/// directly + skip the parse round-trip.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompileResult {
+    /// Pretty-serialized Terraform JSON. The form written to
+    /// `main.tf.json` for tofu compatibility + human debugging.
     pub terraform_json: String,
+    /// The same content as a typed JSON value. Callers passing
+    /// straight to magma should consume this instead of re-parsing
+    /// `terraform_json`. `Option` for HTTP-backend compatibility
+    /// (the legacy HTTP sidecar didn't return the typed value;
+    /// embedded backend always populates).
+    #[serde(default)]
+    pub synthesis_value: Option<serde_json::Value>,
 }
 
 /// Mirrors the `/compile-any` request shape (synthesizer-driven

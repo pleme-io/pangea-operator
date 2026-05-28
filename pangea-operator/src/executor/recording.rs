@@ -114,6 +114,15 @@ impl Default for RecordingExecutor {
 
 #[async_trait]
 impl IacExecutor for RecordingExecutor {
+    fn name(&self) -> &'static str {
+        "recording"
+    }
+
+    /// Test mock has no state backend — it never persists anything.
+    fn backend_descriptor(&self) -> Option<String> {
+        None
+    }
+
     async fn init(&self, work_dir: &Path, extra_args: &[&str]) -> Result<TofuResult> {
         Ok(self.record_and_respond(
             "init",

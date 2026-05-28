@@ -538,35 +538,88 @@ fn compile_template(
         .define_variable("$pangea_variables", r_vars)
         .map_err(|e| BackendError::Ruby(format!("define $pangea_variables: {e}")))?;
 
-    // Bracket ENV. Bracket $LOAD_PATH (template_path mode only). Run
-    // the inner eval. Both brackets are drop-guarded so a Ruby panic
-    // doesn't leak ENV/load-path state across requests.
+    // Build the structured compile manifest. Replaces the ad-hoc
+    // with_env + with_load_paths + purge triplet with one transactional
+    // primitive that:
+    //   1. validates the manifest's shape,
+    //   2. runs the algorithmic shield (load-path conflict detector)
+    //      against the resulting $LOAD_PATH and emits warnings,
+    //   3. purges configured modules + $LOADED_FEATURES entries,
+    //   4. brackets ENV + $LOAD_PATH (drop-guarded restore),
+    //   5. runs the body inside the controlled state.
+    //
+    // See `pangea_ruby_eval::CompileContext` doc for the full design
+    // + memory/project_ruby_pool_double_load_fix.md for the bug
+    // class this defends against.
     let load_paths: Vec<std::path::PathBuf> = req
         .rubylib_paths
         .iter()
         .map(std::path::PathBuf::from)
         .collect();
 
-    let synthesis_json = evaluator
-        .with_env(&env_overrides, |ev| {
-            ev.with_load_paths(&load_paths, |ev| {
-                // Inner returns BackendError; translate to EvalError
-                // at the bracket boundary. The outer ? then maps
-                // back via the From impl on backend.rs.
-                run_capture_and_synthesize(ev, req).map_err(|e| {
-                    pangea_ruby_eval::EvalError::Other(format!("compile: {e}"))
-                })
+    let ctx = pangea_ruby_eval::CompileContext::new()
+        .with_load_paths(load_paths)
+        .with_env(env_overrides.clone())
+        // Pangea::Architectures is the canonical bug-prone module
+        // (Dry::Struct classes with strict attribute-redefinition
+        // semantics; loaded by prepare_gem at runtime + by every
+        // workspace compile). Purging before each compile gives the
+        // workspace a fresh definition surface.
+        //
+        // Sibling namespaces (Pangea::Resources, Pangea::Helpers) are
+        // NOT purged here: production attempts to extend the purge
+        // list risk re-require cascades that hit Ruby's stack limit
+        // (the bug we already paid for once on 2026-05-28). The
+        // structural answer is the planner's source classification +
+        // module-discovery loop (project_controller_detection_axis.md)
+        // — derive the purge surface from the broadcast gem's actual
+        // load tree, not from a hardcoded list that drifts.
+        .with_purge_modules(["Pangea::Architectures"])
+        // Scoped tightly to the bundle's exact path. Earlier attempts
+        // used /nix/store/ — too broad, unloaded pangea-core +
+        // dry-struct + dry-types, triggering re-require cascades that
+        // hit Ruby's stack limit. Only purge what the workspace will
+        // genuinely shadow.
+        .with_purge_feature_prefixes([
+            "/var/pangea/gems/pangea-architectures-main/",
+        ]);
+
+    let (synthesis_json, warnings) = evaluator
+        .compile_in_context(&ctx, |ev| {
+            // Inner returns BackendError; translate to EvalError at
+            // the bracket boundary. The outer ? maps back via the
+            // From impl on backend.rs.
+            run_capture_and_synthesize(ev, req).map_err(|e| {
+                pangea_ruby_eval::EvalError::Other(format!("compile: {e}"))
             })
         })
         .map_err(BackendError::from)?;
 
-    // Pretty-serialize Rust-side. JSON.pretty_generate on the Ruby
-    // side disappears with this — third Pangea-Ruby require deleted.
+    // Surface manifest + conflict warnings as a single log line per
+    // compile. These are the audit trail — every observable
+    // invariant violation lands here, structured + greppable.
+    for msg in &warnings.messages {
+        tracing::warn!(
+            template = req.template_name.as_deref().unwrap_or("?"),
+            warning = %msg,
+            "compile-context warning"
+        );
+    }
+
+    // Pretty-serialize Rust-side for the disk/tofu consumer. JSON.
+    // pretty_generate on the Ruby side disappears with this — third
+    // Pangea-Ruby require deleted. Carry the typed value alongside
+    // so in-process consumers (magma plan, preview, equivalence
+    // tests) skip the re-parse round-trip; see
+    // theory/IN-MEMORY-PIPELINE.md.
     let terraform_json = serde_json::to_string_pretty(&synthesis_json).map_err(|e| {
         BackendError::Compiler(format!("serialize synthesis to JSON: {e}"))
     })?;
 
-    Ok(CompileResult { terraform_json })
+    Ok(CompileResult {
+        terraform_json,
+        synthesis_value: Some(synthesis_json),
+    })
 }
 
 /// The inner eval — must run while `with_env` + `with_load_paths`
@@ -634,7 +687,16 @@ fn run_capture_and_synthesize(
               raise "TerraformSynthesizer not loaded — bundle terraform-synthesizer or set PANGEA_COMPILER_BACKEND=http"
             end
           synth.instance_eval(&$pangea_captured_block)
-          synth.synthesis
+          out = synth.synthesis
+          # Finalize: auto-derive terraform.required_providers from the
+          # resources this workspace emitted, so the rendered config satisfies
+          # magma's preflight laws A2/A3 (every used provider declared). tofu's
+          # resolution is unchanged — the providers it inferred from the
+          # resource prefixes, now stated explicitly. Guarded for older
+          # pangea-core that predates the registry. See Pangea::ProviderRegistry
+          # + theory/EXECUTOR-MIGRATION.md.
+          Pangea::ProviderRegistry.inject_into_synthesis(out) if defined?(Pangea::ProviderRegistry)
+          out
         ensure
           if Object.method_defined?(:template, true) || Object.private_method_defined?(:template, true)
             Object.send(:remove_method, :template) rescue nil
