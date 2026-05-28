@@ -9,6 +9,7 @@ pub mod conflict;
 pub mod anomaly_tracker;
 pub mod error_policy;
 pub mod escalation;
+pub mod escalation_handlers;
 pub mod finalizer;
 pub mod fleet_status_controller;
 pub mod generation_filter;

@@ -1,0 +1,393 @@
+//! `EscalationActionHandler` trait + per-variant implementations.
+//!
+//! The escalation ladder (`escalation.rs`) decides WHICH action to
+//! take. This module decides HOW to take it. Each `EscalationAction`
+//! variant has one handler; the dispatcher matches the action to the
+//! handler at the call site.
+//!
+//! ## Why a trait, not a `match`
+//!
+//! `EscalationAction` has 5 variants; each variant's execution
+//! semantics are independent (Retry is a no-op; PauseAndAlert flips
+//! a status field; RefreshSource invalidates a cache; etc.). With a
+//! `match` arm, every new failure surface that consumes the ladder
+//! has to re-implement the variant dispatch. With a trait, the
+//! dispatch is `state.handler_for(action).execute(&ctx).await?` —
+//! one line, identical at every consumer.
+//!
+//! The trait also lets each handler's tests stay isolated: the
+//! `PauseAndAlertHandler` test asserts the status patch shape
+//! without spinning up a fake `ControllerState`; the dispatch lookup
+//! is tested separately. Composition by trait is a tighter test
+//! seam than a `match` arm.
+//!
+//! ## Why each handler returns a patch, not applies it
+//!
+//! The handlers are pure-ish: they compute the desired status delta
+//! + event payload + return. The caller does the actual
+//! `patch_status` + `record_event` apply. This keeps handlers
+//! testable (no kube-rs mocking) and lets the caller combine the
+//! handler's patch with its own (consecutive count, lastError) into
+//! one server-side merge.
+//!
+//! ## The pattern (controller-detection-axis fix-step composition)
+//!
+//! ```text
+//! handle_compile_failure
+//!   → detection axis    (typed ConflictDetector emits Conflicts)
+//!   → recurrence axis   (anomaly_tracker counts signature)
+//!   → escalation axis   (EscalationLadder picks action)
+//!   → DISPATCH          (this module: action → handler.execute)
+//!   → apply             (caller: patch_status + record_event)
+//! ```
+//!
+//! `project_controller_detection_axis.md` documents the full axis;
+//! `project_escalation_ladder.md` documents the action picker;
+//! `project_anomaly_recurrence.md` documents the signature surface.
+
+use super::escalation::EscalationAction;
+use crate::crd::InfrastructureTemplate;
+use async_trait::async_trait;
+use std::sync::Arc;
+use std::time::Duration;
+
+/// Inputs to one handler's `execute`. Owned by the caller; passed by
+/// shared reference so handlers don't take ownership.
+///
+/// Adding a field here is a contract-extending change: existing
+/// handlers continue to compile (they ignore unknown fields), new
+/// handlers can rely on it. Removing or renaming a field requires
+/// touching every handler — that's the cost of the contract.
+#[derive(Debug)]
+pub struct EscalationContext<'a> {
+    /// The CR currently being handled.
+    pub template: &'a InfrastructureTemplate,
+    /// The action the ladder recommended (matches the dispatched
+    /// handler). Carrying it explicitly lets the handler emit its
+    /// own label + depth into the event message without a re-pick.
+    pub action: EscalationAction,
+    /// How long the template has been non-Ready (from the ladder's
+    /// duration_unready input).
+    pub duration_unready: Duration,
+    /// Current `consecutiveCompileFailures` count after this failure.
+    pub consecutive_failures: u32,
+    /// The raw error string from the underlying failure.
+    pub last_error: String,
+    /// `error_signature` of `last_error` — stable join key for
+    /// dashboards.
+    pub error_signature: String,
+}
+
+/// What a handler produces. The caller merges into its own status
+/// patch + emits the Event.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EscalationOutcome {
+    /// Status fields to merge. Use `serde_json::json!({})` for "no
+    /// status change" (the dispatcher will skip the patch call).
+    pub status_patch: serde_json::Value,
+    /// Event `reason` string. Stable for metric/event-routing.
+    pub event_reason: &'static str,
+    /// Event `message` body. Free-form; humans read this.
+    pub event_message: String,
+}
+
+/// One escalation handler. Each implementation knows how to ENACT
+/// one variant of `EscalationAction`.
+///
+/// Implementations MUST be idempotent: running `execute` twice with
+/// the same context produces the same outcome (or at worst a no-op
+/// on the second call). The reconciliation loop may re-fire the same
+/// handler across cycles; idempotence keeps that safe.
+#[async_trait]
+pub trait EscalationActionHandler: Send + Sync {
+    /// Which action this handler implements. The dispatcher uses this
+    /// to route. Implementations return a stable variant — same
+    /// pattern as `EscalationAction::label()`.
+    fn action(&self) -> EscalationAction;
+
+    /// Apply the corrective action. Pure-ish: computes the status
+    /// patch + event payload. The caller does the apply.
+    async fn execute(&self, ctx: &EscalationContext<'_>) -> anyhow::Result<EscalationOutcome>;
+}
+
+// ── Handler implementations ────────────────────────────────────────
+
+/// No-op handler — the shallowest rung. Returns an empty status
+/// patch + a benign event. The reconcile loop's normal retry
+/// semantics resume.
+pub struct RetryHandler;
+
+#[async_trait]
+impl EscalationActionHandler for RetryHandler {
+    fn action(&self) -> EscalationAction { EscalationAction::Retry }
+
+    async fn execute(&self, ctx: &EscalationContext<'_>) -> anyhow::Result<EscalationOutcome> {
+        Ok(EscalationOutcome {
+            status_patch: serde_json::json!({}),
+            event_reason: "EscalationLadderRetry",
+            event_message: format!(
+                "Recovery ladder: Retry (depth 0, after {}s unready). Normal retry semantics apply.",
+                ctx.duration_unready.as_secs(),
+            ),
+        })
+    }
+}
+
+/// Deepest rung — set `status.autoSuspended=true`. The reconcile
+/// entry checks `auto_suspended` and halts further work on this CR.
+/// Humans clear via `kubectl patch ... --type=merge \
+///   -p '{"status":{"autoSuspended":false}}' --subresource status`.
+pub struct PauseAndAlertHandler;
+
+#[async_trait]
+impl EscalationActionHandler for PauseAndAlertHandler {
+    fn action(&self) -> EscalationAction { EscalationAction::PauseAndAlert }
+
+    async fn execute(&self, ctx: &EscalationContext<'_>) -> anyhow::Result<EscalationOutcome> {
+        Ok(EscalationOutcome {
+            status_patch: serde_json::json!({
+                "status": { "autoSuspended": true }
+            }),
+            event_reason: "EscalationLadderPause",
+            event_message: format!(
+                "Auto-suspended after {}s unready (consecutive failures: {}). \
+                 Recovery ladder reached PauseAndAlert (depth 4). Last error \
+                 signature: {}. Clear with: kubectl patch -n <ns> it/<name> \
+                 --type=merge -p '{{\"status\":{{\"autoSuspended\":false}}}}' \
+                 --subresource status.",
+                ctx.duration_unready.as_secs(),
+                ctx.consecutive_failures,
+                ctx.error_signature,
+            ),
+        })
+    }
+}
+
+/// TODO (slice-5): drop the workspace's cached `_repo` clone and
+/// re-pull from `spec.source.gitRepository`. Needs `WorkspaceManager`
+/// access via `ControllerState`. Until the implementation lands, the
+/// handler is registered as a no-op + emits an Event naming what it
+/// WOULD do, so dashboards can count "RefreshSource would have
+/// fired" even before behaviorally enabled.
+pub struct RefreshSourceHandler;
+
+#[async_trait]
+impl EscalationActionHandler for RefreshSourceHandler {
+    fn action(&self) -> EscalationAction { EscalationAction::RefreshSource }
+
+    async fn execute(&self, ctx: &EscalationContext<'_>) -> anyhow::Result<EscalationOutcome> {
+        // Slice-5 will populate this:
+        //   state.workspace_manager.drop_clone(&template.namespace, &template.name).await?;
+        //   force-refresh on next reconcile picks up source changes.
+        Ok(EscalationOutcome {
+            status_patch: serde_json::json!({}),
+            event_reason: "EscalationLadderRefreshSource",
+            event_message: format!(
+                "Recovery ladder: RefreshSource (depth 1, after {}s unready). Source-clone \
+                 invalidation deferred to slice-5; this event records the recommendation \
+                 so dashboards count the would-fire.",
+                ctx.duration_unready.as_secs(),
+            ),
+        })
+    }
+}
+
+/// TODO (slice-5): purge `$LOADED_FEATURES` under the gem-cache
+/// prefix + re-broadcast every gem lib to every pool worker.
+pub struct ReloadGemsHandler;
+
+#[async_trait]
+impl EscalationActionHandler for ReloadGemsHandler {
+    fn action(&self) -> EscalationAction { EscalationAction::ReloadGems }
+
+    async fn execute(&self, ctx: &EscalationContext<'_>) -> anyhow::Result<EscalationOutcome> {
+        Ok(EscalationOutcome {
+            status_patch: serde_json::json!({}),
+            event_reason: "EscalationLadderReloadGems",
+            event_message: format!(
+                "Recovery ladder: ReloadGems (depth 2, after {}s unready). Gem-cache \
+                 invalidation deferred to slice-5; this event records the recommendation.",
+                ctx.duration_unready.as_secs(),
+            ),
+        })
+    }
+}
+
+/// TODO (slice-5): kill + respawn every Ruby pool worker.
+pub struct RecycleWorkersHandler;
+
+#[async_trait]
+impl EscalationActionHandler for RecycleWorkersHandler {
+    fn action(&self) -> EscalationAction { EscalationAction::RecycleWorkers }
+
+    async fn execute(&self, ctx: &EscalationContext<'_>) -> anyhow::Result<EscalationOutcome> {
+        Ok(EscalationOutcome {
+            status_patch: serde_json::json!({}),
+            event_reason: "EscalationLadderRecycleWorkers",
+            event_message: format!(
+                "Recovery ladder: RecycleWorkers (depth 3, after {}s unready). Pool-worker \
+                 recycle deferred to slice-5; this event records the recommendation.",
+                ctx.duration_unready.as_secs(),
+            ),
+        })
+    }
+}
+
+// ── Registry / dispatch ─────────────────────────────────────────────
+
+/// Bundle of every action's handler. The dispatcher picks one by
+/// matching the recommended action. Constructed once at startup +
+/// shared via `ControllerState`.
+///
+/// Adding a new `EscalationAction` variant → add a corresponding
+/// handler field + match arm. The trait's blanket implementation
+/// makes the compile-time check happen: forget a variant and the
+/// match in `dispatch` won't be exhaustive.
+pub struct EscalationHandlerRegistry {
+    retry: Arc<dyn EscalationActionHandler>,
+    refresh_source: Arc<dyn EscalationActionHandler>,
+    reload_gems: Arc<dyn EscalationActionHandler>,
+    recycle_workers: Arc<dyn EscalationActionHandler>,
+    pause_and_alert: Arc<dyn EscalationActionHandler>,
+}
+
+impl EscalationHandlerRegistry {
+    /// Default registry — one implementation per action variant.
+    /// Slice-5 swaps the no-op `RefreshSource` / `ReloadGems` /
+    /// `RecycleWorkers` impls with real ones; the trait shape stays.
+    pub fn pangea_default() -> Self {
+        Self {
+            retry: Arc::new(RetryHandler),
+            refresh_source: Arc::new(RefreshSourceHandler),
+            reload_gems: Arc::new(ReloadGemsHandler),
+            recycle_workers: Arc::new(RecycleWorkersHandler),
+            pause_and_alert: Arc::new(PauseAndAlertHandler),
+        }
+    }
+
+    /// Dispatch: pick the handler for the given action. Total over
+    /// every variant — adding a variant forces an explicit arm here
+    /// at compile time.
+    pub fn handler_for(&self, action: EscalationAction) -> &Arc<dyn EscalationActionHandler> {
+        match action {
+            EscalationAction::Retry => &self.retry,
+            EscalationAction::RefreshSource => &self.refresh_source,
+            EscalationAction::ReloadGems => &self.reload_gems,
+            EscalationAction::RecycleWorkers => &self.recycle_workers,
+            EscalationAction::PauseAndAlert => &self.pause_and_alert,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a minimal context for handler tests. Most handlers don't
+    /// touch `template` (slice-5 will). Using a stub `template` is
+    /// fine for v1 trait shape verification.
+    fn minimal_ctx(action: EscalationAction) -> EscalationContext<'static> {
+        // Static template stub via the same JSON-payload pattern other
+        // controller tests use (see fleet_status_controller's
+        // `fake_template`). InfrastructureTemplateSpec doesn't impl
+        // Default by design (every field is meaningful), so we round-
+        // trip through serde to construct one cheaply.
+        static TEMPLATE: once_cell::sync::OnceCell<InfrastructureTemplate> =
+            once_cell::sync::OnceCell::new();
+        let template = TEMPLATE.get_or_init(|| {
+            let payload = serde_json::json!({
+                "apiVersion": "pangea.pleme.io/v1alpha1",
+                "kind": "InfrastructureTemplate",
+                "metadata": { "name": "test-template", "namespace": "test-ns" },
+                "spec": {
+                    "source": { "raw": "" },
+                    "pangeaNamespace": "default"
+                },
+                "status": null
+            });
+            serde_json::from_value::<InfrastructureTemplate>(payload)
+                .expect("test stub template must deserialize")
+        });
+        EscalationContext {
+            template,
+            action,
+            duration_unready: Duration::from_secs(900),
+            consecutive_failures: 5,
+            last_error: "test error".to_string(),
+            error_signature: "abcdef123456".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn retry_handler_returns_empty_status_patch() {
+        let h = RetryHandler;
+        let ctx = minimal_ctx(EscalationAction::Retry);
+        let outcome = h.execute(&ctx).await.unwrap();
+        assert_eq!(outcome.status_patch, serde_json::json!({}));
+        assert_eq!(outcome.event_reason, "EscalationLadderRetry");
+    }
+
+    #[tokio::test]
+    async fn pause_and_alert_handler_sets_auto_suspended_true() {
+        let h = PauseAndAlertHandler;
+        let ctx = minimal_ctx(EscalationAction::PauseAndAlert);
+        let outcome = h.execute(&ctx).await.unwrap();
+        assert_eq!(
+            outcome.status_patch["status"]["autoSuspended"],
+            serde_json::Value::Bool(true),
+            "PauseAndAlert must request autoSuspended=true"
+        );
+        assert_eq!(outcome.event_reason, "EscalationLadderPause");
+        // Error signature included in the event message so operators
+        // can grep `kubectl get events` by the bug class.
+        assert!(outcome.event_message.contains("abcdef123456"));
+    }
+
+    #[tokio::test]
+    async fn slice5_handlers_emit_record_event_no_status_change_yet() {
+        // The shallower-but-not-yet-implemented handlers emit only an
+        // Event recording the recommendation. Behavioral change lands
+        // in slice-5. This test pins the "record-only" contract so a
+        // slice-5 refactor that introduces a status field is caught.
+        let h = RefreshSourceHandler;
+        let ctx = minimal_ctx(EscalationAction::RefreshSource);
+        let outcome = h.execute(&ctx).await.unwrap();
+        assert_eq!(outcome.status_patch, serde_json::json!({}));
+        assert_eq!(outcome.event_reason, "EscalationLadderRefreshSource");
+
+        let h = ReloadGemsHandler;
+        let ctx = minimal_ctx(EscalationAction::ReloadGems);
+        let outcome = h.execute(&ctx).await.unwrap();
+        assert_eq!(outcome.status_patch, serde_json::json!({}));
+        assert_eq!(outcome.event_reason, "EscalationLadderReloadGems");
+
+        let h = RecycleWorkersHandler;
+        let ctx = minimal_ctx(EscalationAction::RecycleWorkers);
+        let outcome = h.execute(&ctx).await.unwrap();
+        assert_eq!(outcome.status_patch, serde_json::json!({}));
+        assert_eq!(outcome.event_reason, "EscalationLadderRecycleWorkers");
+    }
+
+    #[tokio::test]
+    async fn registry_dispatches_each_action_to_its_handler() {
+        // The registry must route every variant to a handler whose
+        // `.action()` matches the dispatch key. Catches accidental
+        // wiring (e.g. registering RetryHandler under the
+        // PauseAndAlert slot, which would silently break recovery).
+        let reg = EscalationHandlerRegistry::pangea_default();
+        for action in [
+            EscalationAction::Retry,
+            EscalationAction::RefreshSource,
+            EscalationAction::ReloadGems,
+            EscalationAction::RecycleWorkers,
+            EscalationAction::PauseAndAlert,
+        ] {
+            let handler = reg.handler_for(action);
+            assert_eq!(
+                handler.action(),
+                action,
+                "registry's handler for {action:?} reports its own action mismatched"
+            );
+        }
+    }
+}
