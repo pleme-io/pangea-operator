@@ -565,6 +565,15 @@ fn compile_template(
         // semantics; loaded by prepare_gem at runtime + by every
         // workspace compile). Purging before each compile gives the
         // workspace a fresh definition surface.
+        //
+        // Sibling namespaces (Pangea::Resources, Pangea::Helpers) are
+        // NOT purged here: production attempts to extend the purge
+        // list risk re-require cascades that hit Ruby's stack limit
+        // (the bug we already paid for once on 2026-05-28). The
+        // structural answer is the planner's source classification +
+        // module-discovery loop (project_controller_detection_axis.md)
+        // — derive the purge surface from the broadcast gem's actual
+        // load tree, not from a hardcoded list that drifts.
         .with_purge_modules(["Pangea::Architectures"])
         // Scoped tightly to the bundle's exact path. Earlier attempts
         // used /nix/store/ — too broad, unloaded pangea-core +
