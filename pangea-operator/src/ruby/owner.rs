@@ -597,13 +597,20 @@ fn compile_template(
         );
     }
 
-    // Pretty-serialize Rust-side. JSON.pretty_generate on the Ruby
-    // side disappears with this — third Pangea-Ruby require deleted.
+    // Pretty-serialize Rust-side for the disk/tofu consumer. JSON.
+    // pretty_generate on the Ruby side disappears with this — third
+    // Pangea-Ruby require deleted. Carry the typed value alongside
+    // so in-process consumers (magma plan, preview, equivalence
+    // tests) skip the re-parse round-trip; see
+    // theory/IN-MEMORY-PIPELINE.md.
     let terraform_json = serde_json::to_string_pretty(&synthesis_json).map_err(|e| {
         BackendError::Compiler(format!("serialize synthesis to JSON: {e}"))
     })?;
 
-    Ok(CompileResult { terraform_json })
+    Ok(CompileResult {
+        terraform_json,
+        synthesis_value: Some(synthesis_json),
+    })
 }
 
 /// The inner eval — must run while `with_env` + `with_load_paths`

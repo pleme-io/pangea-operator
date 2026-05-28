@@ -71,7 +71,14 @@ impl CompilerBackend for HttpCompilerBackend {
                 BackendError::Compiler("compile response missing terraform_json".into())
             })?
             .to_string();
-        Ok(CompileResult { terraform_json })
+        // HTTP-backend path: the legacy compiler sidecar returned
+        // pretty-serialized JSON only. Re-parse it to populate
+        // synthesis_value so embedded + HTTP backends present a
+        // consistent CompileResult shape; magma + preview consumers
+        // can stay backend-agnostic.
+        let synthesis_value: Option<serde_json::Value> =
+            serde_json::from_str(&terraform_json).ok();
+        Ok(CompileResult { terraform_json, synthesis_value })
     }
 
     async fn compile_any(
