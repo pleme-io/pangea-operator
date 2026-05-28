@@ -1314,7 +1314,16 @@ async fn handle_applying(
 ) -> Result<ReconcileAction> {
     info!("Template in Applying phase");
     let _phase_timer = state.metrics.record_phase_duration("applying");
+    // Keep `executor` for the verb-level apply call (we don't migrate the
+    // full handle_applying to runner.apply in this slice — apply has
+    // tofu-specific self-heal paths the runner abstraction would have to
+    // grow to absorb cleanly; slice 2d does that). But we ALSO grab the
+    // runner so we can run a post-apply `runner.plan()` and thread the
+    // resulting `CycleArtifact` into the cycle receipt. That's what makes
+    // tofu cycles WITH CHANGES populate `actionDistribution` after apply —
+    // the post-apply re-plan reports the converged state.
     let executor = state.executor_for(template);
+    let runner = state.executor_runner_for(template);
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
     let plan_path = workspace.plan_path();
@@ -1499,11 +1508,34 @@ async fn handle_applying(
         }
 
         update_phase(template, Phase::Ready, state).await?;
+
+        // Slice 2c part-2: capture the post-apply state via the runner.
+        // For tofu, this is a fresh `tofu plan` that should report no
+        // changes (the apply converged the state). For magma, the
+        // bundle on disk reflects the post-apply state. Either way,
+        // threading this artifact into the cycle receipt gives the CR
+        // status its `actionDistribution` for the post-apply cycle.
+        //
+        // Best-effort: a runner.plan() failure here doesn't fail the
+        // apply (which already succeeded); we just lose the
+        // post-apply artifact and the cycle records without
+        // actionDistribution populated.
+        let post_apply_artifact = match runner.plan(&workspace).await {
+            Ok(r) => r.artifact,
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "post-apply runner.plan failed; cycle will record without actionDistribution"
+                );
+                None
+            }
+        };
+
         record_reconcile_cycle(
             template,
             state,
             Some(&workspace.path),
-                None, // artifact: caller-provided pre-computed CycleArtifact (slice 2c migrates handle_planning to pass it)
+            post_apply_artifact,
             &prior_drifts,
             prior_plan_summary,
             CycleResult::AppliedSuccess { imported_addresses: imported_addresses.clone() },
@@ -1588,11 +1620,19 @@ async fn handle_applying(
         }
 
         update_phase_with_error(template, Phase::Failed, &err_msg, state).await?;
+
+        // Even on apply failure, capture the post-failure state via
+        // the runner — for tofu, this surfaces "what changed (or
+        // didn't) at the point of failure"; for magma, the bundle
+        // captures the lifecycle FSM's failed-phase. Best-effort:
+        // a runner.plan() failure here is silent.
+        let post_apply_artifact = runner.plan(&workspace).await.ok().and_then(|r| r.artifact);
+
         record_reconcile_cycle(
             template,
             state,
             Some(&workspace.path),
-                None, // artifact: caller-provided pre-computed CycleArtifact (slice 2c migrates handle_planning to pass it)
+            post_apply_artifact,
             &prior_drifts,
             prior_plan_summary,
             CycleResult::AppliedFailure(err_msg.clone()),
