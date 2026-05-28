@@ -6,6 +6,7 @@
 
 pub mod architecture_gem_controller;
 pub mod conflict;
+pub mod anomaly_tracker;
 pub mod error_policy;
 pub mod escalation;
 pub mod finalizer;

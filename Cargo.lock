@@ -2933,6 +2933,7 @@ dependencies = [
  "async-graphql-axum",
  "async-trait",
  "axum 0.8.8",
+ "blake3",
  "chrono",
  "derive_builder",
  "futures",

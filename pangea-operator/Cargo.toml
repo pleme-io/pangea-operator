@@ -148,6 +148,11 @@ opentelemetry-otlp = { version = "0.26", features = ["tonic"] }
 opentelemetry_sdk = { version = "0.26", features = ["rt-tokio"] }
 prometheus = "0.13"
 
+# Stable cross-process hash for the anomaly_tracker module's
+# error_signature primitive. Already transitively present via magma;
+# adding as a direct dep so the source of truth is clear.
+blake3 = "1"
+
 # Error handling
 thiserror.workspace = true
 anyhow.workspace = true
