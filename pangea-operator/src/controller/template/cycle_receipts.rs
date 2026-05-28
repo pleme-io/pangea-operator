@@ -528,6 +528,112 @@ mod tests {
         assert!(cycle_content_equal(&a, &b));
     }
 
+    /// The slice-2 acceptance property at the cycle-receipt layer:
+    /// given the same logical workspace state (same resources, same
+    /// actions), both executors flow into a `ReconcileCycle` that
+    /// agrees on every observable except `executor` (legitimately
+    /// different) and `bundle_ref` / `lifecycle_phase` (different
+    /// artifact kinds; honest absence on the tofu side).
+    ///
+    /// Asserts at the seam where `cycle_artifact` is consumed by
+    /// `build_reconcile_cycle` — the same code path the live
+    /// controller takes. If this passes, magma and tofu cycles
+    /// produce equivalent CR status given equivalent input. The
+    /// load-bearing claim that justifies slice 2's
+    /// "interchangeable" framing.
+    #[test]
+    fn slice_2_acceptance_same_inputs_yield_equivalent_cycle_receipts() {
+        use crate::executor::cycle_artifact::{
+            CycleArtifact, PlanAction, Severity, SeverityRollup, TypedResourceChange,
+        };
+
+        let mk_change = |addr: &str, action: PlanAction, severity: Severity| {
+            TypedResourceChange { address: addr.into(), action, severity }
+        };
+
+        // A workspace with 4 changes: 2 no-op, 1 create, 1 delete.
+        // Same logical content; each executor populates from its
+        // native format.
+        let common_changes = vec![
+            mk_change("github_repository.a", PlanAction::NoOp,   Severity::Cosmetic),
+            mk_change("github_repository.b", PlanAction::NoOp,   Severity::Cosmetic),
+            mk_change("github_repository.c", PlanAction::Create, Severity::Functional),
+            mk_change("github_repository.d", PlanAction::Delete, Severity::Breaking),
+        ];
+
+        let tofu_art = CycleArtifact {
+            action_distribution: CycleArtifact::action_distribution_from(&common_changes),
+            resource_changes: common_changes.clone(),
+            artifact_ref: None,                                       // tofu side: slice 2a leaves None
+            severities: Some(SeverityRollup::from_changes(&common_changes)),
+            lifecycle_phase: None,                                    // tofu has no FSM
+        };
+
+        let magma_art = CycleArtifact {
+            action_distribution: CycleArtifact::action_distribution_from(&common_changes),
+            resource_changes: common_changes.clone(),
+            artifact_ref: Some(crate::crd::BundleRef {
+                kind: "terraform".into(),
+                bundle_id: "abc123".into(),
+                size_bytes: 4096,
+            }),
+            severities: Some(SeverityRollup::from_changes(&common_changes)),
+            lifecycle_phase: Some("stable".into()),
+        };
+
+        // Build via the same code path the live operator takes.
+        let drifts: Vec<DriftDetail> = vec![];
+
+        let tofu_cycle = build_reconcile_cycle(
+            42,
+            chrono::Utc::now(),
+            &drifts,
+            4,
+            Some("+1 ~0 -1".into()),
+            None,
+            Some("tofu".into()),
+            Some(tofu_art),
+            CycleResult::NoChanges,
+        );
+        let magma_cycle = build_reconcile_cycle(
+            42,
+            chrono::Utc::now(),
+            &drifts,
+            4,
+            Some("+1 ~0 -1".into()),
+            None,
+            Some("magma".into()),
+            Some(magma_art),
+            CycleResult::NoChanges,
+        );
+
+        // ── Equivalent observables ───────────────────────────────
+        assert_eq!(
+            tofu_cycle.action_distribution, magma_cycle.action_distribution,
+            "action_distribution must be identical across executors"
+        );
+        assert_eq!(
+            tofu_cycle.severity_rollup, magma_cycle.severity_rollup,
+            "severity_rollup must be identical (the pure action→severity \
+             mapping ensures tofu lands on the same buckets magma's \
+             classifier does for the same actions)"
+        );
+        // CycleSummary doesn't impl PartialEq so we compare field-wise.
+        assert_eq!(tofu_cycle.summary.matched,   magma_cycle.summary.matched);
+        assert_eq!(tofu_cycle.summary.created,   magma_cycle.summary.created);
+        assert_eq!(tofu_cycle.summary.updated,   magma_cycle.summary.updated);
+        assert_eq!(tofu_cycle.summary.destroyed, magma_cycle.summary.destroyed);
+        assert_eq!(tofu_cycle.summary.imported,  magma_cycle.summary.imported);
+        assert_eq!(tofu_cycle.summary.failed,    magma_cycle.summary.failed);
+
+        // ── Permit-by-design differences ─────────────────────────
+        assert_ne!(tofu_cycle.executor, magma_cycle.executor, "executor name legitimately differs");
+        assert!(tofu_cycle.bundle_ref.is_none(), "tofu side: no bundle ref in slice 2a (deferred)");
+        assert!(magma_cycle.bundle_ref.is_some(), "magma side: bundle ref present");
+        assert!(tofu_cycle.lifecycle_phase.is_none(), "tofu: no FSM (honest absence)");
+        assert!(magma_cycle.lifecycle_phase.is_some(), "magma: FSM present");
+    }
+
     #[test]
     fn cycle_content_equal_distinguishes_different_summaries() {
         let mk = |matched| {

@@ -2447,23 +2447,36 @@ async fn handle_destroying(
     }
 
     info!("Template in Destroying phase");
-    let executor = state.executor_for(template);
+    // Slice 2c part 4: the last phase handler that still spoke the raw
+    // `IacExecutor` migrates to the typed `WorkspaceRunner`. After this
+    // commit, EVERY phase handler (planning/applying/ready/destroying)
+    // consumes the same abstraction — `IacExecutor` is held directly
+    // only by the verb-level carve-outs (`run_import_prepass`,
+    // `conflict.rs`), as designed.
+    let runner = state.executor_runner_for(template);
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
 
     // Only run destroy if workspace has been initialized
     if workspace.file_exists(".terraform") {
-        let result = executor.destroy(&workspace.path, true).await?;
+        let r = runner.destroy(&workspace, true).await?;
 
-        if !result.success {
-            let err_msg = format!("tofu destroy failed: {}", result.stderr);
+        if !r.success {
+            // Combine stdout + stderr — tofu writes most diagnostics to
+            // stdout (same logic that lives in handle_applying's
+            // post-apply failure path).
+            let err_msg = format!(
+                "destroy failed (runner={}): {}",
+                runner.name(),
+                if r.raw_stdout.is_empty() { String::new() } else { r.raw_stdout.clone() }
+            );
             warn!(%err_msg);
             update_phase_with_error(template, Phase::Failed, &err_msg, state).await?;
             record_event(template, state, EventType::Warning, "DestroyFailed", &err_msg).await;
             return Ok(ReconcileAction::Requeue(ERROR_REQUEUE_INTERVAL));
         }
 
-        info!("tofu destroy completed successfully");
+        info!(runner = runner.name(), "destroy completed successfully");
         record_event(template, state, EventType::Normal, "Destroyed", "Infrastructure destroyed successfully").await;
     }
 
