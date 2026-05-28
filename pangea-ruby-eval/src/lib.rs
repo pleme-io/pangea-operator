@@ -35,7 +35,9 @@ pub mod evaluator;
 pub mod fixture;
 pub mod value;
 
-pub use evaluator::RubyEvaluator;
+pub use evaluator::{
+    detect_load_path_conflicts, CompileContext, ContextWarnings, LoadPathConflict, RubyEvaluator,
+};
 pub use fixture::{parse_yaml_fixture, short_sha256_hex, ParsedFixture};
 pub use value::{json_to_ruby, ruby_hash_to_json, ruby_value_to_json, JsonHash};
 

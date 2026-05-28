@@ -538,69 +538,64 @@ fn compile_template(
         .define_variable("$pangea_variables", r_vars)
         .map_err(|e| BackendError::Ruby(format!("define $pangea_variables: {e}")))?;
 
-    // Bracket ENV. Bracket $LOAD_PATH (template_path mode only). Run
-    // the inner eval. Both brackets are drop-guarded so a Ruby panic
-    // doesn't leak ENV/load-path state across requests.
+    // Build the structured compile manifest. Replaces the ad-hoc
+    // with_env + with_load_paths + purge triplet with one transactional
+    // primitive that:
+    //   1. validates the manifest's shape,
+    //   2. runs the algorithmic shield (load-path conflict detector)
+    //      against the resulting $LOAD_PATH and emits warnings,
+    //   3. purges configured modules + $LOADED_FEATURES entries,
+    //   4. brackets ENV + $LOAD_PATH (drop-guarded restore),
+    //   5. runs the body inside the controlled state.
+    //
+    // See `pangea_ruby_eval::CompileContext` doc for the full design
+    // + memory/project_ruby_pool_double_load_fix.md for the bug
+    // class this defends against.
     let load_paths: Vec<std::path::PathBuf> = req
         .rubylib_paths
         .iter()
         .map(std::path::PathBuf::from)
         .collect();
 
-    // CRuby's interpreter is single-VM-per-process. Across compile
-    // requests, `$LOADED_FEATURES` and module constants accumulate.
-    // When the bundled `/var/pangea/gems/pangea-architectures-main/`
-    // and the workspace's `_repo/lib` both ship `pangea/architectures
-    // /types.rb` at different absolute paths, Ruby's `require`
-    // dedup-by-absolute-path loads BOTH; the second load reopens
-    // `Dry::Struct` classes and fatally raises "Attribute :cluster_name
-    // has already been defined".
-    //
-    // Purge the stale bundle-side `Pangea::Architectures` constants +
-    // `$LOADED_FEATURES` entries before pushing the workspace's lib
-    // onto `$LOAD_PATH`. The workspace's `require 'pangea/architectures
-    // /types'` then runs as a fresh load — no reopening, no Dry::Struct
-    // redefine error.
-    //
-    // See `pangea_ruby_eval::RubyEvaluator::purge_for_workspace_compile`
-    // module doc for the full bug + design notes.
-    //
-    // Prefixes covered:
-    //   /var/pangea/gems/       — runtime-cloned gem caches (the
-    //                              architecture_gem path).
-    //   /nix/store/             — bundled path-gems baked at image
-    //                              build time. The flake's RUBYLIB
-    //                              currently doesn't bundle pangea-
-    //                              architectures, but if a future
-    //                              build adds it, this prefix catches
-    //                              it. Safe even when no nix-store
-    //                              entry matches.
-    if let Err(e) = evaluator.purge_for_workspace_compile(
-        &["Pangea::Architectures"],
-        &["/var/pangea/gems/", "/nix/store/"],
-    ) {
-        // Best-effort: a purge failure shouldn't block compile.
-        // Worst case it falls back to the old double-load bug (which
-        // was already broken before this purge existed). Log so the
-        // operator surface tells us if the purge fails systematically.
-        tracing::warn!(
-            error = %e,
-            "workspace compile state purge failed; double-load risk persists"
-        );
-    }
+    let ctx = pangea_ruby_eval::CompileContext::new()
+        .with_load_paths(load_paths)
+        .with_env(env_overrides.clone())
+        // Pangea::Architectures is the canonical bug-prone module
+        // (Dry::Struct classes with strict attribute-redefinition
+        // semantics; loaded by prepare_gem at runtime + by every
+        // workspace compile). Purging before each compile gives the
+        // workspace a fresh definition surface.
+        .with_purge_modules(["Pangea::Architectures"])
+        // Scoped tightly to the bundle's exact path. Earlier attempts
+        // used /nix/store/ — too broad, unloaded pangea-core +
+        // dry-struct + dry-types, triggering re-require cascades that
+        // hit Ruby's stack limit. Only purge what the workspace will
+        // genuinely shadow.
+        .with_purge_feature_prefixes([
+            "/var/pangea/gems/pangea-architectures-main/",
+        ]);
 
-    let synthesis_json = evaluator
-        .with_env(&env_overrides, |ev| {
-            ev.with_load_paths(&load_paths, |ev| {
-                // Inner returns BackendError; translate to EvalError
-                // at the bracket boundary. The outer ? then maps
-                // back via the From impl on backend.rs.
-                run_capture_and_synthesize(ev, req).map_err(|e| {
-                    pangea_ruby_eval::EvalError::Other(format!("compile: {e}"))
-                })
+    let (synthesis_json, warnings) = evaluator
+        .compile_in_context(&ctx, |ev| {
+            // Inner returns BackendError; translate to EvalError at
+            // the bracket boundary. The outer ? maps back via the
+            // From impl on backend.rs.
+            run_capture_and_synthesize(ev, req).map_err(|e| {
+                pangea_ruby_eval::EvalError::Other(format!("compile: {e}"))
             })
         })
         .map_err(BackendError::from)?;
+
+    // Surface manifest + conflict warnings as a single log line per
+    // compile. These are the audit trail — every observable
+    // invariant violation lands here, structured + greppable.
+    for msg in &warnings.messages {
+        tracing::warn!(
+            template = req.template_name.as_deref().unwrap_or("?"),
+            warning = %msg,
+            "compile-context warning"
+        );
+    }
 
     // Pretty-serialize Rust-side. JSON.pretty_generate on the Ruby
     // side disappears with this — third Pangea-Ruby require deleted.
