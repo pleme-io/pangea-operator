@@ -217,6 +217,42 @@ pub fn detect_load_path_conflicts(
         .collect()
 }
 
+/// Convert a Ruby module-style name (`Pangea::Architectures`) to the
+/// conventional Ruby `require` path (`pangea/architectures`).
+///
+/// Each `::`-separated segment is snake_case'd: insert `_` before
+/// any uppercase letter that's preceded by a lowercase letter or
+/// digit, then lowercase the whole thing.
+///
+/// Examples:
+///   `Pangea::Architectures`         → `pangea/architectures`
+///   `Pangea::Resources::Cloudflare` → `pangea/resources/cloudflare`
+///   `Foo::BarBaz`                   → `foo/bar_baz`
+///   `Foo::HTTPServer`               → `foo/h_t_t_p_server`  ← acronyms
+///
+/// The acronym case (HTTPServer → h_t_t_p_server) is deliberately
+/// simple — Ruby's actual convention varies. For pangea-* modules
+/// (the only consumers today), acronyms aren't present in module
+/// names, so the simple rule suffices.
+pub fn module_name_to_require_path(module_name: &str) -> String {
+    module_name
+        .split("::")
+        .map(|segment| {
+            let mut out = String::with_capacity(segment.len() + 4);
+            let mut prev_was_lowercase_or_digit = false;
+            for c in segment.chars() {
+                if c.is_uppercase() && prev_was_lowercase_or_digit {
+                    out.push('_');
+                }
+                out.push(c.to_ascii_lowercase());
+                prev_was_lowercase_or_digit = c.is_lowercase() || c.is_ascii_digit();
+            }
+            out
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 /// Recursive helper: walk every `.rb` file under `root`, compute its
 /// logical path relative to `load_path_root` (the `$LOAD_PATH` entry
 /// it lives under), and append to `acc[logical] = [paths…]`.
@@ -541,20 +577,75 @@ impl RubyEvaluator {
             ));
         }
 
-        // Step 3-7 dispatched through the existing primitives:
-        // purge_for_workspace_compile (3+4), with_env+with_load_paths
-        // (5+7 — the existing drop-guarded brackets). f runs inside
-        // both brackets.
-        self.purge_for_workspace_compile(
-            &ctx.purge_modules.iter().map(String::as_str).collect::<Vec<_>>(),
-            &ctx.purge_feature_prefixes.iter().map(String::as_str).collect::<Vec<_>>(),
-        )?;
-
+        // Steps 3-7 happen INSIDE the with_load_paths bracket so
+        // that the workspace's lib is at $LOAD_PATH's priority head
+        // when re-require resolves. Order matters:
+        //
+        //   3. bracket ENV + $LOAD_PATH (workspace's lib unshifted).
+        //   4. purge configured modules + $LOADED_FEATURES entries
+        //      (so the workspace's load defines fresh).
+        //   5. re-require each purged module from its conventional
+        //      Ruby path. This re-establishes `Pangea::Architectures`
+        //      (and any other purged module) WITH autoloads, so
+        //      workspace code that accesses constants without an
+        //      explicit `require` doesn't see "uninitialized
+        //      constant". Crucially, the re-require resolves
+        //      AGAINST the just-bracketed $LOAD_PATH — so when the
+        //      workspace's lib has the file (workspace fully
+        //      overrides the bundle), workspace's version wins;
+        //      when it doesn't, bundle's wins (the workspace gets
+        //      the same shape it had before purge).
+        //   6. run f (the compile body).
+        //   7. (on drop) restore $LOAD_PATH + ENV.
+        let purge_modules_vec: Vec<&str> = ctx.purge_modules.iter().map(String::as_str).collect();
+        let purge_prefixes_vec: Vec<&str> = ctx.purge_feature_prefixes.iter().map(String::as_str).collect();
         let result = self.with_env(&ctx.env, |ev| {
-            ev.with_load_paths(&ctx.load_paths, |ev| f(ev))
+            ev.with_load_paths(&ctx.load_paths, |ev| {
+                ev.purge_for_workspace_compile(&purge_modules_vec, &purge_prefixes_vec)?;
+                ev.restore_purged_modules(&purge_modules_vec)?;
+                f(ev)
+            })
         })?;
 
         Ok((result, warnings))
+    }
+
+    /// Re-`require` each purged module from its conventional Ruby
+    /// path. Companion to `purge_for_workspace_compile`: after the
+    /// purge removes a module constant, the next workspace
+    /// reference to the constant would raise `uninitialized
+    /// constant` — workspaces assume the operator preloads these.
+    ///
+    /// Ruby's convention maps a module name to a file path by
+    /// snake_case'ing each segment and joining with `/`:
+    ///
+    ///   * `Pangea::Architectures`            → `pangea/architectures`
+    ///   * `Pangea::Resources::Cloudflare`    → `pangea/resources/cloudflare`
+    ///   * `Foo::BarBaz::QuxQuux`             → `foo/bar_baz/qux_quux`
+    ///
+    /// The require resolves against the CURRENT `$LOAD_PATH`. When
+    /// called from inside `compile_in_context` AFTER the workspace's
+    /// lib is unshifted, the workspace's file (if present) wins.
+    /// Otherwise the operator's bundled gem wins (fallback). Either
+    /// way, the module + its autoloads are re-established.
+    ///
+    /// Best-effort: a failed require for one module is logged but
+    /// doesn't abort the loop. Subsequent purge_modules might
+    /// succeed independently.
+    pub fn restore_purged_modules(&self, modules: &[&str]) -> Result<(), EvalError> {
+        for module_name in modules {
+            let require_path = module_name_to_require_path(module_name);
+            let src = format!(r#"require '{require_path}'; nil"#);
+            if let Err(e) = self.ruby.eval::<Value>(&src) {
+                tracing::warn!(
+                    module = module_name,
+                    require_path = %require_path,
+                    error = %e,
+                    "restore_purged_modules: re-require failed (continuing)"
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Reset CRuby state for a fresh workspace compile.
@@ -854,6 +945,42 @@ mod tests {
         let full = root.join(relative);
         std::fs::create_dir_all(full.parent().unwrap()).unwrap();
         std::fs::write(&full, b"# stub\n").unwrap();
+    }
+
+    // ── module_name_to_require_path ───────────────────────────────
+
+    #[test]
+    fn module_name_simple_two_segments() {
+        assert_eq!(module_name_to_require_path("Pangea::Architectures"), "pangea/architectures");
+    }
+
+    #[test]
+    fn module_name_three_segments() {
+        assert_eq!(
+            module_name_to_require_path("Pangea::Resources::Cloudflare"),
+            "pangea/resources/cloudflare"
+        );
+    }
+
+    #[test]
+    fn module_name_camelcase_within_segment_becomes_snake() {
+        assert_eq!(module_name_to_require_path("Foo::BarBaz"), "foo/bar_baz");
+        assert_eq!(
+            module_name_to_require_path("Pangea::ProviderRegistry"),
+            "pangea/provider_registry"
+        );
+    }
+
+    #[test]
+    fn module_name_handles_single_segment() {
+        assert_eq!(module_name_to_require_path("Pangea"), "pangea");
+    }
+
+    #[test]
+    fn module_name_handles_digits() {
+        // Digits don't trigger snake-case insertion; they're treated
+        // as lowercase-adjacent.
+        assert_eq!(module_name_to_require_path("Magma2::Plan"), "magma2/plan");
     }
 }
 
