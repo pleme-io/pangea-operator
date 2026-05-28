@@ -24,7 +24,8 @@ use crate::crd::{
     ResourceOutcome,
 };
 use crate::error::Result;
-use crate::executor::magma_bundle::{read_bundle_artifacts, BundleArtifacts};
+use crate::executor::cycle_artifact::CycleArtifact;
+use crate::executor::magma_bundle::read_cycle_artifact;
 
 /// What triggered the cycle emission — drives outcome derivation when
 /// translating drift_details into per-resource ResourceOutcome entries.
@@ -60,11 +61,13 @@ pub enum CycleResult {
 /// `executor_name` is the IaC executor that ran this cycle
 /// (`"magma"` / `"tofu"`); recorded into `ReconcileCycle.executor` so
 /// the cycle history preserves which executor produced each receipt
-/// even after a future flip. `bundle_artifacts` carries
-/// magma-bundle-derived fields (action distribution + bundle_ref);
-/// `None` for tofu cycles or when the bundle wasn't readable.
+/// even after a future flip. `cycle_artifact` carries the unified
+/// post-plan data both executors populate — action distribution +
+/// bundle ref + (slice 2b+) per-resource changes + severity rollup +
+/// lifecycle phase. `None` when no artifact was available (no plan
+/// has run yet, executor produced no on-disk output, etc.).
 ///
-/// Pure function — all I/O (executor lookup, bundle reading) happens
+/// Pure function — all I/O (executor lookup, artifact reading) happens
 /// in the caller `record_reconcile_cycle`, so this is the layer that
 /// gets the test coverage for "given these inputs, the receipt has
 /// these fields."
@@ -76,7 +79,7 @@ pub fn build_reconcile_cycle(
     plan_summary: Option<String>,
     source_revision: Option<String>,
     executor_name: Option<String>,
-    bundle_artifacts: Option<BundleArtifacts>,
+    cycle_artifact: Option<CycleArtifact>,
     result: CycleResult,
 ) -> ReconcileCycle {
     let mut summary = CycleSummary::default();
@@ -142,11 +145,16 @@ pub fn build_reconcile_cycle(
     let untouched = total.saturating_sub(touched_count);
     summary.matched = summary.matched.saturating_add(untouched);
 
-    // Split bundle_artifacts into its two destination fields so each
-    // can be None independently (a bundle with a valid ref but missing
-    // plan.changes still records the ref).
-    let (action_distribution, bundle_ref) = match bundle_artifacts {
-        Some(a) => (a.action_distribution, a.bundle_ref),
+    // Split the unified CycleArtifact into its destination fields.
+    // action_distribution is required on the artifact when present
+    // (a CycleArtifact with no changes still has a zero-distribution,
+    // which is informative). artifact_ref is independently optional
+    // — tofu cycles don't populate it in slice 2a, magma cycles do.
+    //
+    // Currently only `action_distribution` + `bundle_ref` make it to
+    // status — slice 2.17 adds severities + resource_changes routing.
+    let (action_distribution, bundle_ref) = match cycle_artifact {
+        Some(a) => (Some(a.action_distribution), a.artifact_ref),
         None    => (None, None),
     };
 
@@ -246,10 +254,11 @@ pub async fn record_reconcile_cycle(
 
     // Read the magma-bundle.json if the caller passed a workspace
     // dir. Always best-effort: a missing or malformed bundle leaves
-    // the bundle-derived fields as None on the cycle (tofu cycles
-    // hit this path too — they have no bundle).
-    let bundle_artifacts = match work_dir {
-        Some(dir) => read_bundle_artifacts(dir).await,
+    // the artifact as None on the cycle (tofu cycles hit this path
+    // today — slice 2c will route tofu cycles through the tofu
+    // reader instead via WorkspaceRunner).
+    let cycle_artifact = match work_dir {
+        Some(dir) => read_cycle_artifact(dir).await,
         None      => None,
     };
 
@@ -261,7 +270,7 @@ pub async fn record_reconcile_cycle(
         plan_summary,
         source_revision,
         executor_name.clone(),
-        bundle_artifacts,
+        cycle_artifact,
         result,
     );
 

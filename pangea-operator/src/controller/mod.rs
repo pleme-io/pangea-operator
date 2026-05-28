@@ -279,6 +279,32 @@ impl ControllerState {
         Arc::clone(&self.executor)
     }
 
+    /// Build the typed `WorkspaceRunner` for this CR's reconcile path.
+    ///
+    /// Mirrors `executor_for` but wraps the chosen `IacExecutor` in
+    /// the matching typed runner (`MagmaWorkspaceRunner` /
+    /// `TofuWorkspaceRunner`). The controller's phase handlers
+    /// consume this typed surface (slice 2c) instead of reaching for
+    /// the raw `IacExecutor` + reparsing JSON.
+    ///
+    /// Dispatch is on the inner executor's `.name()` so the test mock
+    /// (`RecordingExecutor`, name=`"recording"`) cleanly falls through
+    /// to the tofu runner (which speaks tofu-shaped JSON, matching
+    /// the mock's canned output).
+    pub fn executor_runner_for(
+        &self,
+        template: &crate::crd::InfrastructureTemplate,
+    ) -> Arc<dyn crate::executor::workspace_runner::WorkspaceRunner> {
+        use crate::executor::workspace_runner::{
+            MagmaWorkspaceRunner, TofuWorkspaceRunner, WorkspaceRunner,
+        };
+        let exec = self.executor_for(template);
+        match exec.name() {
+            "magma" => Arc::new(MagmaWorkspaceRunner::new(exec)) as Arc<dyn WorkspaceRunner>,
+            _       => Arc::new(TofuWorkspaceRunner::new(exec)) as Arc<dyn WorkspaceRunner>,
+        }
+    }
+
     /// Set the database pool.
     ///
     /// Also constructs the shared `StateBackend` (a

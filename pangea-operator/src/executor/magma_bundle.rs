@@ -40,6 +40,9 @@ use tokio::fs;
 use tracing::debug;
 
 use crate::crd::{ActionDistribution, BundleRef};
+use crate::executor::cycle_artifact::{
+    CycleArtifact, PlanAction, Severity, SeverityRollup, TypedResourceChange,
+};
 
 /// Artifacts derived from `magma-bundle.json` for one reconcile cycle.
 /// Both fields are optional independently — a bundle that's missing
@@ -92,6 +95,57 @@ pub async fn read_bundle_artifacts(work_dir: &Path) -> Option<BundleArtifacts> {
     })
 }
 
+/// Read the magma-bundle.json at `work_dir/magma-bundle.json` and
+/// produce a unified `CycleArtifact` — the slice-2 typed shape both
+/// executors populate.
+///
+/// Where this differs from `read_bundle_artifacts`: it extracts the
+/// FULL `plan.changes` array as `TypedResourceChange[]` (action +
+/// severity per resource), the `lifecycle.current` FSM phase, and
+/// derives the `SeverityRollup` from the bundle's native severities
+/// (cosmetic/functional/critical → Cosmetic/Functional/Breaking) —
+/// none of which the slice-1a `BundleArtifacts` carried.
+///
+/// `None` semantics: missing file (workspace not yet planned, or tofu
+/// cycle — tofu cycles use `from_tofu_plan_show_json` instead) or
+/// parse failure. The reader is best-effort by design; cycle
+/// recording falls back to None and the controller patches what it
+/// has.
+pub async fn read_cycle_artifact(work_dir: &Path) -> Option<CycleArtifact> {
+    let path = work_dir.join("magma-bundle.json");
+    let bytes = match fs::read(&path).await {
+        Ok(b) => b,
+        Err(e) => {
+            debug!(path = %path.display(), error = %e, "no magma-bundle.json (no CycleArtifact)");
+            return None;
+        }
+    };
+
+    let value: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(e) => {
+            debug!(path = %path.display(), error = %e, "magma-bundle.json parse failed (no CycleArtifact)");
+            return None;
+        }
+    };
+
+    let resource_changes = resource_changes_from(&value);
+    let action_distribution = CycleArtifact::action_distribution_from(&resource_changes);
+    let severities = if resource_changes.is_empty() {
+        None
+    } else {
+        Some(SeverityRollup::from_changes(&resource_changes))
+    };
+
+    Some(CycleArtifact {
+        action_distribution,
+        resource_changes,
+        artifact_ref:    bundle_ref_from(&value, &bytes),
+        severities,
+        lifecycle_phase: lifecycle_phase_from(&value),
+    })
+}
+
 /// Derive a `BundleRef` from the parsed bundle + raw bytes. Returns
 /// `None` only if the bundle lacks both `kind` AND `bundle_id` — at
 /// that point we have nothing referential to record. The `bundle_id`
@@ -107,6 +161,61 @@ fn bundle_ref_from(value: &serde_json::Value, raw: &[u8]) -> Option<BundleRef> {
         bundle_id:  bundle_id.to_string(),
         size_bytes: raw.len() as u64,
     })
+}
+
+/// Extract `TypedResourceChange[]` from the bundle's `plan.changes`
+/// array. Each change yields (address, action, severity); the bundle
+/// carries all three natively. Empty when `plan.changes` is missing
+/// or not an array.
+///
+/// The severity vocabulary in the bundle is magma-drift's
+/// `ChangeSeverity` — `"cosmetic"`, `"functional"`, `"critical"` —
+/// projected to the operator's `Severity` (Cosmetic/Functional/
+/// Breaking). Unknown severity strings fall back to the
+/// action-derived default via `action_to_severity`.
+fn resource_changes_from(value: &serde_json::Value) -> Vec<TypedResourceChange> {
+    let Some(changes) = value.get("plan").and_then(|v| v.get("changes")).and_then(|v| v.as_array())
+    else {
+        return Vec::new();
+    };
+    changes
+        .iter()
+        .filter_map(|c| {
+            let address = c.get("address").and_then(|v| v.as_str())?.to_string();
+            let raw_action = c.get("action").and_then(|v| v.as_str()).unwrap_or("");
+            let action = PlanAction::parse(raw_action);
+            let severity = c
+                .get("severity")
+                .and_then(|v| v.as_str())
+                .map(map_severity_with_fallback)
+                .unwrap_or_else(|| crate::executor::cycle_artifact::action_to_severity(&action));
+            Some(TypedResourceChange { address, action, severity })
+        })
+        .collect()
+}
+
+/// Project the bundle's severity string into the operator's
+/// `Severity` enum. `"critical"` becomes `Breaking` (the operator's
+/// outer-axis name to avoid colliding with log-level severity).
+/// Unknown strings fall back to `Functional` — the same conservative
+/// default `action_to_severity` uses for `Other` actions.
+fn map_severity_with_fallback(raw: &str) -> Severity {
+    match raw.to_ascii_lowercase().as_str() {
+        "cosmetic"             => Severity::Cosmetic,
+        "functional"           => Severity::Functional,
+        "critical" | "breaking" => Severity::Breaking,
+        _                      => Severity::Functional,
+    }
+}
+
+/// Extract the lifecycle FSM phase from the bundle's `lifecycle.current`
+/// field. Magma-only; tofu cycles will always leave this `None`.
+fn lifecycle_phase_from(value: &serde_json::Value) -> Option<String> {
+    value
+        .get("lifecycle")
+        .and_then(|v| v.get("current"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
 }
 
 /// Derive an `ActionDistribution` by bucketing every change's `action`
@@ -270,6 +379,114 @@ mod tests {
         let path = dir.path().join("magma-bundle.json");
         tokio::fs::write(&path, b"{not json").await.unwrap();
         assert_eq!(read_bundle_artifacts(dir.path()).await, None);
+    }
+
+    // ── read_cycle_artifact (slice 2) ─────────────────────────────
+
+    #[tokio::test]
+    async fn read_cycle_artifact_end_to_end_with_all_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let bundle = json!({
+            "kind": "terraform",
+            "bundle_id": "6ed9680d05a3",
+            "plan": {
+                "changes": [
+                    {"address": "github_repository.r1", "action": "no_op",  "severity": "cosmetic"},
+                    {"address": "github_repository.r2", "action": "no_op",  "severity": "cosmetic"},
+                    {"address": "github_repository.r3", "action": "create", "severity": "functional"},
+                    {"address": "github_repository.r4", "action": "delete", "severity": "critical"},
+                ]
+            },
+            "lifecycle": {"current": "planning"}
+        });
+        let raw = serde_json::to_vec(&bundle).unwrap();
+        tokio::fs::write(dir.path().join("magma-bundle.json"), &raw).await.unwrap();
+
+        let art = read_cycle_artifact(dir.path()).await.unwrap();
+        // ActionDistribution faithfully reflects every change.
+        assert_eq!(art.action_distribution.no_op,  2);
+        assert_eq!(art.action_distribution.create, 1);
+        assert_eq!(art.action_distribution.delete, 1);
+        // Resource changes carry per-resource action + severity (and
+        // the "critical" projects to Breaking — the operator's
+        // outer-axis name).
+        assert_eq!(art.resource_changes.len(), 4);
+        assert_eq!(art.resource_changes[0].address, "github_repository.r1");
+        assert_eq!(art.resource_changes[0].action,  PlanAction::NoOp);
+        assert_eq!(art.resource_changes[0].severity, Severity::Cosmetic);
+        assert_eq!(art.resource_changes[3].action,  PlanAction::Delete);
+        assert_eq!(art.resource_changes[3].severity, Severity::Breaking);
+        // SeverityRollup matches per-resource breakdown.
+        let rollup = art.severities.unwrap();
+        assert_eq!(rollup.cosmetic,   2);
+        assert_eq!(rollup.functional, 1);
+        assert_eq!(rollup.breaking,   1);
+        // Lifecycle phase came through.
+        assert_eq!(art.lifecycle_phase.as_deref(), Some("planning"));
+        // Bundle ref is populated.
+        let bref = art.artifact_ref.unwrap();
+        assert_eq!(bref.kind, "terraform");
+        assert_eq!(bref.bundle_id, "6ed9680d05a3");
+    }
+
+    #[tokio::test]
+    async fn read_cycle_artifact_falls_back_to_action_severity_when_unset() {
+        // Production magma bundles include severity, but a partial
+        // bundle from a different magma version might not. The reader
+        // falls back to the pure action→severity mapping so the
+        // SeverityRollup is still populated honestly.
+        let dir = tempfile::tempdir().unwrap();
+        let bundle = json!({
+            "kind": "terraform",
+            "bundle_id": "abc",
+            "plan": {
+                "changes": [
+                    {"address": "r.a", "action": "delete"},
+                    {"address": "r.b", "action": "create"},
+                ]
+            }
+        });
+        tokio::fs::write(
+            dir.path().join("magma-bundle.json"),
+            serde_json::to_vec(&bundle).unwrap(),
+        ).await.unwrap();
+
+        let art = read_cycle_artifact(dir.path()).await.unwrap();
+        assert_eq!(art.resource_changes[0].severity, Severity::Breaking,    "delete defaults to Breaking");
+        assert_eq!(art.resource_changes[1].severity, Severity::Functional,  "create defaults to Functional");
+    }
+
+    #[tokio::test]
+    async fn read_cycle_artifact_handles_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(read_cycle_artifact(dir.path()).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn read_cycle_artifact_handles_malformed_json() {
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::write(dir.path().join("magma-bundle.json"), b"{not json").await.unwrap();
+        assert!(read_cycle_artifact(dir.path()).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn read_cycle_artifact_handles_resourceless_bundle() {
+        // A magma bundle with no plan.changes (e.g. a workspace
+        // that errored before plan ran) still yields a CycleArtifact
+        // — the artifact_ref + lifecycle survive, just with no
+        // resource_changes + no severities.
+        let dir = tempfile::tempdir().unwrap();
+        let bundle = json!({"kind": "terraform", "bundle_id": "xyz"});
+        tokio::fs::write(
+            dir.path().join("magma-bundle.json"),
+            serde_json::to_vec(&bundle).unwrap(),
+        ).await.unwrap();
+
+        let art = read_cycle_artifact(dir.path()).await.unwrap();
+        assert!(art.resource_changes.is_empty());
+        assert!(art.severities.is_none(), "no resources → no rollup");
+        assert!(art.artifact_ref.is_some(), "bundle_ref still derives");
+        assert!(art.lifecycle_phase.is_none());
     }
 
     #[tokio::test]
