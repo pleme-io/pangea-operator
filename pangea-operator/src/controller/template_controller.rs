@@ -801,28 +801,6 @@ async fn handle_compile_failure(
         .unwrap_or(std::time::Duration::ZERO);
     let recommended_action = crate::controller::escalation::EscalationLadder::pangea_default()
         .pick(duration_unready);
-    tracing::info!(
-        template = %name,
-        namespace = %namespace,
-        consecutive_failures = next,
-        duration_unready_s = duration_unready.as_secs(),
-        recommended_action = recommended_action.label(),
-        depth = recommended_action.depth(),
-        "escalation ladder recommendation"
-    );
-    // Surface the recommendation in Prometheus so dashboards can
-    // answer "how many templates are above depth 2 right now" + plot
-    // selection histograms. Companion to the log + lastError surfaces.
-    state
-        .metrics
-        .escalation_recommended_depth
-        .with_label_values(&[&namespace, &name])
-        .set(recommended_action.depth() as i64);
-    state
-        .metrics
-        .escalation_actions_total
-        .with_label_values(&[&namespace, &name, recommended_action.label()])
-        .inc();
 
     // Anomaly recurrence — the known-unknowns axis. Hash the error
     // into a stable signature + bump the in-process tracker. Same
@@ -836,26 +814,29 @@ async fn handle_compile_failure(
         .observe(&recurrence_key, &signature);
 
     // Composite three-axis summary — one structured event for log
-    // analytics + (slice-4) `.status.anomalies[]` + Prometheus. Same
+    // analytics + Prometheus + (slice-4) `.status.anomalies[]`. Same
     // shape regardless of whether a typed detector also fired, so
-    // consumers don't branch on source. The `typed_detector` field
-    // is `None` here (handle_compile_failure runs at the controller
-    // layer; the typed detectors fire inside pangea-ruby-eval). The
-    // detector's Conflict, when it exists, propagates separately
-    // through ContextWarnings.conflicts and gets folded into the
-    // summary at the slice-4 status surface.
+    // consumers don't branch on source.
     let summary = crate::controller::anomaly_tracker::AnomalySummary::compose(
         &recurrence,
         recommended_action.label(),
         recommended_action.depth(),
         None,
     );
-    tracing::info!(
-        template = %name,
-        namespace = %namespace,
-        summary = ?summary,
-        "anomaly observed"
-    );
+
+    // Fan the summary to every configured sink via the
+    // AnomalyEmitter trait. CompositeEmitter::pangea_default ships
+    // tracing + Prometheus today; slice-4 appends a status-field
+    // emitter without touching this call site. See
+    // controller/anomaly_emitter.rs.
+    let emit_ctx = crate::controller::anomaly_emitter::AnomalyContext {
+        template,
+        summary: &summary,
+        error_msg: err_msg,
+        event_reason: "CompileFailureEscalated", // overridden below if escalation fires
+        event_message: err_msg,
+    };
+    state.anomaly_emitter.emit(&emit_ctx).await;
 
     // Item J observability: bump rate counter + set current-count gauge
     // so Grafana can alert on "stuck-Compiling" before the settling

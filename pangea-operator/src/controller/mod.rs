@@ -6,6 +6,7 @@
 
 pub mod architecture_gem_controller;
 pub mod conflict;
+pub mod anomaly_emitter;
 pub mod anomaly_tracker;
 pub mod error_policy;
 pub mod escalation;
@@ -143,6 +144,14 @@ pub struct ControllerState {
     /// shape stays so call sites don't change.
     /// See `project_escalation_ladder.md`.
     pub escalation_handlers: Arc<escalation_handlers::EscalationHandlerRegistry>,
+
+    /// Composite anomaly emitter — fans the per-failure
+    /// `AnomalySummary` to every configured sink (tracing, Prometheus,
+    /// future: status field, k8s Events, GraphQL stream). Slice-4
+    /// adds new emitters by appending to this composite, not by
+    /// editing each call site. See `anomaly_emitter.rs` +
+    /// `project_controller_detection_axis.md` (expose axis).
+    pub anomaly_emitter: Arc<dyn anomaly_emitter::AnomalyEmitter>,
 }
 
 impl ControllerState {
@@ -178,6 +187,10 @@ impl ControllerState {
         // Ensure workspace base directory exists
         workspace_manager.init().await?;
 
+        let anomaly_emitter_arc: Arc<dyn anomaly_emitter::AnomalyEmitter> = Arc::new(
+            anomaly_emitter::CompositeEmitter::pangea_default(metrics.clone()),
+        );
+
         Ok(Self {
             client,
             metrics,
@@ -194,6 +207,7 @@ impl ControllerState {
             escalation_handlers: Arc::new(
                 escalation_handlers::EscalationHandlerRegistry::pangea_default(),
             ),
+            anomaly_emitter: anomaly_emitter_arc,
         })
     }
 
