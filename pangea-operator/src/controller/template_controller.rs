@@ -783,10 +783,20 @@ async fn handle_compile_failure(
     // gem cache invalidation; RecycleWorkers → pool kill+respawn;
     // PauseAndAlert → set autoSuspended + Event).
     let now = chrono::Utc::now();
+    // Duration since last_applied_at — the canonical "how long since
+    // we were last in a good (applied) state". phase_entered_at is
+    // wrong: phase resets to Compiling on every retry, so it stays
+    // tiny even when the template has been thrashing for hours.
+    // Fallback chain: last_applied_at (best) → phase_entered_at
+    // (acceptable for never-applied templates) → ZERO.
     let duration_unready = template
         .status
         .as_ref()
-        .and_then(|s| s.phase_entered_at.as_ref())
+        .and_then(|s| {
+            s.last_applied_at
+                .as_ref()
+                .or(s.phase_entered_at.as_ref())
+        })
         .map(|t| (now - *t).to_std().unwrap_or(std::time::Duration::ZERO))
         .unwrap_or(std::time::Duration::ZERO);
     let recommended_action = crate::controller::escalation::EscalationLadder::pangea_default()
