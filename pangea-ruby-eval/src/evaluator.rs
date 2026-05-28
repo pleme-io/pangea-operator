@@ -162,5 +162,131 @@ impl RubyEvaluator {
             .map_err(|e| EvalError::RubyException(format!("{e}")))?;
         Ok(())
     }
+
+    /// Reset CRuby state for a fresh workspace compile.
+    ///
+    /// ## The bug this exists to fix
+    ///
+    /// `pangea-ruby-eval` runs ONE long-lived CRuby interpreter per
+    /// process (Magnus can't boot a second one — `Ruby already
+    /// initialized`). State accumulates across compiles: `$LOAD_PATH`
+    /// gets new dirs, `$LOADED_FEATURES` remembers every file ever
+    /// loaded, and module constants survive.
+    ///
+    /// When `prepare_gem` (`ruby/embedded_backend.rs`) clones
+    /// `pangea-architectures` into `/var/pangea/gems/.../lib` and
+    /// broadcasts it onto `$LOAD_PATH`, the bundled gem's `types.rb`
+    /// gets `require`-loaded — defining `Pangea::Architectures::Types::*`
+    /// as `Dry::Struct` classes with strict attribute-redefinition
+    /// semantics.
+    ///
+    /// Later, a workspace compile pushes its own `_repo/lib` onto
+    /// `$LOAD_PATH` (so workspaces can ride newer architectures
+    /// versions than the bundle). The workspace's
+    /// `pangea/architectures/types.rb` resolves to a DIFFERENT
+    /// absolute path. Ruby's `$LOADED_FEATURES` deduplicates by
+    /// absolute path, so it loads BOTH. The second load reopens the
+    /// existing `Dry::Struct` classes and re-runs `attribute
+    /// :cluster_name, …` — which fatally raises
+    /// `"Attribute :cluster_name has already been defined"`.
+    ///
+    /// Observed on rio 2026-05-28 wedging both pleme-io-opensource
+    /// (magma, 1054 resources) and cloudflare-pleme (tofu) into
+    /// `Phase::Failed` after the slice-2c-part-2 deploy; the bug
+    /// was latent for months (intermittent on pod restart ordering).
+    ///
+    /// ## What this method does
+    ///
+    /// Before each workspace compile, undo the side-effects of any
+    /// prior bundle load that the workspace's own `_repo/lib` is
+    /// about to shadow:
+    ///
+    ///   1. Drop `$LOADED_FEATURES` entries whose path matches any
+    ///      `feature_path_prefixes` (typically the bundled gem cache
+    ///      dir — `/var/pangea/gems/`). Ruby's require-dedup forgets
+    ///      those files; the upcoming workspace require will reload
+    ///      them from the workspace's lib.
+    ///   2. `Object.send(:remove_const, …)` on each module in
+    ///      `modules_to_purge` (typically `["Pangea::Architectures"]`).
+    ///      Removes the constant + every nested class so the
+    ///      workspace's load DEFINES them fresh (no reopening, no
+    ///      `Dry::Struct` redefine error).
+    ///
+    /// State is NOT restored on exit. The newly-loaded workspace
+    /// version of `Pangea::Architectures` survives the compile.
+    /// Subsequent compiles re-purge + reload. Operator-side code
+    /// that introspects `Pangea::Architectures` (list_architectures,
+    /// smoke_test) sees whichever workspace compiled most recently.
+    /// That's acceptable because every architecture-introspecting
+    /// RPC is self-bracketing — it triggers its own require chain
+    /// before reading constants.
+    ///
+    /// ## Why not restore on exit?
+    ///
+    /// Restoration would require re-requiring the bundle's
+    /// `types.rb`. But the workspace's load already populated
+    /// `Pangea::Architectures` with the workspace's classes — the
+    /// bundle's re-require would hit the same redefine error.
+    /// Cleaner to leave the workspace's version installed; it
+    /// represents the LATEST workspace state on disk anyway.
+    pub fn purge_for_workspace_compile(
+        &self,
+        modules_to_purge: &[&str],
+        feature_path_prefixes: &[&str],
+    ) -> Result<(), EvalError> {
+        // Build a Ruby array literal of the path prefixes — embedded
+        // into the eval source as a string-quoted literal. Each
+        // prefix is double-escaped (so paths with backslashes / dquotes
+        // survive Ruby parsing).
+        let prefix_list = feature_path_prefixes
+            .iter()
+            .map(|p| format!(r#""{}""#, p.replace('\\', "\\\\").replace('"', "\\\"")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let module_list = modules_to_purge
+            .iter()
+            .map(|m| format!(r#""{}""#, m.replace('\\', "\\\\").replace('"', "\\\"")))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        // ── Drop $LOADED_FEATURES entries under prefix paths. ─────
+        // After this, `require 'pangea/architectures/types'` finds
+        // the workspace's copy via $LOAD_PATH and loads it fresh.
+        //
+        // ── Remove module constants. ──────────────────────────────
+        // Walks `"Pangea::Architectures"` → owner = `Pangea`, child
+        // = `:Architectures`, then `owner.send(:remove_const, child)`.
+        // Top-level `Object.send(:remove_const, …)` for un-namespaced
+        // modules.
+        let src = format!(
+            r#"
+            prefixes = [{prefix_list}]
+            $LOADED_FEATURES.reject! {{ |f| prefixes.any? {{ |p| f.start_with?(p) }} }}
+
+            modules = [{module_list}]
+            modules.each do |full_name|
+              parts = full_name.split('::')
+              child = parts.pop.to_sym
+              owner = if parts.empty?
+                        Object
+                      else
+                        # Walk down the parents. If any segment is
+                        # already absent we have nothing to purge.
+                        parts.inject(Object) do |mod, name|
+                          break nil unless mod.const_defined?(name, false)
+                          mod.const_get(name, false)
+                        end
+                      end
+              next unless owner && owner.const_defined?(child, false)
+              owner.send(:remove_const, child) rescue nil
+            end
+            "#,
+        );
+        let _: Value = self
+            .ruby
+            .eval(&src)
+            .map_err(|e| EvalError::RubyException(format!("purge_for_workspace_compile: {e}")))?;
+        Ok(())
+    }
 }
 

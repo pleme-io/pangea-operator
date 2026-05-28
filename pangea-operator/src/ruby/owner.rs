@@ -547,6 +547,48 @@ fn compile_template(
         .map(std::path::PathBuf::from)
         .collect();
 
+    // CRuby's interpreter is single-VM-per-process. Across compile
+    // requests, `$LOADED_FEATURES` and module constants accumulate.
+    // When the bundled `/var/pangea/gems/pangea-architectures-main/`
+    // and the workspace's `_repo/lib` both ship `pangea/architectures
+    // /types.rb` at different absolute paths, Ruby's `require`
+    // dedup-by-absolute-path loads BOTH; the second load reopens
+    // `Dry::Struct` classes and fatally raises "Attribute :cluster_name
+    // has already been defined".
+    //
+    // Purge the stale bundle-side `Pangea::Architectures` constants +
+    // `$LOADED_FEATURES` entries before pushing the workspace's lib
+    // onto `$LOAD_PATH`. The workspace's `require 'pangea/architectures
+    // /types'` then runs as a fresh load — no reopening, no Dry::Struct
+    // redefine error.
+    //
+    // See `pangea_ruby_eval::RubyEvaluator::purge_for_workspace_compile`
+    // module doc for the full bug + design notes.
+    //
+    // Prefixes covered:
+    //   /var/pangea/gems/       — runtime-cloned gem caches (the
+    //                              architecture_gem path).
+    //   /nix/store/             — bundled path-gems baked at image
+    //                              build time. The flake's RUBYLIB
+    //                              currently doesn't bundle pangea-
+    //                              architectures, but if a future
+    //                              build adds it, this prefix catches
+    //                              it. Safe even when no nix-store
+    //                              entry matches.
+    if let Err(e) = evaluator.purge_for_workspace_compile(
+        &["Pangea::Architectures"],
+        &["/var/pangea/gems/", "/nix/store/"],
+    ) {
+        // Best-effort: a purge failure shouldn't block compile.
+        // Worst case it falls back to the old double-load bug (which
+        // was already broken before this purge existed). Log so the
+        // operator surface tells us if the purge fails systematically.
+        tracing::warn!(
+            error = %e,
+            "workspace compile state purge failed; double-load risk persists"
+        );
+    }
+
     let synthesis_json = evaluator
         .with_env(&env_overrides, |ev| {
             ev.with_load_paths(&load_paths, |ev| {
