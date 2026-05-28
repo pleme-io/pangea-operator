@@ -814,6 +814,27 @@ async fn handle_compile_failure(
         .with_label_values(&[&namespace, &name, recommended_action.label()])
         .inc();
 
+    // Anomaly recurrence — the known-unknowns axis. Hash the error
+    // into a stable signature + bump the in-process tracker. Same
+    // logical error produces the same signature across runs, so
+    // dashboards can answer "is this template stuck on ONE bug
+    // class repeated 100 times, or 100 distinct issues?". The
+    // typed Recurrence flows into the tracing emit as evidence;
+    // slice-N wires it through to status.anomalies[].
+    let signature = crate::controller::anomaly_tracker::error_signature(err_msg);
+    let recurrence_key = format!("{}/{}", namespace, name);
+    let recurrence = state
+        .anomaly_tracker
+        .observe(&recurrence_key, &signature);
+    tracing::info!(
+        template = %name,
+        namespace = %namespace,
+        error_signature = %signature,
+        recurrence_count = recurrence.count,
+        recurrence_age_s = recurrence.age.as_secs(),
+        "anomaly recurrence observed"
+    );
+
     // Item J observability: bump rate counter + set current-count gauge
     // so Grafana can alert on "stuck-Compiling" before the settling
     // threshold trips. Prometheus path:

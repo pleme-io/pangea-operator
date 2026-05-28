@@ -122,6 +122,16 @@ pub struct ControllerState {
     /// the fleet-wide kill-switch + per-controller suspends. Updated
     /// by the `operator_policy_watcher` task.
     pub operator_policy: Arc<operator_policy_cache::OperatorPolicyCache>,
+
+    /// Anomaly recurrence tracker — observes (template, error_signature)
+    /// pairs and counts recurrence. Per-process in v1 (lost on
+    /// restart); slice-N swaps for sqlx-backed persistent impl
+    /// behind the same `RecurrenceObserver` trait so the swap is
+    /// local. Read by `handle_compile_failure` to surface "this
+    /// error has now repeated N times" in tracing + (slice-4)
+    /// `.status.anomalies[]`. See
+    /// `project_controller_detection_axis.md` (known-unknowns axis).
+    pub anomaly_tracker: Arc<dyn anomaly_tracker::RecurrenceObserver>,
 }
 
 impl ControllerState {
@@ -169,6 +179,7 @@ impl ControllerState {
             compiler_backend,
             routing_client: Arc::new(routing::RoutingClient::from_env()),
             operator_policy: Arc::new(operator_policy_cache::OperatorPolicyCache::new_permissive()),
+            anomaly_tracker: Arc::new(anomaly_tracker::InMemoryRecurrenceTracker::new()),
         })
     }
 
