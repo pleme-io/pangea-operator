@@ -19,10 +19,6 @@
     forge = {
       url = "github:pleme-io/forge";
       inputs.nixpkgs.follows = "nixpkgs";
-      # Share the operator's pinned substrate so forge's mkRustWorkspace
-      # call resolves through the fixed mkProject. Without this, forge
-      # brings in its own (older) substrate that still rejects `name`.
-      inputs.substrate.follows = "substrate";
     };
     ruby-nix.url = "github:inscapist/ruby-nix";
 
