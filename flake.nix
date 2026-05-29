@@ -9,7 +9,7 @@
       # introduced the fix). Previous substrate revs (ab6d1afd,
       # 914d53f) hit "function 'mkProject' called with unexpected
       # argument 'name'".
-      url = "github:pleme-io/substrate/9556488";
+      url = "github:pleme-io/substrate";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     crate2nix = {
