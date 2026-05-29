@@ -339,6 +339,13 @@
           src = self;
           architecture = arch;
           serviceType = "graphql";
+          # Use the legacy crate2nix-generated Cargo.nix path. The
+          # lockfile-builder (substrate's new default) is producing a
+          # broken rustix build tree where linux_raw_sys isn't passed
+          # as --extern. Falling back to the committed Cargo.nix until
+          # the lockfile-builder's Cargo.build-spec.json drift is
+          # resolved upstream.
+          useLockfileBuilder = false;
           # executor_magma listed EXPLICITLY (not only via `default`) so
           # the embedded image always compiles MagmaExecutor in. A stale
           # Cargo.nix once dropped it from default and the operator
