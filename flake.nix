@@ -4,7 +4,12 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
     substrate = {
-      url = "github:pleme-io/substrate";
+      # Pinned to 9556488 — mkProject accepts the optional `name`
+      # arg that mk-rust-workspace.nix passes through (substrate@80c5778
+      # introduced the fix). Previous substrate revs (ab6d1afd,
+      # 914d53f) hit "function 'mkProject' called with unexpected
+      # argument 'name'".
+      url = "github:pleme-io/substrate/9556488";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     crate2nix = {
