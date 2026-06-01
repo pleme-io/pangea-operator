@@ -2755,11 +2755,11 @@
     "pangea-splunk": {
       "flake": false,
       "locked": {
-        "lastModified": 1780303082,
-        "narHash": "sha256-Vh7fY1Z/5dgn0aw6JiX7uK4+mL29ybSOpEr7SvqxId8=",
+        "lastModified": 1780324029,
+        "narHash": "sha256-35iaGeesaYX39Rt9yVSBCOZLifD/AK1yz1wSgT7EPfM=",
         "owner": "pleme-io",
         "repo": "pangea-splunk",
-        "rev": "c03af1bab0a42d1437a1d8f3fd48a4c5f4a834e8",
+        "rev": "eca2d75c7dfbc43853d5ef5b1450c848b2e45098",
         "type": "github"
       },
       "original": {
@@ -2771,11 +2771,11 @@
     "pangea-spot": {
       "flake": false,
       "locked": {
-        "lastModified": 1780303094,
-        "narHash": "sha256-V8Ib8VYRGV/ipcegq+COdZGuK99iv9aiNYoczBfsrmA=",
+        "lastModified": 1780324044,
+        "narHash": "sha256-EQKfL4s6zzx75l+ew0yJ/EBVl945vB6VX4s/oXrA9xU=",
         "owner": "pleme-io",
         "repo": "pangea-spot",
-        "rev": "666ab6c0dbd3996302c329cf3471ca2edb00bc62",
+        "rev": "9981efabee033d32fa71a82221e3c093586ee91f",
         "type": "github"
       },
       "original": {
