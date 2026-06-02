@@ -2675,11 +2675,11 @@
     "pangea-gcp": {
       "flake": false,
       "locked": {
-        "lastModified": 1780395694,
-        "narHash": "sha256-ZG1/HaVpkFr4dI/hjFg8en3cg1fWT9cjRjPmJQD0vnA=",
+        "lastModified": 1780396329,
+        "narHash": "sha256-2LOOGN04C5ArHy1kexeAxf73VKmyNGOooDD4iVjcsMQ=",
         "owner": "pleme-io",
         "repo": "pangea-gcp",
-        "rev": "a7f51f4b80c5ae01e4c442f956aabb7c7ca8037f",
+        "rev": "5ea44ee3cf37e6ec166a230f6b7a26a84a752ffc",
         "type": "github"
       },
       "original": {
