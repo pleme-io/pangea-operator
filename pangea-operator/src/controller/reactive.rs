@@ -76,22 +76,41 @@ impl Default for EffectiveReactivePolicy {
 
 impl EffectiveReactivePolicy {
     /// Resolve the cascade, innermost wins per field.
+    ///
+    /// The per-field merge is the canonical `CascadePolicy` primitive
+    /// (`impl` on [`ReactivePolicy`] in `crd::architecture_gem`; see
+    /// `theory/CONVERGENCE-ADOPTION.md` §II.2). This method:
+    ///   1. folds the layers innermost-wins via `CascadePolicy::resolve`
+    ///      (workspace, then template on top — rightmost wins per field),
+    ///   2. projects the merged `Option`-field policy onto the
+    ///      hard-defaulted concrete `EffectiveReactivePolicy`, filling
+    ///      any field no layer set with this type's `Default`.
+    ///
+    /// Behaviour is identical to the prior inline merge loop — the
+    /// existing cascade tests below prove parity.
     pub fn resolve(
         template_policy: Option<&ReactivePolicy>,
         workspace_policy: Option<&ReactivePolicy>,
     ) -> Self {
+        use shigoto_types::policy::CascadePolicy;
+        // Merge the Option-field layers innermost-wins (workspace then
+        // template). `resolve` starts from an all-`None` default and
+        // applies each layer in order; the rightmost layer that sets a
+        // field wins.
+        let merged =
+            ReactivePolicy::resolve(&[workspace_policy, template_policy], ReactivePolicy::default());
+        // Project the merged layer onto the hard-defaulted concrete
+        // policy: a field the cascade set overrides the default; an
+        // unset field keeps the hard default.
         let mut effective = Self::default();
-        // Apply workspace level first, then template overrides on top.
-        for layer in [workspace_policy, template_policy].into_iter().flatten() {
-            if let Some(f) = &layer.failure_escalation {
-                effective.failure = f.clone();
-            }
-            if let Some(p) = &layer.phase_timeout {
-                effective.phase_timeout = p.clone();
-            }
-            if let Some(v) = &layer.verified_blocked {
-                effective.verified_blocked = v.clone();
-            }
+        if let Some(f) = merged.failure_escalation {
+            effective.failure = f;
+        }
+        if let Some(p) = merged.phase_timeout {
+            effective.phase_timeout = p;
+        }
+        if let Some(v) = merged.verified_blocked {
+            effective.verified_blocked = v;
         }
         effective
     }

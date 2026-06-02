@@ -59,6 +59,9 @@ pangea-types = { workspace = true, features = ["server"] }
 gen-platform = { workspace = true }
 gen-types = { workspace = true }
 
+# Convergence primitives — CascadePolicy for the reactive-policy cascade.
+shigoto-types = { workspace = true }
+
 # In-process Ruby evaluator (feature-gated; see [features].embedded_ruby).
 pangea-ruby-eval = { path = "../pangea-ruby-eval", optional = true }
 

@@ -24,6 +24,14 @@ pangea-types = { path = "pangea-types" }
 gen-platform = { git = "https://github.com/pleme-io/gen" }
 gen-types = { git = "https://github.com/pleme-io/gen" }
 
+# Convergence primitives — the reactive-policy cascade consumes the
+# canonical innermost-wins-per-field merge (theory/CONVERGENCE-ADOPTION.md
+# §II.2). Git, not crates.io: the operator is a binary (not a published
+# library) and the re-homed `policy::CascadePolicy` is not on crates.io
+# 0.1.0 yet. Rev-pinned to the re-home commit for determinism (matches
+# how tend pins shigoto-emit) — bump deliberately on a shigoto upgrade.
+shigoto-types = { git = "https://github.com/pleme-io/shigoto", rev = "417bf9d538a1741c5576b29a4d71673e92cf5d22" }
+
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

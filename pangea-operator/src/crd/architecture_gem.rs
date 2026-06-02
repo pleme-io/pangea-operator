@@ -265,6 +265,29 @@ pub struct ReactivePolicy {
     pub verified_blocked: Option<VerifiedBlockedPolicy>,
 }
 
+/// Innermost-wins per-field merge — the canonical convergence cascade.
+///
+/// Replaces the hand-rolled merge loop that previously lived inline in
+/// `controller::reactive::EffectiveReactivePolicy::resolve`. Per
+/// `theory/CONVERGENCE-ADOPTION.md` §II.2, the gem → workspace →
+/// template cascade IS the `CascadePolicy` primitive; the trait's
+/// `resolve(layers, default)` default method folds the layers
+/// innermost-wins so the operator-side resolve becomes a one-line
+/// delegation + projection onto the hard-defaulted concrete policy.
+impl shigoto_types::policy::CascadePolicy for ReactivePolicy {
+    fn merge(&mut self, layer: &Self) {
+        if let Some(f) = &layer.failure_escalation {
+            self.failure_escalation = Some(f.clone());
+        }
+        if let Some(p) = &layer.phase_timeout {
+            self.phase_timeout = Some(p.clone());
+        }
+        if let Some(v) = &layer.verified_blocked {
+            self.verified_blocked = Some(v.clone());
+        }
+    }
+}
+
 /// Escalate after N consecutive failed reconciles.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
