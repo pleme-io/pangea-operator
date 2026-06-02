@@ -331,6 +331,20 @@
             crate2nix = crate2nix.packages.${imageSystem}.default;
           };
           arch = if imageSystem == "aarch64-linux" then "arm64" else "amd64";
+          # Anchor every path-gem SOURCE into the image closure. RUBYLIB
+          # (= fullRubylib) includes `gemWs.rubylib` = each
+          # `${pangeaInputsChecked.<g>}/lib`, whose store path must exist at
+          # runtime. Raw flake-input source paths placed directly in
+          # `extraContents` are NOT derivations, so the image builder drops them
+          # (verified: nix-store -qR <image> | grep <path-gem-source> = 0).
+          # Reference them from a real runCommand output instead — nix's
+          # reference scanner pulls each into THIS derivation's closure, which
+          # buildLayeredImage then includes, so the `/lib` subpaths resolve.
+          # Same pangeaInputsChecked as gemWs.rubylib → paths match by construction.
+          pathGemAnchor = imagePkgs.runCommand "pangea-pathgem-anchor" { } ''
+            mkdir -p $out
+            printf '%s\n' ${lib.concatMapStringsSep " " (src: lib.escapeShellArg "${src}") (builtins.attrValues pangeaInputsChecked)} > $out/path-gem-refs
+          '';
         in builders.mkCrate2nixDockerImage {
           serviceName = "pangea-operator";
           packageName = "pangea-operator";
@@ -361,7 +375,7 @@
           extraContents = pkgs: (with pkgs; [
             ruby_3_3 opentofu packer git busybox
             gemWs.env
-          ]) ++ builtins.attrValues pangeaInputsChecked;
+          ]) ++ [ pathGemAnchor ];
           extraEnv = [
             "RUBYLIB=${fullRubylib}"
             "DRY_TYPES_WARNINGS=false"
