@@ -117,7 +117,7 @@ async-graphql-axum = { workspace = true, optional = true }
 # gRPC (optional)
 tonic = { version = "0.12", optional = true }
 prost = { version = "0.13", optional = true }
-prost-types = "0.13"
+prost-types = "0.14"
 
 # Database
 sqlx = { workspace = true, features = ["tls-rustls", "chrono", "uuid"] }
