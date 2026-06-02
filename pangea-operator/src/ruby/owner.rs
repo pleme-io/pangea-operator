@@ -574,6 +574,26 @@ fn compile_template(
         .map(std::path::PathBuf::from)
         .collect();
 
+    // $LOADED_FEATURES purge prefixes. The gem-cache clone is the legacy
+    // entry; we ALSO purge the composer subtree under each workspace lib
+    // (`req.rubylib_paths` = the freshly-cloned `_repo/lib`). Without the
+    // latter, the workspace clone's `pangea/architectures.rb` stays cached in
+    // $LOADED_FEATURES across compiles, so `restore_purged_modules`'
+    // `require 'pangea/architectures'` no-ops (require dedups by absolute
+    // path) and the just-`remove_const`'d `Pangea::Architectures` is never
+    // reloaded → `uninitialized constant Pangea::Architectures` (the rio
+    // pleme-io-opensource wedge). Scoped to `…/pangea/architectures` — NOT the
+    // whole lib and NOT `/nix/store/` — so pangea-core / dry-struct / dry-types
+    // are untouched (avoids the 2026-05-28 re-require stack-limit cascade).
+    let mut purge_feature_prefixes: Vec<String> =
+        vec!["/var/pangea/gems/pangea-architectures-main/".to_string()];
+    for rl in &req.rubylib_paths {
+        purge_feature_prefixes.push(format!(
+            "{}/pangea/architectures",
+            rl.trim_end_matches('/')
+        ));
+    }
+
     let ctx = pangea_ruby_eval::CompileContext::new()
         .with_load_paths(load_paths)
         .with_env(env_overrides.clone())
@@ -592,14 +612,13 @@ fn compile_template(
         // — derive the purge surface from the broadcast gem's actual
         // load tree, not from a hardcoded list that drifts.
         .with_purge_modules(["Pangea::Architectures"])
-        // Scoped tightly to the bundle's exact path. Earlier attempts
-        // used /nix/store/ — too broad, unloaded pangea-core +
-        // dry-struct + dry-types, triggering re-require cascades that
-        // hit Ruby's stack limit. Only purge what the workspace will
-        // genuinely shadow.
-        .with_purge_feature_prefixes([
-            "/var/pangea/gems/pangea-architectures-main/",
-        ]);
+        // Scoped tightly: gem-cache clone + each workspace lib's
+        // `…/pangea/architectures` composer subtree (built above). Earlier
+        // attempts used /nix/store/ — too broad, unloaded pangea-core +
+        // dry-struct + dry-types, triggering re-require cascades that hit
+        // Ruby's stack limit. Only purge what the workspace will genuinely
+        // shadow + reload.
+        .with_purge_feature_prefixes(purge_feature_prefixes);
 
     let (synthesis_json, warnings) = evaluator
         .compile_in_context(&ctx, |ev| {
