@@ -350,10 +350,18 @@
           # CRuby's ruby_init() reads it, $LOAD_PATH includes every
           # foundational pangea-* + dry-* + terraform-synthesizer at
           # boot. Per-CR ArchitectureGem clones (M8.4.2) layer on top.
-          extraContents = pkgs: with pkgs; [
+          # gemWs.env carries the Bundler-resolved gems; the path-gems
+          # (pangea-core/aws/gcp/…) are referenced by RUBYLIB via
+          # `gemWs.rubylib` (= each `${pangeaInputsChecked.<g>}/lib`) but are
+          # NOT in gemWs.env's closure, so without this they are absent at
+          # runtime → `cannot load .../resource` (the 2026-06-02 gem-closure
+          # wedge). Both gemWs.rubylib and these values derive from the SAME
+          # pangeaInputsChecked, so adding the path-gem source closures here
+          # guarantees every RUBYLIB entry resolves in the image.
+          extraContents = pkgs: (with pkgs; [
             ruby_3_3 opentofu packer git busybox
             gemWs.env
-          ];
+          ]) ++ builtins.attrValues pangeaInputsChecked;
           extraEnv = [
             "RUBYLIB=${fullRubylib}"
             "DRY_TYPES_WARNINGS=false"
