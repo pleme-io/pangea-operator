@@ -4,11 +4,13 @@
 //!
 //!   1. The CR's `spec.executor` field (per-CR override)
 //!   2. The `PANGEA_EXECUTOR` env var (operator-wide default)
-//!   3. Fallback to `Tofu` (the conservative default)
+//!   3. Fallback to `Magma` (the default since 2026-06-02 — "we only deal
+//!      in magma for pangea-operator"; tofu is now an explicit opt-in via
+//!      CR/env, never the implicit default)
 //!
-//! Per `theory/MAGMA-OPERATOR-BACKEND.md` §VI. Both `tofu` and
-//! `magma` ship indefinitely; this is the load-bearing per-CR
-//! opt-in for the magma backend during burn-in.
+//! Per `theory/MAGMA-OPERATOR-BACKEND.md` §VI. Both `tofu` and `magma` ship
+//! indefinitely; magma is the default + tofu is the per-CR escape hatch /
+//! last-resort fallback.
 
 /// Which `IacExecutor` impl handles a reconcile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,7 +38,9 @@ impl ExecutorBackend {
                 return b;
             }
         }
-        ExecutorBackend::Tofu
+        // Default since 2026-06-02: magma. tofu is never the implicit default —
+        // it is only ever chosen by an explicit CR field or env var. See module docs.
+        ExecutorBackend::Magma
     }
 
     /// Parse a backend name. Returns `None` for unrecognized values
@@ -75,9 +79,10 @@ mod tests {
     }
 
     #[test]
-    fn default_is_tofu_when_neither_set() {
+    fn default_is_magma_when_neither_set() {
+        // 2026-06-02: magma is the default; tofu is opt-in only.
         let r = ExecutorBackend::resolve(None, None);
-        assert_eq!(r, ExecutorBackend::Tofu);
+        assert_eq!(r, ExecutorBackend::Magma);
     }
 
     #[test]
@@ -87,9 +92,9 @@ mod tests {
     }
 
     #[test]
-    fn unrecognized_env_falls_through_to_tofu() {
+    fn unrecognized_env_falls_through_to_magma() {
         let r = ExecutorBackend::resolve(None, Some("kerflump"));
-        assert_eq!(r, ExecutorBackend::Tofu);
+        assert_eq!(r, ExecutorBackend::Magma);
     }
 
     #[test]
@@ -136,10 +141,10 @@ mod tests {
     fn empty_string_treated_as_unset() {
         // A literal empty string from a YAML-marshaled
         // Option<String> shouldn't accidentally pick a backend.
-        // Today empty string is unrecognized so it falls through —
-        // verify that explicitly.
+        // Empty string is unrecognized so it falls through to the default
+        // (magma since 2026-06-02) — verify that explicitly.
         let r = ExecutorBackend::resolve(Some(""), None);
-        assert_eq!(r, ExecutorBackend::Tofu);
+        assert_eq!(r, ExecutorBackend::Magma);
     }
 
     #[test]
