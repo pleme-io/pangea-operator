@@ -495,12 +495,29 @@ fn compile_template(
                 real.display()
             )));
         }
+        // Trusted root set for rubylib entries. Historically this was
+        // PANGEA_WORKSPACE_BASE only — correct when the sole entry was
+        // the cloned workspace's `_repo/lib`. The magma-rubygems
+        // resolver (resolve_ruby_env_for_roots) now produces a
+        // dependency-ordered closure whose entries legitimately live in
+        // the per-CR gem cache (PANGEA_GEM_CACHE_DIR, default
+        // /var/pangea/gems) and the image's baked Nix closure
+        // (/nix/store/...). All three are operator-trusted roots — the
+        // same trust boundary the GemRootsLocator + ManifestLocator
+        // resolve against — so admit any entry under one of them.
+        let gem_cache_base = std::env::var("PANGEA_GEM_CACHE_DIR")
+            .unwrap_or_else(|_| "/var/pangea/gems".to_string());
+        let trusted_roots = [base.clone(), gem_cache_base, "/nix/store".to_string()];
         for rl in &req.rubylib_paths {
             let r = std::fs::canonicalize(rl)
                 .map_err(|e| BackendError::Compiler(format!("rubylib_path canonicalize {rl}: {e}")))?;
-            if !r.starts_with(format!("{base}/")) && !r.starts_with(&base) {
+            let under_trusted = trusted_roots
+                .iter()
+                .any(|t| r.starts_with(format!("{t}/")) || r.starts_with(t));
+            if !under_trusted {
                 return Err(BackendError::Compiler(format!(
-                    "rubylib_paths entries must resolve under {base}: {rl}"
+                    "rubylib_paths entries must resolve under a trusted root \
+                     (workspace base {base}, gem cache, or /nix/store): {rl}"
                 )));
             }
             if !r.is_dir() {

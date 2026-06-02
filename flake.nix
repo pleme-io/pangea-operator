@@ -326,6 +326,40 @@
           bundlerLibPaths = imagePkgs.lib.removeSuffix "\n" (builtins.readFile fullRubylibFile);
           fullRubylib = "${gemWs.rubylib}:${bundlerLibPaths}";
 
+          # Baked-gem manifest: a `{ "gem-name": "/abs/lib/dir" }` JSON
+          # the operator's embedded compile path consumes via
+          # magma_rubygems::ManifestLocator. The RUBYLIB is a flat list
+          # of lib dirs whose basenames (Nix store hashes,
+          # `<name>-<ver>`) cannot be reverse-mapped to gem names; this
+          # manifest carries the mapping the flake already knows.
+          #   - Bundler gems: enumerated via RubyGems (same source the
+          #     fullRubylib computation uses) → name → full_require_path.
+          #   - Path-gems (pangea-* providers): Nix-side from
+          #     pangeaInputsChecked → name → `${src}/lib`. They WIN on
+          #     a name clash (authoritative workspace copies).
+          # pangea-architectures (the composer) is in NEITHER set — it is
+          # not baked; the operator resolves it from the per-CR gem cache
+          # via GemRootsLocator. See template_controller::resolve_workspace_load_path.
+          gemManifestFile = imagePkgs.runCommand "pangea-gem-manifest" {
+            pathGemJson = builtins.toJSON
+              (lib.mapAttrs (_n: src: "${src}/lib") pangeaInputsChecked);
+          } ''
+            mkdir -p $out
+            ${gemWs.ruby}/bin/ruby -e '
+              require "rubygems"
+              require "json"
+              ENV["GEM_PATH"] = "${gemWs.env}/lib/ruby/gems/3.3.0"
+              Gem.clear_paths
+              manifest = {}
+              Gem::Specification.each do |s|
+                p = s.full_require_paths.reject { |x| x.start_with?("/build/") }.first
+                manifest[s.name] ||= p if p
+              end
+              manifest.merge!(JSON.parse(ENV.fetch("pathGemJson")))
+              File.write(File.join(ENV.fetch("out"), "manifest.json"), JSON.generate(manifest))
+            '
+          '';
+
           builders = import "${substrate}/lib/build/rust/crate2nix-builders.nix" {
             pkgs = imagePkgs;
             crate2nix = crate2nix.packages.${imageSystem}.default;
@@ -375,10 +409,14 @@
           extraContents = pkgs: (with pkgs; [
             ruby_3_3 opentofu packer git busybox
             gemWs.env
-          ]) ++ [ pathGemAnchor ];
+          ]) ++ [ pathGemAnchor gemManifestFile ];
           extraEnv = [
             "RUBYLIB=${fullRubylib}"
             "DRY_TYPES_WARNINGS=false"
+            # Baked-gem name→lib-dir manifest the embedded compile path
+            # resolves the workspace Gemfile.lock against. Absent ⇒ the
+            # operator falls back to legacy single-_repo/lib behaviour.
+            "PANGEA_GEM_MANIFEST=${gemManifestFile}/manifest.json"
           ];
           buildInputs = [ ruby imagePkgs.openssl imagePkgs.postgresql imagePkgs.sqlite ];
           nativeBuildInputs = [ libclang imagePkgs.pkg-config imagePkgs.cmake imagePkgs.perl ];
