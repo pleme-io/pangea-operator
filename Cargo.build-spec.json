@@ -1,7 +1,7 @@
 {
   "version": 10,
   "workspace": {
-    "root": "/Users/drzzln/code/github/pleme-io/pangea-operator",
+    "root": "/Users/luis.d/code/github/pleme-io/pangea-operator",
     "members": [
       {
         "name": "pangea-types",
@@ -10452,15 +10452,15 @@
         "preBuild": "export CARGO_CRATE_NAME=futures_util;"
       }
     },
-    "gen-macros-0.1.0": {
+    "gen-macros-0.1.3": {
       "name": "gen-macros",
-      "version": "0.1.0",
+      "version": "0.1.3",
       "edition": "2024",
       "source": {
         "kind": "git",
         "url": "https://github.com/pleme-io/gen",
-        "rev": "0d9df5087f3b9c1a30988b9dfe08e280f72df83f",
-        "sha256": "sha256-sQCrY9vhjIBJB+XYIDtGCTds5LiJMS7PA1ghJ2MQwB0="
+        "rev": "810b1292dbc4b83cef2526c9aa969bef8246dd43",
+        "sha256": "sha256-IQZbmLnkOgF/OCMaD3oLtlALomjQHxUX1fk5MjZ7fx0="
       },
       "features": [],
       "proc_macro": true,
@@ -10514,7 +10514,7 @@
       },
       "build_rust_crate_args": {
         "crateName": "gen-macros",
-        "version": "0.1.0",
+        "version": "0.1.3",
         "edition": "2024",
         "crateRenames": {
           "proc-macro2": [
@@ -10529,15 +10529,15 @@
         "preBuild": "export CARGO_CRATE_NAME=gen_macros;"
       }
     },
-    "gen-platform-0.1.0": {
+    "gen-platform-0.1.3": {
       "name": "gen-platform",
-      "version": "0.1.0",
+      "version": "0.1.3",
       "edition": "2024",
       "source": {
         "kind": "git",
         "url": "https://github.com/pleme-io/gen",
-        "rev": "0d9df5087f3b9c1a30988b9dfe08e280f72df83f",
-        "sha256": "sha256-sQCrY9vhjIBJB+XYIDtGCTds5LiJMS7PA1ghJ2MQwB0="
+        "rev": "810b1292dbc4b83cef2526c9aa969bef8246dd43",
+        "sha256": "sha256-IQZbmLnkOgF/OCMaD3oLtlALomjQHxUX1fk5MjZ7fx0="
       },
       "features": [],
       "proc_macro": false,
@@ -10548,7 +10548,7 @@
       "runtime_dependencies": [
         {
           "name": "gen_macros",
-          "package_key": "gen-macros-0.1.0",
+          "package_key": "gen-macros-0.1.3",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -10558,7 +10558,7 @@
         },
         {
           "name": "gen_types",
-          "package_key": "gen-types-0.1.0",
+          "package_key": "gen-types-0.1.3",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -10613,31 +10613,31 @@
       "crate_renames": {
         "gen-macros": [
           {
-            "version": "0.1.0",
+            "version": "0.1.3",
             "rename": "gen_macros"
           }
         ],
         "gen-types": [
           {
-            "version": "0.1.0",
+            "version": "0.1.3",
             "rename": "gen_types"
           }
         ]
       },
       "build_rust_crate_args": {
         "crateName": "gen-platform",
-        "version": "0.1.0",
+        "version": "0.1.3",
         "edition": "2024",
         "crateRenames": {
           "gen-macros": [
             {
-              "version": "0.1.0",
+              "version": "0.1.3",
               "rename": "gen_macros"
             }
           ],
           "gen-types": [
             {
-              "version": "0.1.0",
+              "version": "0.1.3",
               "rename": "gen_types"
             }
           ]
@@ -10646,15 +10646,15 @@
         "preBuild": "export CARGO_CRATE_NAME=gen_platform;"
       }
     },
-    "gen-types-0.1.0": {
+    "gen-types-0.1.3": {
       "name": "gen-types",
-      "version": "0.1.0",
+      "version": "0.1.3",
       "edition": "2024",
       "source": {
         "kind": "git",
         "url": "https://github.com/pleme-io/gen",
-        "rev": "0d9df5087f3b9c1a30988b9dfe08e280f72df83f",
-        "sha256": "sha256-sQCrY9vhjIBJB+XYIDtGCTds5LiJMS7PA1ghJ2MQwB0="
+        "rev": "810b1292dbc4b83cef2526c9aa969bef8246dd43",
+        "sha256": "sha256-IQZbmLnkOgF/OCMaD3oLtlALomjQHxUX1fk5MjZ7fx0="
       },
       "features": [],
       "proc_macro": false,
@@ -10744,7 +10744,7 @@
       "crate_renames": {},
       "build_rust_crate_args": {
         "crateName": "gen-types",
-        "version": "0.1.0",
+        "version": "0.1.3",
         "edition": "2024",
         "release": true,
         "preBuild": "export CARGO_CRATE_NAME=gen_types;"
@@ -13460,7 +13460,7 @@
         },
         {
           "name": "socket2",
-          "package_key": "socket2-0.6.4",
+          "package_key": "socket2-0.5.10",
           "kind": "normal",
           "features": [
             "all"
@@ -18189,7 +18189,7 @@
         },
         {
           "name": "gen_platform",
-          "package_key": "gen-platform-0.1.0",
+          "package_key": "gen-platform-0.1.3",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -18340,7 +18340,7 @@
         ],
         "gen-platform": [
           {
-            "version": "0.1.0",
+            "version": "0.1.3",
             "rename": "gen_platform"
           }
         ],
@@ -18394,7 +18394,7 @@
           ],
           "gen-platform": [
             {
-              "version": "0.1.0",
+              "version": "0.1.3",
               "rename": "gen_platform"
             }
           ],
@@ -18480,7 +18480,7 @@
         },
         {
           "name": "gen_platform",
-          "package_key": "gen-platform-0.1.0",
+          "package_key": "gen-platform-0.1.3",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -18545,7 +18545,7 @@
       "crate_renames": {
         "gen-platform": [
           {
-            "version": "0.1.0",
+            "version": "0.1.3",
             "rename": "gen_platform"
           }
         ],
@@ -18563,7 +18563,7 @@
         "crateRenames": {
           "gen-platform": [
             {
-              "version": "0.1.0",
+              "version": "0.1.3",
               "rename": "gen_platform"
             }
           ],
@@ -20787,7 +20787,7 @@
         },
         {
           "name": "gen_platform",
-          "package_key": "gen-platform-0.1.0",
+          "package_key": "gen-platform-0.1.3",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -20797,7 +20797,7 @@
         },
         {
           "name": "gen_types",
-          "package_key": "gen-types-0.1.0",
+          "package_key": "gen-types-0.1.3",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -20867,13 +20867,13 @@
       "crate_renames": {
         "gen-platform": [
           {
-            "version": "0.1.0",
+            "version": "0.1.3",
             "rename": "gen_platform"
           }
         ],
         "gen-types": [
           {
-            "version": "0.1.0",
+            "version": "0.1.3",
             "rename": "gen_types"
           }
         ]
@@ -20885,13 +20885,13 @@
         "crateRenames": {
           "gen-platform": [
             {
-              "version": "0.1.0",
+              "version": "0.1.3",
               "rename": "gen_platform"
             }
           ],
           "gen-types": [
             {
-              "version": "0.1.0",
+              "version": "0.1.3",
               "rename": "gen_types"
             }
           ]
@@ -23672,7 +23672,7 @@
         },
         {
           "name": "gen_platform",
-          "package_key": "gen-platform-0.1.0",
+          "package_key": "gen-platform-0.1.3",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -23682,7 +23682,7 @@
         },
         {
           "name": "gen_types",
-          "package_key": "gen-types-0.1.0",
+          "package_key": "gen-types-0.1.3",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -24068,6 +24068,16 @@
           "tree": "target"
         },
         {
+          "name": "shigoto_types",
+          "package_key": "shigoto-types-0.1.0",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
           "name": "sqlx",
           "package_key": "sqlx-0.8.6",
           "kind": "normal",
@@ -24273,13 +24283,13 @@
         ],
         "gen-platform": [
           {
-            "version": "0.1.0",
+            "version": "0.1.3",
             "rename": "gen_platform"
           }
         ],
         "gen-types": [
           {
-            "version": "0.1.0",
+            "version": "0.1.3",
             "rename": "gen_types"
           }
         ],
@@ -24403,6 +24413,12 @@
             "rename": "prost_types"
           }
         ],
+        "shigoto-types": [
+          {
+            "version": "0.1.0",
+            "rename": "shigoto_types"
+          }
+        ],
         "tokio-stream": [
           {
             "version": "0.1.18",
@@ -24470,13 +24486,13 @@
           ],
           "gen-platform": [
             {
-              "version": "0.1.0",
+              "version": "0.1.3",
               "rename": "gen_platform"
             }
           ],
           "gen-types": [
             {
-              "version": "0.1.0",
+              "version": "0.1.3",
               "rename": "gen_types"
             }
           ],
@@ -24598,6 +24614,12 @@
             {
               "version": "0.13.5",
               "rename": "prost_types"
+            }
+          ],
+          "shigoto-types": [
+            {
+              "version": "0.1.0",
+              "rename": "shigoto_types"
             }
           ],
           "tokio-stream": [
@@ -27978,7 +28000,7 @@
         },
         {
           "name": "socket2",
-          "package_key": "socket2-0.6.4",
+          "package_key": "socket2-0.5.10",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -28310,7 +28332,7 @@
         },
         {
           "name": "socket2",
-          "package_key": "socket2-0.6.4",
+          "package_key": "socket2-0.5.10",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -33672,8 +33694,8 @@
       "source": {
         "kind": "git",
         "url": "https://github.com/pleme-io/shigoto",
-        "rev": "ed9df4e2befe93b2a11796e46457f06ede327414",
-        "sha256": "sha256-LVP6a6vXvusqR33TFvpfzoTE27f2aLfVKOAtvkhP9VI="
+        "rev": "417bf9d538a1741c5576b29a4d71673e92cf5d22",
+        "sha256": "sha256-KaNUnx3IpQFGdlox6zK3vHHiGVXiy+fHyb4BxOxHQn4="
       },
       "features": [],
       "proc_macro": false,
@@ -33857,8 +33879,8 @@
       "source": {
         "kind": "git",
         "url": "https://github.com/pleme-io/shigoto",
-        "rev": "ed9df4e2befe93b2a11796e46457f06ede327414",
-        "sha256": "sha256-LVP6a6vXvusqR33TFvpfzoTE27f2aLfVKOAtvkhP9VI="
+        "rev": "417bf9d538a1741c5576b29a4d71673e92cf5d22",
+        "sha256": "sha256-KaNUnx3IpQFGdlox6zK3vHHiGVXiy+fHyb4BxOxHQn4="
       },
       "features": [],
       "proc_macro": false,
@@ -33932,8 +33954,8 @@
       "source": {
         "kind": "git",
         "url": "https://github.com/pleme-io/shigoto",
-        "rev": "ed9df4e2befe93b2a11796e46457f06ede327414",
-        "sha256": "sha256-LVP6a6vXvusqR33TFvpfzoTE27f2aLfVKOAtvkhP9VI="
+        "rev": "417bf9d538a1741c5576b29a4d71673e92cf5d22",
+        "sha256": "sha256-KaNUnx3IpQFGdlox6zK3vHHiGVXiy+fHyb4BxOxHQn4="
       },
       "features": [],
       "proc_macro": false,
@@ -34017,8 +34039,8 @@
       "source": {
         "kind": "git",
         "url": "https://github.com/pleme-io/shigoto",
-        "rev": "ed9df4e2befe93b2a11796e46457f06ede327414",
-        "sha256": "sha256-LVP6a6vXvusqR33TFvpfzoTE27f2aLfVKOAtvkhP9VI="
+        "rev": "417bf9d538a1741c5576b29a4d71673e92cf5d22",
+        "sha256": "sha256-KaNUnx3IpQFGdlox6zK3vHHiGVXiy+fHyb4BxOxHQn4="
       },
       "features": [],
       "proc_macro": false,
@@ -34124,8 +34146,8 @@
       "source": {
         "kind": "git",
         "url": "https://github.com/pleme-io/shigoto",
-        "rev": "ed9df4e2befe93b2a11796e46457f06ede327414",
-        "sha256": "sha256-LVP6a6vXvusqR33TFvpfzoTE27f2aLfVKOAtvkhP9VI="
+        "rev": "417bf9d538a1741c5576b29a4d71673e92cf5d22",
+        "sha256": "sha256-KaNUnx3IpQFGdlox6zK3vHHiGVXiy+fHyb4BxOxHQn4="
       },
       "features": [],
       "proc_macro": false,
@@ -34199,8 +34221,8 @@
       "source": {
         "kind": "git",
         "url": "https://github.com/pleme-io/shigoto",
-        "rev": "ed9df4e2befe93b2a11796e46457f06ede327414",
-        "sha256": "sha256-LVP6a6vXvusqR33TFvpfzoTE27f2aLfVKOAtvkhP9VI="
+        "rev": "417bf9d538a1741c5576b29a4d71673e92cf5d22",
+        "sha256": "sha256-KaNUnx3IpQFGdlox6zK3vHHiGVXiy+fHyb4BxOxHQn4="
       },
       "features": [],
       "proc_macro": false,
@@ -34264,8 +34286,8 @@
       "source": {
         "kind": "git",
         "url": "https://github.com/pleme-io/shigoto",
-        "rev": "ed9df4e2befe93b2a11796e46457f06ede327414",
-        "sha256": "sha256-LVP6a6vXvusqR33TFvpfzoTE27f2aLfVKOAtvkhP9VI="
+        "rev": "417bf9d538a1741c5576b29a4d71673e92cf5d22",
+        "sha256": "sha256-KaNUnx3IpQFGdlox6zK3vHHiGVXiy+fHyb4BxOxHQn4="
       },
       "features": [],
       "proc_macro": false,
@@ -34506,8 +34528,8 @@
       "source": {
         "kind": "git",
         "url": "https://github.com/pleme-io/shigoto",
-        "rev": "ed9df4e2befe93b2a11796e46457f06ede327414",
-        "sha256": "sha256-LVP6a6vXvusqR33TFvpfzoTE27f2aLfVKOAtvkhP9VI="
+        "rev": "417bf9d538a1741c5576b29a4d71673e92cf5d22",
+        "sha256": "sha256-KaNUnx3IpQFGdlox6zK3vHHiGVXiy+fHyb4BxOxHQn4="
       },
       "features": [],
       "proc_macro": false,
@@ -34540,7 +34562,7 @@
         },
         {
           "name": "gen_platform",
-          "package_key": "gen-platform-0.1.0",
+          "package_key": "gen-platform-0.1.3",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -34550,7 +34572,7 @@
         },
         {
           "name": "gen_types",
-          "package_key": "gen-types-0.1.0",
+          "package_key": "gen-types-0.1.3",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -34613,13 +34635,13 @@
         ],
         "gen-platform": [
           {
-            "version": "0.1.0",
+            "version": "0.1.3",
             "rename": "gen_platform"
           }
         ],
         "gen-types": [
           {
-            "version": "0.1.0",
+            "version": "0.1.3",
             "rename": "gen_types"
           }
         ]
@@ -34637,13 +34659,13 @@
           ],
           "gen-platform": [
             {
-              "version": "0.1.0",
+              "version": "0.1.3",
               "rename": "gen_platform"
             }
           ],
           "gen-types": [
             {
-              "version": "0.1.0",
+              "version": "0.1.3",
               "rename": "gen_types"
             }
           ]
@@ -50016,7 +50038,7 @@
           "std"
         ]
       },
-      "gen-macros-0.1.0": {
+      "gen-macros-0.1.3": {
         "runtime_dependencies": [
           {
             "name": "proc_macro2",
@@ -50055,11 +50077,11 @@
         "build_dependencies": [],
         "features": []
       },
-      "gen-platform-0.1.0": {
+      "gen-platform-0.1.3": {
         "runtime_dependencies": [
           {
             "name": "gen_macros",
-            "package_key": "gen-macros-0.1.0",
+            "package_key": "gen-macros-0.1.3",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -50069,7 +50091,7 @@
           },
           {
             "name": "gen_types",
-            "package_key": "gen-types-0.1.0",
+            "package_key": "gen-types-0.1.3",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -50123,7 +50145,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "gen-types-0.1.0": {
+      "gen-types-0.1.3": {
         "runtime_dependencies": [
           {
             "name": "blake3",
@@ -51679,7 +51701,7 @@
           },
           {
             "name": "socket2",
-            "package_key": "socket2-0.6.4",
+            "package_key": "socket2-0.5.10",
             "kind": "normal",
             "features": [
               "all"
@@ -54299,7 +54321,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.0",
+            "package_key": "gen-platform-0.1.3",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -54469,7 +54491,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.0",
+            "package_key": "gen-platform-0.1.3",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -55879,7 +55901,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.0",
+            "package_key": "gen-platform-0.1.3",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -55889,7 +55911,7 @@
           },
           {
             "name": "gen_types",
-            "package_key": "gen-types-0.1.0",
+            "package_key": "gen-types-0.1.3",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -57376,7 +57398,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.0",
+            "package_key": "gen-platform-0.1.3",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -57386,7 +57408,7 @@
           },
           {
             "name": "gen_types",
-            "package_key": "gen-types-0.1.0",
+            "package_key": "gen-types-0.1.3",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -57764,6 +57786,16 @@
           {
             "name": "serde_yaml",
             "package_key": "serde_yaml-0.9.34+deprecated",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "shigoto_types",
+            "package_key": "shigoto-types-0.1.0",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -59596,7 +59628,7 @@
           },
           {
             "name": "socket2",
-            "package_key": "socket2-0.6.4",
+            "package_key": "socket2-0.5.10",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -59798,7 +59830,7 @@
           },
           {
             "name": "socket2",
-            "package_key": "socket2-0.6.4",
+            "package_key": "socket2-0.5.10",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -62497,7 +62529,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.0",
+            "package_key": "gen-platform-0.1.3",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -62507,7 +62539,7 @@
           },
           {
             "name": "gen_types",
-            "package_key": "gen-types-0.1.0",
+            "package_key": "gen-types-0.1.3",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -71080,5 +71112,5 @@
       }
     }
   },
-  "cargo_lock_sha256": "823fd2a3e38bdff30af13f39a26368b7c6cd0b95c12c75fa2981c91d955d2f71"
+  "cargo_lock_sha256": "f9627087c6a417d83c034b409b74bad2c8d2455a03b04dc8f41203d6658094ed"
 }
