@@ -360,6 +360,17 @@
             '
           '';
 
+          # No-tofu provider sourcing: bake the terraform provider binaries
+          # into the image as a single mirror dir. MagmaExecutor's
+          # `magma_providers::locate_provider` finds them via
+          # `$MAGMA_PROVIDER_DIR` (recursive walk), so apply spawns the real
+          # provider over gRPC without ever running `tofu init`. Add a
+          # provider here as a workspace needs it (aws/gcp/cloudflare/…).
+          providerMirror = imagePkgs.symlinkJoin {
+            name = "magma-provider-mirror";
+            paths = with imagePkgs.terraform-providers; [ github ];
+          };
+
           builders = import "${substrate}/lib/build/rust/crate2nix-builders.nix" {
             pkgs = imagePkgs;
             crate2nix = crate2nix.packages.${imageSystem}.default;
@@ -409,10 +420,12 @@
           extraContents = pkgs: (with pkgs; [
             ruby_3_3 opentofu packer git busybox
             gemWs.env
-          ]) ++ [ pathGemAnchor gemManifestFile ];
+          ]) ++ [ pathGemAnchor gemManifestFile providerMirror ];
           extraEnv = [
             "RUBYLIB=${fullRubylib}"
             "DRY_TYPES_WARNINGS=false"
+            # No-tofu provider sourcing — see `providerMirror` above.
+            "MAGMA_PROVIDER_DIR=${providerMirror}"
             # Baked-gem name→lib-dir manifest the embedded compile path
             # resolves the workspace Gemfile.lock against. Absent ⇒ the
             # operator falls back to legacy single-_repo/lib behaviour.
