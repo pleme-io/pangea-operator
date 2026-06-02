@@ -8,7 +8,15 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["graphql", "grpc"]
+# embedded_ruby + executor_magma are DEFAULT (2026-06-02): the sidecar is
+# sunset, magnus is the only compiler backend, and magma is the canonical
+# executor. gen resolves DEFAULT features into Cargo.build-spec.json — the
+# rootFeatures arg to mkCrate2nixDockerImage is NOT honored by the
+# gen/lockfile-builder path, so a non-default feature never reaches the image
+# build (this is why the operator silently shipped HTTP-sidecar + Tofu-only).
+# Making them default is the load-bearing fix: every build now links libruby
+# (use the `.#ruby-eval` devshell) + compiles MagmaExecutor in.
+default = ["graphql", "grpc", "embedded_ruby", "executor_magma"]
 graphql = ["async-graphql", "async-graphql-axum"]
 grpc = ["tonic", "prost"]
 # In-process CRuby evaluator (M8.2 of the hollow-out plan). When OFF (the

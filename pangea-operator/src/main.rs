@@ -147,8 +147,11 @@ async fn main() -> Result<()> {
     // See theory/PANGEA-WORKSPACE-RECONCILIATION.md § M8.2.
     let compiler_endpoint = std::env::var("COMPILER_ENDPOINT")
         .unwrap_or_else(|_| "http://localhost:8082".to_string());
+    // Sidecar sunset (2026-06-02): default to in-process magnus. The HTTP
+    // sidecar is legacy; embedded is the strategy. An explicit
+    // PANGEA_COMPILER_BACKEND=http remains only as a migration escape hatch.
     let backend_kind = std::env::var("PANGEA_COMPILER_BACKEND")
-        .unwrap_or_else(|_| "http".to_string());
+        .unwrap_or_else(|_| "embedded".to_string());
     let compiler_backend: std::sync::Arc<dyn pangea_operator::ruby::CompilerBackend> =
         match backend_kind.as_str() {
             #[cfg(feature = "embedded_ruby")]
@@ -178,8 +181,20 @@ async fn main() -> Result<()> {
                 .with_metrics(metrics.clone());
                 std::sync::Arc::new(backend)
             }
+            // Fail loud: embedded was requested but the feature isn't compiled
+            // in. Do NOT silently fall back to the sunset HTTP sidecar — that
+            // silent fallback is exactly how the operator shipped HTTP-only
+            // despite PANGEA_COMPILER_BACKEND=embedded (the build-spec dropped
+            // the non-default embedded_ruby feature). embedded_ruby is now a
+            // default feature; if it's somehow absent, that's a build bug.
+            #[cfg(not(feature = "embedded_ruby"))]
+            "embedded" => panic!(
+                "PANGEA_COMPILER_BACKEND=embedded but the embedded_ruby feature is not \
+                 compiled in. The HTTP compiler sidecar is sunset — rebuild with the \
+                 embedded_ruby feature (now default). Refusing to fall back to HTTP."
+            ),
             _ => {
-                info!(endpoint = %compiler_endpoint, "Compiler backend: HTTP sidecar");
+                info!(endpoint = %compiler_endpoint, "Compiler backend: HTTP sidecar (LEGACY/sunset — embedded is the strategy)");
                 pangea_operator::controller::architecture_gem_controller::http_backend(
                     compiler_endpoint.clone(),
                 )
