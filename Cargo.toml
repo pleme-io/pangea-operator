@@ -71,7 +71,12 @@ k8s-openapi = { version = "0.24", features = ["v1_31"] }
 schemars = { version = "0.8", features = ["chrono"] }
 
 # Database
-sqlx = { version = "0.8", features = ["postgres", "runtime-tokio"] }
+# default-features = false drops sqlx's `any` driver (the AnyDriver pulls every
+# backend — sqlx-mysql + sqlx-sqlite + libsqlite3-sys). The operator only uses
+# Postgres (no sqlx::Any / Sqlite anywhere), and sqlx-sqlite 0.8.6 fails to
+# compile against libsqlite3-sys's pkg-config bindings (missing sqlite3_serialize
+# / prepare_v3). Re-add the non-`any` defaults the operator relies on.
+sqlx = { version = "0.8", default-features = false, features = ["macros", "migrate", "json", "postgres", "runtime-tokio"] }
 
 # CLI
 clap = { version = "4", features = ["derive", "env"] }

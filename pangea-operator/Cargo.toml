@@ -121,6 +121,13 @@ prost-types = "0.13"
 
 # Database
 sqlx = { workspace = true, features = ["tls-rustls", "chrono", "uuid"] }
+# sqlx-macros-core depends on every driver (sqlite/mysql/postgres) for
+# compile-time query verification, so sqlx-sqlite is built even though the
+# operator only uses Postgres. sqlx-sqlite 0.8.6 needs libsqlite3-sys's full API
+# (sqlite3_serialize / prepare_v3), absent from the pkg-config bindings. Force
+# `bundled` so libsqlite3-sys compiles a vendored SQLite with the complete API.
+# (Direct dep purely to set the feature via Cargo's feature unification.)
+libsqlite3-sys = { version = "0.30", features = ["bundled"] }
 
 # Serialization
 serde.workspace = true
