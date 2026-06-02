@@ -555,8 +555,18 @@ where
         let mut state = magma_backend::Backend::read_state(&backend)
             .await
             .map_err(|e| Error::MagmaExecution(format!("read state: {e}")))?;
-        let outcome = magma_apply::run_plan(&plan, &mut state)
-            .map_err(|e| Error::MagmaExecution(format!("magma_apply: {e}")))?;
+        // REAL apply: drive the providers over gRPC (spawn → configure →
+        // plan → apply), folding each resource's provider-returned new_state
+        // into magma state. Provider binaries are located under the
+        // workspace's `.terraform/providers` or the Nix-baked
+        // `$MAGMA_PROVIDER_DIR`; provider credentials come from the pod env
+        // (GITHUB_TOKEN/GITHUB_OWNER/AWS_*/…), so an absent provider config
+        // block falls back to env — the standard terraform-provider contract.
+        // No subprocess to tofu. Per-change failures land in `outcome.failed`
+        // and drive the lifecycle to `Failed` (handled below); they are not a
+        // hard error so the bundle + partial successes are still recorded.
+        let ctx = magma_apply::engine::ApplyContext::new(work_dir.to_path_buf());
+        let outcome = magma_apply::engine::run_plan_with_providers(&plan, &mut state, &ctx).await;
         magma_backend::Backend::write_state(&backend, &state)
             .await
             .map_err(|e| Error::MagmaExecution(format!("write state: {e}")))?;
