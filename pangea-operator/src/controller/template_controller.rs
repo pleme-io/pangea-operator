@@ -1226,6 +1226,26 @@ async fn handle_planning(
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
 
+    // Restart-safety: the workspace is a pod-local emptyDir, lost on
+    // every pod restart, but the CR `status.phase` persists in etcd. A
+    // fresh pod that resumes a CR already at phase=Planning dispatches
+    // straight here, SKIPPING handle_compiling — so main.tf.json was
+    // never (re)written on this pod, and the executor's load_config
+    // IO-errors on the missing file (`No such file or directory`),
+    // looping forever at Planning (the 2026-06-03 fleet-wide wedge:
+    // every operator redeploy re-broke pleme-io-opensource + every other
+    // template). If the compiled config is absent, bounce back to
+    // Compiling so the clone+compile re-runs before we plan.
+    if !workspace.main_tf_path().exists() {
+        warn!(
+            template = %template.name_any(),
+            "Planning: compiled main.tf.json missing (pod restart / wiped \
+             workspace) — resetting to Compiling so clone+compile re-runs"
+        );
+        update_phase(template, Phase::Compiling, state).await?;
+        return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
+    }
+
     let plan_result = runner.plan(&workspace).await?;
 
     if !plan_result.success {
@@ -1549,6 +1569,21 @@ async fn handle_applying(
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
     let plan_path = workspace.plan_path();
+
+    // Restart-safety (see handle_planning): a pod that resumes a CR at
+    // phase=Applying on a fresh emptyDir workspace has no compiled
+    // main.tf.json (nor plan checkpoint) — the apply / post-apply re-plan
+    // would IO-error on the missing config. Bounce back to Compiling so
+    // the clone+compile (then plan) re-runs.
+    if !workspace.main_tf_path().exists() {
+        warn!(
+            template = %template.name_any(),
+            "Applying: compiled main.tf.json missing (pod restart / wiped \
+             workspace) — resetting to Compiling so clone+compile re-runs"
+        );
+        update_phase(template, Phase::Compiling, state).await?;
+        return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
+    }
 
     // Snapshot the drift_details that handle_planning persisted on
     // status before the apply ran — this is the per-resource change
