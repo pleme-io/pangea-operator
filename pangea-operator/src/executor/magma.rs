@@ -435,43 +435,17 @@ where
         }
 
         let backend = self.make_backend();
-        let mut state = magma_backend::Backend::read_state(&backend)
+        let state = magma_backend::Backend::read_state(&backend)
             .await
             .map_err(|e| Error::MagmaExecution(format!("read state: {e}")))?;
 
-        // Refresh state against the providers' ACTUAL state (terraform's
-        // plan-time refresh) BEFORE diffing — so the plan diffs config vs the
-        // WORLD, not vs trusted stored bytes. This self-heals phantom entries
-        // (a resource a prior structural-only apply recorded in state but
-        // never created) so they get re-created, and surfaces real attribute
-        // drift. Refresh uses the same provider context as apply (workspace
-        // providers + rendered creds) and NEVER drops state on uncertainty —
-        // only on a confirmed null ReadResource.
-        {
-            let mut ctx = magma_apply::engine::ApplyContext::new(work_dir.to_path_buf());
-            for (name, pc) in cfg.providers.clone() {
-                let fields: serde_json::Map<String, serde_json::Value> =
-                    pc.fields.into_iter().collect();
-                ctx = ctx.with_provider_config(name, serde_json::Value::Object(fields));
-            }
-            let report = magma_apply::engine::refresh_state(&mut state, &ctx).await;
-            tracing::info!(
-                refreshed = report.refreshed,
-                dropped_instances = report.dropped_instances,
-                dropped_resources = report.dropped_resources,
-                kept_on_error = report.kept_on_error,
-                "magma plan-time state refresh"
-            );
-            // Persist the refreshed state when entries were dropped (phantoms
-            // healed), so the subsequent apply() reads the de-phantomed state
-            // and its Create actions land cleanly.
-            if report.dropped_instances > 0 || report.dropped_resources > 0 {
-                magma_backend::Backend::write_state(&backend, &state)
-                    .await
-                    .map_err(|e| Error::MagmaExecution(format!("write refreshed state: {e}")))?;
-            }
-        }
-
+        // NOTE: plan-time refresh (magma_apply::engine::refresh_state) is
+        // available but intentionally NOT run here. On a 661-resource github
+        // workspace it issues ~1074 ReadResource RPCs per plan, which is heavy
+        // (and tripped github's secondary rate limit). It's a future opt-in
+        // (rate-budgeted / incremental). It isn't needed for correctness here:
+        // the apply itself now reconciles state via the provider RPCs, and the
+        // engine's apply graph resolves ${ref}s + retries on rate limits.
         let plan = magma_plan::plan(&cfg, &state)
             .map_err(|e| Error::MagmaExecution(format!("magma_plan: {e}")))?;
 
