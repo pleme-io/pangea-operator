@@ -555,14 +555,40 @@ where
         let checkpoint = plan_file
             .map(PathBuf::from)
             .unwrap_or_else(|| Self::plan_checkpoint_path(work_dir));
-        let bytes = tokio::fs::read(&checkpoint).await.map_err(Error::Io)?;
-        let plan: magma_types::Plan = serde_json::from_slice(&bytes)
-            .map_err(|e| Error::MagmaExecution(format!("decode plan checkpoint: {e}")))?;
 
+        // Read current state first — needed either way (to apply against, and
+        // to recompute the plan in-process if the checkpoint is absent).
         let backend = self.make_backend();
         let mut state = magma_backend::Backend::read_state(&backend)
             .await
             .map_err(|e| Error::MagmaExecution(format!("read state: {e}")))?;
+
+        // Restart-safety: the cached plan checkpoint is an OPTIMIZATION, not a
+        // requirement. When it's absent — e.g. the operator pod was replaced
+        // mid-`Applying`, so the previous pod's ephemeral work_dir (and the
+        // checkpoint it wrote) are gone — recompute the plan in-process from
+        // config + current state, exactly as `plan()` does. This mirrors
+        // tofu's `apply` (without `-out`) computing a fresh plan, and stops a
+        // pod restart from trapping the template in an apply→ENOENT loop
+        // (`os error 2` on the missing checkpoint). handle_applying already
+        // passes plan_file=None when plan_path is absent; the
+        // checkpoint-or-recompute decision lives here in the executor.
+        let plan: magma_types::Plan = match tokio::fs::read(&checkpoint).await {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map_err(|e| Error::MagmaExecution(format!("decode plan checkpoint: {e}")))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                tracing::warn!(
+                    checkpoint = %checkpoint.display(),
+                    "magma apply: plan checkpoint absent (likely pod restart mid-Applying) \
+                     — recomputing plan in-process from config + current state"
+                );
+                let cfg = Self::load_config(work_dir).await?;
+                magma_plan::plan(&cfg, &state).map_err(|e| {
+                    Error::MagmaExecution(format!("magma_plan (apply re-plan): {e}"))
+                })?
+            }
+            Err(e) => return Err(Error::Io(e)),
+        };
         // REAL apply: drive the providers over gRPC (spawn → configure →
         // plan → apply), folding each resource's provider-returned new_state
         // into magma state. Provider binaries are located under the
