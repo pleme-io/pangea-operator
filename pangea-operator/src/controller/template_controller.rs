@@ -2388,6 +2388,26 @@ async fn handle_ready(
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
 
+    // Restart-safety: same wedge as handle_planning/handle_applying, but on
+    // the Ready-phase drift check. A fresh pod that resumes a CR already at
+    // phase=Ready dispatches straight here, SKIPPING handle_compiling — so
+    // main.tf.json was never (re)written on this pod's emptyDir workspace and
+    // the executor's load_config IO-errors on the missing file, looping the
+    // ~60s drift check forever (the 2026-06-03 fleet wedge: 4 Ready-phase
+    // templates — cloudflare-pleme, rio-arc-github, rio-health-check,
+    // rio-zot-cloudflare-tunnel — os-error-2'd every cycle on the post-restart
+    // emptyDir). If the compiled config is absent, bounce back to Compiling so
+    // the clone+compile re-runs before the drift plan.
+    if !workspace.main_tf_path().exists() {
+        warn!(
+            template = %template.name_any(),
+            "Ready: compiled main.tf.json missing (pod restart / wiped \
+             workspace) — resetting to Compiling so clone+compile re-runs"
+        );
+        update_phase(template, Phase::Compiling, state).await?;
+        return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
+    }
+
     let plan_result = runner.plan(&workspace).await?;
 
     update_drift_check_timestamp(template, state).await?;
