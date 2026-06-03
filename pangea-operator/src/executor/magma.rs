@@ -435,17 +435,62 @@ where
         }
 
         let backend = self.make_backend();
-        let state = magma_backend::Backend::read_state(&backend)
+        let mut state = magma_backend::Backend::read_state(&backend)
             .await
             .map_err(|e| Error::MagmaExecution(format!("read state: {e}")))?;
 
-        // NOTE: plan-time refresh (magma_apply::engine::refresh_state) is
-        // available but intentionally NOT run here. On a 661-resource github
-        // workspace it issues ~1074 ReadResource RPCs per plan, which is heavy
-        // (and tripped github's secondary rate limit). It's a future opt-in
-        // (rate-budgeted / incremental). It isn't needed for correctness here:
-        // the apply itself now reconciles state via the provider RPCs, and the
-        // engine's apply graph resolves ${ref}s + retries on rate limits.
+        // ── Targeted phantom-heal (bounded, rate-budgeted plan-time refresh) ──
+        // A full plan-time refresh would issue ~1074 ReadResource RPCs — too
+        // heavy. Instead: probe-plan once, then ReadResource-refresh ONLY the
+        // parent `github_repository` resources NAMED by create-children
+        // (labels / branch-protection whose repo is a NoOp in state). Those are
+        // the phantom candidates — recorded in state but never created in cloud,
+        // which is why their children fail 404 / unresolved-${ref}. refresh_named
+        // drops ONLY provider-confirmed-gone (never on error), so over-including
+        // is safe. Cycles with no creates skip this entirely (zero RPCs). This
+        // reconciles state↔reality both ways: dropped phantoms become +create
+        // next plan. Per ★★ MAGMA-NATIVE EXECUTION (state in the DB is the
+        // source of truth; refresh keeps it true).
+        let mut refresh_ctx = magma_apply::engine::ApplyContext::new(work_dir.to_path_buf());
+        for (name, pc) in cfg.providers.clone() {
+            let fields: serde_json::Map<String, serde_json::Value> =
+                pc.fields.into_iter().collect();
+            refresh_ctx =
+                refresh_ctx.with_provider_config(name, serde_json::Value::Object(fields));
+        }
+        let probe = magma_plan::plan(&cfg, &state)
+            .map_err(|e| Error::MagmaExecution(format!("magma_plan (probe): {e}")))?;
+        let suspects = magma_apply::engine::collect_suspect_repos(&probe);
+        if !suspects.is_empty() {
+            let report = magma_apply::engine::refresh_named(
+                &mut state,
+                "github_repository",
+                &suspects,
+                &refresh_ctx,
+            )
+            .await;
+            if report.dropped_resources > 0 || report.dropped_instances > 0 {
+                tracing::warn!(
+                    suspects = suspects.len(),
+                    dropped_resources = report.dropped_resources,
+                    dropped_instances = report.dropped_instances,
+                    refreshed = report.refreshed,
+                    kept_on_error = report.kept_on_error,
+                    "magma plan: dropped phantom parent repos (in state, gone in cloud) — re-creating"
+                );
+                // Persist the reconciled state so the drop is durable + the
+                // apply phase (which re-reads state) sees the phantom as a create.
+                magma_backend::Backend::write_state(&backend, &state)
+                    .await
+                    .map_err(|e| Error::MagmaExecution(format!("write reconciled state: {e}")))?;
+            } else {
+                tracing::debug!(
+                    suspects = suspects.len(),
+                    refreshed = report.refreshed,
+                    "magma plan: refreshed suspect parents, no phantoms found"
+                );
+            }
+        }
         let plan = magma_plan::plan(&cfg, &state)
             .map_err(|e| Error::MagmaExecution(format!("magma_plan: {e}")))?;
 
