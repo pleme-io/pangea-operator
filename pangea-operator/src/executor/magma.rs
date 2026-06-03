@@ -565,7 +565,21 @@ where
         // No subprocess to tofu. Per-change failures land in `outcome.failed`
         // and drive the lifecycle to `Failed` (handled below); they are not a
         // hard error so the bundle + partial successes are still recorded.
-        let ctx = magma_apply::engine::ApplyContext::new(work_dir.to_path_buf());
+        let mut ctx = magma_apply::engine::ApplyContext::new(work_dir.to_path_buf());
+        // Configure each provider with the credentials the rendered
+        // workspace declares (owner, token, … resolved from akeyless by the
+        // Pangea architecture) — i.e. exactly what tofu's provider block
+        // would carry. Re-load the rendered `main.tf.json` and forward every
+        // `provider "<name>" { … }` block as the provider's ConfigureProvider
+        // value. Absent / unparsable config → empty configs, and providers
+        // fall back to their own env credentials.
+        if let Ok(cfg) = Self::load_config(work_dir).await {
+            for (name, pc) in cfg.providers {
+                let fields: serde_json::Map<String, serde_json::Value> =
+                    pc.fields.into_iter().collect();
+                ctx = ctx.with_provider_config(name, serde_json::Value::Object(fields));
+            }
+        }
         let outcome = magma_apply::engine::run_plan_with_providers(&plan, &mut state, &ctx).await;
         magma_backend::Backend::write_state(&backend, &state)
             .await
