@@ -339,11 +339,26 @@ pub fn detect_load_path_conflicts(
     // Resulting $LOAD_PATH order: new_paths first (priority head),
     // then existing entries. Mirrors `RArray::unshift` order from
     // `with_load_paths`.
-    let combined: Vec<&Path> = new_paths
+    let mut combined: Vec<&Path> = new_paths
         .iter()
         .chain(existing_load_path.iter())
         .map(|p| p.as_path())
         .collect();
+
+    // Dedup byte-identical entries, preserving first-occurrence (resolution)
+    // order. The same absolute path routinely appears more than once in the
+    // combined load path — a broadcast gem cache (e.g.
+    // `pangea-architectures-main/lib`) is also present in the inherited
+    // `$LOAD_PATH` — so without this every logical file under the prefixes
+    // resolves to ITS OWN identical path twice and is flagged as a
+    // self-conflict (winner == shadowed). On pleme-io-opensource that was
+    // ~9.6k spurious WARN lines per compile (≈32% of all operator log
+    // volume), burying the real signal. Ruby's `require` dedups by absolute
+    // path, so a repeated entry is never a real shadow — only DISTINCT paths
+    // exposing the same logical file are. Deduping here also halves the scan
+    // work. (audit action #5)
+    let mut seen_dirs = std::collections::HashSet::new();
+    combined.retain(|p| seen_dirs.insert(*p));
 
     // Walk each entry under each namespace prefix; build a map of
     // logical_path → ordered list of absolute paths exposing it.
@@ -1391,6 +1406,27 @@ mod tests {
         );
         assert_eq!(conflicts.len(), 1);
         assert_eq!(conflicts[0].shadowed_paths.len(), 2);
+    }
+
+    /// audit #5: the SAME absolute path present in BOTH new_paths and the
+    /// inherited `$LOAD_PATH` (the broadcast-gem-cache-also-inherited case)
+    /// must NOT self-conflict — Ruby `require` dedups by absolute path, so a
+    /// repeated entry is not a real shadow. Before the dedup, every logical
+    /// file under the prefixes was flagged winner==shadowed against its own
+    /// identical path (~9.6k spurious WARNs/compile on pleme-io-opensource).
+    #[test]
+    fn identical_repeated_load_path_entry_is_not_a_self_conflict() {
+        let dir = TempDir::new().unwrap();
+        write_dummy(dir.path(), "pangea/architectures/types.rb");
+        let conflicts = detect_load_path_conflicts(
+            &[dir.path().to_path_buf()],
+            &[dir.path().to_path_buf()],
+            &["pangea/"],
+        );
+        assert!(
+            conflicts.is_empty(),
+            "a byte-identical repeated $LOAD_PATH entry is not a real shadow"
+        );
     }
 
     #[test]
