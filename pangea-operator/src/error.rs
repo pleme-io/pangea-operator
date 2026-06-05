@@ -1,5 +1,6 @@
 //! Error types for the Pangea Operator.
 
+use shigoto_types::failure::FailureKind;
 use thiserror::Error;
 
 /// Main error type for the Pangea Operator.
@@ -120,21 +121,30 @@ impl Error {
         }
     }
 
-    /// Check if this error is retryable.
+    /// Classify this error into the fleet-canonical `FailureKind`
+    /// (`shigoto_types::failure`). `Transient` failures are worth
+    /// retrying; `Declarative` failures (a genuinely wrong source /
+    /// config) are not. This is the TYPED classification surface;
+    /// `is_retryable` is its boolean projection. Per
+    /// theory/FAILURE-CLASSIFICATION.md §V, pangea-operator joins the
+    /// fleet `FailureKind` vocabulary so downstream consumers (drift,
+    /// attestation, controller backoff) pattern-match the typed kind
+    /// instead of a bare bool.
     ///
-    /// Compilation errors are retryable: the most common failure mode is
-    /// the compiler sidecar not being ready yet at operator startup
-    /// (race between operator init and compiler Bundler.setup, ~5s).
-    /// Real source errors will be retried too, but the controller's
+    /// Compilation errors classify `Transient`: the most common failure
+    /// mode is the compiler sidecar not being ready yet at operator
+    /// startup (race between operator init and compiler Bundler.setup,
+    /// ~5s). Real source errors retry too, but the controller's
     /// failure_count keeps accumulating so the template eventually moves
     /// to Failed if the user's source is genuinely broken.
     ///
     /// `WithContext` recurses into the inner error so `.context(...)`
-    /// preserves retryability. Without this, wrapping a retryable
-    /// error with operator context (a common pattern at every
-    /// reconcile boundary) silently flipped it to non-retryable and
-    /// the controller would back off ~5x longer than intended.
-    pub fn is_retryable(&self) -> bool {
+    /// preserves the classification — the wrapper adds information, not a
+    /// new class. Without this, wrapping a `Transient` error with
+    /// operator context (a common pattern at every reconcile boundary)
+    /// silently flipped it to `Declarative` and the controller backed
+    /// off ~5x longer than intended.
+    pub fn failure_kind(&self) -> FailureKind {
         match self {
             Error::Kube(_)
             | Error::Database(_)
@@ -143,13 +153,17 @@ impl Error {
             | Error::Io(_)
             | Error::PackerExecution(_)
             | Error::AmiTestFailed(_)
-            | Error::Compilation(_) => true,
-            // Preserve retryability through context wrappers — the
-            // wrapper's job is to add information, not change the
-            // error classification.
-            Error::WithContext { source, .. } => source.is_retryable(),
-            _ => false,
+            | Error::Compilation(_) => FailureKind::Transient,
+            Error::WithContext { source, .. } => source.failure_kind(),
+            _ => FailureKind::Declarative,
         }
+    }
+
+    /// Check if this error is retryable — the boolean projection of
+    /// [`failure_kind`](Self::failure_kind) (`Transient` ⇒ retry,
+    /// `Declarative` ⇒ give up).
+    pub fn is_retryable(&self) -> bool {
+        self.failure_kind().is_transient()
     }
 }
 
@@ -222,6 +236,27 @@ mod tests {
         let wrapped1 = inner.context("loading namespace");
         let wrapped2 = wrapped1.context("during reconciliation");
         assert!(format!("{}", wrapped2).contains("during reconciliation"));
+    }
+
+    #[test]
+    fn failure_kind_maps_to_the_typed_fleet_vocabulary() {
+        use shigoto_types::failure::FailureKind;
+        // Transient (retryable) class.
+        assert_eq!(Error::Timeout(60).failure_kind(), FailureKind::Transient);
+        assert_eq!(Error::Compilation("sidecar".into()).failure_kind(), FailureKind::Transient);
+        // Declarative (give-up) class — a genuinely wrong source/config.
+        assert_eq!(Error::InvalidSource("bad".into()).failure_kind(), FailureKind::Declarative);
+        assert_eq!(Error::Config("bad".into()).failure_kind(), FailureKind::Declarative);
+        // WithContext recurses, preserving the class of the inner error.
+        assert_eq!(
+            Error::Timeout(1).context("at reconcile").failure_kind(),
+            FailureKind::Transient
+        );
+        // is_retryable is exactly the Transient projection.
+        assert_eq!(
+            Error::Timeout(1).is_retryable(),
+            Error::Timeout(1).failure_kind() == FailureKind::Transient
+        );
     }
 
     #[test]
