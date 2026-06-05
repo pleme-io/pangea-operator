@@ -368,7 +368,21 @@
           # provider here as a workspace needs it (aws/gcp/cloudflare/…).
           providerMirror = imagePkgs.symlinkJoin {
             name = "magma-provider-mirror";
-            paths = with imagePkgs.terraform-providers; [ github ];
+            # rio-{drive,zot}-cloudflare-tunnel workspaces declare
+            # cloudflare/cloudflare (v5: cloudflare_dns_record,
+            # cloudflare_zero_trust_tunnel_cloudflared{,_config}) + rio-drive
+            # also hashicorp/random (random_id). Without these baked,
+            # MagmaExecutor's locate_provider errors "provider binary for
+            # <p> not found" and the templates hot-loop Failed every ~6min,
+            # crowding the single controller loop. nixpkgs renamed the
+            # attrs: github→integrations_github (6.x), cloudflare→
+            # cloudflare_cloudflare (5.x). NOTE: cloudflare-pleme also needs
+            # marcfrederick/porkbun which is NOT in nixpkgs — separate gap.
+            paths = with imagePkgs.terraform-providers; [
+              integrations_github
+              cloudflare_cloudflare
+              random
+            ];
           };
 
           builders = import "${substrate}/lib/build/rust/crate2nix-builders.nix" {
