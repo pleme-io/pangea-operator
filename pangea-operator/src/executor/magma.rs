@@ -469,6 +469,21 @@ where
                 &refresh_ctx,
             )
             .await;
+            if report.suppressed_mass_drop > 0 {
+                // refresh_named's mass-drop guard fired: a large fraction of
+                // suspect repos all read "gone" in one pass. That is a systemic
+                // ReadResource malfunction (provider owner/auth/read-id), NOT
+                // genuine phantoms — state was left intact to avoid the
+                // false-drop → +N-create → adopt oscillation. Surface loudly.
+                tracing::error!(
+                    suspects = suspects.len(),
+                    suppressed_mass_drop = report.suppressed_mass_drop,
+                    refreshed = report.refreshed,
+                    kept_on_error = report.kept_on_error,
+                    "magma plan: SUPPRESSED mass phantom-drop — suspect repos all read gone in one pass; \
+                     treating as a systemic ReadResource malfunction, state left intact; investigate github read_resource"
+                );
+            }
             if report.dropped_resources > 0 || report.dropped_instances > 0 {
                 tracing::warn!(
                     suspects = suspects.len(),
