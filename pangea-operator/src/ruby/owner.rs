@@ -599,6 +599,24 @@ fn compile_template(
         // genuinely shadow.
         .with_purge_feature_prefixes([
             "/var/pangea/gems/pangea-architectures-main/",
+        ])
+        // Cross-template $LOADED_FEATURES shadow fix (reproduced live
+        // 2026-06-05). The prefix purge above only clears the gem-cache
+        // copy. But a SIBLING github-workspace template (cloudflare-pleme,
+        // rio-arc-github) compiles first in this long-lived VM and
+        // registers pangea/architectures/*.rb from its OWN _repo/lib;
+        // that entry survives the gem-cache-only purge, so the next
+        // template's autoload-driven `require` no-ops and the purged
+        // Pangea::Architectures::OpenSourceRepo constant is never
+        // redefined → `uninitialized constant`. Purge the architectures
+        // subtree (entry `architectures.rb` AND the `architectures/*`
+        // files) by LOGICAL path across EVERY root. `/pangea/architectures`
+        // (no trailing slash) matches both, and matches nothing in
+        // pangea-core / dry-struct — scoped to the same module already in
+        // purge_modules, so no foundational gem is unloaded (the
+        // 2026-05-28 re-require-cascade class is not reintroduced).
+        .with_purge_feature_substrings([
+            "/pangea/architectures",
         ]);
 
     let (synthesis_json, warnings) = evaluator

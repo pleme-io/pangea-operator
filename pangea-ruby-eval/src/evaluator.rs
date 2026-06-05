@@ -94,6 +94,28 @@ pub struct CompileContext {
     /// that hit Ruby's stack limit — observed on 2026-05-28 (one
     /// SHA before this commit).
     pub purge_feature_prefixes: Vec<String>,
+
+    /// `$LOADED_FEATURES` path SUBSTRINGS to drop before compile —
+    /// matched ANYWHERE in the absolute path, not just as a prefix.
+    /// Where `purge_feature_prefixes` clears one root, a substring like
+    /// `/pangea/architectures` clears EVERY copy of the architectures
+    /// tree regardless of which root registered it (the gem cache, a
+    /// sibling template's `_repo/lib`, the baked nix-store closure).
+    ///
+    /// This is the structural fix for the cross-template
+    /// `$LOADED_FEATURES` shadow: a sibling github-workspace template
+    /// compiles first and registers `pangea/architectures/*.rb` from its
+    /// OWN `_repo/lib`; a prefix-only purge of the gem cache leaves that
+    /// entry alive, so the next template's `require` no-ops and the
+    /// purged `Pangea::Architectures::OpenSourceRepo` constant is never
+    /// redefined → `uninitialized constant` (reproduced live 2026-06-05).
+    ///
+    /// Keep substrings SCOPED to a subtree that is ALSO in
+    /// `purge_modules` (here `Pangea::Architectures`) so foundational
+    /// gems (pangea-core, dry-struct) are NEVER matched/unloaded — that
+    /// is the 2026-05-28 stack-overflow re-require cascade this must not
+    /// reintroduce.
+    pub purge_feature_substrings: Vec<String>,
 }
 
 /// Result of `CompileContext::validate` + detector runs. Returned
@@ -700,6 +722,19 @@ impl CompileContext {
         self
     }
 
+    /// Drop `$LOADED_FEATURES` entries whose absolute path CONTAINS any
+    /// of these substrings (not just prefix-matches). See
+    /// [`CompileContext::purge_feature_substrings`] — clears a logical
+    /// require subtree (e.g. `/pangea/architectures`) across every root.
+    pub fn with_purge_feature_substrings<I, S>(mut self, substrings: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.purge_feature_substrings = substrings.into_iter().map(Into::into).collect();
+        self
+    }
+
     /// Build a `CompileContext` from a `LoadPathPlan`. The plan's
     /// `install_order` becomes `load_paths`; its
     /// `purge_feature_prefixes` become the manifest's. Caller adds
@@ -722,6 +757,7 @@ impl CompileContext {
             env: Vec::new(),
             purge_modules: Vec::new(),
             purge_feature_prefixes: plan.purge_feature_prefixes.clone(),
+            purge_feature_substrings: Vec::new(),
         }
     }
 
@@ -1034,9 +1070,15 @@ impl RubyEvaluator {
         //   7. (on drop) restore $LOAD_PATH + ENV.
         let purge_modules_vec: Vec<&str> = ctx.purge_modules.iter().map(String::as_str).collect();
         let purge_prefixes_vec: Vec<&str> = ctx.purge_feature_prefixes.iter().map(String::as_str).collect();
+        let purge_substrings_vec: Vec<&str> =
+            ctx.purge_feature_substrings.iter().map(String::as_str).collect();
         let result = self.with_env(&ctx.env, |ev| {
             ev.with_load_paths(&ctx.load_paths, |ev| {
-                ev.purge_for_workspace_compile(&purge_modules_vec, &purge_prefixes_vec)?;
+                ev.purge_for_workspace_compile(
+                    &purge_modules_vec,
+                    &purge_prefixes_vec,
+                    &purge_substrings_vec,
+                )?;
                 ev.restore_purged_modules(&purge_modules_vec)?;
                 // Patches that must be in place before the workspace's
                 // types.rb autoload fires (which `restore_purged_modules`
@@ -1217,6 +1259,7 @@ impl RubyEvaluator {
         &self,
         modules_to_purge: &[&str],
         feature_path_prefixes: &[&str],
+        feature_path_substrings: &[&str],
     ) -> Result<(), EvalError> {
         // Build a Ruby array literal of the path prefixes — embedded
         // into the eval source as a string-quoted literal. Each
@@ -1232,6 +1275,14 @@ impl RubyEvaluator {
             .map(|m| format!(r#""{}""#, m.replace('\\', "\\\\").replace('"', "\\\"")))
             .collect::<Vec<_>>()
             .join(", ");
+        // Logical-path substrings — matched anywhere in the absolute
+        // path, so EVERY root's copy of the subtree is dropped (gem
+        // cache + sibling `_repo/lib` + nix-store). Same escaping.
+        let substring_list = feature_path_substrings
+            .iter()
+            .map(|p| format!(r#""{}""#, p.replace('\\', "\\\\").replace('"', "\\\"")))
+            .collect::<Vec<_>>()
+            .join(", ");
 
         // ── Drop $LOADED_FEATURES entries under prefix paths. ─────
         // After this, `require 'pangea/architectures/types'` finds
@@ -1245,7 +1296,8 @@ impl RubyEvaluator {
         let src = format!(
             r#"
             prefixes = [{prefix_list}]
-            $LOADED_FEATURES.reject! {{ |f| prefixes.any? {{ |p| f.start_with?(p) }} }}
+            substrings = [{substring_list}]
+            $LOADED_FEATURES.reject! {{ |f| prefixes.any? {{ |p| f.start_with?(p) }} || substrings.any? {{ |s| f.include?(s) }} }}
 
             modules = [{module_list}]
             modules.each do |full_name|
