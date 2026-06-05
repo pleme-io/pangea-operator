@@ -137,11 +137,25 @@ impl CompilerBackend for EmbeddedCompilerBackend {
             None => return Ok(()), // no cache → caller's gems are pre-bundled.
         };
 
-        // Skip if we've already prepared this (name, ref).
+        // Skip re-ensure ONLY for an IMMUTABLE ref (a full 40-char commit
+        // SHA) we've already prepared. For MUTABLE refs (branch names like
+        // "main"), `source.git_ref` is the ref NAME, which always equals the
+        // prepared name — so a name-equality skip pins the gem to the
+        // boot-time HEAD for the whole pod lifetime, and architectures
+        // hotfixes on `main` never reach a running pod without a manual
+        // restart (observed 2026-06-05: a pangea-architectures autoload-prune
+        // fix required `kubectl delete pod` to take effect, and templates
+        // stayed wedged on the stale gem-cache). Always re-ensure mutable
+        // refs; `cache.ensure()` does `git fetch` + `reset --hard`
+        // (idempotent, ~no-op when HEAD is unchanged) so each reconcile
+        // cheaply picks up new commits — making GitOps architectures fixes
+        // self-propagating, no restart required.
         {
             let prepared = self.prepared.lock().await;
             if let Some(existing) = prepared.get(&source.name) {
-                if existing.git_ref == source.git_ref {
+                let is_immutable_sha = source.git_ref.len() == 40
+                    && source.git_ref.bytes().all(|b| b.is_ascii_hexdigit());
+                if existing.git_ref == source.git_ref && is_immutable_sha {
                     return Ok(());
                 }
             }
