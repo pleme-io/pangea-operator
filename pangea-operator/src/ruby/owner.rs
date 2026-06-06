@@ -713,7 +713,23 @@ fn run_capture_and_synthesize(
               s = TerraformSynthesizer.new
               if defined?(Pangea::Resources)
                 Pangea::Resources.constants.each do |c|
-                  m = Pangea::Resources.const_get(c)
+                  # Tolerate a stale autoload pointing at a gem absent from the
+                  # operator's closure (:Grafana/:Tailscale/:Tls). A pre-prune
+                  # architectures.rb can register such an autoload on the
+                  # long-lived Pangea::Resources module; it SURVIVES even after
+                  # the clean (pruned) file reloads, and the purge can't reach
+                  # an autoload entry (it's neither a $LOADED_FEATURES row nor
+                  # the purged Pangea::Architectures constant). const_get on it
+                  # fires `require '<gem>'` -> LoadError, which would otherwise
+                  # kill the compile of a template that never used that provider
+                  # — cross-template poison (root-caused 2026-06-05). Skip absent
+                  # providers; extend every loadable one. Mirrors the tolerant
+                  # const_get in list_architectures.
+                  m = begin
+                        Pangea::Resources.const_get(c)
+                      rescue LoadError
+                        next
+                      end
                   s.extend(m) if m.is_a?(Module) && !m.is_a?(Class)
                 end
               end
