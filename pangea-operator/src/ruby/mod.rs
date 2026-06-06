@@ -12,6 +12,11 @@ pub mod backend;
 pub mod escape;
 pub mod http_backend;
 
+/// Typed IPC protocol for process-isolated compiles (the durable fix
+/// for cross-template magnus-VM contamination). Pure serde — always
+/// compiled; only the worker that *boots* a VM needs `embedded_ruby`.
+pub mod wire;
+
 #[cfg(feature = "embedded_ruby")]
 pub mod embedded_backend;
 
