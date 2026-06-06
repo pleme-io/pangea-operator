@@ -220,7 +220,7 @@ fn run_owner_loop(
 /// In-process equivalent of `GET /v1/architectures?gem=<gem>`.
 ///
 /// Mirrors `pangea-compiler/app.rb` lines 265-291.
-fn list_architectures(
+pub(crate) fn list_architectures(
     evaluator: &RubyEvaluator,
     gem: &str,
 ) -> Result<ArchListing, BackendError> {
@@ -322,7 +322,7 @@ fn list_architectures(
 /// resolve. Mirrors `pangea-compiler/app.rb` lines 293-365 in shape
 /// but drops `require 'yaml'` and `require 'digest'` from the Ruby
 /// surface.
-fn smoke_test(
+pub(crate) fn smoke_test(
     evaluator: &RubyEvaluator,
     req: &SmokeRequest,
 ) -> Result<FixtureOutcome, BackendError> {
@@ -467,7 +467,7 @@ fn smoke_test(
 /// Both are bracketed via [`RubyEvaluator::with_env`] and a Rust-side
 /// `ensure { $pangea_variables = nil }` so concurrent compile
 /// requests in different fleets don't see each other's leaks.
-fn compile_template(
+pub(crate) fn compile_template(
     evaluator: &RubyEvaluator,
     req: &CompileRequest,
 ) -> Result<CompileResult, BackendError> {

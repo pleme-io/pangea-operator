@@ -29,6 +29,15 @@ pub mod owner;
 #[cfg(feature = "embedded_ruby")]
 pub mod pool;
 
+/// `--compile-worker` child entrypoint — process-per-compile isolation
+/// (boots a fresh magnus VM, serves one request, exits).
+#[cfg(feature = "embedded_ruby")]
+pub mod worker;
+
+/// Parent-side process-isolated compiler backend (spawns `worker`).
+#[cfg(feature = "embedded_ruby")]
+pub mod process_backend;
+
 pub use backend::{
     ArchListing, BackendError, CompileAnyRequest, CompileAnyResult, CompileRequest,
     CompileResult, CompilerBackend, FixtureOutcome, GemSource, SmokeRequest, SourceKind,
@@ -46,3 +55,6 @@ pub use owner::{RubyOwner, RubyRequest};
 
 #[cfg(feature = "embedded_ruby")]
 pub use pool::RubyPool;
+
+#[cfg(feature = "embedded_ruby")]
+pub use process_backend::ProcessIsolatedCompilerBackend;

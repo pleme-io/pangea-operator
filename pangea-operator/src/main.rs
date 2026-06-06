@@ -90,6 +90,18 @@ async fn main() -> Result<()> {
     // aws-lc-rs explicitly. Idempotent — ignore the already-installed Err.
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
+    // Process-per-compile worker entrypoint (PANGEA_COMPILER_BACKEND=process).
+    // Runs FULLY SYNCHRONOUSLY on this thread — boots its own magnus VM,
+    // serves exactly one framed WireRequest, writes the reply, exits — before
+    // any tracing/k8s init and before any `.await` (so all magnus calls stay
+    // on one thread and no stdout write precedes the worker's reply-frame fd
+    // redirect). See ruby::worker. The parent ProcessIsolatedCompilerBackend
+    // re-execs this same binary with --compile-worker per compile.
+    #[cfg(feature = "embedded_ruby")]
+    if env::args().any(|arg| arg == "--compile-worker") {
+        std::process::exit(pangea_operator::ruby::worker::run_compile_worker() as i32);
+    }
+
     let config = Config::from_env();
 
     // Handle CRD generation
@@ -179,6 +191,30 @@ async fn main() -> Result<()> {
                     cache,
                 )
                 .with_metrics(metrics.clone());
+                std::sync::Arc::new(backend)
+            }
+            // Process-per-compile isolation (the durable by-construction fix
+            // for cross-template magnus-VM contamination). Each compile runs
+            // in a fresh `--compile-worker` child → zero shared VM state →
+            // order-independent. Default-OFF; flip the rio chart's
+            // PANGEA_COMPILER_BACKEND to `process` once proven, then the whole
+            // in-VM purge tower becomes deletable dead code.
+            #[cfg(feature = "embedded_ruby")]
+            "process" => {
+                let max_concurrent: usize = std::env::var("PANGEA_RUBY_WORKERS")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(1);
+                info!(
+                    max_concurrent,
+                    "Compiler backend: process-isolated (fresh magnus VM per compile)"
+                );
+                let cache = pangea_operator::ruby::GemCache::from_env();
+                let backend = pangea_operator::ruby::ProcessIsolatedCompilerBackend::new(
+                    cache,
+                    max_concurrent,
+                )
+                .expect("construct process-isolated compiler backend");
                 std::sync::Arc::new(backend)
             }
             // Fail loud: embedded was requested but the feature isn't compiled
