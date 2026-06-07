@@ -87,6 +87,7 @@ PATH
   remote: vendor/pangea-github
   specs:
     pangea-github (0.1.0)
+      dry-struct (~> 1.6)
       dry-types (~> 1.7)
       pangea-core (~> 0.2)
       terraform-synthesizer (~> 0.0.28)
