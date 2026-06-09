@@ -2,7 +2,7 @@
   description = "Pangea Operator — Kubernetes controller for infrastructure management";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    nixpkgs.follows = "substrate/nixpkgs";
     substrate = {
       # Pinned to 9556488 — mkProject accepts the optional `name`
       # arg that mk-rust-workspace.nix passes through (substrate@80c5778
@@ -10,7 +10,6 @@
       # 914d53f) hit "function 'mkProject' called with unexpected
       # argument 'name'".
       url = "github:pleme-io/substrate";
-      inputs.nixpkgs.follows = "nixpkgs";
     };
     crate2nix = {
       url = "github:nix-community/crate2nix";
