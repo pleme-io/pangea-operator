@@ -7,8 +7,21 @@ license.workspace = true
 repository.workspace = true
 description = "Embedded CRuby evaluator for Pangea DSL — magnus-backed replacement for the pangea-compiler sidecar"
 
+[features]
+# `ruby` (default) pulls in magnus + the embedded CRuby interpreter
+# (RubyEvaluator, value conversion, boot_ruby_unchecked). With the
+# feature OFF the crate is the PURE typed load-path algebra only —
+# CompileContext, LoadPathEntry/LoadPathSource, plan_load_paths,
+# ConflictDetector, residual_dual_load — no libruby linkage. That pure
+# surface is what pangea-operator's always-compiled compiler-backend
+# border (backend.rs / wire.rs) consumes, so a
+# `--no-default-features` operator build (CRD generation) no longer
+# needs a Ruby toolchain at all.
+default = ["ruby"]
+ruby = ["dep:magnus"]
+
 [dependencies]
-magnus = { version = "0.8", features = ["embed"] }
+magnus = { version = "0.8", features = ["embed"], optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = "0.9"

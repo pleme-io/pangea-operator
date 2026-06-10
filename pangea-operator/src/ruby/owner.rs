@@ -508,8 +508,9 @@ pub(crate) fn compile_template(
         let gem_cache_base = std::env::var("PANGEA_GEM_CACHE_DIR")
             .unwrap_or_else(|_| "/var/pangea/gems".to_string());
         let trusted_roots = [base.clone(), gem_cache_base, "/nix/store".to_string()];
-        for rl in &req.rubylib_paths {
-            let r = std::fs::canonicalize(rl)
+        for entry in &req.rubylib_paths {
+            let rl = entry.path.display();
+            let r = std::fs::canonicalize(&entry.path)
                 .map_err(|e| BackendError::Compiler(format!("rubylib_path canonicalize {rl}: {e}")))?;
             let under_trusted = trusted_roots
                 .iter()
@@ -555,27 +556,42 @@ pub(crate) fn compile_template(
         .define_variable("$pangea_variables", r_vars)
         .map_err(|e| BackendError::Ruby(format!("define $pangea_variables: {e}")))?;
 
-    // Build the structured compile manifest. Replaces the ad-hoc
-    // with_env + with_load_paths + purge triplet with one transactional
-    // primitive that:
-    //   1. validates the manifest's shape,
-    //   2. runs the algorithmic shield (load-path conflict detector)
-    //      against the resulting $LOAD_PATH and emits warnings,
-    //   3. purges configured modules + $LOADED_FEATURES entries,
-    //   4. brackets ENV + $LOAD_PATH (drop-guarded restore),
-    //   5. runs the body inside the controlled state.
-    //
-    // See `pangea_ruby_eval::CompileContext` doc for the full design
-    // + memory/project_ruby_pool_double_load_fix.md for the bug
-    // class this defends against.
-    let load_paths: Vec<std::path::PathBuf> = req
-        .rubylib_paths
-        .iter()
-        .map(std::path::PathBuf::from)
-        .collect();
+    // Build the structured compile manifest FROM THE PLAN. The
+    // labeled `rubylib_paths` entries feed `plan_load_paths`, which
+    // derives the one-copy-per-namespace install order + the
+    // `$LOADED_FEATURES` purge prefixes — the hardcoded
+    // `/var/pangea/gems/pangea-architectures-main/` literal is gone;
+    // the purge surface now adapts to whichever gems actually
+    // broadcast. `compile_in_context` then applies the manifest as
+    // one transactional primitive (validate → detect → purge →
+    // bracket → run → restore); see `pangea_ruby_eval::CompileContext`
+    // + memory/project_ruby_pool_double_load_fix.md for the bug class
+    // this defends against.
+    let plan = pangea_ruby_eval::plan_load_paths(&req.rubylib_paths, &["pangea/"]);
 
-    let ctx = pangea_ruby_eval::CompileContext::new()
-        .with_load_paths(load_paths)
+    // Cross-template $LOADED_FEATURES shadow fix (reproduced live
+    // 2026-06-05) — kept ALONGSIDE the plan-derived prefixes. The
+    // plan's prefixes clear the labeled gem roots, but a SIBLING
+    // github-workspace template (cloudflare-pleme, rio-arc-github)
+    // compiles first in this long-lived VM and registers
+    // pangea/architectures/*.rb from its OWN _repo/lib; that entry is
+    // outside the plan's reach, so the next template's
+    // autoload-driven `require` no-ops and the purged
+    // Pangea::Architectures::OpenSourceRepo constant is never
+    // redefined → `uninitialized constant`. Purge the architectures
+    // subtree by LOGICAL path across EVERY root.
+    // `/pangea/architectures` (no trailing slash) matches both the
+    // `architectures.rb` entry and the `architectures/*` files, and
+    // matches nothing in pangea-core / dry-struct — scoped to the
+    // same module already in purge_modules, so no foundational gem is
+    // unloaded (the 2026-05-28 re-require-cascade class is not
+    // reintroduced). Tier-honest: this substring purge is a
+    // MITIGATION of the shared-interpreter ceiling, not a structural
+    // fix — the structural answer is process-per-compile isolation
+    // (`tests/process_isolation.rs` seam).
+    let purge_feature_substrings = ["/pangea/architectures"];
+
+    let ctx = pangea_ruby_eval::CompileContext::from_plan(&plan)
         .with_env(env_overrides.clone())
         // Pangea::Architectures is the canonical bug-prone module
         // (Dry::Struct classes with strict attribute-redefinition
@@ -586,40 +602,11 @@ pub(crate) fn compile_template(
         // Sibling namespaces (Pangea::Resources, Pangea::Helpers) are
         // NOT purged here: production attempts to extend the purge
         // list risk re-require cascades that hit Ruby's stack limit
-        // (the bug we already paid for once on 2026-05-28). The
-        // structural answer is the planner's source classification +
-        // module-discovery loop (project_controller_detection_axis.md)
-        // — derive the purge surface from the broadcast gem's actual
-        // load tree, not from a hardcoded list that drifts.
+        // (the bug we already paid for once on 2026-05-28).
         .with_purge_modules(["Pangea::Architectures"])
-        // Scoped tightly to the bundle's exact path. Earlier attempts
-        // used /nix/store/ — too broad, unloaded pangea-core +
-        // dry-struct + dry-types, triggering re-require cascades that
-        // hit Ruby's stack limit. Only purge what the workspace will
-        // genuinely shadow.
-        .with_purge_feature_prefixes([
-            "/var/pangea/gems/pangea-architectures-main/",
-        ])
-        // Cross-template $LOADED_FEATURES shadow fix (reproduced live
-        // 2026-06-05). The prefix purge above only clears the gem-cache
-        // copy. But a SIBLING github-workspace template (cloudflare-pleme,
-        // rio-arc-github) compiles first in this long-lived VM and
-        // registers pangea/architectures/*.rb from its OWN _repo/lib;
-        // that entry survives the gem-cache-only purge, so the next
-        // template's autoload-driven `require` no-ops and the purged
-        // Pangea::Architectures::OpenSourceRepo constant is never
-        // redefined → `uninitialized constant`. Purge the architectures
-        // subtree (entry `architectures.rb` AND the `architectures/*`
-        // files) by LOGICAL path across EVERY root. `/pangea/architectures`
-        // (no trailing slash) matches both, and matches nothing in
-        // pangea-core / dry-struct — scoped to the same module already in
-        // purge_modules, so no foundational gem is unloaded (the
-        // 2026-05-28 re-require-cascade class is not reintroduced).
-        .with_purge_feature_substrings([
-            "/pangea/architectures",
-        ]);
+        .with_purge_feature_substrings(purge_feature_substrings);
 
-    let (synthesis_json, warnings) = evaluator
+    let (synthesis_json, mut warnings) = evaluator
         .compile_in_context(&ctx, |ev| {
             // Inner returns BackendError; translate to EvalError at
             // the bracket boundary. The outer ? maps back via the
@@ -630,6 +617,34 @@ pub(crate) fn compile_template(
         })
         .map_err(BackendError::from)?;
 
+    // Residual refusal (the LOUD arm): any live-detector conflict
+    // whose stale shadowed copies are covered by NEITHER the plan's
+    // purge prefixes NOR the substring purge above means a second
+    // copy of a logical file can load mid-compile. That state was
+    // previously a silent half-compile (wedged the fleet 2026-05-28);
+    // now it is a typed error that flows through
+    // `handle_compile_failure` into the escalation ladder.
+    //
+    // The body already ran by this point — refusing here trades one
+    // wasted compile for the guarantee that its (possibly poisoned)
+    // synthesis never reaches the workspace.
+    let residual: Vec<pangea_ruby_eval::Conflict> =
+        pangea_ruby_eval::residual_dual_load(&warnings.conflicts, &plan)
+            .into_iter()
+            .filter(|c| !substring_purge_covers(c, &purge_feature_substrings))
+            .collect();
+
+    // Fold the plan's overlap findings into the same structured
+    // surface as the detector's (the plan ran ahead of
+    // `compile_in_context`'s detector step). Dual surface for parity:
+    // flat message string + typed Conflict.
+    for c in &plan.conflicts {
+        warnings
+            .messages
+            .push(format!("detector:{}: {}", c.detector, c.message));
+    }
+    warnings.conflicts.extend(plan.conflicts.iter().cloned());
+
     // Surface manifest + conflict warnings as a single log line per
     // compile. These are the audit trail — every observable
     // invariant violation lands here, structured + greppable.
@@ -639,6 +654,10 @@ pub(crate) fn compile_template(
             warning = %msg,
             "compile-context warning"
         );
+    }
+
+    if !residual.is_empty() {
+        return Err(BackendError::DualLoad(residual));
     }
 
     // Pretty-serialize Rust-side for the disk/tofu consumer. JSON.
@@ -654,7 +673,31 @@ pub(crate) fn compile_template(
     Ok(CompileResult {
         terraform_json,
         synthesis_value: Some(synthesis_json),
+        // Stop dropping the typed surface: detector + planner
+        // findings ride the result so the controller can emit them as
+        // k8s Warning Events (previously only the flat `messages`
+        // strings hit the pod log and the typed view died here).
+        conflicts: warnings.conflicts,
     })
+}
+
+/// Returns true when every stale shadowed path in `c`'s evidence is
+/// matched by one of the owner-level `purge_feature_substrings`
+/// (matched ANYWHERE in the absolute path — the same semantics
+/// `CompileContext::purge_feature_substrings` applies). Used to
+/// exempt substring-purged conflicts from the residual dual-load
+/// refusal: the plan-level `residual_dual_load` only knows the plan's
+/// prefixes, while the `/pangea/architectures` subtree purge is an
+/// owner-level mitigation layered on top.
+fn substring_purge_covers(c: &pangea_ruby_eval::Conflict, substrings: &[&str]) -> bool {
+    let Some(paths) = c.evidence.get("shadowed_paths").and_then(|v| v.as_array()) else {
+        return false;
+    };
+    !paths.is_empty()
+        && paths
+            .iter()
+            .filter_map(|p| p.as_str())
+            .all(|p| substrings.iter().any(|s| p.contains(s)))
 }
 
 /// The inner eval — must run while `with_env` + `with_load_paths`
@@ -774,9 +817,16 @@ fn run_capture_and_synthesize(
 use super::escape::ruby_string_literal;
 
 /// Resolve a fixture path. Absolute paths pass through; relative
-/// paths require the gem to be loaded so we can look up its
-/// `full_gem_path`. Returns a typed-failure reason string when the
-/// gem isn't loaded — caller surfaces it as a FixtureOutcome.
+/// paths try the gem's `Gem.loaded_specs` `full_gem_path` first, then
+/// fall back to the gem-cache checkout dir
+/// (`PANGEA_GEM_CACHE_DIR/<name>-<ref>`). The fallback matters
+/// because cloned-via-cache gems are path-required, never
+/// gem-installed — `Gem.loaded_specs` is nil for them, which used to
+/// produce a permanent `SmokeTested=False` / `phase=Failed` masking a
+/// healthy load (the 85/85-classes-loaded ArchitectureGem stuck
+/// Failed, observed 2026-06). Returns a typed-failure reason string
+/// when neither source resolves — caller surfaces it as a
+/// FixtureOutcome.
 fn resolve_fixture_path(
     evaluator: &RubyEvaluator,
     gem: &str,
@@ -798,8 +848,30 @@ fn resolve_fixture_path(
         .map_err(|e| format!("Gem path lookup: {e}"))?;
     match result {
         Json::String(gem_path) => Ok(Path::new(&gem_path).join(fixture_path)),
-        _ => Err(format!("Gem not loaded: {gem}")),
+        _ => gem_cache_fixture_fallback(gem, fixture_path)
+            .ok_or_else(|| format!("Gem not loaded: {gem}")),
     }
+}
+
+/// Fallback for path-required (cloned-via-cache) gems: scan
+/// `PANGEA_GEM_CACHE_DIR` for a `<gem>-<ref>` checkout that actually
+/// contains the fixture file. Multiple refs of the same gem can
+/// coexist in the cache; picking the one where the fixture exists is
+/// the honest disambiguation available without the ref in hand.
+fn gem_cache_fixture_fallback(gem: &str, fixture_path: &str) -> Option<std::path::PathBuf> {
+    let base = std::env::var("PANGEA_GEM_CACHE_DIR")
+        .unwrap_or_else(|_| "/var/pangea/gems".to_string());
+    let prefix = format!("{gem}-");
+    let entries = std::fs::read_dir(&base).ok()?;
+    entries
+        .flatten()
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .is_some_and(|n| n.starts_with(&prefix))
+        })
+        .map(|e| e.path().join(fixture_path))
+        .find(|candidate| candidate.is_file())
 }
 
 impl Drop for RubyOwner {

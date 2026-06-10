@@ -78,7 +78,8 @@ impl CompilerBackend for HttpCompilerBackend {
         // can stay backend-agnostic.
         let synthesis_value: Option<serde_json::Value> =
             serde_json::from_str(&terraform_json).ok();
-        Ok(CompileResult { terraform_json, synthesis_value })
+        // The legacy sidecar has no conflict detector — honest absence.
+        Ok(CompileResult { terraform_json, synthesis_value, conflicts: Vec::new() })
     }
 
     async fn compile_any(

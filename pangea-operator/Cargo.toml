@@ -24,9 +24,16 @@ grpc = ["tonic", "prost"]
 # pangea-compiler sidecar over HTTP. When ON, the operator additionally
 # spawns a Ruby owner thread + can be configured (via PANGEA_COMPILER_BACKEND
 # env or helm useEmbeddedRuby flag) to evaluate templates in-process.
-# Pulls in pangea-ruby-eval which links libruby — only enable in builds
-# where CRuby is available (Linux container image, dev shell).
-embedded_ruby = ["dep:pangea-ruby-eval"]
+# Turns on pangea-ruby-eval's `ruby` feature, which links libruby — only
+# enable in builds where CRuby is available (Linux container image, dev
+# shell). The pangea-ruby-eval dep itself is non-optional below: its
+# PURE typed load-path algebra (LoadPathEntry/plan_load_paths/Conflict)
+# is consumed by the always-compiled compiler-backend border
+# (backend.rs / wire.rs), so unlabeled `$LOAD_PATH` entries are
+# unrepresentable in EVERY build configuration — including the
+# `--no-default-features` CRD-generation build, which now needs no Ruby
+# toolchain at all.
+embedded_ruby = ["pangea-ruby-eval/ruby"]
 # Magma-backed IacExecutor (alternative to TofuExecutor). When OFF
 # (the default) the operator only ships `TofuExecutor`. When ON,
 # `MagmaExecutor` is also compiled in and is selectable per-CR or
@@ -67,8 +74,10 @@ gen-types = { workspace = true }
 # Convergence primitives — CascadePolicy for the reactive-policy cascade.
 shigoto-types = { workspace = true }
 
-# In-process Ruby evaluator (feature-gated; see [features].embedded_ruby).
-pangea-ruby-eval = { path = "../pangea-ruby-eval", optional = true }
+# In-process Ruby evaluator. Always present for its pure typed
+# load-path algebra (no libruby without features); the interpreter
+# itself is gated — see [features].embedded_ruby.
+pangea-ruby-eval = { path = "../pangea-ruby-eval", default-features = false }
 
 # Magma library suite (feature-gated; see [features].executor_magma).
 # Per theory/MAGMA-OPERATOR-BACKEND.md — every reconcile runs as

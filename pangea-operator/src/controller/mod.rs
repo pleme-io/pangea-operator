@@ -31,7 +31,11 @@ pub mod flow_scheduler;
 pub mod policy_cascade;
 mod reconciler;
 pub mod settling;
-mod template;
+// `pub` (was private) so the staleness_honesty integration test can
+// drive `template::freshness`'s pure decision fns + `observe_head`
+// against real temp git remotes; sibling sub-modules stay
+// template_controller-internal by convention.
+pub mod template;
 mod template_controller;
 mod namespace_controller;
 mod packer_build_controller;

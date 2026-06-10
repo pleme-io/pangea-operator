@@ -11,6 +11,7 @@
 //! avoid an extra dep) — callers use `.await` normally.
 
 use async_trait::async_trait;
+use pangea_ruby_eval::{Conflict, LoadPathEntry};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -59,8 +60,31 @@ pub enum BackendError {
     #[error("ruby evaluator: {0}")]
     Ruby(String),
 
+    /// Residual dual-load refused: the live load-path detector found
+    /// logical Ruby files whose stale shadowed copies the derived
+    /// purge plan does NOT cover, so a second definition could load
+    /// mid-compile. Refusing here is LOUD by design — the alternative
+    /// is the silent half-compile class wedged on 2026-05-28
+    /// (`Attribute :cluster_name has already been defined`) and
+    /// 2026-06-05 (`uninitialized constant` via a sibling template's
+    /// surviving `$LOADED_FEATURES` entry). Flows through
+    /// `handle_compile_failure` into the existing escalation ladder.
+    #[error("dual-load refused: {} residual load-path conflict(s) not covered by the purge plan: {}", .0.len(), summarize_conflicts(.0))]
+    DualLoad(Vec<Conflict>),
+
     #[error("backend not initialized")]
     NotInitialized,
+}
+
+/// Render the conflict categories (logical Ruby paths) for the
+/// `DualLoad` Display — the escalation ladder + `lastError` carry
+/// this string, so it must name WHICH files are at risk.
+fn summarize_conflicts(conflicts: &[Conflict]) -> String {
+    conflicts
+        .iter()
+        .map(|c| c.category.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[cfg(feature = "embedded_ruby")]
@@ -80,8 +104,19 @@ pub struct CompileRequest {
     pub source: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub template_path: Option<String>,
+    /// `$LOAD_PATH` candidates, each labeled with its source identity
+    /// (workspace clone / broadcast gem / other). The label is what
+    /// lets `plan_load_paths` derive the one-copy-per-namespace
+    /// install order + purge directives instead of owner.rs
+    /// hardcoding a gem path. Tier proof: this field's type IS the
+    /// unrepresentability — a constructor passing a raw `Vec<String>`
+    /// is `E0308`, so an unlabeled path cannot reach the compiler in
+    /// any build configuration. (The legacy HTTP sidecar spoke
+    /// `Vec<String>` here; embedded is the only deployed backend
+    /// (M8.2), so the old wire shape is parse-time-rejected at the
+    /// serde boundary rather than silently coerced.)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub rubylib_paths: Vec<String>,
+    pub rubylib_paths: Vec<LoadPathEntry>,
     #[serde(default)]
     pub variables: HashMap<String, serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -111,6 +146,14 @@ pub struct CompileResult {
     /// embedded backend always populates).
     #[serde(default)]
     pub synthesis_value: Option<serde_json::Value>,
+    /// Structured load-path conflicts observed during this compile —
+    /// the planner's overlap findings + the live detector's findings,
+    /// previously dropped at owner.rs (only the flat warning strings
+    /// were logged). The controller emits these as k8s Warning Events
+    /// so the audit surface survives past the pod log. Empty for the
+    /// legacy HTTP sidecar (serde default).
+    #[serde(default)]
+    pub conflicts: Vec<Conflict>,
 }
 
 /// Mirrors the `/compile-any` request shape (synthesizer-driven
@@ -228,6 +271,23 @@ mod tests {
             format!("{}", BackendError::NotInitialized),
             "backend not initialized"
         );
+    }
+
+    #[test]
+    fn backend_error_dual_load_display_names_logical_paths() {
+        // The DualLoad Display feeds lastError + the escalation
+        // ladder; it must name WHICH logical files are at risk, not
+        // just a count.
+        let e = BackendError::DualLoad(vec![Conflict {
+            detector: "load_path_double_load".into(),
+            category: "pangea/architectures/types".into(),
+            message: "test".into(),
+            evidence: serde_json::json!({}),
+        }]);
+        let msg = e.to_string();
+        assert!(msg.contains("dual-load refused"), "got: {msg}");
+        assert!(msg.contains("1 residual"), "got: {msg}");
+        assert!(msg.contains("pangea/architectures/types"), "got: {msg}");
     }
 
     // ── SourceKind serde defaults + round-trip ──

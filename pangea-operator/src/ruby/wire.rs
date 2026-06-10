@@ -43,15 +43,18 @@ use super::backend::{
 /// and is reconstituted into a `BackendError` on the parent side, so the
 /// process boundary is invisible to `CompilerBackend` callers.
 ///
-/// Kept structurally identical to `BackendError` (same four variants,
-/// same `String` payloads) so the `From` impls are total + lossless —
-/// a new `BackendError` variant is a compile error here until mirrored,
-/// which is the intended forcing function.
+/// Kept structurally identical to `BackendError` (same variants, same
+/// payloads) so the `From` impls are total + lossless — a new
+/// `BackendError` variant is a compile error here until mirrored,
+/// which is the intended forcing function. `DualLoad` carries the
+/// typed `Conflict` list itself (already serde) so the parent's
+/// refusal handling sees the same evidence a worker saw.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WireError {
     Transport(String),
     Compiler(String),
     Ruby(String),
+    DualLoad(Vec<pangea_ruby_eval::Conflict>),
     NotInitialized,
 }
 
@@ -61,6 +64,7 @@ impl From<&BackendError> for WireError {
             BackendError::Transport(s) => WireError::Transport(s.clone()),
             BackendError::Compiler(s) => WireError::Compiler(s.clone()),
             BackendError::Ruby(s) => WireError::Ruby(s.clone()),
+            BackendError::DualLoad(c) => WireError::DualLoad(c.clone()),
             BackendError::NotInitialized => WireError::NotInitialized,
         }
     }
@@ -78,6 +82,7 @@ impl From<WireError> for BackendError {
             WireError::Transport(s) => BackendError::Transport(s),
             WireError::Compiler(s) => BackendError::Compiler(s),
             WireError::Ruby(s) => BackendError::Ruby(s),
+            WireError::DualLoad(c) => BackendError::DualLoad(c),
             WireError::NotInitialized => BackendError::NotInitialized,
         }
     }
@@ -160,6 +165,14 @@ mod tests {
             BackendError::Transport("conn refused".into()),
             BackendError::Compiler("syntax error".into()),
             BackendError::Ruby("NameError: undefined".into()),
+            BackendError::DualLoad(vec![pangea_ruby_eval::Conflict {
+                detector: "load_path_double_load".into(),
+                category: "pangea/architectures/types".into(),
+                message: "reachable via 2 paths".into(),
+                evidence: serde_json::json!({
+                    "shadowed_paths": ["/elsewhere/lib/pangea/architectures/types.rb"],
+                }),
+            }]),
             BackendError::NotInitialized,
         ];
         for be in cases {
@@ -178,7 +191,11 @@ mod tests {
         let req = WireRequest::Compile(CompileRequest {
             source: Some("template :t do; end".into()),
             template_name: Some("t".into()),
-            rubylib_paths: vec!["/var/pangea/gems/pangea-architectures-main/lib".into()],
+            // Typed entry — the label crosses the wire with the path.
+            rubylib_paths: vec![pangea_ruby_eval::LoadPathEntry::gem(
+                "/var/pangea/gems/pangea-architectures-main/lib",
+                "pangea-architectures",
+            )],
             ..Default::default()
         });
         let mut buf: Vec<u8> = Vec::new();
@@ -192,6 +209,14 @@ mod tests {
             WireRequest::Compile(c) => {
                 assert_eq!(c.template_name.as_deref(), Some("t"));
                 assert_eq!(c.rubylib_paths.len(), 1);
+                assert!(
+                    matches!(
+                        &c.rubylib_paths[0].source,
+                        pangea_ruby_eval::LoadPathSource::GemBroadcast { gem_name }
+                            if gem_name == "pangea-architectures"
+                    ),
+                    "source label must survive the wire round-trip"
+                );
             }
             other => panic!("wrong variant: {other:?}"),
         }
@@ -202,6 +227,7 @@ mod tests {
         let reply = WireReply::Compile(Ok(CompileResult {
             terraform_json: "{\"resource\":{}}".into(),
             synthesis_value: Some(serde_json::json!({"resource": {}})),
+            conflicts: vec![],
         }));
         let mut buf: Vec<u8> = Vec::new();
         write_framed(&mut buf, &reply).expect("write");

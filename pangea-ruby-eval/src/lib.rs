@@ -33,14 +33,18 @@ use thiserror::Error;
 
 pub mod evaluator;
 pub mod fixture;
+#[cfg(feature = "ruby")]
 pub mod value;
 
 pub use evaluator::{
-    detect_load_path_conflicts, module_name_to_require_path, plan_load_paths, CompileContext,
-    Conflict, ConflictDetector, ContextWarnings, LoadPathConflict, LoadPathConflictDetector,
-    LoadPathEntry, LoadPathPlan, LoadPathSource, RubyEvaluator,
+    detect_load_path_conflicts, module_name_to_require_path, plan_load_paths, residual_dual_load,
+    CompileContext, Conflict, ConflictDetector, ContextWarnings, LoadPathConflict,
+    LoadPathConflictDetector, LoadPathEntry, LoadPathPlan, LoadPathSource,
 };
+#[cfg(feature = "ruby")]
+pub use evaluator::RubyEvaluator;
 pub use fixture::{parse_yaml_fixture, short_sha256_hex, ParsedFixture};
+#[cfg(feature = "ruby")]
 pub use value::{json_to_ruby, ruby_hash_to_json, ruby_value_to_json, JsonHash};
 
 #[derive(Debug, Error)]
@@ -74,11 +78,12 @@ pub enum EvalError {
 ///
 /// Calling more than once per process panics. Calling from a thread
 /// that is not the intended Ruby owner thread is undefined behavior.
+#[cfg(feature = "ruby")]
 pub unsafe fn boot_ruby_unchecked() -> magnus::embed::Cleanup {
     magnus::embed::init()
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "ruby"))]
 mod tests {
     use super::*;
     use crate::evaluator::RubyEvaluator;

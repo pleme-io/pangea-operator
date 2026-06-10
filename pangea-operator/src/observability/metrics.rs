@@ -25,6 +25,13 @@ pub struct Metrics {
     /// Total drift detections.
     pub drift_detected_total: IntCounter,
 
+    /// Source-freshness checks (`git ls-remote` ahead of Ready /
+    /// Planning / Drifted phase work) that could not observe the
+    /// remote HEAD. The drift loop proceeds on such failures (the
+    /// `Freshness::Unknown` arm), so a rising rate here is the ONLY
+    /// loud signal that "Settled" verdicts are running unverified.
+    pub source_freshness_check_failures_total: IntCounter,
+
     /// Total managed resources.
     pub managed_resources_total: IntGaugeVec,
 
@@ -289,6 +296,12 @@ impl Metrics {
         let drift_detected_total = IntCounter::with_opts(Opts::new(
             "pangea_drift_detected_total",
             "Total number of drift detections",
+        ))
+        .expect("metric can be created");
+
+        let source_freshness_check_failures_total = IntCounter::with_opts(Opts::new(
+            "pangea_source_freshness_check_failures_total",
+            "Freshness checks (git ls-remote) that could not observe the remote HEAD",
         ))
         .expect("metric can be created");
 
@@ -559,6 +572,9 @@ impl Metrics {
             .register(Box::new(drift_detected_total.clone()))
             .expect("metric can be registered");
         registry
+            .register(Box::new(source_freshness_check_failures_total.clone()))
+            .expect("metric can be registered");
+        registry
             .register(Box::new(managed_resources_total.clone()))
             .expect("metric can be registered");
         registry
@@ -647,6 +663,7 @@ impl Metrics {
             templates_by_phase,
             reconciliation_duration_seconds,
             drift_detected_total,
+            source_freshness_check_failures_total,
             managed_resources_total,
             tofu_operations_total,
             pg_state_operations_total,

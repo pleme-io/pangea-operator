@@ -16,13 +16,18 @@
 #![cfg(feature = "embedded_ruby")]
 
 use pangea_operator::ruby::{
-    CompileRequest, CompilerBackend, EmbeddedCompilerBackend, GemCache, RubyOwner, SmokeRequest,
+    CompileRequest, CompilerBackend, EmbeddedCompilerBackend, GemCache, RubyPool, SmokeRequest,
 };
+use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn embedded_backend_smoke() {
-    let owner = RubyOwner::spawn(vec![]).await.expect("spawn ruby owner");
-    let backend = EmbeddedCompilerBackend::new(owner.tx_handle());
+    // One-worker pool — observationally identical to the pre-S2
+    // single-owner shape this test was written against (the S2 pool
+    // refactor changed the constructor from a tx handle to
+    // Arc<RubyPool>; this test drifted until repaired 2026-06-10).
+    let pool = Arc::new(RubyPool::spawn(1, vec![]).await.expect("spawn ruby pool"));
+    let backend = EmbeddedCompilerBackend::new(pool.clone());
 
     // Step 1 — listing an unknown gem returns empty classes/version
     // (matches the sidecar's behavior; the operator surfaces this as
@@ -105,8 +110,8 @@ async fn embedded_backend_smoke() {
     {
         use pangea_operator::ruby::RubyRequest;
         let (rtx, rrx) = tokio::sync::oneshot::channel();
-        owner
-            .tx_handle()
+        pool
+            .next_sender()
             .send(RubyRequest::Eval {
                 source: r#"
                 class TerraformSynthesizer
@@ -255,8 +260,7 @@ async fn embedded_backend_smoke() {
     )
     .expect("write fake gem entrypoint");
 
-    owner
-        .prepend_load_path(lib_dir.clone())
+    pool.broadcast_prepend_load_path(lib_dir.clone())
         .await
         .expect("prepend_load_path round-trip");
 
@@ -265,11 +269,16 @@ async fn embedded_backend_smoke() {
     // (no clone), and the backend's prepare_gem should prepend its
     // lib path. Distinct gem name from the previous step so we can
     // observe the "first call → prepend" behavior.
-    let prepared_gem_dir = tmp.join("pangea-prepared-gem-stub");
+    //
+    // The no-network cache-hit contract is: SHA-shaped ref + a `.git`
+    // marker present. (An earlier revision of ensure() tolerated a
+    // missing .git; it now treats that as a stale dir and re-clones —
+    // this fixture tracks the current contract.)
+    let prepared_sha = "0123456789abcdef0123456789abcdef01234567";
+    let prepared_gem_dir = tmp.join(format!("pangea-prepared-gem-{prepared_sha}"));
     let prepared_lib_dir = prepared_gem_dir.join("lib");
     std::fs::create_dir_all(&prepared_lib_dir).expect("mkdir -p prepared lib");
-    // The cache hit branch tolerates a missing .git as long as lib
-    // exists.
+    std::fs::create_dir_all(prepared_gem_dir.join(".git")).expect("mkdir -p .git marker");
     std::fs::write(
         prepared_lib_dir.join("prepared_gem.rb"),
         b"module PreparedGem; STAMP = \"42\".freeze; end\n",
@@ -277,14 +286,14 @@ async fn embedded_backend_smoke() {
     .expect("write prepared_gem entrypoint");
 
     let backend_with_cache = pangea_operator::ruby::EmbeddedCompilerBackend::with_cache(
-        owner.tx_handle(),
+        pool.clone(),
         cache.clone(),
     );
     backend_with_cache
         .prepare_gem(&pangea_operator::ruby::GemSource {
             name: "pangea-prepared-gem".to_string(),
             git_url: "https://example.invalid/pangea-prepared-gem.git".to_string(),
-            git_ref: "stub".to_string(),
+            git_ref: "0123456789abcdef0123456789abcdef01234567".to_string(),
             kind: pangea_operator::ruby::SourceKind::Ruby,
         })
         .await
@@ -293,8 +302,8 @@ async fn embedded_backend_smoke() {
     {
         use pangea_operator::ruby::RubyRequest;
         let (rtx, rrx) = tokio::sync::oneshot::channel();
-        owner
-            .tx_handle()
+        pool
+            .next_sender()
             .send(RubyRequest::Eval {
                 source: r#"
                 require 'prepared_gem'
@@ -319,7 +328,7 @@ async fn embedded_backend_smoke() {
         .prepare_gem(&pangea_operator::ruby::GemSource {
             name: "pangea-prepared-gem".to_string(),
             git_url: "https://example.invalid/pangea-prepared-gem.git".to_string(),
-            git_ref: "stub".to_string(),
+            git_ref: "0123456789abcdef0123456789abcdef01234567".to_string(),
             kind: pangea_operator::ruby::SourceKind::Ruby,
         })
         .await
@@ -365,8 +374,8 @@ async fn embedded_backend_smoke() {
     {
         use pangea_operator::ruby::RubyRequest;
         let (rtx, rrx) = tokio::sync::oneshot::channel();
-        owner
-            .tx_handle()
+        pool
+            .next_sender()
             .send(RubyRequest::Eval {
                 source: format!(
                     r#"
@@ -389,7 +398,10 @@ async fn embedded_backend_smoke() {
     std::env::remove_var("PANGEA_GEM_CACHE_DIR");
     let _ = std::fs::remove_dir_all(&tmp);
 
-    owner.shutdown().await;
+    // Pool drop signals each owner thread to shut down.
+    drop(backend_with_cache);
+    drop(backend);
+    drop(pool);
 }
 
 /// Per-test temp dir. We can't pull in `tempfile` for one helper, and

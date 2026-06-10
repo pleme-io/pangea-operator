@@ -62,8 +62,8 @@ pub fn parse_duration(s: &str) -> Option<Duration> {
         return None;
     }
 
-    let (num_str, unit) = if s.ends_with("ms") {
-        (&s[..s.len() - 2], "ms")
+    let (num_str, unit) = if let Some(stripped) = s.strip_suffix("ms") {
+        (stripped, "ms")
     } else {
         let last_char = s.chars().last()?;
         if last_char.is_ascii_digit() {
@@ -108,6 +108,7 @@ pub fn next_phase(current: Phase, success: bool) -> Phase {
         Phase::Ready => Phase::Ready,
         Phase::Drifted => Phase::Planning,
         Phase::Failed => Phase::Pending, // Retry from beginning
+        Phase::CompileBlocked => Phase::Compiling, // Self-heals: retry the compile
         Phase::Destroying => Phase::Pending,
     }
 }
@@ -148,6 +149,10 @@ pub fn conditions_for_phase(phase: Phase, error_msg: Option<&str>) -> Vec<crate:
         Phase::Ready => (true, false, false),
         Phase::Drifted => (false, false, true),
         Phase::Failed => (false, false, false),
+        // Self-healing park: actively retrying the compile on
+        // backoff, so progress IS being attempted (Reconciling=True),
+        // but the system is not Ready.
+        Phase::CompileBlocked => (false, true, false),
         Phase::Destroying => (false, false, false),
     };
 
@@ -158,6 +163,11 @@ pub fn conditions_for_phase(phase: Phase, error_msg: Option<&str>) -> Vec<crate:
         (Phase::Ready, _) => "Infrastructure is up to date".into(),
         (Phase::Drifted, _) => "Infrastructure drift detected".into(),
         (Phase::Failed, _) => "Operation failed".into(),
+        (Phase::CompileBlocked, _) => {
+            "Source HEAD does not compile — retrying on backoff; \
+             resumes automatically when a compiling commit lands"
+                .into()
+        }
         (Phase::Pending, _) => "Waiting to be processed".into(),
         (Phase::Destroying, _) => "Infrastructure is being destroyed".into(),
         (phase, _) => format!("{} in progress", phase),

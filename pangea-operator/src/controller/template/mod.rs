@@ -4,13 +4,15 @@
 //!
 //! Each sub-module is a self-contained helper group consumed only by
 //! `template_controller`; nothing here is part of the public crate
-//! surface. Future R-passes can pull more modules out of
-//! `template_controller.rs` (status helpers, reactive policy, reconcile-
-//! cycle receipts) by following the same shape.
+//! surface (`freshness` is the one exception — its pure decision fns
+//! and `observe_head` are exercised by the `staleness_honesty`
+//! integration test). Future R-passes can pull more modules out of
+//! `template_controller.rs` by following the same shape.
 
 pub mod cycle_receipts;
 pub mod events;
 pub mod finalizer;
+pub mod freshness;
 pub mod output_bindings;
 pub mod provider_creds;
 pub mod reactive_policy;

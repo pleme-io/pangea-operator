@@ -197,7 +197,7 @@ impl CompilerBackend for EmbeddedCompilerBackend {
                 tracing::warn!(
                     gem = %source.name,
                     git_ref = %source.git_ref,
-                    detector = c.detector,
+                    detector = %c.detector,
                     category = %c.category,
                     warning = %c.message,
                     "prepare_gem load-path conflict — gem broadcast will create double-load risk"

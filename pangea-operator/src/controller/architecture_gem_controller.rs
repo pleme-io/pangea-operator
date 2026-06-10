@@ -351,7 +351,16 @@ async fn patch_status_if_changed(
             &prev.conditions,
             new_status.conditions,
         );
-        if status_content_equal(prev, &new_status) {
+        // Honesty bound on the dedupe: `status_content_equal`
+        // excludes `last_reconcile_time`, so a steady-state gem's
+        // status timestamp would freeze forever (observed: 3 days
+        // stale on a live 5m loop — indistinguishable from a dead
+        // controller). Patch anyway once the recorded timestamp is
+        // >5m old; that caps the staleness at one refresh interval
+        // while still suppressing per-reconcile etcd churn.
+        if status_content_equal(prev, &new_status)
+            && last_reconcile_is_fresh(prev.last_reconcile_time, Utc::now())
+        {
             debug!(
                 gem = %name,
                 "ArchitectureGem status content unchanged; skipping patch (avoids hot reconcile loop)"
@@ -361,6 +370,19 @@ async fn patch_status_if_changed(
     }
     crate::controller::status::patch_status::<ArchitectureGem, _>(client, name, &new_status).await?;
     Ok(())
+}
+
+/// True while the previously-recorded `last_reconcile_time` is recent
+/// enough (≤5m) that skipping the liveness restamp is honest. `None`
+/// (never recorded) is stale by definition.
+fn last_reconcile_is_fresh(
+    prev: Option<chrono::DateTime<Utc>>,
+    now: chrono::DateTime<Utc>,
+) -> bool {
+    match prev {
+        Some(t) => now.signed_duration_since(t) <= chrono::Duration::minutes(5),
+        None => false,
+    }
 }
 
 /// Two statuses are content-equal when every observable field except
@@ -596,5 +618,32 @@ mod tests {
         a.conditions = vec![cond("Loaded", "True", "OK", "msg-a", Utc::now())];
         b.conditions = vec![cond("Loaded", "True", "OK", "msg-b", Utc::now())];
         assert!(!status_content_equal(&a, &b));
+    }
+
+    // ── last_reconcile_is_fresh — the liveness bound on the dedupe ──
+    use super::last_reconcile_is_fresh;
+
+    #[test]
+    fn stale_last_reconcile_forces_a_liveness_patch() {
+        // The 3-day-frozen-status bug: content-equal must NOT skip
+        // forever — once the recorded timestamp is >5m old, patch.
+        let now = Utc::now();
+        assert!(
+            !last_reconcile_is_fresh(Some(now - chrono::Duration::minutes(6)), now),
+            ">5m-stale timestamp must force a patch"
+        );
+        assert!(
+            !last_reconcile_is_fresh(None, now),
+            "never-recorded timestamp is stale by definition"
+        );
+    }
+
+    #[test]
+    fn fresh_last_reconcile_keeps_the_dedupe() {
+        let now = Utc::now();
+        assert!(
+            last_reconcile_is_fresh(Some(now - chrono::Duration::minutes(2)), now),
+            "a 2m-old timestamp is fresh — skip the churn patch"
+        );
     }
 }

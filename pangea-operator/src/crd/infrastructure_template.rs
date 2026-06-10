@@ -772,6 +772,36 @@ pub struct InfrastructureTemplateStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_applied_revision: Option<String>,
 
+    /// Git commit SHA the most recent successful compile consumed
+    /// (gitRepository sources only). The freshness model's anchor:
+    /// `Ready` is only settled against THIS revision; handle_ready's
+    /// gate compares it to `observedHeadRevision` and bounces to
+    /// Compiling on mismatch. Before this field existed, staleness
+    /// was unrepresentable in the wrong direction — no status field
+    /// could express "the compile is behind the remote".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compiled_revision: Option<String>,
+
+    /// When `compiledRevision` was produced. Only restamped when the
+    /// revision actually changes (diff-gated; no etcd churn for
+    /// same-rev recompiles).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compiled_at: Option<DateTime<Utc>>,
+
+    /// The remote HEAD the freshness gate last observed via
+    /// `git ls-remote` (1 RTT, no clone). Tier-honest: a C2
+    /// external-world observation, renewed per check — never a
+    /// compile-time proof.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_head_revision: Option<String>,
+
+    /// When the freshness gate last successfully observed the remote
+    /// HEAD. An old timestamp on a Ready template means the remote
+    /// has been unreachable (the gate proceeds on Unknown but says so
+    /// in the Settled condition message).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_freshness_check_at: Option<DateTime<Utc>>,
+
     /// Timestamp of the last successful plan.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_planned_at: Option<DateTime<Utc>>,
@@ -1286,6 +1316,14 @@ pub enum Phase {
     Drifted,
     /// Operation failed.
     Failed,
+    /// HEAD observed, compile of it cannot succeed. Unlike `Failed`
+    /// this phase self-heals: its handler retries Compiling on
+    /// backoff and exits the moment a new commit compiles — a broken
+    /// commit on the tracked ref parks here LOUDLY (Events + ladder
+    /// escalation already fired) instead of wedging in Failed until a
+    /// human resets. Entered via `handle_compile_failure` when the
+    /// consecutive-compile-failure threshold trips.
+    CompileBlocked,
     /// Running `tofu destroy`.
     Destroying,
 }

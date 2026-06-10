@@ -112,12 +112,16 @@ pub fn ruby_value_to_json(value: Value) -> Result<Json, EvalError> {
 /// to `"foo"`) — matches the existing pangea-compiler `_stringify_keys`
 /// helper.
 pub fn ruby_hash_to_json(hash: RHash) -> Result<JsonHash, EvalError> {
+    // This fn only runs on the interpreter thread (RHash is only
+    // valid there), so the handle lookup cannot fail in practice.
+    let ruby = magnus::Ruby::get()
+        .map_err(|e| EvalError::Conversion(format!("Ruby::get for hash conversion: {e:?}")))?;
     let mut out = JsonHash::new();
     let result = hash.foreach(|key: Value, val: Value| {
         let key_str = if let Some(s) = RString::from_value(key) {
             s.to_string().map_err(|e| {
                 magnus::Error::new(
-                    magnus::exception::runtime_error(),
+                    ruby.exception_runtime_error(),
                     format!("hash key string utf-8 error: {e:?}"),
                 )
             })?
@@ -125,7 +129,7 @@ pub fn ruby_hash_to_json(hash: RHash) -> Result<JsonHash, EvalError> {
             sym.name()
                 .map_err(|e| {
                     magnus::Error::new(
-                        magnus::exception::runtime_error(),
+                        ruby.exception_runtime_error(),
                         format!("hash key symbol error: {e:?}"),
                     )
                 })?
@@ -134,7 +138,7 @@ pub fn ruby_hash_to_json(hash: RHash) -> Result<JsonHash, EvalError> {
             // Fallback: call to_s on whatever the key is.
             let s: String = key.funcall("to_s", ()).map_err(|e| {
                 magnus::Error::new(
-                    magnus::exception::runtime_error(),
+                    ruby.exception_runtime_error(),
                     format!("hash key to_s failed: {e:?}"),
                 )
             })?;
@@ -143,7 +147,7 @@ pub fn ruby_hash_to_json(hash: RHash) -> Result<JsonHash, EvalError> {
 
         let json_val = ruby_value_to_json(val).map_err(|e| {
             magnus::Error::new(
-                magnus::exception::runtime_error(),
+                ruby.exception_runtime_error(),
                 format!("value conversion: {e}"),
             )
         })?;
