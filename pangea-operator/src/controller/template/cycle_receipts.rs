@@ -25,7 +25,7 @@ use crate::crd::{
 };
 use crate::error::Result;
 use crate::executor::cycle_artifact::CycleArtifact;
-use crate::executor::magma_bundle::read_cycle_artifact;
+use crate::executor::magma_bundle::{read_apply_outcome, read_cycle_artifact};
 
 /// What triggered the cycle emission — drives outcome derivation when
 /// translating drift_details into per-resource ResourceOutcome entries.
@@ -288,6 +288,43 @@ pub async fn record_reconcile_cycle(
             None      => None,
         },
     };
+
+    // First-class magma apply-outcome metrics. Only meaningful when
+    // (a) this cycle actually ran an apply (AppliedSuccess/Failure —
+    // NoChanges/PolicyGated never invoke magma_apply) and (b) the
+    // executor was magma (the magma-bundle.json carries the
+    // `{applied, failed, phase}` shape; tofu has no such bundle and
+    // its outcome flows through pangea_tofu_operations_total). Reading
+    // the bundle here — at the controller cycle boundary — keeps the
+    // executor free of a Metrics handle and records exactly once per
+    // apply. Best-effort: a missing/plan-only bundle yields None and
+    // the metrics simply aren't recorded for this cycle.
+    let cycle_was_apply = matches!(
+        result,
+        CycleResult::AppliedSuccess { .. } | CycleResult::AppliedFailure(_)
+    );
+    if cycle_was_apply && executor.name() == "magma" {
+        if let Some(dir) = work_dir {
+            if let Some(outcome) = read_apply_outcome(dir).await {
+                let template_ns = template
+                    .namespace()
+                    .unwrap_or_else(|| "unknown".to_string());
+                state.metrics.record_magma_apply(
+                    &name,
+                    &template_ns,
+                    outcome.applied,
+                    outcome.failed,
+                );
+                debug!(
+                    template = %name,
+                    applied = outcome.applied,
+                    failed = outcome.failed,
+                    succeeded = outcome.succeeded,
+                    "recorded magma apply-outcome metrics",
+                );
+            }
+        }
+    }
 
     let new_cycle = build_reconcile_cycle(
         next_cycle,

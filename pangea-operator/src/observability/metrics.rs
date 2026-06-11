@@ -248,6 +248,58 @@ pub struct Metrics {
     /// `output_missing` rates (binding declares an output the template
     /// no longer produces — author drift).
     pub output_bindings_published_total: IntCounterVec,
+
+    // -----------------------------------------------------------------
+    // Magma apply-outcome metrics (ASM-observe-operator-metrics).
+    //
+    // Until these landed, a magma apply's outcome was only visible
+    // through the generic `pangea_tofu_operations_total{operation,result}`
+    // (a binary apply/success|failure) and the per-CR
+    // `status.lastCycle`. Neither surfaced the load-bearing number from
+    // a real apply: the live pleme-io-opensource cutover applied 1494
+    // resources with 14 FAILED — the generic counter only recorded
+    // "apply=failure", giving no fleet-scrapeable signal of the 14
+    // partial failures. magma's apply path already parses the
+    // `{applied, failed, phase}` shape out of `magma-bundle.json`
+    // (see executor/magma_bundle.rs::read_apply_outcome); these
+    // first-class metrics record it where the controller reads the
+    // bundle at cycle-receipt time.
+    //
+    // Cardinality: keyed by (template, namespace) — grows linearly with
+    // the InfrastructureTemplate count, identical to the settling /
+    // policy metrics above. The `phase` label on the counter is a
+    // bounded enum (Succeeded|Failed). Safe to a few hundred templates.
+    // -----------------------------------------------------------------
+
+    /// Total magma apply runs, by template + terminal phase.
+    /// Labels: template, namespace, phase (Succeeded|Failed).
+    /// `Succeeded` = the apply's lifecycle FSM reached `Stable` with
+    /// zero failed changes; `Failed` = `Failed` phase or any failed
+    /// change. Lets a dashboard count apply attempts + the
+    /// success/failure split per template without parsing CR status.
+    pub magma_apply_total: IntCounterVec,
+
+    /// Resources successfully applied in the LAST magma apply per
+    /// template (gauge — `outcome.applied.len()`). Labels: template,
+    /// namespace. The "1494" half of the `applied 1494 / failed 14`
+    /// shape.
+    pub magma_resources_applied: IntGaugeVec,
+
+    /// Resources that FAILED to apply in the LAST magma apply per
+    /// template (gauge — `outcome.failed.len()`). Labels: template,
+    /// namespace. THE signal that would have surfaced the 14 failures
+    /// in the live cutover — `pangea_magma_resources_failed > 0` is the
+    /// canonical "this template's apply is partially failing" alert
+    /// expression (lareira-observe's `PangeaTemplateFailing`).
+    pub magma_resources_failed: IntGaugeVec,
+
+    /// Cumulative count of failed changes across ALL magma applies per
+    /// template (counter — incremented by `outcome.failed.len()` each
+    /// apply). Labels: template, namespace. The counter complements the
+    /// gauge: the gauge answers "is it failing now?", the counter
+    /// answers "how much has this template's apply churned failures
+    /// over time" (rate() surfaces a flapping template).
+    pub magma_failed_changes_total: IntCounterVec,
 }
 
 impl Metrics {
@@ -542,6 +594,42 @@ impl Metrics {
         )
         .expect("metric can be created");
 
+        let magma_apply_total = IntCounterVec::new(
+            Opts::new(
+                "pangea_magma_apply_total",
+                "Total magma apply runs by template and terminal phase (Succeeded|Failed)",
+            ),
+            &["template", "namespace", "phase"],
+        )
+        .expect("metric can be created");
+
+        let magma_resources_applied = IntGaugeVec::new(
+            Opts::new(
+                "pangea_magma_resources_applied",
+                "Resources applied in the last magma apply per template (outcome.applied.len())",
+            ),
+            &["template", "namespace"],
+        )
+        .expect("metric can be created");
+
+        let magma_resources_failed = IntGaugeVec::new(
+            Opts::new(
+                "pangea_magma_resources_failed",
+                "Resources that failed to apply in the last magma apply per template (outcome.failed.len())",
+            ),
+            &["template", "namespace"],
+        )
+        .expect("metric can be created");
+
+        let magma_failed_changes_total = IntCounterVec::new(
+            Opts::new(
+                "pangea_magma_failed_changes_total",
+                "Cumulative failed changes across all magma applies per template",
+            ),
+            &["template", "namespace"],
+        )
+        .expect("metric can be created");
+
         // Register all metrics
         registry
             .register(Box::new(reconciliations_total.clone()))
@@ -639,6 +727,18 @@ impl Metrics {
         registry
             .register(Box::new(output_bindings_published_total.clone()))
             .expect("metric can be registered");
+        registry
+            .register(Box::new(magma_apply_total.clone()))
+            .expect("metric can be registered");
+        registry
+            .register(Box::new(magma_resources_applied.clone()))
+            .expect("metric can be registered");
+        registry
+            .register(Box::new(magma_resources_failed.clone()))
+            .expect("metric can be registered");
+        registry
+            .register(Box::new(magma_failed_changes_total.clone()))
+            .expect("metric can be registered");
 
         Self {
             registry,
@@ -674,6 +774,10 @@ impl Metrics {
             compile_queue_depth,
             compile_request_seconds,
             output_bindings_published_total,
+            magma_apply_total,
+            magma_resources_applied,
+            magma_resources_failed,
+            magma_failed_changes_total,
         }
     }
 
@@ -745,6 +849,50 @@ impl Metrics {
         self.output_bindings_published_total
             .with_label_values(&[template, namespace, result])
             .inc();
+    }
+
+    /// Record the outcome of one magma apply for a template. This is
+    /// the first-class signal for the magma reconcile loop: the
+    /// `{applied, failed, phase}` shape the operator already parses out
+    /// of `magma-bundle.json`.
+    ///
+    /// Sets:
+    ///   * `pangea_magma_apply_total{template,namespace,phase}` += 1
+    ///     (phase = "Succeeded" when `failed == 0`, else "Failed")
+    ///   * `pangea_magma_resources_applied{template,namespace}` = applied
+    ///   * `pangea_magma_resources_failed{template,namespace}` = failed
+    ///   * `pangea_magma_failed_changes_total{template,namespace}` += failed
+    ///
+    /// The two gauges are "last apply" snapshots (idempotently
+    /// overwritten each apply); the two counters are monotonic. Called
+    /// from `record_reconcile_cycle` whenever a magma bundle yields an
+    /// apply outcome. tofu cycles never call this (their outcome flows
+    /// through `pangea_tofu_operations_total`).
+    pub fn record_magma_apply(
+        &self,
+        template: &str,
+        namespace: &str,
+        applied: u64,
+        failed: u64,
+    ) {
+        let phase = if failed == 0 { "Succeeded" } else { "Failed" };
+        self.magma_apply_total
+            .with_label_values(&[template, namespace, phase])
+            .inc();
+        // i64 is the gauge's native width; apply counts (low thousands
+        // — the live cutover was 1494) never approach i64::MAX, but
+        // saturate defensively rather than wrap.
+        self.magma_resources_applied
+            .with_label_values(&[template, namespace])
+            .set(applied.min(i64::MAX as u64) as i64);
+        self.magma_resources_failed
+            .with_label_values(&[template, namespace])
+            .set(failed.min(i64::MAX as u64) as i64);
+        if failed > 0 {
+            self.magma_failed_changes_total
+                .with_label_values(&[template, namespace])
+                .inc_by(failed);
+        }
     }
 
     /// Compile-specific timer. Distinct from `record_phase_duration("compiling")`

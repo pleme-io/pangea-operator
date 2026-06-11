@@ -60,6 +60,105 @@ pub struct BundleArtifacts {
     pub bundle_ref: Option<BundleRef>,
 }
 
+/// Apply-stage outcome derived from `magma-bundle.json`'s `outcome` +
+/// `lifecycle.current` fields. Distinct from the plan-stage
+/// `BundleArtifacts` / `CycleArtifact` (which parse `plan.changes`):
+/// this carries the magma APPLY result — the `{applied, failed, phase}`
+/// shape the operator's first-class magma metrics record.
+///
+/// `None` from `read_apply_outcome` when the bundle has no `outcome`
+/// field at all (a plan-only bundle, where magma planned but never
+/// applied). A bundle WITH an outcome whose arrays are empty is a real
+/// signal (`applied 0 / failed 0` — apply ran, touched nothing) and
+/// yields `Some`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ApplyOutcome {
+    /// `outcome.applied.len()` — resources successfully applied. The
+    /// "1494" half of the live cutover's `applied 1494 / failed 14`.
+    pub applied: u64,
+    /// `outcome.failed.len()` — resources that failed to apply. THE
+    /// signal the first-class metric surfaces (`14`).
+    pub failed: u64,
+    /// Whether the apply's lifecycle FSM terminated cleanly. `true` iff
+    /// `failed == 0` AND `lifecycle.current` is not `failed`. The metric
+    /// recorder ultimately derives the `phase` label from `failed`, but
+    /// this honors the bundle's own FSM verdict so a future
+    /// failed-but-zero-failed-changes shape (e.g. a verification failure
+    /// after a clean apply) still reports `Failed`.
+    pub succeeded: bool,
+}
+
+/// Read the magma APPLY outcome from `work_dir/magma-bundle.json`.
+///
+/// Returns `None` when:
+///   * the file is missing (no apply ran, or a tofu cycle),
+///   * the JSON is malformed,
+///   * the bundle has no `outcome` object (a plan-only bundle — magma
+///     planned but the apply stage never wrote an outcome).
+///
+/// Best-effort by design (mirrors `read_bundle_artifacts`): cycle
+/// recording must not fail when the bundle is unavailable. The caller
+/// (`record_reconcile_cycle`) simply skips the magma apply metrics
+/// when this is `None`.
+pub async fn read_apply_outcome(work_dir: &Path) -> Option<ApplyOutcome> {
+    let path = work_dir.join("magma-bundle.json");
+    let bytes = match fs::read(&path).await {
+        Ok(b) => b,
+        Err(e) => {
+            debug!(path = %path.display(), error = %e, "no magma-bundle.json (no ApplyOutcome)");
+            return None;
+        }
+    };
+    let value: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(e) => {
+            debug!(path = %path.display(), error = %e, "magma-bundle.json parse failed (no ApplyOutcome)");
+            return None;
+        }
+    };
+    apply_outcome_from(&value)
+}
+
+/// Extract an `ApplyOutcome` from a parsed bundle value. `None` when
+/// the bundle has no `outcome` object — that's a plan-only bundle, not
+/// an apply, so there's no apply outcome to record.
+///
+/// `applied` / `failed` are the lengths of `outcome.applied` /
+/// `outcome.failed` (the magma_converge::Outcome serialization). The
+/// `succeeded` flag also consults `lifecycle.current`: an apply that
+/// reached the FSM's `failed` phase reports `succeeded == false` even
+/// if (defensively) the failed array were empty.
+fn apply_outcome_from(value: &serde_json::Value) -> Option<ApplyOutcome> {
+    let outcome = value.get("outcome")?;
+    // A null `outcome` (plan-only bundle serializes `outcome: null`)
+    // is the same as absent — nothing applied.
+    if outcome.is_null() {
+        return None;
+    }
+    let applied = outcome
+        .get("applied")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len() as u64)
+        .unwrap_or(0);
+    let failed = outcome
+        .get("failed")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len() as u64)
+        .unwrap_or(0);
+    // magma-fsm serializes Phase as snake_case ("stable", "failed", …).
+    let phase_is_failed = value
+        .get("lifecycle")
+        .and_then(|v| v.get("current"))
+        .and_then(|v| v.as_str())
+        .map(|p| p.eq_ignore_ascii_case("failed"))
+        .unwrap_or(false);
+    Some(ApplyOutcome {
+        applied,
+        failed,
+        succeeded: failed == 0 && !phase_is_failed,
+    })
+}
+
 /// Read + summarize the magma-bundle.json at `work_dir/magma-bundle.json`.
 ///
 /// Returns `None` on every "not really an error" outcome — missing file
@@ -487,6 +586,123 @@ mod tests {
         assert!(art.severities.is_none(), "no resources → no rollup");
         assert!(art.artifact_ref.is_some(), "bundle_ref still derives");
         assert!(art.lifecycle_phase.is_none());
+    }
+
+    // ── read_apply_outcome (magma apply-outcome metrics) ───────────
+
+    #[test]
+    fn apply_outcome_from_production_partial_failure_shape() {
+        // The shape that motivated the first-class metrics: the live
+        // pleme-io-opensource cutover applied 1494 resources with 14
+        // failed, terminal phase Failed. (Sized down to keep the test
+        // fixture small; counts match the structure, not the magnitude.)
+        let v = json!({
+            "kind": "terraform",
+            "bundle_id": "abc",
+            "outcome": {
+                "plan_id": "deadbeef",
+                "kind": "terraform",
+                "applied": (0..1494).map(|i| json!({
+                    "address": format!("github_repository.r{i}"),
+                    "action": "create"
+                })).collect::<Vec<_>>(),
+                "failed": (0..14).map(|i| json!({
+                    "address": format!("github_repository.f{i}"),
+                    "action": "create",
+                    "error": "rate limited"
+                })).collect::<Vec<_>>(),
+            },
+            "lifecycle": {"current": "failed"},
+        });
+        let o = apply_outcome_from(&v).expect("outcome present");
+        assert_eq!(o.applied, 1494);
+        assert_eq!(o.failed, 14);
+        assert!(!o.succeeded, "14 failures + Failed phase → not succeeded");
+    }
+
+    #[test]
+    fn apply_outcome_from_clean_apply_is_succeeded() {
+        let v = json!({
+            "outcome": {
+                "applied": [
+                    {"address": "r.a", "action": "create"},
+                    {"address": "r.b", "action": "update"},
+                ],
+                "failed": [],
+            },
+            "lifecycle": {"current": "stable"},
+        });
+        let o = apply_outcome_from(&v).unwrap();
+        assert_eq!(o.applied, 2);
+        assert_eq!(o.failed, 0);
+        assert!(o.succeeded, "zero failures + Stable phase → succeeded");
+    }
+
+    #[test]
+    fn apply_outcome_failed_phase_overrides_zero_failed_changes() {
+        // Defensive: an apply that reached the FSM Failed phase reports
+        // not-succeeded even if (somehow) the failed array is empty —
+        // e.g. a post-apply verification failure. The `succeeded` flag
+        // honors the bundle's own FSM verdict.
+        let v = json!({
+            "outcome": { "applied": [{"address": "r.a", "action": "create"}], "failed": [] },
+            "lifecycle": {"current": "failed"},
+        });
+        let o = apply_outcome_from(&v).unwrap();
+        assert_eq!(o.failed, 0);
+        assert!(!o.succeeded, "Failed phase forces succeeded=false");
+    }
+
+    #[test]
+    fn apply_outcome_empty_arrays_is_some_zero_zero() {
+        // An apply that ran but touched nothing IS a signal (apply
+        // executed, 0 applied, 0 failed) — must be Some, not None.
+        let v = json!({
+            "outcome": { "applied": [], "failed": [] },
+            "lifecycle": {"current": "stable"},
+        });
+        let o = apply_outcome_from(&v).unwrap();
+        assert_eq!(o.applied, 0);
+        assert_eq!(o.failed, 0);
+        assert!(o.succeeded);
+    }
+
+    #[test]
+    fn apply_outcome_plan_only_bundle_yields_none() {
+        // A plan-stage bundle has no `outcome` (or `outcome: null`) —
+        // there's no apply to record. None means "skip the apply
+        // metrics", distinct from "apply ran and did nothing".
+        assert!(apply_outcome_from(&json!({"plan": {"changes": []}})).is_none());
+        assert!(apply_outcome_from(&json!({"outcome": serde_json::Value::Null})).is_none());
+    }
+
+    #[tokio::test]
+    async fn read_apply_outcome_handles_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(read_apply_outcome(dir.path()).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn read_apply_outcome_end_to_end() {
+        let dir = tempfile::tempdir().unwrap();
+        let bundle = json!({
+            "kind": "terraform",
+            "bundle_id": "xyz",
+            "outcome": {
+                "applied": [{"address": "r.a", "action": "create"}],
+                "failed":  [{"address": "r.b", "action": "create", "error": "boom"}],
+            },
+            "lifecycle": {"current": "failed"},
+        });
+        tokio::fs::write(
+            dir.path().join("magma-bundle.json"),
+            serde_json::to_vec(&bundle).unwrap(),
+        ).await.unwrap();
+
+        let o = read_apply_outcome(dir.path()).await.unwrap();
+        assert_eq!(o.applied, 1);
+        assert_eq!(o.failed, 1);
+        assert!(!o.succeeded);
     }
 
     #[tokio::test]
