@@ -199,6 +199,28 @@ pub fn outcome_for_action(action: &str) -> Outcome {
     }
 }
 
+/// Is THIS cycle "clean" — i.e. eligible to clear a stale `lastError`?
+///
+/// A cycle is clean when it is NOT a terminal failure and NOT a
+/// policy-refuse block:
+///   * `AppliedFailure` — the apply errored; the failure path sets
+///     `lastError`, which must NOT be cleared here.
+///   * `PolicyGated(Refuse)` — a deliberate hard stop; the refuse path
+///     sets its own `lastError`, which must NOT be cleared here.
+///   * `NoChanges` / `AppliedSuccess` / `PolicyGated(RequireApproval)` /
+///     `PolicyGated(AutoApply)` — no terminal error this cycle ⇒ clean.
+///
+/// The caller AND-combines this with `summary.failed == 0` (the
+/// per-resource second condition the directive names) before clearing.
+/// Pure + total over `CycleResult` so it's unit-testable without a
+/// live controller.
+pub fn cycle_is_clean(result: &CycleResult) -> bool {
+    !matches!(
+        result,
+        CycleResult::AppliedFailure(_) | CycleResult::PolicyGated(PolicyDecision::Refuse)
+    )
+}
+
 /// Trim a string to 256 characters with an ellipsis suffix when
 /// truncated. Used to keep status fields under the etcd value-size
 /// budget when stuffing terraform error output into a status patch.
@@ -326,6 +348,9 @@ pub async fn record_reconcile_cycle(
         }
     }
 
+    // Does THIS cycle clear a stale lastError? See `cycle_is_clean`.
+    let cycle_clean = cycle_is_clean(&result);
+
     let new_cycle = build_reconcile_cycle(
         next_cycle,
         started_at,
@@ -338,6 +363,21 @@ pub async fn record_reconcile_cycle(
         result,
     );
 
+    // A clean cycle (no terminal error this cycle AND zero per-resource
+    // failures) must CLEAR any stale lastError so the surfaced error
+    // reflects the CURRENT cycle, not a stale one from hours ago. This
+    // is load-bearing because `last_error` carries
+    // `#[serde(skip_serializing_if = "Option::is_none")]`: the
+    // happy-path `update_phase(Ready)` sets the field to `None`, but a
+    // `None` is OMITTED from the JSON Merge Patch rather than serialized
+    // as an explicit `null` — so the stale value in etcd is never
+    // actually cleared (the exact 19h-stale "tofu apply failed" on the
+    // pleme-io-opensource template, which was simultaneously reporting
+    // failed:0). We must emit an explicit `null` to clear it. A cycle
+    // that DID fail keeps its lastError (the `cycle_clean` guard).
+    let clears_stale_error =
+        cycle_clean && new_cycle.summary.failed == 0 && prior_status.last_error.is_some();
+
     // Content-equality guard: skip the patch when the new cycle's
     // observable content matches the prior cycle AND the top-level
     // executor/backend echo also matches. Steady-state Ready→Ready
@@ -347,7 +387,16 @@ pub async fn record_reconcile_cycle(
         prior_status.executor.as_deref() == executor_name.as_deref()
             && prior_status.backend.as_deref() == backend_descriptor.as_deref();
     if let Some(prev) = prior_status.last_cycle.as_ref() {
-        if cycle_content_equal(prev, &new_cycle) && runtime_identity_unchanged {
+        // A stale lastError that this clean cycle must clear overrides
+        // the content-equality skip — otherwise a steady-state
+        // Ready→Ready cycle (content-equal) would early-return and the
+        // stale error would survive forever (the rio bug). Only skip
+        // when there is genuinely nothing observable to change AND no
+        // stale error to clear.
+        if cycle_content_equal(prev, &new_cycle)
+            && runtime_identity_unchanged
+            && !clears_stale_error
+        {
             debug!(
                 template = %name,
                 cycle = prior_cycle_count,
@@ -363,19 +412,36 @@ pub async fn record_reconcile_cycle(
     new_status.executor = executor_name.clone();
     new_status.backend = backend_descriptor.clone();
 
-    let patch = serde_json::json!({
-        "status": {
-            "cycleCount": new_status.cycle_count,
-            "lastCycle":  new_status.last_cycle,
-            // Top-level executor + backend echo so observers can
-            // answer "what's running here?" with a single jsonpath
-            // (no grep on operator logs). Always sent (rather than
-            // skip-if-None) so a flip from magma to tofu propagates
-            // immediately on the next patched cycle.
-            "executor":   new_status.executor,
-            "backend":    new_status.backend,
-        }
+    let mut patch_status = serde_json::json!({
+        "cycleCount": new_status.cycle_count,
+        "lastCycle":  new_status.last_cycle,
+        // Top-level executor + backend echo so observers can
+        // answer "what's running here?" with a single jsonpath
+        // (no grep on operator logs). Always sent (rather than
+        // skip-if-None) so a flip from magma to tofu propagates
+        // immediately on the next patched cycle.
+        "executor":   new_status.executor,
+        "backend":    new_status.backend,
     });
+    if clears_stale_error {
+        // Emit an EXPLICIT null (not an omitted key) so the JSON Merge
+        // Patch actually deletes the stale lastError in etcd — a
+        // serialized `None` would be skipped by skip_serializing_if and
+        // leave the stale value in place. Reset failure_count too: the
+        // current cycle is clean, so the consecutive-failure counter
+        // the ReactivePolicy escalation reads must not carry stale
+        // history.
+        if let Some(obj) = patch_status.as_object_mut() {
+            obj.insert("lastError".to_string(), serde_json::Value::Null);
+            obj.insert("failureCount".to_string(), serde_json::json!(0));
+        }
+        info!(
+            template = %name,
+            cycle = next_cycle,
+            "Clean cycle cleared a stale lastError (current cycle reports no failures)"
+        );
+    }
+    let patch = serde_json::json!({ "status": patch_status });
     crate::controller::status_patch::patch_status(template, &state.client, patch)
     .await?;
 

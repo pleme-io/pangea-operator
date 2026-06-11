@@ -245,6 +245,51 @@ impl ControllerState {
         }
     }
 
+    /// Like [`executor_for`](Self::executor_for) but enforces the
+    /// `PANGEA_FORBID_TOFU` config gate: when the env var is truthy AND
+    /// resolution selects tofu (whether by `spec.executor=tofu` or as
+    /// the fallback), this returns a typed [`Error::TofuForbidden`]
+    /// naming the template instead of silently building a tofu
+    /// executor.
+    ///
+    /// Per the org ★★ MAGMA-NATIVE directive, tofu may only run by
+    /// explicit config, never a silent fallback. The reconcile path
+    /// (plan / apply) resolves through this checked variant so a
+    /// forbidden tofu selection surfaces as a loud cycle error
+    /// (`status.lastError`) and the apply never runs tofu. The
+    /// infallible `executor_for` stays for non-mutating call sites
+    /// (cycle-receipt labeling) where the choice is only being read,
+    /// not used to mutate infrastructure.
+    ///
+    /// This makes the "silently ran tofu for spec.executor=magma"
+    /// class (flake.nix:358 comment, caught by the rio-health-check
+    /// canary 2026-05-27) unrepresentable on the apply path.
+    pub fn executor_for_checked(
+        &self,
+        template: &crate::crd::InfrastructureTemplate,
+    ) -> Result<Arc<dyn IacExecutor>> {
+        use kube::ResourceExt;
+
+        let chosen = ExecutorBackend::resolve(
+            template.spec.executor.as_deref(),
+            Some(self.default_backend.label()),
+        );
+
+        if chosen == ExecutorBackend::Tofu
+            && crate::executor::backend_select::forbid_tofu_from_env()
+        {
+            return Err(crate::error::Error::TofuForbidden {
+                template: template.name_any(),
+                reason: "PANGEA_FORBID_TOFU is set".to_string(),
+            });
+        }
+
+        Ok(match chosen {
+            ExecutorBackend::Magma => self.magma_executor_for(template),
+            ExecutorBackend::Tofu => Arc::clone(&self.executor),
+        })
+    }
+
     /// Build a magma-backed `IacExecutor` for this CR, or fall back
     /// to the shared tofu executor when magma is unavailable.
     ///
@@ -365,8 +410,23 @@ impl ControllerState {
         // these bytes directly. Verified vs the live pangea_state DB
         // 2026-05-27. (magma-backend has no native pg impl; the
         // operator-provided AsyncStateStore is the canonical hookup.)
-        self.state_backend =
-            Some(Arc::new(crate::backend::TofuPgStateBackend::new(Arc::clone(&shared))));
+        // Wrap the live tofu-format state backend in the bounded
+        // connect-retry decorator. During an unsupervised CNPG
+        // switchover the `pangea-database-rw` service has no ready
+        // primary for a few seconds (5432 refuses); sqlx does not
+        // retry the initial dial, so a bare state read/write would
+        // surface a hard cycle error. The decorator retries ONLY
+        // connection-level errors (refused / closed / pool timeout)
+        // with bounded exponential backoff (200ms→~3s, ~10s cap) —
+        // a transient refuse recovers inside the window instead of
+        // becoming a cycle error. Every StateBackend op is idempotent
+        // (reads, upserts, idempotent deletes) so a retry never
+        // double-applies. See backend/retry.rs.
+        let live_backend: Arc<dyn crate::backend::StateBackend> =
+            Arc::new(crate::backend::TofuPgStateBackend::new(Arc::clone(&shared)));
+        self.state_backend = Some(Arc::new(crate::backend::RetryingStateBackend::new(
+            live_backend,
+        )));
         // `db_pool` wraps the pool itself; reuse the same Arc'd pool.
         self.db_pool = Some(Arc::new(RwLock::new((*shared).clone())));
         self

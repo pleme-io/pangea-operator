@@ -69,6 +69,18 @@ pub enum Error {
     #[error("State backend error: {0}")]
     StateBackend(String),
 
+    /// Tofu was selected as the executor but `PANGEA_FORBID_TOFU` is
+    /// set. Per the org ★★ MAGMA-NATIVE directive tofu must only run
+    /// by explicit config, never a silent fallback — so a forbidden
+    /// tofu selection fails loud with the offending template named
+    /// rather than quietly shelling out to tofu.
+    #[error(
+        "executor=tofu selected for template '{template}' but PANGEA_FORBID_TOFU is set \
+         ({reason}); refusing to run tofu — set spec.executor=magma (or unset \
+         PANGEA_FORBID_TOFU to allow tofu)"
+    )]
+    TofuForbidden { template: String, reason: String },
+
     /// Configuration error.
     #[error("Configuration error: {0}")]
     Config(String),
@@ -285,6 +297,13 @@ mod tests {
         assert!(!Error::HealthCheckFailed("fail".into()).is_retryable());
         assert!(!Error::AssertionFailed("fail".into()).is_retryable());
         assert!(!Error::ImagePipeline("fail".into()).is_retryable());
+        // A forbidden-tofu gate is declarative: retrying won't change
+        // the config decision. It must surface, not loop.
+        assert!(!Error::TofuForbidden {
+            template: "t".into(),
+            reason: "PANGEA_FORBID_TOFU=true".into(),
+        }
+        .is_retryable());
     }
 
     #[test]

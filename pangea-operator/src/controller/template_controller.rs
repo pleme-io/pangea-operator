@@ -1018,7 +1018,11 @@ async fn handle_initializing(
 ) -> Result<ReconcileAction> {
     info!("Template in Initializing phase");
     let _phase_timer = state.metrics.record_phase_duration("initializing");
-    let executor = state.executor_for(template);
+    // Mutating phase entry point: resolve through the forbid-aware
+    // checked variant so a `PANGEA_FORBID_TOFU` violation fails loud
+    // (typed Error::TofuForbidden → status.lastError) instead of
+    // silently running tofu. Per ★★ MAGMA-NATIVE.
+    let executor = state.executor_for_checked(template)?;
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
 
@@ -1116,6 +1120,15 @@ async fn handle_planning(
 ) -> Result<ReconcileAction> {
     info!("Template in Planning phase");
     let _phase_timer = state.metrics.record_phase_duration("planning");
+
+    // Plan also runs the executor (tofu plan spawns tofu): enforce the
+    // forbid-aware gate before building the runner so a
+    // `PANGEA_FORBID_TOFU` violation fails loud (typed
+    // Error::TofuForbidden → status.lastError) instead of silently
+    // running tofu. Per ★★ MAGMA-NATIVE. The check is cheap (no I/O)
+    // and idempotent; we discard the executor here and let the runner
+    // rebuild it (same resolution → same gate verdict).
+    let _gate = state.executor_for_checked(template)?;
 
     // Slice 2c: phase handlers speak the typed `WorkspaceRunner`
     // surface — one call returns both the unified `CycleArtifact`
@@ -1445,7 +1458,11 @@ async fn handle_applying(
     // resulting `CycleArtifact` into the cycle receipt. That's what makes
     // tofu cycles WITH CHANGES populate `actionDistribution` after apply —
     // the post-apply re-plan reports the converged state.
-    let executor = state.executor_for(template);
+    // Mutating phase entry point: resolve through the forbid-aware
+    // checked variant so a `PANGEA_FORBID_TOFU` violation fails loud
+    // (typed Error::TofuForbidden → status.lastError) instead of
+    // silently running tofu apply. Per ★★ MAGMA-NATIVE.
+    let executor = state.executor_for_checked(template)?;
     let runner = state.executor_runner_for(template);
 
     let workspace = state.workspace_manager.get_workspace(template).await?;

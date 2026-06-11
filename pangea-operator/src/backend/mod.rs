@@ -4,6 +4,7 @@
 //! using the `pg` backend type with schema isolation per namespace.
 
 mod postgres;
+mod retry;
 mod schema;
 mod state;
 mod tofu_pg_state_backend;
@@ -12,6 +13,7 @@ mod lock;
 mod config;
 
 pub use postgres::PostgresBackend;
+pub use retry::{is_connection_level, RetryPolicy, RetryingStateBackend};
 pub use schema::SchemaManager;
 pub use state::StateStore;
 pub use tofu_pg_state_backend::TofuPgStateBackend;

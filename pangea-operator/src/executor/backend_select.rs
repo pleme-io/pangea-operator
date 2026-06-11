@@ -62,6 +62,29 @@ impl ExecutorBackend {
     }
 }
 
+/// Is `PANGEA_FORBID_TOFU` truthy? Reads the env var and parses it as
+/// a boolean flag (`1` / `true` / `yes` / `on`, case-insensitive).
+///
+/// Per the org ★★ MAGMA-NATIVE directive this is the explicit config
+/// gate that bans tofu from running as a silent fallback: when set,
+/// any resolution that would select tofu must fail loud rather than
+/// shell out to tofu. Unset / empty / any other value ⇒ tofu remains
+/// a permitted (config-selectable) executor.
+pub fn forbid_tofu_from_env() -> bool {
+    parse_truthy(std::env::var("PANGEA_FORBID_TOFU").ok().as_deref())
+}
+
+/// Parse a boolean-flavored env value. `1` / `true` / `yes` / `on`
+/// (case-insensitive, trimmed) are truthy; everything else (including
+/// `None`) is falsy. Extracted so the gate is unit-testable without
+/// touching process env.
+pub fn parse_truthy(v: Option<&str>) -> bool {
+    matches!(
+        v.map(|s| s.trim().to_lowercase()).as_deref(),
+        Some("1" | "true" | "yes" | "on")
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,6 +189,23 @@ mod tests {
         for v in variants {
             assert_eq!(ExecutorBackend::parse(v.label()), Some(v),
                        "label/parse asymmetric for {v:?}");
+        }
+    }
+
+    // ── PANGEA_FORBID_TOFU gate ─────────────────────────────────
+
+    #[test]
+    fn parse_truthy_recognizes_canonical_true_values() {
+        for v in ["1", "true", "TRUE", "Yes", "on", "  true  "] {
+            assert!(parse_truthy(Some(v)), "{v:?} should be truthy");
+        }
+    }
+
+    #[test]
+    fn parse_truthy_treats_unset_and_falsy_as_false() {
+        assert!(!parse_truthy(None), "unset is falsy");
+        for v in ["", "0", "false", "no", "off", "magma", "garbage"] {
+            assert!(!parse_truthy(Some(v)), "{v:?} should be falsy");
         }
     }
 }
