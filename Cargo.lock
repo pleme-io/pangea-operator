@@ -87,7 +87,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -98,7 +98,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -522,7 +522,7 @@ dependencies = [
  "bitflags",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools",
  "proc-macro2",
  "quote",
  "regex",
@@ -722,7 +722,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
 dependencies = [
  "lazy_static",
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -1105,7 +1105,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1206,7 +1206,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1444,8 +1444,8 @@ dependencies = [
 
 [[package]]
 name = "gen-macros"
-version = "0.1.3"
-source = "git+https://github.com/pleme-io/gen#810b1292dbc4b83cef2526c9aa969bef8246dd43"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/gen#712c3466375ddb1d6876193f2afb0798d30efb70"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1454,8 +1454,8 @@ dependencies = [
 
 [[package]]
 name = "gen-platform"
-version = "0.1.3"
-source = "git+https://github.com/pleme-io/gen#810b1292dbc4b83cef2526c9aa969bef8246dd43"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/gen#712c3466375ddb1d6876193f2afb0798d30efb70"
 dependencies = [
  "gen-macros",
  "gen-types",
@@ -1467,8 +1467,8 @@ dependencies = [
 
 [[package]]
 name = "gen-types"
-version = "0.1.3"
-source = "git+https://github.com/pleme-io/gen#810b1292dbc4b83cef2526c9aa969bef8246dd43"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/gen#712c3466375ddb1d6876193f2afb0798d30efb70"
 dependencies = [
  "blake3",
  "chrono",
@@ -1834,7 +1834,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "tokio",
  "tower-service",
  "tracing",
@@ -2049,15 +2049,6 @@ name = "itertools"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
 dependencies = [
  "either",
 ]
@@ -2401,8 +2392,8 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "magma-apply"
-version = "0.1.1"
-source = "git+https://github.com/pleme-io/magma#f92bacb894f21addb8a01d754acc630e420f40fc"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/magma#80982743c00347ec0adf49659f27d304732ebe59"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2410,11 +2401,14 @@ dependencies = [
  "hex",
  "magma-attest",
  "magma-config",
+ "magma-cty",
  "magma-graph",
  "magma-plan",
  "magma-plugin",
+ "magma-providers",
  "magma-state",
  "magma-types",
+ "samba",
  "serde",
  "serde_json",
  "shigoto",
@@ -2426,8 +2420,8 @@ dependencies = [
 
 [[package]]
 name = "magma-attest"
-version = "0.1.1"
-source = "git+https://github.com/pleme-io/magma#f92bacb894f21addb8a01d754acc630e420f40fc"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/magma#80982743c00347ec0adf49659f27d304732ebe59"
 dependencies = [
  "blake3",
  "chrono",
@@ -2440,8 +2434,8 @@ dependencies = [
 
 [[package]]
 name = "magma-backend"
-version = "0.1.1"
-source = "git+https://github.com/pleme-io/magma#f92bacb894f21addb8a01d754acc630e420f40fc"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/magma#80982743c00347ec0adf49659f27d304732ebe59"
 dependencies = [
  "async-trait",
  "magma-types",
@@ -2455,8 +2449,8 @@ dependencies = [
 
 [[package]]
 name = "magma-bundle"
-version = "0.1.1"
-source = "git+https://github.com/pleme-io/magma#f92bacb894f21addb8a01d754acc630e420f40fc"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/magma#80982743c00347ec0adf49659f27d304732ebe59"
 dependencies = [
  "blake3",
  "chrono",
@@ -2472,8 +2466,8 @@ dependencies = [
 
 [[package]]
 name = "magma-config"
-version = "0.1.1"
-source = "git+https://github.com/pleme-io/magma#f92bacb894f21addb8a01d754acc630e420f40fc"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/magma#80982743c00347ec0adf49659f27d304732ebe59"
 dependencies = [
  "magma-types",
  "serde",
@@ -2484,8 +2478,8 @@ dependencies = [
 
 [[package]]
 name = "magma-converge"
-version = "0.1.1"
-source = "git+https://github.com/pleme-io/magma#f92bacb894f21addb8a01d754acc630e420f40fc"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/magma#80982743c00347ec0adf49659f27d304732ebe59"
 dependencies = [
  "async-trait",
  "blake3",
@@ -2500,15 +2494,27 @@ dependencies = [
  "magma-types",
  "serde",
  "serde_json",
+ "shigoto-types 0.1.6",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
 ]
 
 [[package]]
+name = "magma-cty"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/magma#80982743c00347ec0adf49659f27d304732ebe59"
+dependencies = [
+ "rmpv",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "magma-drift"
-version = "0.1.1"
-source = "git+https://github.com/pleme-io/magma#f92bacb894f21addb8a01d754acc630e420f40fc"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/magma#80982743c00347ec0adf49659f27d304732ebe59"
 dependencies = [
  "blake3",
  "chrono",
@@ -2522,8 +2528,8 @@ dependencies = [
 
 [[package]]
 name = "magma-flow"
-version = "0.1.1"
-source = "git+https://github.com/pleme-io/magma#f92bacb894f21addb8a01d754acc630e420f40fc"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/magma#80982743c00347ec0adf49659f27d304732ebe59"
 dependencies = [
  "hex",
  "magma-backend",
@@ -2540,8 +2546,8 @@ dependencies = [
 
 [[package]]
 name = "magma-fsm"
-version = "0.1.1"
-source = "git+https://github.com/pleme-io/magma#f92bacb894f21addb8a01d754acc630e420f40fc"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/magma#80982743c00347ec0adf49659f27d304732ebe59"
 dependencies = [
  "chrono",
  "magma-converge",
@@ -2552,8 +2558,8 @@ dependencies = [
 
 [[package]]
 name = "magma-graph"
-version = "0.1.1"
-source = "git+https://github.com/pleme-io/magma#f92bacb894f21addb8a01d754acc630e420f40fc"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/magma#80982743c00347ec0adf49659f27d304732ebe59"
 dependencies = [
  "magma-types",
  "petgraph 0.6.5",
@@ -2563,8 +2569,8 @@ dependencies = [
 
 [[package]]
 name = "magma-operator-backend"
-version = "0.1.1"
-source = "git+https://github.com/pleme-io/magma#f92bacb894f21addb8a01d754acc630e420f40fc"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/magma#80982743c00347ec0adf49659f27d304732ebe59"
 dependencies = [
  "async-trait",
  "magma-backend",
@@ -2578,8 +2584,8 @@ dependencies = [
 
 [[package]]
 name = "magma-pangea"
-version = "0.1.1"
-source = "git+https://github.com/pleme-io/magma#f92bacb894f21addb8a01d754acc630e420f40fc"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/magma#80982743c00347ec0adf49659f27d304732ebe59"
 dependencies = [
  "async-trait",
  "magma-config",
@@ -2596,8 +2602,8 @@ dependencies = [
 
 [[package]]
 name = "magma-plan"
-version = "0.1.1"
-source = "git+https://github.com/pleme-io/magma#f92bacb894f21addb8a01d754acc630e420f40fc"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/magma#80982743c00347ec0adf49659f27d304732ebe59"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2616,19 +2622,24 @@ dependencies = [
 
 [[package]]
 name = "magma-plugin"
-version = "0.1.1"
-source = "git+https://github.com/pleme-io/magma#f92bacb894f21addb8a01d754acc630e420f40fc"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/magma#80982743c00347ec0adf49659f27d304732ebe59"
 dependencies = [
  "async-trait",
  "base64",
+ "bytes",
  "futures",
  "http",
+ "http-body-util",
+ "hyper",
  "hyper-util",
+ "magma-cty",
  "magma-protocol",
  "magma-types",
  "rcgen",
  "rustls",
  "rustls-pemfile",
+ "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "tokio-rustls",
@@ -2640,8 +2651,8 @@ dependencies = [
 
 [[package]]
 name = "magma-protocol"
-version = "0.1.1"
-source = "git+https://github.com/pleme-io/magma#f92bacb894f21addb8a01d754acc630e420f40fc"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/magma#80982743c00347ec0adf49659f27d304732ebe59"
 dependencies = [
  "prost",
  "prost-build",
@@ -2654,9 +2665,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "magma-providers"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/magma#80982743c00347ec0adf49659f27d304732ebe59"
+dependencies = [
+ "magma-plugin",
+ "magma-types",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "magma-rubygems"
-version = "0.1.1"
-source = "git+https://github.com/pleme-io/magma#f92bacb894f21addb8a01d754acc630e420f40fc"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/magma#80982743c00347ec0adf49659f27d304732ebe59"
 dependencies = [
  "blake3",
  "hex",
@@ -2668,8 +2693,8 @@ dependencies = [
 
 [[package]]
 name = "magma-state"
-version = "0.1.1"
-source = "git+https://github.com/pleme-io/magma#f92bacb894f21addb8a01d754acc630e420f40fc"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/magma#80982743c00347ec0adf49659f27d304732ebe59"
 dependencies = [
  "chrono",
  "magma-backend",
@@ -2684,8 +2709,8 @@ dependencies = [
 
 [[package]]
 name = "magma-stream"
-version = "0.1.1"
-source = "git+https://github.com/pleme-io/magma#f92bacb894f21addb8a01d754acc630e420f40fc"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/magma#80982743c00347ec0adf49659f27d304732ebe59"
 dependencies = [
  "async-trait",
  "blake3",
@@ -2702,8 +2727,8 @@ dependencies = [
 
 [[package]]
 name = "magma-test-laws"
-version = "0.1.1"
-source = "git+https://github.com/pleme-io/magma#f92bacb894f21addb8a01d754acc630e420f40fc"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/magma#80982743c00347ec0adf49659f27d304732ebe59"
 dependencies = [
  "magma-apply",
  "magma-config",
@@ -2719,8 +2744,8 @@ dependencies = [
 
 [[package]]
 name = "magma-types"
-version = "0.1.1"
-source = "git+https://github.com/pleme-io/magma#f92bacb894f21addb8a01d754acc630e420f40fc"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/magma#80982743c00347ec0adf49659f27d304732ebe59"
 dependencies = [
  "chrono",
  "gen-platform",
@@ -2860,7 +2885,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3156,7 +3181,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
- "shigoto-types 0.1.0 (git+https://github.com/pleme-io/shigoto?rev=417bf9d538a1741c5576b29a4d71673e92cf5d22)",
+ "shigoto-types 0.1.0",
  "sqlx",
  "strum 0.26.3",
  "tempfile",
@@ -3571,8 +3596,8 @@ version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be769465445e8c1474e9c5dac2018218498557af32d9ed057325ec9a41ae81bf"
 dependencies = [
- "heck 0.5.0",
- "itertools 0.14.0",
+ "heck 0.4.1",
+ "itertools",
  "log",
  "multimap",
  "once_cell",
@@ -3592,7 +3617,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -3690,7 +3715,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -3727,7 +3752,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -4034,6 +4059,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "rmp"
+version = "0.8.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ba8be72d372b2c9b35542551678538b562e7cf86c3315773cae48dfbfe7790c"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "rmpv"
+version = "1.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a4e1d4b9b938a26d2996af33229f0ca0956c652c1375067f0b45291c1df8417"
+dependencies = [
+ "rmp",
+]
+
+[[package]]
 name = "rsa"
 version = "0.9.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4121,7 +4164,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4207,6 +4250,18 @@ name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
+
+[[package]]
+name = "samba"
+version = "0.1.2"
+source = "git+https://github.com/pleme-io/samba?rev=29650485132f635429291b08c5b2cdc5f9293500#29650485132f635429291b08c5b2cdc5f9293500"
+dependencies = [
+ "rand 0.9.4",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "schannel"
@@ -4453,8 +4508,8 @@ checksum = "dc6fe69c597f9c37bfeeeeeb33da3530379845f10be461a66d16d03eca2ded77"
 
 [[package]]
 name = "shigoto"
-version = "0.1.0"
-source = "git+https://github.com/pleme-io/shigoto#417bf9d538a1741c5576b29a4d71673e92cf5d22"
+version = "0.1.6"
+source = "git+https://github.com/pleme-io/shigoto?rev=c8792add60be360ff29788f87f3bd46a2b666af6#c8792add60be360ff29788f87f3bd46a2b666af6"
 dependencies = [
  "shigoto-budget",
  "shigoto-dag",
@@ -4462,64 +4517,64 @@ dependencies = [
  "shigoto-gate",
  "shigoto-retry",
  "shigoto-scheduler",
- "shigoto-types 0.1.0 (git+https://github.com/pleme-io/shigoto)",
+ "shigoto-types 0.1.6",
 ]
 
 [[package]]
 name = "shigoto-budget"
-version = "0.1.0"
-source = "git+https://github.com/pleme-io/shigoto#417bf9d538a1741c5576b29a4d71673e92cf5d22"
+version = "0.1.6"
+source = "git+https://github.com/pleme-io/shigoto?rev=c8792add60be360ff29788f87f3bd46a2b666af6#c8792add60be360ff29788f87f3bd46a2b666af6"
 dependencies = [
  "serde",
- "shigoto-types 0.1.0 (git+https://github.com/pleme-io/shigoto)",
+ "shigoto-types 0.1.6",
  "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "shigoto-dag"
-version = "0.1.0"
-source = "git+https://github.com/pleme-io/shigoto#417bf9d538a1741c5576b29a4d71673e92cf5d22"
+version = "0.1.6"
+source = "git+https://github.com/pleme-io/shigoto?rev=c8792add60be360ff29788f87f3bd46a2b666af6#c8792add60be360ff29788f87f3bd46a2b666af6"
 dependencies = [
  "petgraph 0.6.5",
  "serde",
- "shigoto-types 0.1.0 (git+https://github.com/pleme-io/shigoto)",
+ "shigoto-types 0.1.6",
  "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "shigoto-emit"
-version = "0.1.0"
-source = "git+https://github.com/pleme-io/shigoto#417bf9d538a1741c5576b29a4d71673e92cf5d22"
+version = "0.1.6"
+source = "git+https://github.com/pleme-io/shigoto?rev=c8792add60be360ff29788f87f3bd46a2b666af6#c8792add60be360ff29788f87f3bd46a2b666af6"
 dependencies = [
  "async-trait",
  "serde",
  "serde_json",
- "shigoto-types 0.1.0 (git+https://github.com/pleme-io/shigoto)",
+ "shigoto-types 0.1.6",
  "tracing",
 ]
 
 [[package]]
 name = "shigoto-gate"
-version = "0.1.0"
-source = "git+https://github.com/pleme-io/shigoto#417bf9d538a1741c5576b29a4d71673e92cf5d22"
+version = "0.1.6"
+source = "git+https://github.com/pleme-io/shigoto?rev=c8792add60be360ff29788f87f3bd46a2b666af6#c8792add60be360ff29788f87f3bd46a2b666af6"
 dependencies = [
  "shigoto-dag",
- "shigoto-types 0.1.0 (git+https://github.com/pleme-io/shigoto)",
+ "shigoto-types 0.1.6",
 ]
 
 [[package]]
 name = "shigoto-retry"
-version = "0.1.0"
-source = "git+https://github.com/pleme-io/shigoto#417bf9d538a1741c5576b29a4d71673e92cf5d22"
+version = "0.1.6"
+source = "git+https://github.com/pleme-io/shigoto?rev=c8792add60be360ff29788f87f3bd46a2b666af6#c8792add60be360ff29788f87f3bd46a2b666af6"
 dependencies = [
  "serde",
- "shigoto-types 0.1.0 (git+https://github.com/pleme-io/shigoto)",
+ "shigoto-types 0.1.6",
 ]
 
 [[package]]
 name = "shigoto-scheduler"
-version = "0.1.0"
-source = "git+https://github.com/pleme-io/shigoto#417bf9d538a1741c5576b29a4d71673e92cf5d22"
+version = "0.1.6"
+source = "git+https://github.com/pleme-io/shigoto?rev=c8792add60be360ff29788f87f3bd46a2b666af6#c8792add60be360ff29788f87f3bd46a2b666af6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4529,7 +4584,7 @@ dependencies = [
  "shigoto-emit",
  "shigoto-gate",
  "shigoto-retry",
- "shigoto-types 0.1.0 (git+https://github.com/pleme-io/shigoto)",
+ "shigoto-types 0.1.6",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -4552,13 +4607,15 @@ dependencies = [
 
 [[package]]
 name = "shigoto-types"
-version = "0.1.0"
-source = "git+https://github.com/pleme-io/shigoto#417bf9d538a1741c5576b29a4d71673e92cf5d22"
+version = "0.1.6"
+source = "git+https://github.com/pleme-io/shigoto?rev=c8792add60be360ff29788f87f3bd46a2b666af6#c8792add60be360ff29788f87f3bd46a2b666af6"
 dependencies = [
  "async-trait",
+ "blake3",
  "chrono",
  "gen-platform",
  "gen-types",
+ "hex",
  "schemars",
  "serde",
  "serde_json",
@@ -4623,7 +4680,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52d1cfed4120b4d927bf7c0f86d2087a4a7d6027c906d9f9d525a80573b9be51"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5008,7 +5065,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5018,7 +5075,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix 1.1.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

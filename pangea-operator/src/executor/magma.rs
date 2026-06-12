@@ -31,7 +31,7 @@
 //! magma::config::Config
 //!   ↓ magma_plan::plan(&cfg, &state)
 //! magma::types::Plan
-//!   ↓ checkpoint to disk (restart safety) + magma_apply::run_plan
+//!   ↓ checkpoint to disk (restart safety) + magma_apply::engine::run_plan_with_providers
 //! magma::types::ApplyOutcome
 //!   ↓ write_state via OperatorBackend → StateBackendAsync
 //! PG row (operator's existing storage)
@@ -198,7 +198,8 @@ impl<S: StateBackend + ?Sized> Clone for MagmaExecutorConfig<S> {
 }
 
 /// Magma-backed `IacExecutor`. Drives `magma_plan::plan` +
-/// `magma_apply::run_plan` in-process. No subprocess.
+/// `magma_apply::engine::run_plan_with_providers` (real provider-RPC
+/// apply) in-process. No subprocess.
 pub struct MagmaExecutor<S: StateBackend + ?Sized> {
     cfg: MagmaExecutorConfig<S>,
 }
@@ -555,8 +556,38 @@ where
         let mut state = magma_backend::Backend::read_state(&backend)
             .await
             .map_err(|e| Error::MagmaExecution(format!("read state: {e}")))?;
-        let outcome = magma_apply::run_plan(&plan, &mut state)
-            .map_err(|e| Error::MagmaExecution(format!("magma_apply: {e}")))?;
+
+        // REAL apply: drive the providers over gRPC (spawn -> configure ->
+        // plan -> apply), folding each resource's provider-returned new_state
+        // into magma state, with apply-graph `${type.name.attr}` topological
+        // reference resolution (run_plan_with_providers resolves the dependency
+        // graph + substitutes refs; the state-level run_plan was a structural
+        // no-op that could not create real cloud resources). Provider binaries
+        // resolve under the workspace's `.terraform/providers` or the Nix-baked
+        // `$MAGMA_PROVIDER_DIR`; provider credentials come from the rendered
+        // workspace's `provider "<name>" { .. }` blocks (forwarded below) and
+        // fall back to the pod env (GITHUB_TOKEN/GITHUB_OWNER/AWS_*/...) -- the
+        // standard terraform-provider contract. No subprocess to tofu.
+        // `run_plan_with_providers` is infallible: per-change failures land in
+        // `outcome.failed` and drive the lifecycle to `Failed` (handled below),
+        // so the bundle + partial successes are still recorded. ApplyContext::new
+        // installs magma's default samba mutation pacer (1 req/s) so a bulk
+        // apply can't burst past a provider's secondary rate limit.
+        // Per the MAGMA-NATIVE EXECUTION directive.
+        let mut ctx = magma_apply::engine::ApplyContext::new(work_dir.to_path_buf());
+        // Forward every rendered `provider "<name>" { .. }` block as that
+        // provider's ConfigureProvider value (owner, token, ... resolved from
+        // akeyless by the Pangea architecture). Absent / unparsable config ->
+        // no per-provider block, and the provider falls back to its own env
+        // credentials.
+        if let Ok(cfg) = Self::load_config(work_dir).await {
+            for (name, pc) in cfg.providers {
+                let fields: serde_json::Map<String, serde_json::Value> =
+                    pc.fields.into_iter().collect();
+                ctx = ctx.with_provider_config(name, serde_json::Value::Object(fields));
+            }
+        }
+        let outcome = magma_apply::engine::run_plan_with_providers(&plan, &mut state, &ctx).await;
         magma_backend::Backend::write_state(&backend, &state)
             .await
             .map_err(|e| Error::MagmaExecution(format!("write state: {e}")))?;
@@ -719,8 +750,22 @@ where
             resource_changes,
             output_changes:   vec![],
         };
-        let outcome = magma_apply::run_plan(&plan, &mut state)
-            .map_err(|e| Error::MagmaExecution(format!("magma_apply destroy: {e}")))?;
+        // REAL destroy: drive providers over gRPC so each resource's Delete is
+        // a real provider DestroyResource RPC (the state-level run_plan only
+        // mutated state structurally and never reached the cloud). Same
+        // ApplyContext shape as apply -- provider creds from the rendered
+        // workspace's provider blocks, falling back to the pod env. Infallible:
+        // per-resource delete failures collect into `outcome.failed` and flip
+        // the TofuResult to an error below.
+        let mut ctx = magma_apply::engine::ApplyContext::new(work_dir.to_path_buf());
+        if let Ok(cfg) = Self::load_config(work_dir).await {
+            for (name, pc) in cfg.providers {
+                let fields: serde_json::Map<String, serde_json::Value> =
+                    pc.fields.into_iter().collect();
+                ctx = ctx.with_provider_config(name, serde_json::Value::Object(fields));
+            }
+        }
+        let outcome = magma_apply::engine::run_plan_with_providers(&plan, &mut state, &ctx).await;
         magma_backend::Backend::write_state(&backend, &state)
             .await
             .map_err(|e| Error::MagmaExecution(format!("write state: {e}")))?;
