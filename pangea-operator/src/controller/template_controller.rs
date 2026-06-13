@@ -1186,22 +1186,22 @@ async fn handle_planning(
     info!("Template in Planning phase");
     let _phase_timer = state.metrics.record_phase_duration("planning");
 
-    // Plan also runs the executor (tofu plan spawns tofu): enforce the
-    // forbid-aware gate before building the runner so a
-    // `PANGEA_FORBID_TOFU` violation fails loud (typed
-    // Error::TofuForbidden → status.lastError) instead of silently
-    // running tofu. Per ★★ MAGMA-NATIVE. The check is cheap (no I/O)
-    // and idempotent; we discard the executor here and let the runner
-    // rebuild it (same resolution → same gate verdict).
-    let _gate = state.executor_for_checked(template)?;
-
+    // Plan also runs the executor (tofu plan spawns tofu; magma issues
+    // provider RPCs for data-source reads): build the runner through the
+    // forbid-aware, credential-aware path so (a) a `PANGEA_FORBID_TOFU`
+    // violation fails loud (typed Error::TofuForbidden → status.lastError)
+    // and (b) on the magma path the runner's executor carries the
+    // resolved `spec.providerCredentials` — a cloudflare data-source read
+    // at plan time is a real provider RPC that fails "channel closed"
+    // without the token. Per ★★ MAGMA-NATIVE.
+    //
     // Slice 2c: phase handlers speak the typed `WorkspaceRunner`
     // surface — one call returns both the unified `CycleArtifact`
     // (for status enrichment + magma drift detail) AND the raw
     // tofu-show-JSON (for the legacy `Plan::from_json` path that
     // produces per-attribute DriftDetail entries the policy engine
     // consumes). No double-call to the executor.
-    let runner = state.executor_runner_for(template);
+    let runner = state.executor_runner_for_with_creds(template).await?;
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
 
@@ -1523,12 +1523,17 @@ async fn handle_applying(
     // resulting `CycleArtifact` into the cycle receipt. That's what makes
     // tofu cycles WITH CHANGES populate `actionDistribution` after apply —
     // the post-apply re-plan reports the converged state.
-    // Mutating phase entry point: resolve through the forbid-aware
-    // checked variant so a `PANGEA_FORBID_TOFU` violation fails loud
-    // (typed Error::TofuForbidden → status.lastError) instead of
-    // silently running tofu apply. Per ★★ MAGMA-NATIVE.
-    let executor = state.executor_for_checked(template)?;
-    let runner = state.executor_runner_for(template);
+    // Mutating phase entry point: resolve through the forbid-aware,
+    // credential-aware checked variant so (a) a `PANGEA_FORBID_TOFU`
+    // violation fails loud (typed Error::TofuForbidden → status.lastError)
+    // and (b) on the magma path the apply executor carries the resolved
+    // `spec.providerCredentials` — forwarded into magma's ApplyContext
+    // via with_provider_config so the provider's create/update RPCs reach
+    // it with real credentials instead of a null config ("channel
+    // closed"). The post-apply re-plan runner is built the same way.
+    // Per ★★ MAGMA-NATIVE.
+    let executor = state.executor_for_checked_with_creds(template).await?;
+    let runner = state.executor_runner_for_with_creds(template).await?;
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
     let plan_path = workspace.plan_path();
@@ -2974,7 +2979,13 @@ async fn handle_destroying(
     // consumes the same abstraction — `IacExecutor` is held directly
     // only by the verb-level carve-outs (`run_import_prepass`,
     // `conflict.rs`), as designed.
-    let runner = state.executor_runner_for(template);
+    //
+    // Credential-aware: destroy issues real provider DestroyResource
+    // RPCs, so on the magma path the runner's executor must carry the
+    // resolved `spec.providerCredentials` (forwarded into ApplyContext)
+    // — a cloudflare delete with a null token fails "channel closed"
+    // exactly like an apply. Per ★★ MAGMA-NATIVE.
+    let runner = state.executor_runner_for_with_creds(template).await?;
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
 

@@ -32,7 +32,11 @@ pub mod flow_scheduler;
 pub mod policy_cascade;
 mod reconciler;
 pub mod settling;
-mod template;
+// `pub(crate)` so the magma executor (`crate::executor::magma`) can
+// reuse `template::provider_creds::merge_provider_config` — the single
+// place the spec-cred ↔ rendered-block merge precedence lives. The
+// sub-modules remain crate-internal (not part of the public surface).
+pub(crate) mod template;
 mod template_controller;
 mod namespace_controller;
 mod packer_build_controller;
@@ -313,6 +317,31 @@ impl ControllerState {
         &self,
         template: &crate::crd::InfrastructureTemplate,
     ) -> Arc<dyn IacExecutor> {
+        // Sync construction: no spec.providerCredentials forwarding
+        // (resolving k8s Secrets is async). Non-mutating call sites
+        // (cycle-receipt labeling, plan-gate, runner build for plan)
+        // use this. The mutating apply/destroy path resolves creds via
+        // `magma_executor_for_with_creds` and threads them in.
+        self.magma_executor_with_provider_configs(
+            template,
+            std::collections::BTreeMap::new(),
+        )
+    }
+
+    /// Build a magma-backed `IacExecutor` for this CR with
+    /// `spec.providerCredentials` already resolved into per-provider
+    /// config-objects (keyed by terraform provider local name).
+    ///
+    /// Shared by the sync `magma_executor_for` (empty map) and the
+    /// async `magma_executor_for_with_creds` (resolved map). Centralizes
+    /// the per-CR state-key derivation + config wiring so the two entry
+    /// points can't drift.
+    #[cfg(feature = "executor_magma")]
+    fn magma_executor_with_provider_configs(
+        &self,
+        template: &crate::crd::InfrastructureTemplate,
+        provider_configs: std::collections::BTreeMap<String, serde_json::Value>,
+    ) -> Arc<dyn IacExecutor> {
         use crate::executor::{MagmaExecutor, MagmaExecutorConfig};
         use kube::ResourceExt;
         use magma_operator_backend::BackendShape;
@@ -359,6 +388,13 @@ impl ControllerState {
             // config / plan / bundle in Postgres, the state+bundle
             // apply commit atomic. None → workspace-dir disk fallback.
             artifact_store:  self.artifact_store.clone(),
+            // spec.providerCredentials resolved into ConfigureProvider
+            // config-objects. Forwarded into magma's ApplyContext at
+            // apply/destroy so providers whose creds live ONLY in
+            // spec.providerCredentials (e.g. cloudflare on rio, which
+            // renders no provider block) reach the provider with real
+            // credentials instead of a null config.
+            provider_configs,
         };
 
         Arc::new(MagmaExecutor::new(cfg)) as Arc<dyn IacExecutor>
@@ -382,6 +418,106 @@ impl ControllerState {
              executor_magma (and regenerate Cargo.nix) to enable magma."
         );
         Arc::clone(&self.executor)
+    }
+
+    /// Tofu-only build: magma is not compiled in, so resolved provider
+    /// creds are irrelevant — degrade to the shared tofu executor.
+    #[cfg(not(feature = "executor_magma"))]
+    fn magma_executor_with_provider_configs(
+        &self,
+        template: &crate::crd::InfrastructureTemplate,
+        _provider_configs: std::collections::BTreeMap<String, serde_json::Value>,
+    ) -> Arc<dyn IacExecutor> {
+        self.magma_executor_for(template)
+    }
+
+    /// Async, credential-aware sibling of
+    /// [`executor_for_checked`](Self::executor_for_checked) for the
+    /// **mutating** apply/destroy path.
+    ///
+    /// When resolution selects magma, this resolves
+    /// `spec.providerCredentials` into per-provider ConfigureProvider
+    /// config-objects (reusing `provider_creds::resolve_provider_configs`
+    /// — the same Secret-read + tolerant-key logic the tofu
+    /// `providers.tf.json` path uses) and threads them into the
+    /// `MagmaExecutor` so apply/destroy forward them via
+    /// `with_provider_config`. For tofu the creds reach the provider via
+    /// the on-disk `providers.tf.json` the init phase already wrote, so
+    /// this returns the same checked tofu executor with no extra work.
+    ///
+    /// Enforces the same `PANGEA_FORBID_TOFU` gate as
+    /// `executor_for_checked` (a forbidden tofu selection is a typed
+    /// `Error::TofuForbidden`).
+    pub async fn executor_for_checked_with_creds(
+        &self,
+        template: &crate::crd::InfrastructureTemplate,
+    ) -> Result<Arc<dyn IacExecutor>> {
+        use kube::ResourceExt;
+
+        let chosen = ExecutorBackend::resolve(
+            template.spec.executor.as_deref(),
+            Some(self.default_backend.label()),
+        );
+
+        if chosen == ExecutorBackend::Tofu
+            && crate::executor::backend_select::forbid_tofu_from_env()
+        {
+            return Err(crate::error::Error::TofuForbidden {
+                template: template.name_any(),
+                reason: "PANGEA_FORBID_TOFU is set".to_string(),
+            });
+        }
+
+        Ok(match chosen {
+            ExecutorBackend::Magma => {
+                // Resolve spec.providerCredentials → per-provider config
+                // objects. On the magma path this is the ONLY place the
+                // provider gets its credentials (rio renders no provider
+                // block, so the rendered-config loop forwards nothing).
+                let provider_configs = match template
+                    .spec
+                    .provider_credentials
+                    .as_ref()
+                {
+                    Some(creds) => {
+                        crate::controller::template::provider_creds::resolve_provider_configs(
+                            creds, template, self,
+                        )
+                        .await?
+                    }
+                    None => std::collections::BTreeMap::new(),
+                };
+                self.magma_executor_with_provider_configs(template, provider_configs)
+            }
+            ExecutorBackend::Tofu => Arc::clone(&self.executor),
+        })
+    }
+
+    /// Async, credential-aware sibling of
+    /// [`executor_runner_for`](Self::executor_runner_for).
+    ///
+    /// Builds the typed `WorkspaceRunner` over a magma executor that
+    /// carries the resolved `spec.providerCredentials`, so the runner's
+    /// `plan` (data-source reads) AND `apply` (resource create/update)
+    /// both reach providers with real credentials. The plan phase needs
+    /// this too: a cloudflare data-source read at plan time issues a
+    /// real provider RPC that fails "channel closed" without the token.
+    ///
+    /// For tofu this is identical to `executor_runner_for` (creds reach
+    /// the provider via the on-disk `providers.tf.json`).
+    pub async fn executor_runner_for_with_creds(
+        &self,
+        template: &crate::crd::InfrastructureTemplate,
+    ) -> Result<Arc<dyn crate::executor::workspace_runner::WorkspaceRunner>> {
+        use crate::executor::workspace_runner::{
+            MagmaWorkspaceRunner, TofuWorkspaceRunner, WorkspaceRunner,
+        };
+        let exec = self.executor_for_checked_with_creds(template).await?;
+        Ok(match exec.name() {
+            "magma" => Arc::new(MagmaWorkspaceRunner::new(exec, self.artifact_store.clone()))
+                as Arc<dyn WorkspaceRunner>,
+            _       => Arc::new(TofuWorkspaceRunner::new(exec)) as Arc<dyn WorkspaceRunner>,
+        })
     }
 
     /// Build the typed `WorkspaceRunner` for this CR's reconcile path.

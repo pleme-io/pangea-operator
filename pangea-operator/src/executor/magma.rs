@@ -187,6 +187,28 @@ pub struct MagmaExecutorConfig<S: StateBackend + ?Sized> {
     /// Per the org ★★ MAGMA-NATIVE EXECUTION directive +
     /// `theory/MAGMA-OPERATOR-BACKEND.md` §II-bis.
     pub artifact_store: Option<Arc<crate::backend::ArtifactStore>>,
+    /// Provider config-objects resolved from
+    /// `spec.providerCredentials`, keyed by terraform provider local
+    /// name (`cloudflare` → `{"api_token": …}`, `aws` → `{"region",
+    /// "access_key", "secret_key", "token"?}`, `github` → `{"token",
+    /// "owner"?}`).
+    ///
+    /// Forwarded into magma's `ApplyContext` via `with_provider_config`
+    /// at `apply`/`destroy` time. WITHOUT this, magma's in-process
+    /// provider-RPC apply hands a provider whose creds live ONLY in
+    /// `spec.providerCredentials` (not in a rendered `provider "x" {}`
+    /// block) a null config — every real RPC then fails with
+    /// "Service was not ready: channel closed". The operator resolves
+    /// these in the async controller layer (`provider_creds.rs`) and
+    /// threads them here; the executor just forwards them.
+    ///
+    /// **Merge precedence with rendered-config provider blocks:** these
+    /// are the BASE (authoritative credentials); a rendered
+    /// `provider "x" {}` block AUGMENTS/overrides per-attribute for
+    /// non-secret tuning. Default empty (no spec-cred forwarding — the
+    /// rendered config / pod-env fallback alone applies, the pre-fix
+    /// behavior).
+    pub provider_configs: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 impl<S: StateBackend + ?Sized> Default for MagmaExecutorConfig<S>
@@ -205,6 +227,7 @@ where
             drift_policy:    magma_drift::DriftPolicy::conservative_default(),
             audit_log_path:  None,
             artifact_store:  None,
+            provider_configs: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -222,6 +245,7 @@ impl<S: StateBackend + ?Sized> Clone for MagmaExecutorConfig<S> {
             drift_policy:    self.drift_policy.clone(),
             audit_log_path:  self.audit_log_path.clone(),
             artifact_store:  self.artifact_store.clone(),
+            provider_configs: self.provider_configs.clone(),
         }
     }
 }
@@ -332,6 +356,59 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
             BackendShape::Magma => serde_json::to_vec_pretty(state)
                 .map_err(|e| Error::MagmaExecution(format!("encode magma state: {e}"))),
         }
+    }
+
+    /// Build the per-provider `ApplyContext` config map for an
+    /// apply/destroy, folding two sources:
+    ///
+    ///   1. **rendered-config provider blocks** (`cfg.providers`) — the
+    ///      `provider "<name>" { .. }` blocks the Ruby DSL emitted.
+    ///   2. **`spec.providerCredentials`** (`self.cfg.provider_configs`)
+    ///      — credentials the operator resolved from k8s Secrets in the
+    ///      controller layer.
+    ///
+    /// **Merge precedence:** `spec.providerCredentials` is the BASE
+    /// (authoritative credentials); a rendered block AUGMENTS/overrides
+    /// per-attribute for non-secret tuning, but never erases a real base
+    /// credential with a null/empty value (see
+    /// `provider_creds::merge_provider_config`). A provider present in
+    /// only one source passes through unchanged.
+    ///
+    /// This closes the credential-drop CLASS: any provider whose creds
+    /// live in `spec.providerCredentials` reaches magma regardless of
+    /// whether the renderer emits a `provider "<name>" {}` block (rio
+    /// renders none for cloudflare, which is why the live apply hit
+    /// "channel closed").
+    fn build_provider_configs(
+        &self,
+        cfg: &magma_config::Config,
+    ) -> std::collections::BTreeMap<String, serde_json::Value> {
+        use crate::controller::template::provider_creds::merge_provider_config;
+        use std::collections::BTreeMap;
+
+        // Start from the rendered-config blocks.
+        let mut rendered: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+        for (name, pc) in &cfg.providers {
+            let fields: serde_json::Map<String, serde_json::Value> =
+                pc.fields.clone().into_iter().collect();
+            rendered.insert(name.clone(), serde_json::Value::Object(fields));
+        }
+
+        let mut out: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+
+        // spec.providerCredentials base, merged with any rendered block.
+        for (name, base) in &self.cfg.provider_configs {
+            let merged = merge_provider_config(base, rendered.get(name));
+            out.insert(name.clone(), merged);
+        }
+
+        // Rendered-only providers (no spec.providerCredentials entry)
+        // pass through unchanged.
+        for (name, value) in rendered {
+            out.entry(name).or_insert(value);
+        }
+
+        out
     }
 }
 
@@ -721,16 +798,21 @@ where
         // apply can't burst past a provider's secondary rate limit.
         // Per the MAGMA-NATIVE EXECUTION directive.
         let mut ctx = magma_apply::engine::ApplyContext::new(work_dir.to_path_buf());
-        // Forward every rendered `provider "<name>" { .. }` block as that
-        // provider's ConfigureProvider value (owner, token, ... resolved from
-        // akeyless by the Pangea architecture). Absent / unparsable config ->
-        // no per-provider block, and the provider falls back to its own env
-        // credentials.
+        // Forward each provider's ConfigureProvider value. Two sources,
+        // merged per `build_provider_configs`:
+        //   * rendered `provider "<name>" { .. }` blocks (the Ruby DSL's
+        //     output — owner, token, ... resolved from akeyless by the
+        //     Pangea architecture), and
+        //   * `spec.providerCredentials` resolved from k8s Secrets in the
+        //     controller layer (`self.cfg.provider_configs`) — the BASE
+        //     credentials. This is what was MISSING: rio renders no
+        //     cloudflare provider block, so without the spec-cred base the
+        //     cloudflare provider got a null api_token and every real RPC
+        //     failed ("channel closed"). Absent in both -> no per-provider
+        //     block, and the provider falls back to its own env credentials.
         if let Ok(cfg) = self.load_config_routed(work_dir).await {
-            for (name, pc) in cfg.providers {
-                let fields: serde_json::Map<String, serde_json::Value> =
-                    pc.fields.into_iter().collect();
-                ctx = ctx.with_provider_config(name, serde_json::Value::Object(fields));
+            for (name, value) in self.build_provider_configs(&cfg) {
+                ctx = ctx.with_provider_config(name, value);
             }
         }
         let outcome = magma_apply::engine::run_plan_with_providers(&plan, &mut state, &ctx).await;
@@ -965,13 +1047,16 @@ where
         // per-resource delete failures collect into `outcome.failed` and flip
         // the TofuResult to an error below.
         let mut ctx = magma_apply::engine::ApplyContext::new(work_dir.to_path_buf());
-        // Provider creds from the rendered config — routed: Postgres on
-        // the DB-backed path, `main.tf.json` on the disk fallback.
+        // Provider creds: same two-source merge as apply
+        // (`build_provider_configs`) — `spec.providerCredentials` base
+        // (resolved from k8s Secrets) augmented by any rendered
+        // `provider "<name>" {}` block. Routed: Postgres on the
+        // DB-backed path, `main.tf.json` on the disk fallback. A destroy
+        // must reach the provider with real creds for the DestroyResource
+        // RPC, same as apply.
         if let Ok(cfg) = self.load_config_routed(work_dir).await {
-            for (name, pc) in cfg.providers {
-                let fields: serde_json::Map<String, serde_json::Value> =
-                    pc.fields.into_iter().collect();
-                ctx = ctx.with_provider_config(name, serde_json::Value::Object(fields));
+            for (name, value) in self.build_provider_configs(&cfg) {
+                ctx = ctx.with_provider_config(name, value);
             }
         }
         let outcome = magma_apply::engine::run_plan_with_providers(&plan, &mut state, &ctx).await;
@@ -1067,6 +1152,7 @@ mod tests {
             drift_policy:    magma_drift::DriftPolicy::conservative_default(),
             audit_log_path:  None,
             artifact_store:  None,
+            provider_configs: std::collections::BTreeMap::new(),
         }
     }
 
@@ -1232,6 +1318,7 @@ mod tests {
             drift_policy:    magma_drift::DriftPolicy::conservative_default(),
             audit_log_path:  None,
             artifact_store:  None,
+            provider_configs: std::collections::BTreeMap::new(),
         });
 
         let tmp = tempfile::tempdir().unwrap();
@@ -1287,6 +1374,7 @@ mod tests {
             drift_policy:    magma_drift::DriftPolicy::conservative_default(),
             audit_log_path:  None,
             artifact_store:  None,
+            provider_configs: std::collections::BTreeMap::new(),
         });
 
         let tmp_a = tempfile::tempdir().unwrap();
@@ -1388,6 +1476,7 @@ mod tests {
             drift_policy:    magma_drift::DriftPolicy::conservative_default(),
             audit_log_path:  None,
             artifact_store:  None,
+            provider_configs: std::collections::BTreeMap::new(),
         };
         let exec = MagmaExecutor::new(cfg.clone());
         let tmp = tempfile::tempdir().unwrap();
@@ -1437,6 +1526,7 @@ mod tests {
             drift_policy:    magma_drift::DriftPolicy::conservative_default(),
             audit_log_path:  None,
             artifact_store:  None,
+            provider_configs: std::collections::BTreeMap::new(),
         };
         let exec = MagmaExecutor::new(cfg);
         let tmp = tempfile::tempdir().unwrap();
