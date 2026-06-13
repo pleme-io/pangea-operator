@@ -1787,7 +1787,35 @@ async fn handle_applying(
                     })
                     .collect()
             } else {
-                vec![crate::controller::anomaly::classify(&combined_output, "", "")]
+                // FIX 2 (tofu fallback): the legacy executor surfaces failures
+                // only as a stdout/stderr blob, never structured per-resource
+                // records. Classifying the WHOLE blob once is
+                // first-substring-match-wins across many resources'
+                // diagnostics — a conflict in one resource masks a different
+                // anomaly (rate-limit / permission / transient-net) in
+                // another. Split the blob into per-address diagnostic blocks
+                // (`conflict::apply_error_blocks`) and classify EACH block
+                // separately, mirroring the magma per-`FailedChange` path so
+                // both executors produce a per-resource anomaly list. The
+                // tofu action grammar isn't recoverable from the diagnostic
+                // text, so we pass "" for the per-block action (the
+                // anomalies that carry it record an empty action — the
+                // address + class are what drive the remediation).
+                let blocks = crate::controller::conflict::apply_error_blocks(&combined_output);
+                if blocks.is_empty() {
+                    // No resource-scoped blocks parsed (a backend / init /
+                    // non-resource error). Fall back to the single blanket
+                    // classify so the failure is still typed + surfaced, never
+                    // silently dropped.
+                    vec![crate::controller::anomaly::classify(&combined_output, "", "")]
+                } else {
+                    blocks
+                        .iter()
+                        .map(|(addr, reason)| {
+                            crate::controller::anomaly::classify(reason, addr, "")
+                        })
+                        .collect()
+                }
             };
 
         // Pick the single anomaly that drives this tick's reconcile action.
@@ -1972,17 +2000,35 @@ async fn react_to_apply_anomaly(
         // network fault. magma's in-RPC `rpc_retry!` already wore down the
         // transient inside the apply; reaching here means it exhausted, so
         // back off at the operator tick and let the next reconcile re-plan
-        // + re-apply. SHORT_REQUEUE is the bounded, monotonically-decaying
-        // step (the failure_count + ReactivePolicy escalation bound the
-        // retry envelope so it can't livelock). We DON'T flip to
-        // Phase::Failed — a Decaying anomaly is expected to clear, so we
-        // record the cycle + keep the phase, requeue short, and surface a
-        // Normal (not Warning) event so an expected transient doesn't page.
+        // + re-apply.
+        //
+        // FIX 3 (Decaying livelock): the requeue interval MUST strictly
+        // decrease retry pressure per consecutive failure — a CONSTANT
+        // 30s requeue is constant-weight retry, which the model
+        // (ANOMALY-REACTIVE-RECONCILE.md §IV/§VI) names a forbidden
+        // *livelock* for a "Decaying" remediation. We compute a per-
+        // failure_count exponential backoff (the same `exponential_backoff`
+        // helper the Failed-phase retry path uses), so consecutive
+        // RateLimited/TransientNetwork ticks requeue at a GROWING interval
+        // up to a cap — retry pressure strictly decreases, satisfying the
+        // Decaying contract. The samba pacer already bounds the in-apply
+        // mutation rate; this bounds the BETWEEN-tick cadence. The
+        // ReactivePolicy escalation ladder still counts persistent
+        // decay-that-won't-settle as the upper livelock guard.
         ApplyAnomaly::RateLimited | ApplyAnomaly::TransientNetwork => {
+            // `update_phase_with_error` (called next) bumps failure_count by
+            // one; reflect that increment so the backoff grows from THIS
+            // consecutive failure. base 30s, cap 600s (10m), matching the
+            // Failed-phase retry envelope.
+            let consecutive = template.retry_count().saturating_add(1);
+            let backoff = exponential_backoff(consecutive, 30, 600);
             warn!(
                 anomaly = anomaly.kind_str(),
                 mode = mode.as_str(),
-                "Apply hit a Decaying anomaly — backing off + requeueing short (samba/rpc_retry already attempted in-RPC)"
+                consecutive,
+                backoff_secs = backoff.as_secs(),
+                "Apply hit a Decaying anomaly — backing off with GROWING per-failure exponential \
+                 backoff (strictly-decreasing retry pressure; samba/rpc_retry already attempted in-RPC)"
             );
             // Still bump the failure surface so ReactivePolicy's escalation
             // ladder counts persistent decay-that-won't-settle (the livelock
@@ -2005,14 +2051,16 @@ async fn react_to_apply_anomaly(
                 EventType::Normal,
                 anomaly.event_reason(),
                 &format!(
-                    "[{} / {}] backing off + retrying ({})",
+                    "[{} / {}] backing off {}s (attempt {}) + retrying ({})",
                     anomaly.kind_str(),
                     mode.as_str(),
+                    backoff.as_secs(),
+                    consecutive,
                     truncate_for_status(err_msg)
                 ),
             )
             .await;
-            Ok(Some(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL)))
+            Ok(Some(ReconcileAction::Requeue(backoff)))
         }
 
         // ── ObjectExistsUntracked → Import / adopt ────────────────────
@@ -2059,25 +2107,28 @@ async fn react_to_apply_anomaly(
             Ok(None)
         }
 
-        // ── ProviderUnavailable → StageProvider ───────────────────────
-        // The provider plugin couldn't be located. Part 1 of this change
-        // bakes the providers into the image at a durable MAGMA_PROVIDER_DIR
-        // (roll-surviving), making this Absolute by construction — the next
-        // apply resolves the binary from the image closure. If it STILL
-        // fires after the staged image rolls out, the baked mirror is
-        // missing this provider (a new provider appeared in a rendered
-        // `provider "<name>" {}` block without being added to the flake's
-        // magmaProviderMirror) — that's a real, actionable surface, not a
-        // silent retry. SurfaceAndHold (fall through to Healthy=False) so
-        // the gap is visible; a short requeue retries in case the staged
-        // image is still rolling.
+        // ── ProviderUnavailable → SurfaceAndHold (runtime) ────────────
+        // The provider plugin couldn't be located. Tier-honest split (FIX 4):
+        //   • BUILD time — baking the providers into the image at a durable
+        //     MAGMA_PROVIDER_DIR (roll-surviving) makes this anomaly
+        //     structurally ABSENT for every baked provider: Absolute-by-
+        //     construction at build time (no runtime path can reach here).
+        //   • RUNTIME — for a provider that is NOT yet baked, the operator
+        //     CANNOT stage it at runtime (that needs an image rebuild adding
+        //     it to flake.nix magmaProviderMirror). So the realized runtime
+        //     remediation is a Hold, NOT Absolute: surface the exact
+        //     actionable gap ("add `<provider>` to magmaProviderMirror +
+        //     rebuild") and fall through (None) to Healthy=False. A short
+        //     requeue still retries in case a staged image is mid-roll, but
+        //     the reaction does not claim self-convergence at runtime.
         ApplyAnomaly::ProviderUnavailable { provider } => {
             warn!(
                 provider = %provider,
                 mode = mode.as_str(),
-                "ProviderUnavailable — provider plugin not located. Should be Absolute once the \
-                 provider-staged image (baked MAGMA_PROVIDER_DIR) is live; if persistent, add \
-                 `{provider}` to flake.nix magmaProviderMirror"
+                "ProviderUnavailable — provider plugin not located. Runtime reaction Holds (the \
+                 operator cannot stage a provider at runtime); a baked provider makes this \
+                 structurally absent (Absolute-by-construction at build time). Add `{provider}` \
+                 to flake.nix magmaProviderMirror + rebuild the operator image."
             );
             record_event(
                 template,
@@ -2085,9 +2136,9 @@ async fn react_to_apply_anomaly(
                 EventType::Warning,
                 anomaly.event_reason(),
                 &format!(
-                    "Provider plugin '{provider}' not located. If this persists after the \
-                     provider-staged operator image rolls out, add '{provider}' to the operator \
-                     image's magmaProviderMirror (flake.nix). [mode={}]",
+                    "Provider plugin '{provider}' not in the baked MAGMA_PROVIDER_DIR mirror. \
+                     The operator cannot stage a provider at runtime — add '{provider}' to \
+                     flake.nix magmaProviderMirror and rebuild the operator image. [mode={}]",
                     mode.as_str()
                 ),
             )

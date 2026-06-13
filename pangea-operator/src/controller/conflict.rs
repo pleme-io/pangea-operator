@@ -166,6 +166,54 @@ pub fn classify_apply_conflicts(output: &str) -> Vec<(String, ConflictKind)> {
     out
 }
 
+/// Parse a `tofu apply` failure's combined output into per-address error
+/// **blocks** — `(address, accumulated_error_text)` for every
+/// resource-scoped diagnostic. This is the text-preserving sibling of
+/// [`classify_apply_conflicts`] (which returns only `(address,
+/// ConflictKind)`): the full per-block error string is what the typed
+/// [`crate::controller::anomaly::classify`] needs to route a block into
+/// the *whole* ApplyAnomaly taxonomy (not just the conflict subset).
+///
+/// Used by the tofu-fallback anomaly path so the legacy executor produces
+/// a PER-RESOURCE anomaly list — mirroring the magma per-`FailedChange`
+/// path — instead of collapsing every resource's diagnostic into one
+/// first-substring-match-wins classification. A conflict in one resource
+/// can no longer mask a different anomaly (rate-limit / permission /
+/// transient-net) in another.
+///
+/// Block framing is identical to [`classify_apply_conflicts`]: a block
+/// opens with `Error:` and closes at the `  with <address>,` line; the
+/// box-drawing diagnostic frame is stripped per line.
+pub fn apply_error_blocks(output: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut in_error = false;
+    let mut current = String::new();
+
+    for raw in output.lines() {
+        let line = strip_diag_frame(raw);
+        if line.starts_with("Error:") {
+            in_error = true;
+            current.clear();
+            current.push_str(line);
+        } else if in_error && line.starts_with("with ") {
+            let addr = line
+                .trim_start_matches("with ")
+                .trim_end_matches(',')
+                .trim()
+                .to_string();
+            if !addr.is_empty() {
+                out.push((addr, current.clone()));
+            }
+            in_error = false;
+            current.clear();
+        } else if in_error {
+            current.push(' ');
+            current.push_str(line);
+        }
+    }
+    out
+}
+
 /// Parse the rendered `main.tf.json` config into per-address attribute
 /// maps, shaped identically to `import::parse_planned_attrs` so the same
 /// `substitute_with_planned` cascade consumes it.
@@ -458,6 +506,43 @@ Error: Provider produced inconsistent result after apply
     fn no_conflicts_for_non_resource_errors() {
         let output = "Error: Backend initialization required\n\nPlease run tofu init.";
         assert!(classify_apply_conflicts(output).is_empty());
+    }
+
+    #[test]
+    fn apply_error_blocks_splits_distinct_anomalies_per_address() {
+        // Two resources fail with DIFFERENT anomaly classes in one apply.
+        // A single blanket classify() would first-match-wins one of them and
+        // mask the other; per-block extraction keeps both classifiable.
+        let output = "\
+Error: POST https://api.github.com/orgs/pleme-io/repos: 422 Validation Failed [{Message:name already exists on this account}]
+
+  with github_repository.alpha,
+  on main.tf.json line 0:
+
+Error: PUT https://api.cloudflare.com/...: 429 Too Many Requests — rate limit exceeded
+
+  with cloudflare_dns_record.beta,
+  on main.tf.json line 0:
+";
+        let blocks = apply_error_blocks(output);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].0, "github_repository.alpha");
+        assert!(blocks[0].1.contains("already exists"));
+        assert_eq!(blocks[1].0, "cloudflare_dns_record.beta");
+        assert!(blocks[1].1.contains("429"));
+
+        // And each block routes to its OWN typed anomaly via anomaly::classify.
+        use crate::controller::anomaly::{classify, ApplyAnomaly};
+        let a0 = classify(&blocks[0].1, &blocks[0].0, "create");
+        let a1 = classify(&blocks[1].1, &blocks[1].0, "create");
+        assert!(matches!(a0, ApplyAnomaly::ObjectExistsUntracked { .. }));
+        assert_eq!(a1, ApplyAnomaly::RateLimited);
+    }
+
+    #[test]
+    fn apply_error_blocks_empty_for_non_resource_errors() {
+        let output = "Error: Backend initialization required\n\nPlease run tofu init.";
+        assert!(apply_error_blocks(output).is_empty());
     }
 
     #[test]

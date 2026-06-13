@@ -87,15 +87,23 @@ pub enum ApplyAnomaly {
     /// The provider plugin binary couldn't be located. Live rio anomaly A:
     /// magma's `EngineError::Locate` → `ProviderLocateError` (no
     /// `.terraform/providers` dir, or binary missing under a root).
-    /// Remediation: `StageProvider` — providers now resolve from the durable
-    /// baked `MAGMA_PROVIDER_DIR` (flake.nix), so this is Absolute once the
-    /// image carries the mirror.
+    /// Remediation: `StageProvider`. **Mode = Hold at runtime** — the
+    /// operator cannot stage a brand-new provider at runtime (that needs an
+    /// image rebuild adding it to flake.nix `magmaProviderMirror`). For a
+    /// provider ALREADY baked into the image the anomaly is structurally
+    /// absent (Absolute-by-construction at build time); the runtime Hold
+    /// applies only to a not-yet-baked provider, surfacing the actionable
+    /// "add `<provider>` to the mirror + rebuild" gap. See [`Self::mode`].
     ProviderUnavailable { provider: String },
     /// A `Create` collided with an object that already exists out-of-band
     /// (409 / 422 / "already exists"). Live rio anomaly B: the
     /// grafana.quero.cloud cloudflare_dns_record created via the CF API.
-    /// Remediation: `Import` — adopt the resource into state, reclassify
-    /// `Create → adopted`.
+    /// Remediation: `Import` — adopt the resource into state. **Mode = Hold
+    /// today** (tier-honest): `MagmaExecutor::import` is a STUB on the live
+    /// magma path, so Import does NOT self-converge — the reaction surfaces
+    /// the exact importHint the operator must supply. Becomes `Absolute`
+    /// once the magma pre-flight ImportResourceState probe lands. See
+    /// [`Self::mode`].
     ObjectExistsUntracked { address: String, action: String },
     /// The provider returned (or magma's retry exhausted on) a rate limit
     /// (429 / secondary-limit). Remediation: samba-paced / backoff `Retry`
@@ -129,8 +137,27 @@ impl ApplyAnomaly {
     /// explicit per anomaly (Part 4 of the build contract).
     pub fn mode(&self) -> RemediationMode {
         match self {
-            ApplyAnomaly::ProviderUnavailable { .. } => RemediationMode::Absolute,
-            ApplyAnomaly::ObjectExistsUntracked { .. } => RemediationMode::Absolute,
+            // ProviderUnavailable's RUNTIME reaction is a Hold (the operator
+            // cannot stage a brand-new provider at runtime — that needs an
+            // image rebuild with the provider added to flake.nix
+            // magmaProviderMirror). For providers ALREADY baked into the
+            // image this anomaly is structurally absent — Absolute-by-
+            // construction at BUILD time (the binary resolves from the durable
+            // baked MAGMA_PROVIDER_DIR), so there is no runtime path to react
+            // on. The label here therefore reflects the only behavior the
+            // runtime can realize for a *not-yet-baked* provider: Hold +
+            // surface "add `<X>` to magmaProviderMirror + rebuild". The
+            // reaction arm must NOT claim self-convergence at runtime.
+            ApplyAnomaly::ProviderUnavailable { .. } => RemediationMode::Hold,
+            // Tier-honest: ObjectExistsUntracked is labeled Hold, not Absolute,
+            // because on the live magma path `MagmaExecutor::import` is a STUB
+            // (executor/magma.rs ~1032 returns "not yet implemented … falls
+            // back to recreate") — Import does NOT converge, it Holds. The
+            // reaction surfaces a typed event naming the resource + the exact
+            // importHint the operator must supply, and does not claim
+            // self-convergence. Becomes `Absolute` once the magma pre-flight
+            // ImportResourceState probe lands (residual; §VII.1).
+            ApplyAnomaly::ObjectExistsUntracked { .. } => RemediationMode::Hold,
             ApplyAnomaly::StalePlan => RemediationMode::Absolute,
             ApplyAnomaly::EmptyWorkspace => RemediationMode::Absolute,
             ApplyAnomaly::RateLimited => RemediationMode::Decaying,
@@ -212,8 +239,38 @@ pub fn classify(reason: &str, address: &str, action: &str) -> ApplyAnomaly {
         return ApplyAnomaly::StalePlan;
     }
 
-    // ── PermissionDenied (check before rate-limit: a 403 can mention
-    // "limit" in unrelated text, but auth denial is the harder hold) ───
+    // ── RateLimited short-circuit (Decaying) — MUST precede the
+    // PermissionDenied arm ────────────────────────────────────────────
+    // GitHub *secondary* rate limits surface as a 403 (or 429) whose body
+    // reads "You have exceeded a secondary rate limit". A naive "403 ⇒
+    // PermissionDenied" arm misclassifies that as a Hold, when the realized
+    // behavior is a Decaying backoff retry that genuinely clears. So before
+    // the auth-denial arm, short-circuit the rate-limit shapes:
+    //   (a) the explicit GitHub secondary-limit phrasing — "secondary" + a
+    //       limit/status token (covers the 403/429-bodied secondary limit), or
+    //   (b) any unambiguous rate-limit / throttle / too-many-requests / 429
+    //       signal (a plain primary 429 with no auth-denial context).
+    // A genuine 403/forbidden/insufficient-scope with no rate-limit token
+    // falls through to PermissionDenied below.
+    let mentions_secondary = r.contains("secondary")
+        && (r.contains("rate limit")
+            || r.contains("rate-limit")
+            || r.contains("ratelimit")
+            || r.contains("429")
+            || r.contains("403"));
+    let mentions_rate_limit = r.contains("rate limit")
+        || r.contains("rate-limit")
+        || r.contains("ratelimit")
+        || r.contains("429")
+        || r.contains("too many requests")
+        || r.contains("throttl");
+    if mentions_secondary || mentions_rate_limit {
+        return ApplyAnomaly::RateLimited;
+    }
+
+    // ── PermissionDenied (genuine auth denial — runs AFTER the rate-limit
+    // short-circuit so a secondary-rate-limit 403 can't be misrouted to a
+    // Hold; only a 403/forbidden with NO rate-limit token lands here) ──
     if r.contains("403")
         || r.contains("accessdenied")
         || r.contains("access denied")
@@ -221,22 +278,10 @@ pub fn classify(reason: &str, address: &str, action: &str) -> ApplyAnomaly {
         || r.contains("forbidden")
         || r.contains("not an admin")
         || r.contains("must have admin")
+        || r.contains("insufficient scope")
+        || r.contains("insufficient scopes")
     {
         return ApplyAnomaly::PermissionDenied;
-    }
-
-    // ── RateLimited (Decaying) ────────────────────────────────────────
-    // magma's rpc_retry! exhausts on secondary limits → a plain Rpc string;
-    // there's no guaranteed 429 token, so match the common shapes.
-    if r.contains("429")
-        || r.contains("rate limit")
-        || r.contains("rate-limit")
-        || r.contains("ratelimit")
-        || r.contains("secondary")
-        || r.contains("too many requests")
-        || r.contains("throttl")
-    {
-        return ApplyAnomaly::RateLimited;
     }
 
     // ── ObjectExistsUntracked (live rio anomaly B) ────────────────────
@@ -325,7 +370,10 @@ mod tests {
             a,
             ApplyAnomaly::ProviderUnavailable { provider: "cloudflare".into() }
         );
-        assert_eq!(a.mode(), RemediationMode::Absolute);
+        // Tier-honest (FIX 4): the runtime reaction Holds — the operator can't
+        // stage a not-yet-baked provider at runtime; a baked provider makes
+        // the anomaly structurally absent (Absolute-by-construction at build).
+        assert_eq!(a.mode(), RemediationMode::Hold);
         assert_eq!(a.kind_str(), "ProviderUnavailable");
     }
 
@@ -369,7 +417,10 @@ mod tests {
                 action: "create".into()
             }
         );
-        assert_eq!(a.mode(), RemediationMode::Absolute);
+        // Tier-honest (FIX 4): Hold, not Absolute — magma's import is a stub,
+        // so adoption does not self-converge; the reaction surfaces the
+        // importHint the operator must supply.
+        assert_eq!(a.mode(), RemediationMode::Hold);
     }
 
     #[test]
@@ -422,6 +473,42 @@ mod tests {
             "create",
         );
         assert_eq!(a, ApplyAnomaly::RateLimited);
+        assert_eq!(a.mode(), RemediationMode::Decaying);
+    }
+
+    #[test]
+    fn github_secondary_rate_limit_bodied_403_is_ratelimited_not_permissiondenied() {
+        // GitHub returns secondary rate limits as a 403 with this exact body.
+        // It MUST classify as the Decaying RateLimited (it clears on backoff),
+        // NOT the Hold PermissionDenied — the FIX 1 ordering regression guard.
+        let reason = "provider \"github\" RPC: POST https://api.github.com/orgs/pleme-io/repos: \
+                      403 Forbidden — You have exceeded a secondary rate limit. \
+                      Please wait a few minutes before you try again.";
+        let a = classify(reason, "github_repository.galho", "create");
+        assert_eq!(a, ApplyAnomaly::RateLimited);
+        assert_eq!(a.mode(), RemediationMode::Decaying);
+    }
+
+    #[test]
+    fn plain_429_too_many_requests_is_ratelimited() {
+        let a = classify(
+            "provider \"github\" RPC: 429 Too Many Requests",
+            "github_repository.a",
+            "create",
+        );
+        assert_eq!(a, ApplyAnomaly::RateLimited);
+        assert_eq!(a.mode(), RemediationMode::Decaying);
+    }
+
+    #[test]
+    fn genuine_403_insufficient_scopes_is_permission_denied_not_ratelimited() {
+        // A real auth denial with no rate-limit token must still Hold — the
+        // FIX 1 short-circuit only steals 403s that name a rate limit.
+        let reason = "provider \"github\" RPC: 403 Forbidden: \
+                      `repo` scope required but token has insufficient scopes";
+        let a = classify(reason, "github_repository.x", "create");
+        assert_eq!(a, ApplyAnomaly::PermissionDenied);
+        assert_eq!(a.mode(), RemediationMode::Hold);
     }
 
     // ── TransientNetwork (Decaying) ───────────────────────────────────
@@ -510,6 +597,33 @@ mod tests {
         assert_eq!(RemediationMode::Absolute.as_str(), "Absolute");
         assert_eq!(RemediationMode::Decaying.as_str(), "Decaying");
         assert_eq!(RemediationMode::Hold.as_str(), "Hold");
+    }
+
+    /// FIX 4 — the mode() table must reflect REALIZED behavior, never round
+    /// up. A remediation that actually Holds (magma import stub;
+    /// not-yet-baked provider at runtime) must NOT be labeled Absolute.
+    #[test]
+    fn mode_table_is_tier_honest() {
+        use ApplyAnomaly::*;
+        // Realized-Absolute: self-heal converges in one tick.
+        assert_eq!(StalePlan.mode(), RemediationMode::Absolute);
+        assert_eq!(EmptyWorkspace.mode(), RemediationMode::Absolute);
+        // Realized-Decaying: bounded backoff strictly drops.
+        assert_eq!(RateLimited.mode(), RemediationMode::Decaying);
+        assert_eq!(TransientNetwork.mode(), RemediationMode::Decaying);
+        // Realized-Hold: import is a stub; not-yet-baked provider needs an
+        // image rebuild; auth denial + unclassified never self-converge.
+        assert_eq!(
+            ObjectExistsUntracked { address: "github_repository.x".into(), action: "create".into() }
+                .mode(),
+            RemediationMode::Hold
+        );
+        assert_eq!(
+            ProviderUnavailable { provider: "cloudflare".into() }.mode(),
+            RemediationMode::Hold
+        );
+        assert_eq!(PermissionDenied.mode(), RemediationMode::Hold);
+        assert_eq!(Unclassified { reason: "x".into() }.mode(), RemediationMode::Hold);
     }
 
     #[test]
