@@ -439,7 +439,17 @@ async fn handle_compiling(
                 ))
             })?
     } else if let Some(git_ref) = &source.git_repository {
-        // Clone or fetch the Git repository, then read the template file
+        // Clone or fetch the Git repository, then read the template file.
+        //
+        // NOTE (zero-disk invariant): this git clone — like loading the
+        // gRPC provider-plugin binaries — is workspace *input*
+        // acquisition, the same sanctioned filesystem class as
+        // provider-plugin loading, NOT durable operator execution state.
+        // The zero-disk invariant (★★ MAGMA-NATIVE EXECUTION) is about
+        // execution state — the rendered config, the plan, the bundle,
+        // and the tofu state — which on the magma path now all live in
+        // Postgres. Acquiring the source tree the compiler reads from is
+        // not durable execution state and stays on disk by design.
         let repo_dir = workspace.path.join("_repo");
 
         // Resolve git credentials if specified
@@ -708,6 +718,14 @@ async fn handle_compiling(
     // schema = "pangea_{spec.pangeaNamespace}", template = name_any().
     // Per the org ★★ MAGMA-NATIVE EXECUTION directive.
     let magma_active = state.executor_for(template).name() == "magma";
+    // The DB-backed magma path = magma active AND the artifact store is
+    // wired. On that path the rendered config lives in Postgres and
+    // magma reads it via `load_config_routed` (Postgres), NOT from
+    // `main.tf.json` on disk — so the disk write below is redundant and
+    // is skipped (zero-disk). When magma is active but the store is
+    // absent (disk fallback), magma's `load_config` DOES read
+    // `main.tf.json`, so the write must stay.
+    let magma_db_backed = magma_active && state.artifact_store.is_some();
     if magma_active {
         if let Some(store) = state.artifact_store.as_ref() {
             let value: serde_json::Value = serde_json::from_str(&terraform_json)
@@ -721,12 +739,17 @@ async fn handle_compiling(
         }
     }
 
-    // Always write `main.tf.json` to the workspace too: the tofu path
-    // requires it, and it remains a debugging aid. On the magma DB path
-    // it is redundant (the DB row is the source of truth) — see the
-    // residual disk note in theory/MAGMA-OPERATOR-BACKEND.md.
-    workspace.write_file("main.tf.json", &terraform_json).await?;
-    info!("Template content written to workspace");
+    // Write `main.tf.json` to the workspace UNLESS we're on the DB-backed
+    // magma path (where the DB row is the source of truth and nothing
+    // reads this file — verified: magma's `load_config_routed` reads
+    // Postgres when the store is wired). The tofu path requires it, and
+    // the magma disk-fallback path reads it via `load_config`.
+    if !magma_db_backed {
+        workspace.write_file("main.tf.json", &terraform_json).await?;
+        info!("Template content written to workspace");
+    } else {
+        info!("Skipping main.tf.json disk write (DB-backed magma path; rendered config is in Postgres)");
+    }
 
     // Compile succeeded — reset the failure counter so a subsequent
     // failure starts fresh. The template can recover from a
@@ -1052,6 +1075,15 @@ async fn handle_initializing(
     // silently running tofu. Per ★★ MAGMA-NATIVE.
     let executor = state.executor_for_checked(template)?;
 
+    // On the magma path the operator's `backend.tf.json` /
+    // `providers.tf.json` are never read: magma's `init` is a no-op, and
+    // its plan/apply use the magma-backend Postgres state backend +
+    // read providers from the rendered config (`load_config_routed`),
+    // not these files. So skip those disk writes when magma is active
+    // (true on BOTH the DB-backed and disk-fallback magma paths — magma
+    // never consumes these files either way). The tofu path needs them.
+    let magma_active = executor.name() == "magma";
+
     let workspace = state.workspace_manager.get_workspace(template).await?;
 
     // Resolve PangeaNamespace to get backend configuration
@@ -1060,8 +1092,11 @@ async fn handle_initializing(
         Error::NamespaceNotFound(template.spec.pangea_namespace.clone())
     })?;
 
-    // Resolve PostgreSQL credentials from Secret
-    if let Some(pg) = &pangea_ns.spec.backend.pg {
+    // Resolve PostgreSQL credentials from Secret. On the magma path the
+    // operator-side backend.tf.json is never read (magma uses the
+    // magma-backend Postgres state backend), so skip the credential
+    // resolution + write entirely there.
+    if let Some(pg) = pangea_ns.spec.backend.pg.as_ref().filter(|_| !magma_active) {
         let secret_ns = pg
             .secret_ref
             .namespace
@@ -1107,8 +1142,10 @@ async fn handle_initializing(
         .await?;
     }
 
-    // Write provider configuration if credentials are specified
-    if let Some(provider_creds) = &template.spec.provider_credentials {
+    // Write provider configuration if credentials are specified — but
+    // not on the magma path, where providers come from the rendered
+    // config (`load_config_routed`), not providers.tf.json on disk.
+    if let Some(provider_creds) = template.spec.provider_credentials.as_ref().filter(|_| !magma_active) {
         let provider_config = resolve_provider_config(provider_creds, template, state).await?;
         BackendConfigGenerator::write_provider_config(provider_config, &workspace.path).await?;
     }

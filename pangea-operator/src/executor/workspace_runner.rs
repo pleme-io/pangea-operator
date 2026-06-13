@@ -292,19 +292,51 @@ impl WorkspaceRunner for TofuWorkspaceRunner {
 }
 
 /// `WorkspaceRunner` for magma workspaces — wraps `MagmaExecutor`
-/// (or any `IacExecutor` shaped like it). Plan/apply read the
-/// unified `CycleArtifact` from `magma-bundle.json` via
-/// `magma_bundle::read_cycle_artifact`.
+/// (or any `IacExecutor` shaped like it).
+///
+/// ## Where the cycle artifact comes from — DB-backed vs disk
+///
+/// On the production magma path the durable bundle lives in **Postgres**
+/// (the `ArtifactStore`), not on disk: the executor's plan/apply persist
+/// it via `put_bundle` / `put_apply_result`, and the cycle-receipt
+/// enrichment downstream (`cycle_receipts.rs`) resolves it back through
+/// `get_bundle_bytes`. The runner therefore does NOT read
+/// `magma-bundle.json` from the workspace dir when an `artifact_store`
+/// is wired — that disk file does not exist on the zero-disk path, and
+/// reading it was a latent zero-disk hole (an unconditional disk read on
+/// the Some(store) path). The `PlanResult.artifact` / `ApplyResult.
+/// artifact` are simply `None` on the DB path; the receipt is enriched
+/// from the DB downstream.
+///
+/// When `artifact_store` is `None` (DB-less unit tests + the documented
+/// disk fallback) the runner keeps reading `magma-bundle.json` via
+/// `magma_bundle::read_cycle_artifact`, preserving tofu/test parity.
 pub struct MagmaWorkspaceRunner {
     inner: Arc<dyn IacExecutor>,
+    /// `Some` on the production DB-backed path → the bundle lives in
+    /// Postgres, so skip the workspace-dir `magma-bundle.json` disk
+    /// read entirely (zero-disk). `None` → DB-less path, read the disk
+    /// bundle as before. Parallels how `MagmaExecutorConfig.
+    /// artifact_store` selects the executor's own DB-vs-disk routing.
+    artifact_store: Option<Arc<crate::backend::ArtifactStore>>,
 }
 
 impl MagmaWorkspaceRunner {
     /// Construct a magma runner. The inner executor MUST be magma —
     /// its plan call must produce a `magma-bundle.json` in the
     /// workspace dir.
-    pub fn new(inner: Arc<dyn IacExecutor>) -> Self {
-        Self { inner }
+    ///
+    /// `artifact_store` mirrors the executor's own routing: `Some` on
+    /// the DB-backed zero-disk path (skip the `magma-bundle.json` disk
+    /// read; the bundle is in Postgres), `None` on the disk-fallback /
+    /// test path (read the disk bundle). Construct it from the same
+    /// `ControllerState.artifact_store` the `MagmaExecutorConfig` is
+    /// wired from — see `executor_runner_for`.
+    pub fn new(
+        inner: Arc<dyn IacExecutor>,
+        artifact_store: Option<Arc<crate::backend::ArtifactStore>>,
+    ) -> Self {
+        Self { inner, artifact_store }
     }
 }
 
@@ -327,11 +359,17 @@ impl WorkspaceRunner for MagmaWorkspaceRunner {
         let plan = self.inner.plan(&workspace.path, Some(&plan_path), &[]).await?;
         let has_changes = plan.exit_code == 2;
         let plan_success = plan.exit_code == 0 || plan.exit_code == 2;
-        // Magma writes magma-bundle.json into the workspace dir as
-        // part of plan. Read it via the unified reader; the returned
-        // artifact carries action distribution + per-resource changes
-        // + severities + (when present) lifecycle_phase + bundle_ref.
-        let artifact = crate::executor::magma_bundle::read_cycle_artifact(&workspace.path).await;
+        // On the DB-backed path the bundle is in Postgres (the executor
+        // persisted it via `put_bundle`); there is NO `magma-bundle.json`
+        // on disk to read (zero-disk). Return `None` here — the cycle
+        // receipt is enriched from the DB downstream
+        // (`cycle_receipts.rs` → `get_bundle_bytes`). On the disk-fallback
+        // path (`artifact_store` None) read the disk bundle as before.
+        let artifact = if self.artifact_store.is_some() {
+            None
+        } else {
+            crate::executor::magma_bundle::read_cycle_artifact(&workspace.path).await
+        };
         Ok(PlanResult {
             artifact,
             plan_file: Some(plan_path),
@@ -349,9 +387,17 @@ impl WorkspaceRunner for MagmaWorkspaceRunner {
     async fn apply(&self, workspace: &Workspace, auto_approve: bool) -> Result<ApplyResult> {
         let plan_path = workspace.path.join("magma-plan.json");
         let r = self.inner.apply(&workspace.path, Some(&plan_path), auto_approve).await?;
-        // Magma's apply updates magma-bundle.json with the apply
-        // outcome — re-read to surface the post-apply artifact.
-        let artifact = crate::executor::magma_bundle::read_cycle_artifact(&workspace.path).await;
+        // DB-backed path: the post-apply bundle is committed to Postgres
+        // (atomically with state via `put_apply_result`); there is no
+        // `magma-bundle.json` on disk to re-read (zero-disk). `None` here;
+        // the receipt is resolved from the DB downstream. Disk-fallback
+        // path (`artifact_store` None): re-read the disk bundle to surface
+        // the post-apply artifact, as before.
+        let artifact = if self.artifact_store.is_some() {
+            None
+        } else {
+            crate::executor::magma_bundle::read_cycle_artifact(&workspace.path).await
+        };
         Ok(ApplyResult {
             artifact,
             failed:     Vec::new(), // magma surfaces failures via Error::MagmaExecution today

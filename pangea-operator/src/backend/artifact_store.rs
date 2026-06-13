@@ -40,6 +40,7 @@
 //! apply / bundle pipeline.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use sqlx::{PgPool, Postgres, Transaction};
 use tracing::{debug, info};
@@ -65,17 +66,45 @@ pub mod kind {
 #[derive(Clone)]
 pub struct ArtifactStore {
     pool: Arc<PgPool>,
+    /// Self-healing flag: set once `ensure_table` succeeds. Every public
+    /// op calls [`ArtifactStore::ensure_ready`] first — until the flag is
+    /// true, each op re-runs the cheap `CREATE … IF NOT EXISTS` ensure.
+    /// This is the `MissingArtifactTable → ensure` Absolute remediation:
+    /// a startup DB blip that fails the one-shot ensure in `main.rs` no
+    /// longer leaves the magma path armed-but-tableless until a pod
+    /// restart — the next op converges. Steady-state cost is ~zero (one
+    /// relaxed atomic load once the flag is true). `Arc`'d so it is
+    /// shared across the cheap `Clone`s of the store.
+    ensured: Arc<AtomicBool>,
 }
 
 impl ArtifactStore {
     /// Build an artifact store over a shared pool.
     pub fn new(pool: Arc<PgPool>) -> Self {
-        Self { pool }
+        Self { pool, ensured: Arc::new(AtomicBool::new(false)) }
+    }
+
+    /// Self-heal the durable-artifact table on the first op that needs
+    /// it (and on every op until it succeeds). Cheap no-op once the
+    /// `ensured` flag is set — a single relaxed atomic load. Called at
+    /// the top of every public op so a startup-time ensure failure (DB
+    /// not yet reachable) converges on the next tick rather than waiting
+    /// for a pod restart. Per the ★★ MAGMA-NATIVE EXECUTION directive:
+    /// converge, don't gate the magma path off (no disk regression).
+    async fn ensure_ready(&self) -> Result<()> {
+        if self.ensured.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        // `ensure_table` sets the flag on success; a failure here leaves
+        // it false so the next op retries (converge, don't gate off).
+        self.ensure_table().await
     }
 
     /// Ensure the `pangea_meta.artifacts` table exists. Idempotent —
     /// `CREATE SCHEMA / TABLE IF NOT EXISTS`. Call once at startup
-    /// alongside the other table-ensures (lock table, state tables).
+    /// alongside the other table-ensures (lock table, state tables);
+    /// also self-healed lazily by [`ArtifactStore::ensure_ready`] on
+    /// every op until it first succeeds.
     pub async fn ensure_table(&self) -> Result<()> {
         sqlx::query("CREATE SCHEMA IF NOT EXISTS pangea_meta")
             .execute(self.pool.as_ref())
@@ -99,6 +128,9 @@ impl ArtifactStore {
         .await
         .map_err(Error::Database)?;
 
+        // Prime the self-healing flag so the startup ensure (main.rs)
+        // primes it too — subsequent ops skip the redundant re-ensure.
+        self.ensured.store(true, Ordering::Relaxed);
         info!("pangea_meta.artifacts table ready");
         Ok(())
     }
@@ -114,6 +146,7 @@ impl ArtifactStore {
         kind: &str,
         bytes: &[u8],
     ) -> Result<String> {
+        self.ensure_ready().await?;
         let content_hash = blake3::hash(bytes).to_hex().to_string();
 
         sqlx::query(
@@ -145,6 +178,7 @@ impl ArtifactStore {
     /// when the stored bytes do not hash to the recorded `content_hash`
     /// (a corrupt / torn row never feeds downstream).
     async fn get(&self, schema: &str, template: &str, kind: &str) -> Result<Option<Vec<u8>>> {
+        self.ensure_ready().await?;
         let row: Option<(String, Vec<u8>)> = sqlx::query_as(
             r#"
             SELECT content_hash, data
@@ -256,11 +290,23 @@ impl ArtifactStore {
         state_bytes: &[u8],
         bundle_bytes: &[u8],
     ) -> Result<()> {
+        self.ensure_ready().await?;
         // State bytes land in OpenTofu's TEXT `data` column.
         let state_text = std::str::from_utf8(state_bytes).map_err(|e| {
             Error::StateBackend(format!("apply state bytes are not valid UTF-8: {e}"))
         })?;
         let bundle_hash = blake3::hash(bundle_bytes).to_hex().to_string();
+
+        // Make the magma apply self-sufficient with zero tofu: under
+        // `PANGEA_FORBID_TOFU=true` a brand-new template's `.states`
+        // table is NEVER created (tofu's pg backend, which would
+        // `CREATE SCHEMA … states`, never runs), so the INSERT below
+        // would fail with relation-does-not-exist. Idempotently create
+        // the schema + `.states` table in the EXACT OpenTofu pg-backend
+        // layout before the upsert, so a fresh template's first magma
+        // apply succeeds and a later tofu read still finds its rows.
+        self.ensure_tofu_states_table(artifact_schema, artifact_template)
+            .await?;
 
         let mut tx: Transaction<'_, Postgres> =
             self.pool.begin().await.map_err(Error::Database)?;
@@ -327,6 +373,19 @@ impl ArtifactStore {
     /// underscores) purely as an injection guard, then quote the
     /// original.
     pub fn live_state_table(schema_name: &str, template_name: &str) -> Result<String> {
+        let schema = Self::live_state_schema(schema_name, template_name)?;
+        Ok(format!("{schema}.states"))
+    }
+
+    /// Assemble + validate just the quoted OpenTofu pg-backend SCHEMA
+    /// identifier for a `(schema, template)` pair — the
+    /// `"{schema}_{template}_states"` form (no `.states` table suffix).
+    /// Used by [`ensure_tofu_states_table`] to `CREATE SCHEMA` and to
+    /// qualify the `states` table. Same injection guard as
+    /// [`live_state_table`]: validates the sanitized projection
+    /// (`-`/`.` → `_`) through [`is_valid_identifier`], then quotes the
+    /// original (k8s names carry hyphens/dots that must be double-quoted).
+    pub fn live_state_schema(schema_name: &str, template_name: &str) -> Result<String> {
         // Injection guard on a sanitized projection: a name that still
         // fails after `-`/`.` → `_` carries a character no k8s name can
         // (quote, semicolon, whitespace, control) — refuse it.
@@ -340,7 +399,67 @@ impl ArtifactStore {
         }
         let schema = format!("{schema_name}_{template_name}_states");
         let quoted = schema.replace('"', "\"\"");
-        Ok(format!("\"{quoted}\".states"))
+        Ok(format!("\"{quoted}\""))
+    }
+
+    /// Idempotently create the OpenTofu `pg`-backend schema + `states`
+    /// table for a `(schema, template)` pair, in the EXACT layout
+    /// OpenTofu's pg backend uses, so a brand-new template's first
+    /// **magma** apply is self-sufficient with zero tofu.
+    ///
+    /// Under `PANGEA_FORBID_TOFU=true`, tofu's pg backend — which would
+    /// otherwise `CREATE SCHEMA … states` on `tofu init` — never runs,
+    /// so a never-tofu-initialized template has no `.states` table and
+    /// [`put_apply_result`]'s state upsert fails with
+    /// relation-does-not-exist. This creates it first.
+    ///
+    /// The DDL mirrors OpenTofu/Terraform's `pg` backend
+    /// (`backend/remote-state/pg`):
+    /// ```sql
+    /// CREATE SCHEMA IF NOT EXISTS "<schema>";
+    /// CREATE TABLE IF NOT EXISTS "<schema>".states (
+    ///   id   SERIAL PRIMARY KEY,
+    ///   name TEXT   UNIQUE,
+    ///   data TEXT
+    /// );
+    /// ```
+    /// `name` is `UNIQUE` so the `ON CONFLICT (name)` upsert in
+    /// [`put_apply_result`] / `TofuPgStateBackend::save_state` has the
+    /// arbiter constraint it requires; `id SERIAL PRIMARY KEY` matches
+    /// the `RETURNING id` / `id bigint` the readers in
+    /// `tofu_pg_state_backend.rs` expect. A later tofu read against the
+    /// same table therefore still works (byte-identical layout).
+    ///
+    /// Identifiers are gated through [`live_state_schema`] →
+    /// [`is_valid_identifier`] (the injection guard), so no caller input
+    /// can break out of the quoted schema identifier.
+    pub async fn ensure_tofu_states_table(
+        &self,
+        schema_name: &str,
+        template_name: &str,
+    ) -> Result<()> {
+        let schema = Self::live_state_schema(schema_name, template_name)?;
+
+        let create_schema = format!("CREATE SCHEMA IF NOT EXISTS {schema}");
+        sqlx::query(&create_schema)
+            .execute(self.pool.as_ref())
+            .await
+            .map_err(Error::Database)?;
+
+        let create_table = format!(
+            "CREATE TABLE IF NOT EXISTS {schema}.states ( \
+                id   SERIAL PRIMARY KEY, \
+                name TEXT   UNIQUE, \
+                data TEXT \
+             )"
+        );
+        sqlx::query(&create_table)
+            .execute(self.pool.as_ref())
+            .await
+            .map_err(Error::Database)?;
+
+        debug!(schema = %schema, "OpenTofu pg-backend states table ensured (magma self-sufficient)");
+        Ok(())
     }
 }
 
@@ -436,6 +555,38 @@ mod tests {
         // the injection check and are quoted in the identifier.
         let t = ArtifactStore::live_state_table("pangea_a.b", "c.d").unwrap();
         assert_eq!(t, "\"pangea_a.b_c.d_states\".states");
+    }
+
+    // ── live_state_schema / ensure_tofu_states_table identifier assembly ──
+
+    #[test]
+    fn live_state_schema_is_table_minus_dot_states() {
+        // The schema identifier is exactly the table identifier without
+        // the `.states` suffix — `ensure_tofu_states_table` qualifies
+        // `<schema>.states`, so they MUST agree byte-for-byte.
+        let schema =
+            ArtifactStore::live_state_schema("pangea_cloudflare-pleme", "cloudflare-pleme").unwrap();
+        assert_eq!(schema, "\"pangea_cloudflare-pleme_cloudflare-pleme_states\"");
+        let table =
+            ArtifactStore::live_state_table("pangea_cloudflare-pleme", "cloudflare-pleme").unwrap();
+        assert_eq!(table, format!("{schema}.states"));
+    }
+
+    #[test]
+    fn live_state_schema_allows_dotted_k8s_names() {
+        let s = ArtifactStore::live_state_schema("pangea_a.b", "c.d").unwrap();
+        assert_eq!(s, "\"pangea_a.b_c.d_states\"");
+    }
+
+    #[test]
+    fn live_state_schema_rejects_injection_attempts() {
+        // ensure_tofu_states_table interpolates this into CREATE SCHEMA /
+        // CREATE TABLE; an identifier carrying a quote/semicolon/space
+        // that survives the `-`/`.` → `_` sanitization is refused.
+        assert!(ArtifactStore::live_state_schema("a\"b", "t").is_err());
+        assert!(ArtifactStore::live_state_schema("a; DROP TABLE x", "t").is_err());
+        assert!(ArtifactStore::live_state_schema("a b", "t").is_err());
+        assert!(ArtifactStore::live_state_schema("a", "t' OR '1'='1").is_err());
     }
 
     #[test]

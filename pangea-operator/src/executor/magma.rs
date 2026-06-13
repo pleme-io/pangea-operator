@@ -37,11 +37,25 @@
 //! PG row (operator's existing storage)
 //! ```
 //!
-//! The disk checkpoint is restart-safety only — `tokio::spawn`d
-//! reconciles can be SIGKILLed mid-apply; the next reconcile reads
-//! the checkpoint, re-derives the plan_id via BLAKE3, and resumes.
-//! When this binary owns the full reconcile lifecycle, M0.13+ may
-//! collapse the checkpoint to `Arc<Plan>` in-heap.
+//! The "checkpoint to disk" arrow above describes the **disk-fallback**
+//! path (`artifact_store` = `None`). On the production **DB-backed**
+//! path (`artifact_store` = `Some`) the rendered config, the plan
+//! checkpoint, and the bundle all live in Postgres (`put_rendered_config`
+//! / `put_plan` / the atomic `put_apply_result`), and the tofu-format
+//! state lives in the OpenTofu pg-backend states table — NOTHING durable
+//! is written to the pod-local workspace dir on that path (★★
+//! MAGMA-NATIVE EXECUTION). The only sanctioned filesystem reaches that
+//! remain on the DB-backed path are workspace *input* acquisition — the
+//! gRPC provider-plugin binaries the OS must `exec`, and reading
+//! `Gemfile.lock` / the cloned source tree — none of which is durable
+//! execution state.
+//!
+//! On the disk-fallback path the checkpoint is restart-safety only —
+//! `tokio::spawn`d reconciles can be SIGKILLed mid-apply; the next
+//! reconcile reads the checkpoint, re-derives the plan_id via BLAKE3,
+//! and resumes. The DB-backed path gets the same restart safety from
+//! Postgres (a pod roll loses nothing — state + plan + bundle are
+//! durable in the DB).
 //!
 //! # M0.10 scope
 //!
@@ -380,6 +394,14 @@ async fn emit_stream_events(
 /// today it produces the lockfile-only attestation as a
 /// forward-compatible bridge.
 async fn compute_gem_tree_attestation(work_dir: &Path) -> Option<String> {
+    // NOTE (zero-disk invariant): reading `Gemfile.lock` here is
+    // workspace *input* acquisition — the same sanctioned filesystem
+    // class as loading the gRPC provider-plugin binaries — NOT durable
+    // operator execution state. The zero-disk invariant
+    // (★★ MAGMA-NATIVE EXECUTION) covers execution state (rendered
+    // config / plan / bundle / tofu state), which on the magma path all
+    // live in Postgres now. The lockfile is an input the compiler/source
+    // tree provides; attesting it does not write durable state to disk.
     let gemfile_lock = work_dir.join("Gemfile.lock");
     if !gemfile_lock.exists() {
         return None;

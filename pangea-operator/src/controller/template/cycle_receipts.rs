@@ -311,7 +311,23 @@ pub async fn record_reconcile_cycle(
         match state.artifact_store.as_ref() {
             Some(store) => {
                 let schema_name = format!("pangea_{}", template.spec.pangea_namespace);
-                store.get_bundle_bytes(&schema_name, &name).await.unwrap_or(None)
+                // Don't swallow the typed BLAKE3 integrity-mismatch
+                // (`Error::StateBackend`) into a silent None — a corrupt
+                // / torn artifact row must be observable. Log it, then
+                // fall through to None (no bundle this cycle) rather than
+                // coercing the error into "no bundle".
+                match store.get_bundle_bytes(&schema_name, &name).await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tracing::warn!(
+                            %e,
+                            schema = %schema_name,
+                            template = %name,
+                            "bundle integrity/read failed in cycle receipt enrichment"
+                        );
+                        None
+                    }
+                }
             }
             None => None,
         }

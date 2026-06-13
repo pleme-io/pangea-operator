@@ -404,7 +404,12 @@ impl ControllerState {
         };
         let exec = self.executor_for(template);
         match exec.name() {
-            "magma" => Arc::new(MagmaWorkspaceRunner::new(exec)) as Arc<dyn WorkspaceRunner>,
+            // Thread the artifact store so the magma runner knows it's on
+            // the DB-backed zero-disk path and skips the `magma-bundle.json`
+            // disk read (the bundle lives in Postgres). Mirrors how
+            // `magma_executor_for` wires `MagmaExecutorConfig.artifact_store`.
+            "magma" => Arc::new(MagmaWorkspaceRunner::new(exec, self.artifact_store.clone()))
+                as Arc<dyn WorkspaceRunner>,
             _       => Arc::new(TofuWorkspaceRunner::new(exec)) as Arc<dyn WorkspaceRunner>,
         }
     }
