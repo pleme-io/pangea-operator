@@ -467,6 +467,23 @@ fn smoke_test(
 /// Both are bracketed via [`RubyEvaluator::with_env`] and a Rust-side
 /// `ensure { $pangea_variables = nil }` so concurrent compile
 /// requests in different fleets don't see each other's leaks.
+/// The `$LOADED_FEATURES` purge prefixes for a compile: always the
+/// prepare_gem cache root, plus each `rubylib_paths` entry (a git-source
+/// template's own clone lib, where it loads `Pangea::Architectures` from).
+/// Without the clone-lib prefixes, `with_purge_modules` removes the constant
+/// but the clone-lib `$LOADED_FEATURES` entry survives, so the re-require is a
+/// no-op and the constant is never redefined → "uninitialized constant
+/// Pangea::Architectures" on every git-source compile (the cloudflare-pleme
+/// bug). Workspace-scoped only — never `/nix/store` (that's the too-broad
+/// purge that triggered shared-gem re-require cascades). Inline templates have
+/// empty `rubylib_paths`, so the result is just the gem-cache prefix.
+fn purge_feature_prefixes(rubylib_paths: &[String]) -> Vec<String> {
+    let mut prefixes = Vec::with_capacity(rubylib_paths.len() + 1);
+    prefixes.push("/var/pangea/gems/pangea-architectures-main/".to_string());
+    prefixes.extend(rubylib_paths.iter().cloned());
+    prefixes
+}
+
 fn compile_template(
     evaluator: &RubyEvaluator,
     req: &CompileRequest,
@@ -580,9 +597,20 @@ fn compile_template(
         // dry-struct + dry-types, triggering re-require cascades that
         // hit Ruby's stack limit. Only purge what the workspace will
         // genuinely shadow.
-        .with_purge_feature_prefixes([
-            "/var/pangea/gems/pangea-architectures-main/",
-        ]);
+        //
+        // The gem-cache prefix alone is INSUFFICIENT for a GIT-SOURCE
+        // template (e.g. cloudflare-pleme), which loads Pangea::Architectures
+        // from its OWN clone lib (a `rubylib_paths` entry), NOT the
+        // prepare_gem cache. `with_purge_modules` removes the constant, but
+        // unless the clone-lib path's `$LOADED_FEATURES` entries are also
+        // purged the subsequent `require` is a no-op (feature still "loaded")
+        // → the constant is never redefined → "uninitialized constant
+        // Pangea::Architectures" on every git-source compile. Adding each
+        // `rubylib_paths` root is STILL workspace-scoped (the template's own
+        // clone dirs) — never /nix/store — so no shared-gem re-require
+        // cascade. Inline templates have empty rubylib_paths → list is just
+        // the gem-cache prefix, unchanged behavior.
+        .with_purge_feature_prefixes(purge_feature_prefixes(&req.rubylib_paths));
 
     let (synthesis_json, warnings) = evaluator
         .compile_in_context(&ctx, |ev| {
@@ -767,6 +795,38 @@ impl Drop for RubyOwner {
                     }
                 });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::purge_feature_prefixes;
+
+    #[test]
+    fn inline_template_purges_only_the_gem_cache() {
+        // Empty rubylib_paths (inline-source template) → unchanged behavior:
+        // exactly the prepare_gem cache prefix.
+        let p = purge_feature_prefixes(&[]);
+        assert_eq!(p, vec!["/var/pangea/gems/pangea-architectures-main/".to_string()]);
+    }
+
+    #[test]
+    fn git_source_template_also_purges_its_clone_libs() {
+        // A git-source template (cloudflare-pleme) loads Pangea::Architectures
+        // from its OWN clone lib; that path's $LOADED_FEATURES must be purged
+        // too, or the re-require is a no-op → "uninitialized constant".
+        let rubylib = vec![
+            "/var/pangea/workspaces/cloudflare-pleme/cloudflare-rio/lib".to_string(),
+        ];
+        let p = purge_feature_prefixes(&rubylib);
+        assert_eq!(p.len(), 2);
+        assert_eq!(p[0], "/var/pangea/gems/pangea-architectures-main/");
+        assert!(
+            p.contains(&"/var/pangea/workspaces/cloudflare-pleme/cloudflare-rio/lib".to_string()),
+            "the clone lib must be a purge prefix: {p:?}"
+        );
+        // Never /nix/store (the too-broad prefix that cascades).
+        assert!(p.iter().all(|x| !x.contains("/nix/store")));
     }
 }
 

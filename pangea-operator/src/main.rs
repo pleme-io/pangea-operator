@@ -416,6 +416,20 @@ async fn main() -> Result<()> {
         error!("WorkspaceCatalog controller exited");
     });
 
+    // ReconciliationLoop (roda) reconciler — the loop-granularity axis
+    // (theory/RECONCILIATION-TOPOLOGY.md §II). Watches ReconciliationLoop CRs;
+    // resolves each loop's label selector against the fleet's
+    // InfrastructureTemplates and reports membership + ticks at the loop's
+    // cadence. First increment: membership + observation + cadence; cadence-
+    // ownership + the malha one-per-resource axis are the next increment.
+    let roda_client = state.client.clone();
+    let roda_metrics = state.metrics.clone();
+    let reconciliation_loop_controller = tokio::spawn(async move {
+        pangea_operator::controller::reconciliation_loop_controller::run(roda_client, roda_metrics)
+            .await;
+        error!("ReconciliationLoop controller exited");
+    });
+
     // OperatorPolicy controller — propagates `OperatorPolicy/default`
     // spec into the in-memory cache that every other controller reads
     // via `policy_gate`, and mirrors spec → status. Started before any
@@ -479,6 +493,7 @@ async fn main() -> Result<()> {
     compliance_schedule_controller.abort();
     compliance_binding_controller.abort();
     architecture_gem_controller.abort();
+    reconciliation_loop_controller.abort();
     workspace_catalog_controller.abort();
     operator_policy_controller.abort();
     fleet_status_controller.abort();

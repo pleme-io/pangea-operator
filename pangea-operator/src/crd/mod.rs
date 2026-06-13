@@ -21,7 +21,12 @@ pub mod compliance_schedule;
 pub mod compliance_binding;
 pub mod pangea_dashboard;
 pub mod pangea_fleet_status;
+pub mod reconciliation_loop;
 pub mod workspace_catalog;
+
+pub use reconciliation_loop::{
+    LoopPhase, LoopSelector, ReconciliationLoop, ReconciliationLoopSpec, ReconciliationLoopStatus,
+};
 
 // Re-export InfrastructureTemplate types
 pub use architecture_gem::{
@@ -232,6 +237,15 @@ pub fn generate_crds() -> String {
     crds.push_str(
         &serde_yaml::to_string(&PangeaFleetStatus::crd())
             .expect("Failed to serialize PangeaFleetStatus CRD"),
+    );
+
+    // ReconciliationLoop (roda): the loop-granularity axis
+    // (theory/RECONCILIATION-TOPOLOGY.md §II). Cluster-scoped; one wheel
+    // drives a label-selected set of workspaces at its own cadence.
+    crds.push_str("---\n");
+    crds.push_str(
+        &serde_yaml::to_string(&reconciliation_loop::ReconciliationLoop::crd())
+            .expect("Failed to serialize ReconciliationLoop CRD"),
     );
 
     crds
