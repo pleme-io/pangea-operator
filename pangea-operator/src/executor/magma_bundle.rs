@@ -88,6 +88,39 @@ pub struct ApplyOutcome {
     pub succeeded: bool,
 }
 
+/// Derive an [`ApplyOutcome`] from in-memory bundle bytes (the
+/// `serde_json::to_vec(&Bundle)` blob the artifact store holds in
+/// Postgres). The DB-backed sibling of [`read_apply_outcome`]: same
+/// parsing, no disk. `None` when the bytes don't parse or carry no
+/// `outcome` (a plan-only bundle).
+pub fn apply_outcome_from_bytes(bytes: &[u8]) -> Option<ApplyOutcome> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    apply_outcome_from(&value)
+}
+
+/// Derive a [`CycleArtifact`] from in-memory bundle bytes. The
+/// DB-backed sibling of [`read_cycle_artifact`]: identical extraction
+/// (plan.changes → typed resource changes + severity rollup +
+/// lifecycle phase + bundle ref), no disk read. `None` when the bytes
+/// don't parse.
+pub fn cycle_artifact_from_bytes(bytes: &[u8]) -> Option<CycleArtifact> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    let resource_changes = resource_changes_from(&value);
+    let action_distribution = CycleArtifact::action_distribution_from(&resource_changes);
+    let severities = if resource_changes.is_empty() {
+        None
+    } else {
+        Some(SeverityRollup::from_changes(&resource_changes))
+    };
+    Some(CycleArtifact {
+        action_distribution,
+        resource_changes,
+        artifact_ref:    bundle_ref_from(&value, bytes),
+        severities,
+        lifecycle_phase: lifecycle_phase_from(&value),
+    })
+}
+
 /// Read the magma APPLY outcome from `work_dir/magma-bundle.json`.
 ///
 /// Returns `None` when:
@@ -732,5 +765,71 @@ mod tests {
         assert_eq!(bref.kind, "terraform");
         assert_eq!(bref.bundle_id, "deadbeef");
         assert_eq!(bref.size_bytes, raw.len() as u64);
+    }
+
+    // ── DB-backed byte helpers (zero-disk magma path) ─────────────────
+
+    #[test]
+    fn cycle_artifact_from_bytes_matches_disk_reader() {
+        // The DB-backed reader (`cycle_artifact_from_bytes`) must derive
+        // the EXACT same CycleArtifact the disk reader derives from the
+        // same bundle bytes — the two paths are interchangeable.
+        let bundle = json!({
+            "kind": "terraform",
+            "bundle_id": "6ed9680d05a3",
+            "plan": {
+                "changes": [
+                    {"address": "github_repository.r1", "action": "no_op",  "severity": "cosmetic"},
+                    {"address": "github_repository.r2", "action": "create", "severity": "functional"},
+                    {"address": "github_repository.r3", "action": "delete", "severity": "critical"},
+                ]
+            },
+            "lifecycle": {"current": "applying"}
+        });
+        let bytes = serde_json::to_vec(&bundle).unwrap();
+        let art = cycle_artifact_from_bytes(&bytes).unwrap();
+        assert_eq!(art.action_distribution.no_op, 1);
+        assert_eq!(art.action_distribution.create, 1);
+        assert_eq!(art.action_distribution.delete, 1);
+        assert_eq!(art.resource_changes.len(), 3);
+        assert_eq!(art.resource_changes[2].severity, Severity::Breaking);
+        let rollup = art.severities.unwrap();
+        assert_eq!(rollup.cosmetic, 1);
+        assert_eq!(rollup.functional, 1);
+        assert_eq!(rollup.breaking, 1);
+        assert_eq!(art.lifecycle_phase.as_deref(), Some("applying"));
+        assert_eq!(art.artifact_ref.unwrap().bundle_id, "6ed9680d05a3");
+    }
+
+    #[test]
+    fn cycle_artifact_from_bytes_handles_garbage() {
+        // Non-bundle bytes yield None, never a panic.
+        assert!(cycle_artifact_from_bytes(b"{not json").is_none());
+    }
+
+    #[test]
+    fn apply_outcome_from_bytes_matches_disk_reader() {
+        let bundle = json!({
+            "kind": "terraform",
+            "bundle_id": "xyz",
+            "outcome": {
+                "applied": [{"address": "r.a", "action": "create"}],
+                "failed":  [{"address": "r.b", "action": "create", "error": "boom"}],
+            },
+            "lifecycle": {"current": "failed"},
+        });
+        let bytes = serde_json::to_vec(&bundle).unwrap();
+        let o = apply_outcome_from_bytes(&bytes).unwrap();
+        assert_eq!(o.applied, 1);
+        assert_eq!(o.failed, 1);
+        assert!(!o.succeeded);
+    }
+
+    #[test]
+    fn apply_outcome_from_bytes_plan_only_is_none() {
+        // A plan-only bundle (no `outcome`) → None; garbage → None.
+        let plan_only = serde_json::to_vec(&json!({"plan": {"changes": []}})).unwrap();
+        assert!(apply_outcome_from_bytes(&plan_only).is_none());
+        assert!(apply_outcome_from_bytes(b"not json").is_none());
     }
 }

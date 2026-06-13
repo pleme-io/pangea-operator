@@ -103,6 +103,16 @@ pub struct ControllerState {
     /// to tofu.
     pub state_backend: Option<Arc<dyn StateBackend>>,
 
+    /// Postgres-backed durable artifact store for the magma execution
+    /// path (rendered config / plan / bundle, plus the atomic
+    /// state+bundle apply commit). `Some` once a PG pool is wired in
+    /// (`with_db_pool`); `None` otherwise. When `Some`, the
+    /// `MagmaExecutor` runs fully DB-backed + zero-disk (per the org
+    /// ★★ MAGMA-NATIVE EXECUTION directive); when `None`, magma falls
+    /// back to its workspace-dir disk artifacts. Shares the one pool
+    /// the `state_backend` derives from.
+    pub artifact_store: Option<Arc<crate::backend::ArtifactStore>>,
+
     /// Packer executor for running AMI build commands.
     pub packer_executor: Arc<PackerExecutor>,
 
@@ -198,6 +208,7 @@ impl ControllerState {
             executor,
             default_backend,
             state_backend: None,
+            artifact_store: None,
             packer_executor,
             workspace_manager: workspace_manager.clone(),
             compiler_backend,
@@ -342,6 +353,11 @@ impl ControllerState {
             preflight_laws:  true,
             drift_policy:    magma_drift::DriftPolicy::conservative_default(),
             audit_log_path:  None,
+            // When the artifact store is wired (DB pool live), the
+            // magma path runs fully DB-backed + zero-disk: rendered
+            // config / plan / bundle in Postgres, the state+bundle
+            // apply commit atomic. None → workspace-dir disk fallback.
+            artifact_store:  self.artifact_store.clone(),
         };
 
         Arc::new(MagmaExecutor::new(cfg)) as Arc<dyn IacExecutor>
@@ -427,6 +443,15 @@ impl ControllerState {
         self.state_backend = Some(Arc::new(crate::backend::RetryingStateBackend::new(
             live_backend,
         )));
+        // Durable artifact store on the SAME pool: rendered config /
+        // plan / bundle (and the atomic state+bundle apply commit) all
+        // live in Postgres, so the magma path is zero-disk. The
+        // `pangea_meta.artifacts` table is ensured at startup in main.rs
+        // (the caller has the async context this sync builder lacks).
+        // Per the org ★★ MAGMA-NATIVE EXECUTION directive.
+        self.artifact_store = Some(Arc::new(crate::backend::ArtifactStore::new(Arc::clone(
+            &shared,
+        ))));
         // `db_pool` wraps the pool itself; reuse the same Arc'd pool.
         self.db_pool = Some(Arc::new(RwLock::new((*shared).clone())));
         self

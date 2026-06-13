@@ -258,7 +258,19 @@ async fn main() -> Result<()> {
             {
                 Ok(pool) => {
                     info!("Connected to pangea_state; magma state backend wired");
-                    state.with_db_pool(pool)
+                    let state = state.with_db_pool(pool);
+                    // Ensure the durable artifact table exists before any
+                    // magma plan/apply persists rendered config / plan /
+                    // bundle (zero-disk path). Best-effort: a failure here
+                    // logs + continues — the magma executor's per-op typed
+                    // errors surface the gap loudly rather than silently
+                    // writing to disk. Per ★★ MAGMA-NATIVE EXECUTION.
+                    if let Some(store) = state.artifact_store.as_ref() {
+                        if let Err(e) = store.ensure_table().await {
+                            warn!(error = %e, "failed to ensure pangea_meta.artifacts table");
+                        }
+                    }
+                    state
                 }
                 Err(e) => {
                     warn!(

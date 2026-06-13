@@ -160,6 +160,19 @@ pub struct MagmaExecutorConfig<S: StateBackend + ?Sized> {
     /// None = no audit log (events emit only into the in-memory
     /// stream captured into Bundle.audit).
     pub audit_log_path: Option<PathBuf>,
+    /// Optional Postgres-backed artifact store. When `Some`, the
+    /// magma path is **fully DB-backed, zero-disk**: the
+    /// compile-rendered config, the typed plan, and the compliance
+    /// bundle are read/written through Postgres, and NOTHING durable
+    /// touches the pod-local workspace dir on the magma path. The
+    /// post-apply state + bundle land together in ONE transaction
+    /// (`put_apply_result`). When `None`, the executor falls back to
+    /// the disk behavior (`main.tf.json` / `magma-plan.json` /
+    /// `magma-bundle.json` in `work_dir`) — this keeps DB-less unit
+    /// tests (InMemoryStateBackend, no `PgPool`) compiling + green.
+    /// Per the org ★★ MAGMA-NATIVE EXECUTION directive +
+    /// `theory/MAGMA-OPERATOR-BACKEND.md` §II-bis.
+    pub artifact_store: Option<Arc<crate::backend::ArtifactStore>>,
 }
 
 impl<S: StateBackend + ?Sized> Default for MagmaExecutorConfig<S>
@@ -177,6 +190,7 @@ where
             preflight_laws:  true,
             drift_policy:    magma_drift::DriftPolicy::conservative_default(),
             audit_log_path:  None,
+            artifact_store:  None,
         }
     }
 }
@@ -193,6 +207,7 @@ impl<S: StateBackend + ?Sized> Clone for MagmaExecutorConfig<S> {
             preflight_laws:  self.preflight_laws,
             drift_policy:    self.drift_policy.clone(),
             audit_log_path:  self.audit_log_path.clone(),
+            artifact_store:  self.artifact_store.clone(),
         }
     }
 }
@@ -258,6 +273,51 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
     pub fn load_config_from_value(value: serde_json::Value) -> Result<magma_config::Config> {
         magma_config::Config::from_json(value)
             .map_err(|e| Error::MagmaExecution(format!("magma_config: {e}")))
+    }
+
+    /// Load the rendered terraform `Config` the way the configured
+    /// substrate dictates: from Postgres when an `artifact_store` is
+    /// wired (the DB-backed, zero-disk path — the compile phase
+    /// persisted the rendered JSON via `put_rendered_config`), else
+    /// from `work_dir/main.tf.json` (the disk fallback that keeps
+    /// DB-less unit tests + the tofu-compat debug file working).
+    ///
+    /// A `Some(store)` that has no rendered-config row yet is a typed
+    /// error, not a silent disk fallthrough: on the DB path the compile
+    /// phase MUST have persisted the config before plan/apply runs.
+    async fn load_config_routed(&self, work_dir: &Path) -> Result<magma_config::Config> {
+        match &self.cfg.artifact_store {
+            Some(store) => {
+                let value = store
+                    .get_rendered_config(&self.cfg.schema_name, &self.cfg.template_name)
+                    .await?
+                    .ok_or_else(|| {
+                        Error::MagmaExecution(format!(
+                            "no rendered config in artifact store for {}/{}; \
+                             the compile phase must persist it before plan/apply",
+                            self.cfg.schema_name, self.cfg.template_name
+                        ))
+                    })?;
+                Self::load_config_from_value(value)
+            }
+            None => Self::load_config(work_dir).await,
+        }
+    }
+
+    /// Encode a magma `State` into the durable on-disk byte form that
+    /// matches the configured `BackendShape` — identical to what
+    /// `OperatorBackend::write_state` would persist. `Tofu` shape →
+    /// `magma_to_tofu` (cross-executor-readable JSON, the production
+    /// default); `Magma` shape → typed serde JSON. Used by the atomic
+    /// apply op so the state row written inside the transaction is
+    /// byte-identical to a non-atomic `write_state`.
+    fn encode_state_bytes(&self, state: &magma_types::State) -> Result<Vec<u8>> {
+        match self.cfg.backend_shape {
+            BackendShape::Tofu => magma_operator_backend::magma_to_tofu(state)
+                .map_err(|e| Error::MagmaExecution(format!("encode tofu state: {e}"))),
+            BackendShape::Magma => serde_json::to_vec_pretty(state)
+                .map_err(|e| Error::MagmaExecution(format!("encode magma state: {e}"))),
+        }
     }
 }
 
@@ -414,7 +474,7 @@ where
         _extra_args: &[&str],
     ) -> Result<TofuResult> {
         let started = Instant::now();
-        let cfg = Self::load_config(work_dir).await?;
+        let cfg = self.load_config_routed(work_dir).await?;
 
         // Preflight: run the universal substrate law battery before
         // even reading state. Catches malformed workspaces
@@ -442,13 +502,24 @@ where
         let plan = magma_plan::plan(&cfg, &state)
             .map_err(|e| Error::MagmaExecution(format!("magma_plan: {e}")))?;
 
-        if self.cfg.plan_checkpoint {
-            let checkpoint = plan_file
-                .map(PathBuf::from)
-                .unwrap_or_else(|| Self::plan_checkpoint_path(work_dir));
-            let bytes = serde_json::to_vec_pretty(&plan)
-                .map_err(|e| Error::MagmaExecution(format!("encode plan: {e}")))?;
-            tokio::fs::write(&checkpoint, &bytes).await.map_err(Error::Io)?;
+        // Persist the typed plan so apply() (a separate reconcile)
+        // picks it up. DB-backed path → Postgres (`put_plan`), zero
+        // disk. Disk fallback → `magma-plan.json` checkpoint.
+        match &self.cfg.artifact_store {
+            Some(store) => {
+                store
+                    .put_plan(&self.cfg.schema_name, &self.cfg.template_name, &plan)
+                    .await?;
+            }
+            None if self.cfg.plan_checkpoint => {
+                let checkpoint = plan_file
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| Self::plan_checkpoint_path(work_dir));
+                let bytes = serde_json::to_vec_pretty(&plan)
+                    .map_err(|e| Error::MagmaExecution(format!("encode plan: {e}")))?;
+                tokio::fs::write(&checkpoint, &bytes).await.map_err(Error::Io)?;
+            }
+            None => {}
         }
 
         // Classify the plan per the configured DriftPolicy. Every
@@ -497,13 +568,24 @@ where
             gem_tree_attestation,
         ).map_err(|e| Error::MagmaExecution(format!("magma_bundle::new: {e}")))?;
 
-        // Persist bundle alongside the plan checkpoint so apply()
-        // (potentially a separate process) can pick it up and
-        // continue the lifecycle on the same typed identity.
-        let bundle_path = Self::bundle_checkpoint_path(work_dir);
-        let bundle_bytes = serde_json::to_vec_pretty(&bundle)
-            .map_err(|e| Error::MagmaExecution(format!("encode bundle: {e}")))?;
-        tokio::fs::write(&bundle_path, &bundle_bytes).await.map_err(Error::Io)?;
+        // Persist the plan-stage bundle so apply() (potentially a
+        // separate reconcile) can pick it up and continue the
+        // lifecycle on the same typed identity. DB-backed path →
+        // Postgres (`put_bundle`), zero disk. Disk fallback →
+        // `magma-bundle.json`.
+        match &self.cfg.artifact_store {
+            Some(store) => {
+                store
+                    .put_bundle(&self.cfg.schema_name, &self.cfg.template_name, &bundle)
+                    .await?;
+            }
+            None => {
+                let bundle_path = Self::bundle_checkpoint_path(work_dir);
+                let bundle_bytes = serde_json::to_vec_pretty(&bundle)
+                    .map_err(|e| Error::MagmaExecution(format!("encode bundle: {e}")))?;
+                tokio::fs::write(&bundle_path, &bundle_bytes).await.map_err(Error::Io)?;
+            }
+        }
 
         let stdout = serde_json::to_string_pretty(&serde_json::json!({
             "plan_id":          hex::encode(plan.id.0),
@@ -545,12 +627,31 @@ where
         _auto_approve: bool,
     ) -> Result<TofuResult> {
         let started = Instant::now();
-        let checkpoint = plan_file
-            .map(PathBuf::from)
-            .unwrap_or_else(|| Self::plan_checkpoint_path(work_dir));
-        let bytes = tokio::fs::read(&checkpoint).await.map_err(Error::Io)?;
-        let plan: magma_types::Plan = serde_json::from_slice(&bytes)
-            .map_err(|e| Error::MagmaExecution(format!("decode plan checkpoint: {e}")))?;
+        // Read the typed plan the plan() phase persisted. DB-backed path
+        // → Postgres (`get_plan`) — a normal cache read; a missing row
+        // is a typed error (no disk fallback on the Some path, no
+        // os-error-2 restart-loop class). Disk fallback → the
+        // `magma-plan.json` checkpoint.
+        let plan: magma_types::Plan = match &self.cfg.artifact_store {
+            Some(store) => store
+                .get_plan(&self.cfg.schema_name, &self.cfg.template_name)
+                .await?
+                .ok_or_else(|| {
+                    Error::MagmaExecution(format!(
+                        "no plan in artifact store for {}/{}; \
+                         the plan phase must persist it before apply",
+                        self.cfg.schema_name, self.cfg.template_name
+                    ))
+                })?,
+            None => {
+                let checkpoint = plan_file
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| Self::plan_checkpoint_path(work_dir));
+                let bytes = tokio::fs::read(&checkpoint).await.map_err(Error::Io)?;
+                serde_json::from_slice(&bytes)
+                    .map_err(|e| Error::MagmaExecution(format!("decode plan checkpoint: {e}")))?
+            }
+        };
 
         let backend = self.make_backend();
         let mut state = magma_backend::Backend::read_state(&backend)
@@ -580,7 +681,7 @@ where
         // akeyless by the Pangea architecture). Absent / unparsable config ->
         // no per-provider block, and the provider falls back to its own env
         // credentials.
-        if let Ok(cfg) = Self::load_config(work_dir).await {
+        if let Ok(cfg) = self.load_config_routed(work_dir).await {
             for (name, pc) in cfg.providers {
                 let fields: serde_json::Map<String, serde_json::Value> =
                     pc.fields.into_iter().collect();
@@ -588,34 +689,48 @@ where
             }
         }
         let outcome = magma_apply::engine::run_plan_with_providers(&plan, &mut state, &ctx).await;
-        magma_backend::Backend::write_state(&backend, &state)
-            .await
-            .map_err(|e| Error::MagmaExecution(format!("write state: {e}")))?;
+        // DB-backed path: DO NOT write state here. The state write is
+        // deferred into the atomic `put_apply_result` op below so the
+        // state row + the apply receipt (bundle) land in ONE Postgres
+        // transaction — together-or-not-at-all. Disk fallback: write
+        // state now via the magma backend (state + disk bundle are two
+        // separate writes, the legacy behavior).
+        if self.cfg.artifact_store.is_none() {
+            magma_backend::Backend::write_state(&backend, &state)
+                .await
+                .map_err(|e| Error::MagmaExecution(format!("write state: {e}")))?;
+        }
 
         // Continue the lifecycle FSM: read the plan-stage bundle
         // (if present) + transition through Applying -> Verifying
         // -> Stable/Failed, then re-emit the bundle with the apply
-        // outcome attached. Restart-safe: if a fresh executor
-        // picks this up, it sees the durable bundle on disk.
+        // outcome attached. Restart-safe: a fresh executor picks up
+        // the durable bundle (Postgres on the DB path, disk on the
+        // fallback).
         let bundle_path = Self::bundle_checkpoint_path(work_dir);
-        let mut lifecycle = if bundle_path.exists() {
-            let prev_bytes = tokio::fs::read(&bundle_path).await.ok();
-            match prev_bytes
+        let prev_bundle: Option<magma_bundle::Bundle> = match &self.cfg.artifact_store {
+            Some(store) => store
+                .get_bundle(&self.cfg.schema_name, &self.cfg.template_name)
+                .await?,
+            None if bundle_path.exists() => tokio::fs::read(&bundle_path)
+                .await
+                .ok()
                 .as_deref()
-                .and_then(|b| serde_json::from_slice::<magma_bundle::Bundle>(b).ok())
-            {
-                Some(prev) => prev.lifecycle,
-                None       => magma_fsm::LifecycleState::new(),
+                .and_then(|b| serde_json::from_slice::<magma_bundle::Bundle>(b).ok()),
+            None => None,
+        };
+        let mut lifecycle = match prev_bundle {
+            Some(prev) => prev.lifecycle,
+            None => {
+                // No prior plan-stage bundle — treat as Idle start.
+                let mut s = magma_fsm::LifecycleState::new();
+                let _ = s.transition(
+                    magma_fsm::Phase::Planning,
+                    None,
+                    "magma_executor::apply (synthesized planning)",
+                );
+                s
             }
-        } else {
-            // No prior plan-stage bundle — treat as Idle start.
-            let mut s = magma_fsm::LifecycleState::new();
-            let _ = s.transition(
-                magma_fsm::Phase::Planning,
-                None,
-                "magma_executor::apply (synthesized planning)",
-            );
-            s
         };
         let plan_phase_id = magma_converge::PlanId(hex::encode(outcome.plan_id.0));
         let _ = lifecycle.transition(
@@ -700,9 +815,41 @@ where
             audit_events,
             gem_tree_attestation,
         ).map_err(|e| Error::MagmaExecution(format!("magma_bundle::new: {e}")))?;
-        let bundle_bytes = serde_json::to_vec_pretty(&final_bundle)
-            .map_err(|e| Error::MagmaExecution(format!("encode bundle: {e}")))?;
-        tokio::fs::write(&bundle_path, &bundle_bytes).await.map_err(Error::Io)?;
+
+        // Persist the post-apply state + bundle. DB-backed path → ONE
+        // atomic Postgres transaction (`put_apply_result`): the state
+        // row (encoded in the configured BackendShape, byte-identical
+        // to `write_state`) and the bundle artifact commit together or
+        // roll back together — a half-applied reconcile (state advanced
+        // without a receipt, or receipt without state) is
+        // unrepresentable. Disk fallback → the bundle file (state was
+        // already written above via the magma backend; two writes).
+        match &self.cfg.artifact_store {
+            Some(store) => {
+                let state_bytes = self.encode_state_bytes(&state)?;
+                let bundle_bytes = serde_json::to_vec(&final_bundle)
+                    .map_err(|e| Error::MagmaExecution(format!("encode bundle: {e}")))?;
+                let state_table = crate::backend::ArtifactStore::live_state_table(
+                    &self.cfg.schema_name,
+                    &self.cfg.template_name,
+                )?;
+                store
+                    .put_apply_result(
+                        &self.cfg.schema_name,
+                        &self.cfg.template_name,
+                        &state_table,
+                        &self.cfg.state_name,
+                        &state_bytes,
+                        &bundle_bytes,
+                    )
+                    .await?;
+            }
+            None => {
+                let bundle_bytes = serde_json::to_vec_pretty(&final_bundle)
+                    .map_err(|e| Error::MagmaExecution(format!("encode bundle: {e}")))?;
+                tokio::fs::write(&bundle_path, &bundle_bytes).await.map_err(Error::Io)?;
+            }
+        }
 
         let stdout = serde_json::to_string_pretty(&serde_json::json!({
             "plan_id":     hex::encode(outcome.plan_id.0),
@@ -758,7 +905,9 @@ where
         // per-resource delete failures collect into `outcome.failed` and flip
         // the TofuResult to an error below.
         let mut ctx = magma_apply::engine::ApplyContext::new(work_dir.to_path_buf());
-        if let Ok(cfg) = Self::load_config(work_dir).await {
+        // Provider creds from the rendered config — routed: Postgres on
+        // the DB-backed path, `main.tf.json` on the disk fallback.
+        if let Ok(cfg) = self.load_config_routed(work_dir).await {
             for (name, pc) in cfg.providers {
                 let fields: serde_json::Map<String, serde_json::Value> =
                     pc.fields.into_iter().collect();
@@ -766,6 +915,9 @@ where
             }
         }
         let outcome = magma_apply::engine::run_plan_with_providers(&plan, &mut state, &ctx).await;
+        // Destroy emits no bundle, so there is no state+receipt atomicity
+        // pairing here — the emptied state goes straight through the
+        // state backend (Postgres) via the magma backend on both paths.
         magma_backend::Backend::write_state(&backend, &state)
             .await
             .map_err(|e| Error::MagmaExecution(format!("write state: {e}")))?;
@@ -854,6 +1006,7 @@ mod tests {
             preflight_laws:  false,
             drift_policy:    magma_drift::DriftPolicy::conservative_default(),
             audit_log_path:  None,
+            artifact_store:  None,
         }
     }
 
@@ -1018,6 +1171,7 @@ mod tests {
             preflight_laws:  false,
             drift_policy:    magma_drift::DriftPolicy::conservative_default(),
             audit_log_path:  None,
+            artifact_store:  None,
         });
 
         let tmp = tempfile::tempdir().unwrap();
@@ -1072,6 +1226,7 @@ mod tests {
             preflight_laws:  false,
             drift_policy:    magma_drift::DriftPolicy::conservative_default(),
             audit_log_path:  None,
+            artifact_store:  None,
         });
 
         let tmp_a = tempfile::tempdir().unwrap();
@@ -1172,6 +1327,7 @@ mod tests {
             preflight_laws:  false,
             drift_policy:    magma_drift::DriftPolicy::conservative_default(),
             audit_log_path:  None,
+            artifact_store:  None,
         };
         let exec = MagmaExecutor::new(cfg.clone());
         let tmp = tempfile::tempdir().unwrap();
@@ -1220,6 +1376,7 @@ mod tests {
             preflight_laws:  true, // production default
             drift_policy:    magma_drift::DriftPolicy::conservative_default(),
             audit_log_path:  None,
+            artifact_store:  None,
         };
         let exec = MagmaExecutor::new(cfg);
         let tmp = tempfile::tempdir().unwrap();

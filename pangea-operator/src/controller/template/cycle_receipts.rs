@@ -303,11 +303,30 @@ pub async fn record_reconcile_cycle(
     //      that haven't migrated to runner-provided artifacts).
     //   3. None if neither — cycle records without bundle-derived
     //      fields populated.
+    // On the magma DB-backed path the bundle lives in Postgres (the
+    // artifact store), not on disk — fetch its bytes once and reuse for
+    // both the cycle artifact and the apply-outcome metric below. Keys
+    // match `magma_executor_for`: schema = "pangea_{ns}", template name.
+    let db_bundle_bytes: Option<Vec<u8>> = if executor.name() == "magma" {
+        match state.artifact_store.as_ref() {
+            Some(store) => {
+                let schema_name = format!("pangea_{}", template.spec.pangea_namespace);
+                store.get_bundle_bytes(&schema_name, &name).await.unwrap_or(None)
+            }
+            None => None,
+        }
+    } else {
+        None
+    };
+
     let cycle_artifact = match artifact {
         Some(a) => Some(a),
-        None    => match work_dir {
-            Some(dir) => read_cycle_artifact(dir).await,
-            None      => None,
+        None    => match (&db_bundle_bytes, work_dir) {
+            // DB-backed bundle wins (zero-disk magma path).
+            (Some(bytes), _) => crate::executor::magma_bundle::cycle_artifact_from_bytes(bytes),
+            // Disk fallback for the file-based magma path / un-migrated callers.
+            (None, Some(dir)) => read_cycle_artifact(dir).await,
+            (None, None)      => None,
         },
     };
 
@@ -326,25 +345,32 @@ pub async fn record_reconcile_cycle(
         CycleResult::AppliedSuccess { .. } | CycleResult::AppliedFailure(_)
     );
     if cycle_was_apply && executor.name() == "magma" {
-        if let Some(dir) = work_dir {
-            if let Some(outcome) = read_apply_outcome(dir).await {
-                let template_ns = template
-                    .namespace()
-                    .unwrap_or_else(|| "unknown".to_string());
-                state.metrics.record_magma_apply(
-                    &name,
-                    &template_ns,
-                    outcome.applied,
-                    outcome.failed,
-                );
-                debug!(
-                    template = %name,
-                    applied = outcome.applied,
-                    failed = outcome.failed,
-                    succeeded = outcome.succeeded,
-                    "recorded magma apply-outcome metrics",
-                );
-            }
+        // DB-backed bundle wins (zero-disk path); else read the disk
+        // bundle. Same `{applied, failed, phase}` shape either way.
+        let apply_outcome = match &db_bundle_bytes {
+            Some(bytes) => crate::executor::magma_bundle::apply_outcome_from_bytes(bytes),
+            None => match work_dir {
+                Some(dir) => read_apply_outcome(dir).await,
+                None      => None,
+            },
+        };
+        if let Some(outcome) = apply_outcome {
+            let template_ns = template
+                .namespace()
+                .unwrap_or_else(|| "unknown".to_string());
+            state.metrics.record_magma_apply(
+                &name,
+                &template_ns,
+                outcome.applied,
+                outcome.failed,
+            );
+            debug!(
+                template = %name,
+                applied = outcome.applied,
+                failed = outcome.failed,
+                succeeded = outcome.succeeded,
+                "recorded magma apply-outcome metrics",
+            );
         }
     }
 

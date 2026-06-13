@@ -3,6 +3,7 @@
 //! This module provides PostgreSQL-based state storage for OpenTofu,
 //! using the `pg` backend type with schema isolation per namespace.
 
+mod artifact_store;
 mod postgres;
 mod retry;
 mod schema;
@@ -12,6 +13,7 @@ pub mod state_backend;
 mod lock;
 mod config;
 
+pub use artifact_store::ArtifactStore;
 pub use postgres::PostgresBackend;
 pub use retry::{is_connection_level, RetryPolicy, RetryingStateBackend};
 pub use schema::SchemaManager;
@@ -33,6 +35,7 @@ pub struct BackendManager {
     schema_manager: SchemaManager,
     state_store: StateStore,
     lock_manager: StateLock,
+    artifact_store: ArtifactStore,
 }
 
 impl BackendManager {
@@ -56,6 +59,7 @@ impl BackendManager {
             schema_manager: SchemaManager::new(pool.clone()),
             state_store: StateStore::new(pool.clone()),
             lock_manager: StateLock::new(pool.clone()),
+            artifact_store: ArtifactStore::new(pool.clone()),
         })
     }
 
@@ -67,6 +71,7 @@ impl BackendManager {
             schema_manager: SchemaManager::new(pool.clone()),
             state_store: StateStore::new(pool.clone()),
             lock_manager: StateLock::new(pool.clone()),
+            artifact_store: ArtifactStore::new(pool.clone()),
         }
     }
 
@@ -83,6 +88,12 @@ impl BackendManager {
     /// Get the lock manager.
     pub fn lock_manager(&self) -> &StateLock {
         &self.lock_manager
+    }
+
+    /// Get the artifact store (durable reconcile artifacts on the magma
+    /// path: rendered config / plan / bundle, all in Postgres).
+    pub fn artifact_store(&self) -> &ArtifactStore {
+        &self.artifact_store
     }
 
     /// Get the connection pool.

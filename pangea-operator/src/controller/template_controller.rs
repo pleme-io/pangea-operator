@@ -696,7 +696,35 @@ async fn handle_compiling(
         compile_result.terraform_json
     };
 
-    // Write template content to workspace
+    // Persist the compile→plan rendered-config handoff.
+    //
+    // On the magma DB-backed path (executor resolves to magma AND the
+    // artifact store is wired) the rendered terraform JSON is stored in
+    // Postgres (`put_rendered_config`) so the plan phase — a SEPARATE
+    // reconcile, possibly on a fresh pod — reads it from the DB rather
+    // than a pod-local file. This is the zero-disk compile handoff: a
+    // pod roll between Compiling and Planning no longer os-error-2-loops
+    // on a missing `main.tf.json`. Keys MUST match `magma_executor_for`:
+    // schema = "pangea_{spec.pangeaNamespace}", template = name_any().
+    // Per the org ★★ MAGMA-NATIVE EXECUTION directive.
+    let magma_active = state.executor_for(template).name() == "magma";
+    if magma_active {
+        if let Some(store) = state.artifact_store.as_ref() {
+            let value: serde_json::Value = serde_json::from_str(&terraform_json)
+                .map_err(|e| Error::Compilation(format!("rendered terraform JSON is not valid JSON: {e}")))?;
+            let schema_name = format!("pangea_{}", template.spec.pangea_namespace);
+            let template_name = template.name_any();
+            store
+                .put_rendered_config(&schema_name, &template_name, &value)
+                .await?;
+            info!("Rendered config persisted to Postgres artifact store (zero-disk magma handoff)");
+        }
+    }
+
+    // Always write `main.tf.json` to the workspace too: the tofu path
+    // requires it, and it remains a debugging aid. On the magma DB path
+    // it is redundant (the DB row is the source of truth) — see the
+    // residual disk note in theory/MAGMA-OPERATOR-BACKEND.md.
     workspace.write_file("main.tf.json", &terraform_json).await?;
     info!("Template content written to workspace");
 

@@ -153,7 +153,11 @@ impl SchemaManager {
 }
 
 /// Validate a PostgreSQL identifier (schema/table name).
-fn is_valid_identifier(name: &str) -> bool {
+///
+/// `pub(crate)` so other backend modules (e.g. `artifact_store`) can
+/// reuse the one canonical identifier guard rather than re-implementing
+/// it — the SQL-injection defense lives in exactly one place.
+pub(crate) fn is_valid_identifier(name: &str) -> bool {
     if name.is_empty() || name.len() > 63 {
         return false;
     }
