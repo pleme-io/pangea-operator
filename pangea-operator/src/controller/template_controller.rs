@@ -1741,38 +1741,18 @@ async fn handle_applying(
             }
         };
 
-        // The cycle receipt's planSummary must reflect the APPLIED
-        // (post-apply) plan, not the planning-phase snapshot. After an apply
-        // that adopted/created resources, prior_plan_summary is stale (e.g.
-        // "+6 ~0 -0" while the converged post-apply plan is all-NoOp), which
-        // reads as "6 still pending" on a Ready template — misleading even
-        // though state + outcome are correct. Derive the summary from the
-        // post-apply artifact so the receipt matches the recorded
-        // matched/created/imported counts; fall back to the prior summary
-        // only when no post-apply artifact was produced (best-effort).
-        let applied_plan_summary = post_apply_artifact
-            .as_ref()
-            .map(|art| {
-                let (added, changed, destroyed, total) = art.summary_counts();
-                crate::executor::PlanSummary {
-                    added,
-                    changed,
-                    destroyed,
-                    total,
-                    has_changes: added > 0 || changed > 0 || destroyed > 0,
-                    changes_by_type: std::collections::HashMap::new(),
-                }
-                .format()
-            })
-            .or_else(|| prior_plan_summary.clone());
-
+        // planSummary handling: pass the planning-phase summary (what the
+        // cycle PLANNED — e.g. "+5" for a real create). `build_reconcile_cycle`
+        // centrally overrides it to "No changes" when the cycle actually
+        // converged (success + zero created/updated/destroyed/imported), so a
+        // steady-state template can't show a stale "+6". See cycle_receipts.rs.
         record_reconcile_cycle(
             template,
             state,
             Some(&workspace.path),
             post_apply_artifact,
             &prior_drifts,
-            applied_plan_summary,
+            prior_plan_summary,
             CycleResult::AppliedSuccess { imported_addresses: imported_addresses.clone() },
         )
         .await?;

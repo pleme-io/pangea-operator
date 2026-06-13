@@ -145,6 +145,30 @@ pub fn build_reconcile_cycle(
     let untouched = total.saturating_sub(touched_count);
     summary.matched = summary.matched.saturating_add(untouched);
 
+    // planSummary must reflect THIS cycle's reality, not a stale carried-
+    // forward value. The caller's `plan_summary` is the planning-phase string,
+    // which on a converged template can be stale (e.g. "+6" frozen from when
+    // the resources were first created/adopted, while the template now plans
+    // all-NoOp). When the cycle SUCCEEDED and changed nothing — every resource
+    // matched, zero created/updated/destroyed/imported, no drift, no failure —
+    // the only honest summary is "No changes"; override the stale string.
+    // Genuine-change cycles (some mutation) and failures keep the planning-
+    // phase summary so the operator still sees what was planned/attempted.
+    let converged_no_op = matches!(
+        result,
+        CycleResult::AppliedSuccess { .. } | CycleResult::NoChanges
+    ) && summary.created == 0
+        && summary.updated == 0
+        && summary.destroyed == 0
+        && summary.imported == 0
+        && summary.drifted_uncorrected == 0
+        && summary.failed == 0;
+    let plan_summary = if converged_no_op {
+        Some("No changes".to_string())
+    } else {
+        plan_summary
+    };
+
     // Split the unified CycleArtifact into its destination fields.
     // action_distribution is required on the artifact when present
     // (a CycleArtifact with no changes still has a zero-distribution,
@@ -917,5 +941,49 @@ mod tests {
             }
         };
         assert!(!cycle_content_equal(&mk(7), &mk(8)));
+    }
+
+    #[test]
+    fn converged_success_cycle_overrides_stale_plan_summary() {
+        // #66: a steady-state template that planned +N earlier but now changes
+        // nothing must NOT show the stale "+N". A converged AppliedSuccess
+        // cycle (no drifts → all matched, zero mutations) reports "No changes",
+        // overriding the stale planning-phase string passed in.
+        let drifts: Vec<DriftDetail> = vec![];
+        let cycle = build_reconcile_cycle(
+            100,
+            chrono::Utc::now(),
+            &drifts,
+            10, // 10 resources, all matched (untouched)
+            Some("+6 ~0 -0".into()), // STALE planning-phase summary
+            None,
+            Some("magma".into()),
+            None,
+            CycleResult::AppliedSuccess { imported_addresses: vec![] },
+        );
+        assert_eq!(cycle.plan_summary.as_deref(), Some("No changes"));
+        assert_eq!(cycle.summary.matched, 10);
+        assert_eq!(cycle.summary.created, 0);
+        assert_eq!(cycle.summary.imported, 0);
+    }
+
+    #[test]
+    fn failed_cycle_keeps_planning_summary() {
+        // The override fires ONLY on success+converged. A failed cycle keeps
+        // the planning-phase summary so the operator still sees what was
+        // attempted (no drifts here, but the result is a failure).
+        let drifts: Vec<DriftDetail> = vec![];
+        let cycle = build_reconcile_cycle(
+            101,
+            chrono::Utc::now(),
+            &drifts,
+            10,
+            Some("+6 ~0 -0".into()),
+            None,
+            Some("magma".into()),
+            None,
+            CycleResult::AppliedFailure("boom".into()),
+        );
+        assert_eq!(cycle.plan_summary.as_deref(), Some("+6 ~0 -0"));
     }
 }
