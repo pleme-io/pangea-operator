@@ -342,6 +342,7 @@ fn ok_tofu_result(stdout: String, started: Instant) -> TofuResult {
         stderr:    String::new(),
         success:   true,
         duration:  started.elapsed(),
+        failed_changes: Vec::new(),
     }
 }
 
@@ -448,6 +449,7 @@ fn changes_tofu_result(stdout: String, started: Instant) -> TofuResult {
         stderr:    String::new(),
         success:   true,
         duration:  started.elapsed(),
+        failed_changes: Vec::new(),
     }
 }
 
@@ -458,6 +460,27 @@ fn err_tofu_result(stderr: String, started: Instant) -> TofuResult {
         stderr,
         success:   false,
         duration:  started.elapsed(),
+        failed_changes: Vec::new(),
+    }
+}
+
+/// Like [`err_tofu_result`] but carries the structured per-resource
+/// failures OUT of the apply engine so the controller's reacting FSM can
+/// classify each one (theory/ANOMALY-REACTIVE-RECONCILE.md §VII.2). The
+/// `stdout` still carries the count-only JSON summary for log/debug parity;
+/// the structured `failed_changes` is the load-bearing border.
+fn err_tofu_result_with_failures(
+    stdout: String,
+    started: Instant,
+    failed_changes: Vec<crate::executor::tofu::FailedChangeRecord>,
+) -> TofuResult {
+    TofuResult {
+        exit_code: 1,
+        stdout,
+        stderr: String::new(),
+        success: false,
+        duration: started.elapsed(),
+        failed_changes,
     }
 }
 
@@ -889,7 +912,22 @@ where
         Ok(if outcome.failed.is_empty() {
             ok_tofu_result(stdout, started)
         } else {
-            err_tofu_result(stdout, started)
+            // Surface the structured per-resource failures OUT to the
+            // controller (the reacting FSM) instead of collapsing them into
+            // the count-only `stdout`. Each `FailedChange.reason` is the wire
+            // `controller::anomaly::classify` matches on; the address is
+            // rendered `<type>.<name>` exactly as the universal bundle does
+            // (line ~805) so addresses stay coherent across surfaces.
+            let failed_changes = outcome
+                .failed
+                .iter()
+                .map(|f| crate::executor::tofu::FailedChangeRecord {
+                    address: format!("{}.{}", f.address.type_id.0, f.address.name),
+                    action: f.action.to_string(),
+                    reason: f.reason.clone(),
+                })
+                .collect();
+            err_tofu_result_with_failures(stdout, started, failed_changes)
         })
     }
 

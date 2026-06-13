@@ -38,7 +38,7 @@ pub mod workspace_runner;
 pub use backend_select::ExecutorBackend;
 pub use iac_executor::IacExecutor;
 pub use recording::{RecordedCall, RecordingExecutor};
-pub use tofu::{TofuExecutor, TofuCommand, TofuResult};
+pub use tofu::{TofuExecutor, TofuCommand, TofuResult, FailedChangeRecord};
 pub use workspace::{Workspace, WorkspaceManager};
 pub use plan::{Plan, PlanSummary, ResourceChange, ChangeType};
 pub use packer::{PackerExecutor, PackerCommand, PackerResult, parse_packer_manifest, parse_packer_manifest_region};

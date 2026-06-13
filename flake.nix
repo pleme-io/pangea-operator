@@ -344,6 +344,49 @@
             mkdir -p $out
             printf '%s\n' ${lib.concatMapStringsSep " " (src: lib.escapeShellArg "${src}") (builtins.attrValues pangeaInputsChecked)} > $out/path-gem-refs
           '';
+
+          # ── magma provider-mirror (★★ MAGMA-NATIVE / StageProvider) ─────
+          #
+          # magma's `magma-providers::locate_provider` resolves a provider
+          # plugin binary by recursively walking two roots — the workspace's
+          # `.terraform/providers` (the ephemeral emptyDir, wiped on pod roll)
+          # and `$MAGMA_PROVIDER_DIR` — and filename-matching
+          # `terraform-provider-<name>` / `terraform-provider-<name>_<ver>`
+          # (magma-providers lib.rs:42-101; ANY layout under the root works,
+          # flat dir or the nixpkgs `…/registry.terraform.io/<ns>/<name>/<ver>/
+          # <os>_<arch>/…` tree). Before this, NO provider binaries were baked
+          # and MAGMA_PROVIDER_DIR was never set, so the only resolution root
+          # was the emptyDir — wiped on every pod roll → `EngineError::Locate`
+          # → `NoProvidersDir` → every Create failed (the live rio
+          # ProviderUnavailable anomaly, 2026-06-03).
+          #
+          # Baking the providers into the IMAGE (durable, roll-surviving) and
+          # exporting `MAGMA_PROVIDER_DIR` at that path makes
+          # ProviderUnavailable → StageProvider **Absolute by construction**:
+          # the binaries live in the image's read-only store closure, not in
+          # an emptyDir, so a pod restart cannot lose them. This is the
+          # "one sanctioned filesystem reach" (loading provider plugins) made
+          # *reliable* rather than incidental — theory/ANOMALY-REACTIVE-
+          # RECONCILE.md §VII.1.
+          #
+          # NOTE: nixpkgs renamed the bare provider attrs to `<ns>_<name>`
+          # (`terraform-providers.github` → `integrations_github`,
+          # `cloudflare` → `cloudflare_cloudflare`, `aws` → `hashicorp_aws`,
+          # `kubernetes` → `hashicorp_kubernetes`); the bare aliases still
+          # resolve but emit deprecation warnings — use the canonical names.
+          # The provider set mirrors what the rio Pangea architectures declare
+          # (cloudflare + github at minimum; aws + kubernetes are trivially
+          # available and cheap to bake). Extend this list when a new provider
+          # appears in a rendered `provider "<name>" {}` block.
+          magmaProviderMirror = imagePkgs.buildEnv {
+            name = "magma-provider-mirror";
+            paths = with imagePkgs.terraform-providers; [
+              cloudflare_cloudflare
+              integrations_github
+              hashicorp_aws
+              hashicorp_kubernetes
+            ];
+          };
         in builders.mkCrate2nixDockerImage {
           serviceName = "pangea-operator";
           packageName = "pangea-operator";
@@ -374,10 +417,19 @@
           extraContents = pkgs: (with pkgs; [
             ruby_3_3 opentofu packer git busybox
             gemWs.env
-          ]) ++ [ pathGemAnchor ];
+          ]) ++ [ pathGemAnchor magmaProviderMirror ];
           extraEnv = [
             "RUBYLIB=${fullRubylib}"
             "DRY_TYPES_WARNINGS=false"
+            # Durable, roll-surviving provider-plugin root. magma's
+            # locate_provider walks this recursively + filename-matches
+            # (magma-providers lib.rs:42-101), so pointing it at the
+            # buildEnv root resolves the nixpkgs
+            # `…/libexec/terraform-providers/registry.terraform.io/…` trees
+            # each provider ships, no flattening needed. Makes
+            # ProviderUnavailable → StageProvider Absolute (the binary is in
+            # the image closure, not the wiped emptyDir).
+            "MAGMA_PROVIDER_DIR=${magmaProviderMirror}"
           ];
           buildInputs = [ ruby imagePkgs.openssl imagePkgs.postgresql imagePkgs.sqlite ];
           nativeBuildInputs = [ libclang imagePkgs.pkg-config imagePkgs.cmake imagePkgs.perl ];

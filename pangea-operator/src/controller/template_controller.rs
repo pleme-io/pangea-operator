@@ -1761,69 +1761,73 @@ async fn handle_applying(
         let err_msg = format!("tofu apply failed: {combined_output}");
         warn!(%err_msg);
 
-        // Self-heal the "Saved plan is stale" race: the cached tfplan was
-        // generated against a state serial that no longer matches the live
-        // state. Cause is usually a pod restart mid-Applying or an
-        // out-of-band state write between plan and apply. The recovery
-        // path:
-        //   1. Drop the stale tfplan (so handle_applying can't pick it up
-        //      on next reconcile)
-        //   2. Run workspace.clean() (also drops main.tf.json so the next
-        //      Compiling re-renders deterministically)
-        //   3. Transition phase back to Pending → kube-rs's watch fires →
-        //      next cycle walks Pending → Compiling → Init → Plan → Apply
-        //      with a fresh tfplan against current state.
+        // ── The reacting FSM: classify every apply failure into the typed
+        // ApplyAnomaly taxonomy, then dispatch ONE typed remediation
+        // (theory/ANOMALY-REACTIVE-RECONCILE.md §IV-§VI). This FOLDS the
+        // former four scattered substring checks (stale-plan, empty-
+        // workspace, already-exists, self-healable) into one classifier so
+        // there is a single typed detection border. Each anomaly carries a
+        // RemediationMode (Absolute | Decaying | Hold) — the Lyapunov
+        // settle-bound made explicit.
         //
-        // Without this self-heal, every retry under the affected workspace
-        // re-uses the same stale tfplan and the cycle deterministically
-        // exhausts maxRetries — observed against pleme-io-opensource on
-        // 2026-05-18 (image @b6550b2). The race is rare in steady state
-        // but pod restarts during the apply window make it deterministic.
-        //
-        // Also catches the sibling failure mode `"Apply requires
-        // configuration to be present"` / `"No configuration files"` —
-        // these fire when a previous self-heal called workspace.clean()
-        // (which wipes main.tf.json) but the operator pod was killed
-        // before it could `update_phase(Pending)`. The new pod sees the
-        // template still in `Applying`, runs handle_applying against an
-        // empty workspace, and tofu refuses with these errors. Same
-        // recovery: clean (idempotent) + transition to Pending.
-        let is_stale_plan = combined_output.contains("Saved plan is stale")
-            || combined_output.contains("plan is stale");
-        let is_empty_workspace = combined_output.contains("No configuration files")
-            || combined_output.contains("Apply requires configuration to be present");
-        if is_stale_plan || is_empty_workspace {
-            let (reason_code, reason_msg) = if is_stale_plan {
-                (
-                    "StalePlanRecovered",
-                    "Apply hit stale-plan race; wiped workspace and re-queued from Pending for a fresh plan",
-                )
+        // Detection sources, in priority:
+        //   1. `result.failed_changes` — the structured per-resource
+        //      failures the magma executor now surfaces (each carries the
+        //      free `reason` string the classifier matches on).
+        //   2. Fallback — when the executor produced no structured records
+        //      (the tofu path, whose failures only surface as stdout/
+        //      stderr text), classify the combined output once.
+        let anomalies: Vec<crate::controller::anomaly::ApplyAnomaly> =
+            if !result.failed_changes.is_empty() {
+                result
+                    .failed_changes
+                    .iter()
+                    .map(|fc| {
+                        crate::controller::anomaly::classify(&fc.reason, &fc.address, &fc.action)
+                    })
+                    .collect()
             } else {
-                (
-                    "EmptyWorkspaceRecovered",
-                    "Apply found empty workspace (likely pod restart mid-self-heal); re-queued from Pending",
-                )
+                vec![crate::controller::anomaly::classify(&combined_output, "", "")]
             };
-            warn!(
-                kind = reason_code,
-                "Apply failure is recoverable — wiping workspace + transitioning to Pending"
-            );
-            let workspace_clean = state.workspace_manager.get_workspace(template).await;
-            if let Ok(ws) = workspace_clean {
-                let _ = ws.clean().await;
-            }
-            update_phase(template, Phase::Pending, state).await?;
-            record_event(
-                template,
-                state,
-                EventType::Normal,
-                reason_code,
-                reason_msg,
-            )
-            .await;
-            return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
+
+        // Pick the single anomaly that drives this tick's reconcile action.
+        // Recovery anomalies (stale-plan / empty-workspace) take precedence
+        // because they have an Absolute self-heal that converges within one
+        // reconcile; then the provider/conflict classes; holds last (they
+        // don't recover on their own, so they shouldn't mask a recoverable
+        // sibling). `react_to_apply_anomaly` performs the dispatch.
+        let driver = select_driving_anomaly(&anomalies);
+        warn!(
+            anomaly = driver.kind_str(),
+            mode = driver.mode().as_str(),
+            total = anomalies.len(),
+            "apply failed — classified into typed ApplyAnomaly; dispatching typed remediation"
+        );
+
+        if let Some(action) = react_to_apply_anomaly(
+            template,
+            state,
+            &driver,
+            &err_msg,
+            &prior_drifts,
+            prior_plan_summary.clone(),
+            &workspace,
+            &runner,
+        )
+        .await?
+        {
+            // The remediation produced a terminal reconcile action for this
+            // tick (recovery bounce, Decaying requeue, …). It already
+            // recorded its own status/event/cycle. Return it.
+            return Ok(action);
         }
 
+        // No early-return remediation: fall through to the typed
+        // SurfaceAndHold / record-failure path below (Hold-mode anomalies +
+        // the ProviderUnavailable surface). `update_phase_with_error`
+        // sets phase=Failed + a `Healthy=False` condition + lastError and
+        // runs the ReactivePolicy escalation pipeline — non-silent by
+        // construction.
         update_phase_with_error(template, Phase::Failed, &err_msg, state).await?;
 
         // Even on apply failure, capture the post-failure state via
@@ -1849,15 +1853,276 @@ async fn handle_applying(
         // event so we don't lose the failure on K8s admission validation.
         // The full err_msg is still on the template status (lastError +
         // lastCycle.outcomes) and in the operator log.
-        let event_msg = if err_msg.len() > 1000 {
-            format!("{}…[truncated, full err in template status]", &err_msg[..1000])
+        //
+        // The event reason now carries the typed anomaly discriminant
+        // (SurfaceAndHold per §IV) so `kubectl get events` names the class —
+        // `AnomalyUnclassified` / `AnomalyPermissionDenied` /
+        // `AnomalyProviderUnavailable` — not just a generic `ApplyFailed`.
+        // An Unclassified here is the backlog signal (§X): it forces a new
+        // taxonomy arm.
+        let event_reason = driver.event_reason();
+        let event_body = format!(
+            "[{} / {}] {}",
+            driver.kind_str(),
+            driver.mode().as_str(),
+            err_msg
+        );
+        let event_msg = if event_body.len() > 1000 {
+            format!("{}…[truncated, full err in template status]", &event_body[..1000])
         } else {
-            err_msg.clone()
+            event_body
         };
-        record_event(template, state, EventType::Warning, "ApplyFailed", &event_msg).await;
+        record_event(template, state, EventType::Warning, event_reason, &event_msg).await;
     }
 
     Ok(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL))
+}
+
+/// Pick the single [`ApplyAnomaly`] that drives this reconcile tick's
+/// remediation action from the per-resource set.
+///
+/// Precedence (theory/ANOMALY-REACTIVE-RECONCILE.md §V): Absolute
+/// self-healing recovery classes first (they converge within one reconcile
+/// and shouldn't be masked), then provider/conflict classes, then Decaying
+/// retries, then Hold classes last (a Hold doesn't recover on its own, so it
+/// must not mask a recoverable sibling). Within a tie the first occurrence
+/// wins (deterministic). An empty set never reaches here (the caller only
+/// classifies on failure), but defaults to a typed Unclassified for safety.
+fn select_driving_anomaly(
+    anomalies: &[crate::controller::anomaly::ApplyAnomaly],
+) -> crate::controller::anomaly::ApplyAnomaly {
+    use crate::controller::anomaly::ApplyAnomaly;
+    fn rank(a: &ApplyAnomaly) -> u8 {
+        match a {
+            ApplyAnomaly::StalePlan => 0,
+            ApplyAnomaly::EmptyWorkspace => 1,
+            ApplyAnomaly::ProviderUnavailable { .. } => 2,
+            ApplyAnomaly::ObjectExistsUntracked { .. } => 3,
+            ApplyAnomaly::RateLimited => 4,
+            ApplyAnomaly::TransientNetwork => 5,
+            ApplyAnomaly::PermissionDenied => 6,
+            ApplyAnomaly::Unclassified { .. } => 7,
+        }
+    }
+    anomalies
+        .iter()
+        .min_by_key(|a| rank(a))
+        .cloned()
+        .unwrap_or_else(|| ApplyAnomaly::Unclassified {
+            reason: "apply failed with no classifiable failure record".into(),
+        })
+}
+
+/// Dispatch the typed remediation for the driving [`ApplyAnomaly`]
+/// (theory/ANOMALY-REACTIVE-RECONCILE.md §IV, §VII.2). Returns
+/// `Some(action)` when the remediation produced a terminal reconcile action
+/// for this tick (and recorded its own status/event/cycle); `None` when the
+/// caller should fall through to the typed SurfaceAndHold record-failure
+/// path (Phase::Failed + Healthy=False + ReactivePolicy escalation).
+///
+/// Each arm records its MODE (Absolute | Decaying | Hold) so the Lyapunov
+/// settle-bound is explicit in the operator-facing event.
+#[allow(clippy::too_many_arguments)]
+async fn react_to_apply_anomaly(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+    anomaly: &crate::controller::anomaly::ApplyAnomaly,
+    err_msg: &str,
+    prior_drifts: &[DriftDetail],
+    prior_plan_summary: Option<String>,
+    workspace: &crate::executor::Workspace,
+    runner: &Arc<dyn crate::executor::workspace_runner::WorkspaceRunner>,
+) -> Result<Option<ReconcileAction>> {
+    use crate::controller::anomaly::{ApplyAnomaly, RemediationMode};
+
+    let mode = anomaly.mode();
+    match anomaly {
+        // ── StalePlan / EmptyWorkspace → Absolute self-heal ───────────
+        // Drop the stale cached plan + clean the workspace (idempotent) and
+        // bounce to Pending so the next cycle re-renders + re-plans against
+        // current state. Converges within one reconcile. (Formerly the
+        // is_stale_plan / is_empty_workspace ad-hoc block — folded into the
+        // typed taxonomy.)
+        ApplyAnomaly::StalePlan | ApplyAnomaly::EmptyWorkspace => {
+            let (reason_code, reason_msg) = match anomaly {
+                ApplyAnomaly::StalePlan => (
+                    "StalePlanRecovered",
+                    "Apply hit stale-plan race; wiped workspace and re-queued from Pending for a fresh plan",
+                ),
+                _ => (
+                    "EmptyWorkspaceRecovered",
+                    "Apply found empty workspace (likely pod restart mid-self-heal); re-queued from Pending",
+                ),
+            };
+            warn!(
+                kind = reason_code,
+                mode = mode.as_str(),
+                "Apply failure is recoverable (Absolute) — wiping workspace + transitioning to Pending"
+            );
+            if let Ok(ws) = state.workspace_manager.get_workspace(template).await {
+                let _ = ws.clean().await;
+            }
+            update_phase(template, Phase::Pending, state).await?;
+            record_event(template, state, EventType::Normal, reason_code, reason_msg).await;
+            Ok(Some(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL)))
+        }
+
+        // ── RateLimited / TransientNetwork → Decaying backoff retry ───
+        // The provider RPC hit a (secondary) rate limit or a transient
+        // network fault. magma's in-RPC `rpc_retry!` already wore down the
+        // transient inside the apply; reaching here means it exhausted, so
+        // back off at the operator tick and let the next reconcile re-plan
+        // + re-apply. SHORT_REQUEUE is the bounded, monotonically-decaying
+        // step (the failure_count + ReactivePolicy escalation bound the
+        // retry envelope so it can't livelock). We DON'T flip to
+        // Phase::Failed — a Decaying anomaly is expected to clear, so we
+        // record the cycle + keep the phase, requeue short, and surface a
+        // Normal (not Warning) event so an expected transient doesn't page.
+        ApplyAnomaly::RateLimited | ApplyAnomaly::TransientNetwork => {
+            warn!(
+                anomaly = anomaly.kind_str(),
+                mode = mode.as_str(),
+                "Apply hit a Decaying anomaly — backing off + requeueing short (samba/rpc_retry already attempted in-RPC)"
+            );
+            // Still bump the failure surface so ReactivePolicy's escalation
+            // ladder counts persistent decay-that-won't-settle (the livelock
+            // guard) — but keep it visible-not-terminal.
+            update_phase_with_error(template, Phase::Applying, err_msg, state).await?;
+            let post_apply_artifact = runner.plan(workspace).await.ok().and_then(|r| r.artifact);
+            record_reconcile_cycle(
+                template,
+                state,
+                Some(&workspace.path),
+                post_apply_artifact,
+                prior_drifts,
+                prior_plan_summary,
+                CycleResult::AppliedFailure(err_msg.to_string()),
+            )
+            .await?;
+            record_event(
+                template,
+                state,
+                EventType::Normal,
+                anomaly.event_reason(),
+                &format!(
+                    "[{} / {}] backing off + retrying ({})",
+                    anomaly.kind_str(),
+                    mode.as_str(),
+                    truncate_for_status(err_msg)
+                ),
+            )
+            .await;
+            Ok(Some(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL)))
+        }
+
+        // ── ObjectExistsUntracked → Import / adopt ────────────────────
+        // The operator's existing import machinery already ran BEFORE this
+        // point — the pre-apply `run_import_prepass` (spec.importHints +
+        // importPolicy.naturalIds + bundled_natural_ids) and the post-apply
+        // `conflict::resolve_conflicts_post_apply` import+re-apply loop. If
+        // we still see ObjectExistsUntracked here, adoption did NOT resolve
+        // a cloud-id for this address. For github-shaped resources the
+        // natural-id IS the name and magma's internal adopt closes the loop
+        // once providers are staged; the residual gap is the cloudflare
+        // record whose import id is `<zone_id>/<record_id>` with a
+        // server-assigned record_id that nothing recovers (bundled_natural_ids
+        // deliberately excludes cloudflare — import.rs:108-135).
+        //
+        // The convergent, no-human-id resolution (a pre-flight CF list-by-
+        // name probe → ImportResourceState-by-natural-key) lives in magma
+        // and is OUT OF SCOPE for this operator-side change. So here we
+        // SurfaceAndHold with the EXACT importHint the operator should carry
+        // to adopt the resource — non-silent, actionable, and naming the
+        // residual. Falls through (None) so the record-failure path sets
+        // Healthy=False + runs escalation.
+        ApplyAnomaly::ObjectExistsUntracked { address, .. } => {
+            let hint = suggested_import_hint(address);
+            warn!(
+                address = %address,
+                mode = mode.as_str(),
+                "ObjectExistsUntracked persisted past the import prepass + post-apply conflict loop — \
+                 surfacing the importHint to carry (cloud-id resolution for server-assigned ids is a magma pre-flight probe, out of scope here)"
+            );
+            record_event(
+                template,
+                state,
+                EventType::Warning,
+                "AnomalyObjectExistsUntrackedHint",
+                &format!(
+                    "Resource {address} exists out-of-band and auto-adoption could not resolve its cloud-id. \
+                     Add spec.importHints[\"{address}\"] = \"{hint}\" (+ the referenced variables) to adopt it. \
+                     [mode={}]",
+                    mode.as_str()
+                ),
+            )
+            .await;
+            Ok(None)
+        }
+
+        // ── ProviderUnavailable → StageProvider ───────────────────────
+        // The provider plugin couldn't be located. Part 1 of this change
+        // bakes the providers into the image at a durable MAGMA_PROVIDER_DIR
+        // (roll-surviving), making this Absolute by construction — the next
+        // apply resolves the binary from the image closure. If it STILL
+        // fires after the staged image rolls out, the baked mirror is
+        // missing this provider (a new provider appeared in a rendered
+        // `provider "<name>" {}` block without being added to the flake's
+        // magmaProviderMirror) — that's a real, actionable surface, not a
+        // silent retry. SurfaceAndHold (fall through to Healthy=False) so
+        // the gap is visible; a short requeue retries in case the staged
+        // image is still rolling.
+        ApplyAnomaly::ProviderUnavailable { provider } => {
+            warn!(
+                provider = %provider,
+                mode = mode.as_str(),
+                "ProviderUnavailable — provider plugin not located. Should be Absolute once the \
+                 provider-staged image (baked MAGMA_PROVIDER_DIR) is live; if persistent, add \
+                 `{provider}` to flake.nix magmaProviderMirror"
+            );
+            record_event(
+                template,
+                state,
+                EventType::Warning,
+                anomaly.event_reason(),
+                &format!(
+                    "Provider plugin '{provider}' not located. If this persists after the \
+                     provider-staged operator image rolls out, add '{provider}' to the operator \
+                     image's magmaProviderMirror (flake.nix). [mode={}]",
+                    mode.as_str()
+                ),
+            )
+            .await;
+            Ok(None)
+        }
+
+        // ── PermissionDenied / Unclassified → SurfaceAndHold ──────────
+        // Neither recovers on its own. Fall through to the record-failure
+        // path (Phase::Failed + Healthy=False + ReactivePolicy escalation),
+        // which is non-silent by construction. The terminal-event reason
+        // (set by the caller from `driver.event_reason()`) names the class;
+        // an Unclassified here is the §X backlog signal that forces a new
+        // taxonomy arm. We assert the Hold mode explicitly for clarity.
+        ApplyAnomaly::PermissionDenied | ApplyAnomaly::Unclassified { .. } => {
+            debug_assert_eq!(mode, RemediationMode::Hold);
+            Ok(None)
+        }
+    }
+}
+
+/// Best-effort suggested `importHint` template for a resource address whose
+/// out-of-band twin must be adopted. For the cloudflare-record gap the
+/// natural import id is `<zone_id>/<record_id>` (record_id server-assigned);
+/// for most other types the name is the id. This is advisory text in a
+/// surfaced event — it names what the operator should carry, it does not
+/// auto-resolve the id.
+fn suggested_import_hint(address: &str) -> String {
+    let ty = address.split('.').next().unwrap_or(address);
+    match ty {
+        "cloudflare_dns_record" | "cloudflare_record" => {
+            "{{ zone_id }}/<record_id>".to_string()
+        }
+        _ => "<natural-id>".to_string(),
+    }
 }
 
 /// Detect tofu apply errors that are self-healable by discarding the
@@ -3251,5 +3516,87 @@ mod cycle_tests {
         let vars = std::collections::BTreeMap::new();
         let out = substitute_import_id("{{ .unclosed", &vars).unwrap();
         assert_eq!(out, "{{ .unclosed");
+    }
+}
+
+/// Tests for the reacting-FSM dispatch helpers (the typed remediation
+/// router). These cover the pure decision functions — precedence selection
+/// + import-hint suggestion — without kube mocks. The per-arm side-effect
+/// dispatch (`react_to_apply_anomaly`) is exercised end-to-end via the
+/// controller integration tests; here we lock the routing decisions.
+#[cfg(test)]
+mod anomaly_reaction_tests {
+    use super::{select_driving_anomaly, suggested_import_hint};
+    use crate::controller::anomaly::{ApplyAnomaly, RemediationMode};
+
+    #[test]
+    fn recovery_anomalies_win_precedence_over_holds() {
+        // A mixed batch: an Unclassified hold + a StalePlan recovery. The
+        // recovery (Absolute, converges in one reconcile) must drive the
+        // tick, not the hold.
+        let batch = vec![
+            ApplyAnomaly::Unclassified { reason: "weird".into() },
+            ApplyAnomaly::StalePlan,
+        ];
+        let driver = select_driving_anomaly(&batch);
+        assert_eq!(driver, ApplyAnomaly::StalePlan);
+        assert_eq!(driver.mode(), RemediationMode::Absolute);
+    }
+
+    #[test]
+    fn provider_unavailable_outranks_object_exists_and_holds() {
+        let batch = vec![
+            ApplyAnomaly::PermissionDenied,
+            ApplyAnomaly::ObjectExistsUntracked {
+                address: "github_repository.a".into(),
+                action: "create".into(),
+            },
+            ApplyAnomaly::ProviderUnavailable { provider: "cloudflare".into() },
+        ];
+        let driver = select_driving_anomaly(&batch);
+        assert_eq!(
+            driver,
+            ApplyAnomaly::ProviderUnavailable { provider: "cloudflare".into() }
+        );
+    }
+
+    #[test]
+    fn object_exists_outranks_decaying_and_holds() {
+        // The grafana-record class must drive over an incidental rate-limit
+        // on a sibling resource so adoption is attempted before backoff.
+        let batch = vec![
+            ApplyAnomaly::RateLimited,
+            ApplyAnomaly::ObjectExistsUntracked {
+                address: "cloudflare_dns_record.x".into(),
+                action: "create".into(),
+            },
+            ApplyAnomaly::PermissionDenied,
+        ];
+        let driver = select_driving_anomaly(&batch);
+        assert!(matches!(driver, ApplyAnomaly::ObjectExistsUntracked { .. }));
+    }
+
+    #[test]
+    fn empty_batch_defaults_to_typed_unclassified_never_panics() {
+        let driver = select_driving_anomaly(&[]);
+        assert!(matches!(driver, ApplyAnomaly::Unclassified { .. }));
+        assert_eq!(driver.mode(), RemediationMode::Hold);
+    }
+
+    #[test]
+    fn cloudflare_record_import_hint_names_zone_record_shape() {
+        // The live rio grafana-record gap: import id is <zone_id>/<record_id>.
+        assert_eq!(
+            suggested_import_hint("cloudflare_dns_record.rio-grafana-quero-cloud-cname"),
+            "{{ zone_id }}/<record_id>"
+        );
+    }
+
+    #[test]
+    fn generic_resource_import_hint_is_natural_id_placeholder() {
+        assert_eq!(
+            suggested_import_hint("github_repository.galho"),
+            "<natural-id>"
+        );
     }
 }

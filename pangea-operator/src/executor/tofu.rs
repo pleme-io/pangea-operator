@@ -51,6 +51,32 @@ impl TofuCommand {
     }
 }
 
+/// One typed per-resource apply failure, surfaced OUT of the executor so
+/// the controller's reacting FSM can classify it
+/// (theory/ANOMALY-REACTIVE-RECONCILE.md §VII.2). This is the executor-
+/// border mirror of magma's `magma_apply::FailedChange { address, action,
+/// reason }` — a plain struct (no magma dep) so the controller side and the
+/// tests don't link magma. The magma executor populates this from
+/// `outcome.failed`; the tofu executor leaves it empty (its failures are
+/// substring-scanned from stdout/stderr the same way the typed classifier
+/// scans `reason`).
+///
+/// Before this existed the magma executor collapsed `outcome.failed` into a
+/// **count-only** `stdout` JSON and dropped every per-reason string, so the
+/// controller never saw the structured failures — only an aggregate count.
+/// `failed_changes` carries the reasons through to `classify`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FailedChangeRecord {
+    /// Resource address, rendered `<type>.<name>` (e.g.
+    /// `cloudflare_dns_record.foo`).
+    pub address: String,
+    /// Raw action grammar (`create` / `update` / `delete` / `replace` / …).
+    pub action: String,
+    /// Free-form failure reason — magma's formatted `EngineError`. This is
+    /// the wire `controller::anomaly::classify` substring-matches on.
+    pub reason: String,
+}
+
 /// Result of a tofu command execution.
 #[derive(Debug, Clone)]
 pub struct TofuResult {
@@ -68,6 +94,13 @@ pub struct TofuResult {
 
     /// Execution duration.
     pub duration: Duration,
+
+    /// Typed per-resource apply failures, when the executor produced them
+    /// structurally (the magma path). Empty for executors whose failures
+    /// only surface as stdout/stderr text (the tofu path) and for non-apply
+    /// commands. The controller's reacting FSM classifies these into the
+    /// typed [`crate::controller::anomaly::ApplyAnomaly`] taxonomy.
+    pub failed_changes: Vec<FailedChangeRecord>,
 }
 
 impl TofuResult {
@@ -403,6 +436,10 @@ impl TofuExecutor {
             stderr,
             success,
             duration,
+            // tofu surfaces failures as stdout/stderr text, not structured
+            // per-resource records — the controller substring-classifies
+            // the combined output. Left empty.
+            failed_changes: Vec::new(),
         })
     }
 }
