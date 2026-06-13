@@ -286,11 +286,14 @@ async fn main() -> Result<()> {
 
     // Spawn health server (8080) — /healthz + /readyz; also serves
     // /metrics for back-compat with scrape configs that hit the
-    // health port.
+    // health port. /readyz probes the magma state-backend pool (when
+    // wired) with a bounded SELECT 1, so the pod is pulled from the
+    // Service endpoints while Postgres is unreachable.
     let health_metrics = metrics.clone();
+    let health_ready_pool = state.db_pool.clone();
     let health_addr = config.health_addr;
     tokio::spawn(async move {
-        if let Err(e) = run_health_server(health_addr, health_metrics).await {
+        if let Err(e) = run_health_server(health_addr, health_metrics, health_ready_pool).await {
             error!(error = %e, "Health server error");
         }
     });
@@ -298,10 +301,12 @@ async fn main() -> Result<()> {
     // Spawn dedicated metrics server (9090) so the container/service
     // declared "metrics" port actually has something behind it. Same
     // handler shape as health_addr; ServiceMonitor scrapes hit this.
+    // No readiness probe here — a scrape endpoint's readiness is
+    // liveness, and adding a DB probe to it adds no signal.
     let metrics_only = metrics.clone();
     let metrics_addr = config.metrics_addr;
     tokio::spawn(async move {
-        if let Err(e) = run_health_server(metrics_addr, metrics_only).await {
+        if let Err(e) = run_health_server(metrics_addr, metrics_only, None).await {
             error!(error = %e, "Metrics server error");
         }
     });

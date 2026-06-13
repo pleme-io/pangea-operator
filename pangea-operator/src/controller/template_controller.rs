@@ -112,6 +112,12 @@ async fn reconcile_template(
 
     info!("Reconciling InfrastructureTemplate");
     state.metrics.reconciliations_total.inc();
+    // Track in-flight reconciles via an RAII guard: inc on entry, dec
+    // on every scope exit (including early-returns + the `?` error
+    // paths). Before this, `pangea_active_reconciliations` was declared
+    // but never moved, so it sat flat at 0.
+    let _active_guard =
+        crate::observability::ActiveReconcileGuard::enter(&state.metrics);
     // Per-controller reconcile counter — completes the denominator
     // for `pangea_controller_reconciliations_total{controller="template"}`
     // so the chart 0.8.14 PangeaControllerReconcileRateHigh alert can
@@ -121,6 +127,15 @@ async fn reconcile_template(
     state
         .metrics
         .record_reconcile(crate::crd::ControllerKind::Template, "ok");
+    // Seed the magma apply-outcome series (failed/applied gauges +
+    // Succeeded counter) at 0 from the first reconcile, BEFORE any
+    // apply has run — otherwise the failure-signal series for this
+    // template does not exist until its first apply failure, and the
+    // PangeaTemplateFailing alert (`pangea_magma_resources_failed > 0`)
+    // has no series to evaluate. The label arity/order matches
+    // `record_magma_apply`, so a later real apply overwrites the same
+    // series rather than forking a second one.
+    state.metrics.seed_template(&name, &namespace);
 
     // Pre-reconcile policy pipeline — runs the kill-switch + per-workspace
     // pause gates in their canonical order. Each gate returns a SkipWith

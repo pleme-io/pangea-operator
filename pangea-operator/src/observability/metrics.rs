@@ -25,12 +25,6 @@ pub struct Metrics {
     /// Total drift detections.
     pub drift_detected_total: IntCounter,
 
-    /// Total managed resources.
-    pub managed_resources_total: IntGaugeVec,
-
-    /// OpenTofu operations counter.
-    pub tofu_operations_total: IntCounterVec,
-
     /// PostgreSQL state operations.
     pub pg_state_operations_total: IntCounterVec,
 
@@ -344,24 +338,6 @@ impl Metrics {
         ))
         .expect("metric can be created");
 
-        let managed_resources_total = IntGaugeVec::new(
-            Opts::new(
-                "pangea_managed_resources_total",
-                "Total managed resources by namespace",
-            ),
-            &["namespace"],
-        )
-        .expect("metric can be created");
-
-        let tofu_operations_total = IntCounterVec::new(
-            Opts::new(
-                "pangea_tofu_operations_total",
-                "Total OpenTofu operations by type and result",
-            ),
-            &["operation", "result"],
-        )
-        .expect("metric can be created");
-
         let pg_state_operations_total = IntCounterVec::new(
             Opts::new(
                 "pangea_pg_state_operations_total",
@@ -400,7 +376,7 @@ impl Metrics {
                 "pangea_policy_decisions_total",
                 "Per-resource policy decisions emitted during plan evaluation",
             ),
-            &["template", "namespace", "decision"],
+            &["template", "target_namespace", "decision"],
         )
         .expect("metric can be created");
 
@@ -409,7 +385,7 @@ impl Metrics {
                 "pangea_consecutive_drift_cycles",
                 "Current consecutive-drift-cycle count per template (0 = settled)",
             ),
-            &["template", "namespace"],
+            &["template", "target_namespace"],
         )
         .expect("metric can be created");
 
@@ -418,7 +394,7 @@ impl Metrics {
                 "pangea_settled",
                 "1 when Settled condition is True, 0 when False",
             ),
-            &["template", "namespace"],
+            &["template", "target_namespace"],
         )
         .expect("metric can be created");
 
@@ -427,7 +403,7 @@ impl Metrics {
                 "pangea_stuck_resources",
                 "Number of resources in the stuck set per template",
             ),
-            &["template", "namespace"],
+            &["template", "target_namespace"],
         )
         .expect("metric can be created");
 
@@ -436,7 +412,7 @@ impl Metrics {
                 "pangea_settling_failures_total",
                 "Settling-failure escalations by reason",
             ),
-            &["template", "namespace", "reason"],
+            &["template", "target_namespace", "reason"],
         )
         .expect("metric can be created");
 
@@ -445,7 +421,7 @@ impl Metrics {
                 "pangea_template_drift_detail",
                 "Pending changes per template by action and risk",
             ),
-            &["template", "namespace", "action", "risk"],
+            &["template", "target_namespace", "action", "risk"],
         )
         .expect("metric can be created");
 
@@ -473,7 +449,7 @@ impl Metrics {
                 "pangea_compile_failures_total",
                 "Template compile failures (Item J observability)",
             ),
-            &["namespace", "name"],
+            &["target_namespace", "name"],
         )
         .expect("metric can be created");
 
@@ -484,7 +460,7 @@ impl Metrics {
                  (0=Retry, 1=RefreshSource, 2=ReloadGems, 3=RecycleWorkers, 4=PauseAndAlert) \
                  (controller-detection-axis fix step)",
             ),
-            &["namespace", "name"],
+            &["target_namespace", "name"],
         )
         .expect("metric can be created");
 
@@ -493,7 +469,7 @@ impl Metrics {
                 "pangea_escalation_actions_total",
                 "Total times each escalation action was recommended by template+action",
             ),
-            &["namespace", "name", "action"],
+            &["target_namespace", "name", "action"],
         )
         .expect("metric can be created");
 
@@ -502,7 +478,7 @@ impl Metrics {
                 "pangea_template_consecutive_compile_failures",
                 "Current consecutive compile failure count per template",
             ),
-            &["namespace", "name"],
+            &["target_namespace", "name"],
         )
         .expect("metric can be created");
 
@@ -512,7 +488,7 @@ impl Metrics {
                 "1 for each workspace whose effective state is Active during a more-general pause; \
                  lets dashboards answer 'what's still reconciling under a global pause?'",
             ),
-            &["kind", "namespace", "name", "source"],
+            &["kind", "target_namespace", "name", "source"],
         )
         .expect("metric can be created");
 
@@ -530,7 +506,7 @@ impl Metrics {
                 "pangea_packer_builds_by_phase",
                 "PackerBuild CRs by phase",
             ),
-            &["namespace", "name", "phase"],
+            &["target_namespace", "name", "phase"],
         )
         .expect("metric can be created");
 
@@ -539,7 +515,7 @@ impl Metrics {
                 "pangea_image_pipelines_by_phase",
                 "ImagePipeline CRs by phase",
             ),
-            &["namespace", "name", "phase"],
+            &["target_namespace", "name", "phase"],
         )
         .expect("metric can be created");
 
@@ -548,7 +524,7 @@ impl Metrics {
                 "pangea_ami_tests_by_phase",
                 "AmiTest CRs by phase",
             ),
-            &["namespace", "name", "phase"],
+            &["target_namespace", "name", "phase"],
         )
         .expect("metric can be created");
 
@@ -557,7 +533,7 @@ impl Metrics {
                 "pangea_compliance_schedules_by_phase",
                 "ComplianceSchedule CRs by phase",
             ),
-            &["namespace", "name", "phase"],
+            &["target_namespace", "name", "phase"],
         )
         .expect("metric can be created");
 
@@ -566,7 +542,7 @@ impl Metrics {
                 "pangea_compliance_bindings_gated_targets",
                 "Number of targets currently gated by a ComplianceBinding due to non-compliance",
             ),
-            &["namespace", "name"],
+            &["target_namespace", "name"],
         )
         .expect("metric can be created");
 
@@ -590,7 +566,7 @@ impl Metrics {
                 "pangea_output_bindings_published_total",
                 "Output bindings processed during a successful apply, by per-binding result (X2).",
             ),
-            &["template", "namespace", "result"],
+            &["template", "target_namespace", "result"],
         )
         .expect("metric can be created");
 
@@ -599,7 +575,7 @@ impl Metrics {
                 "pangea_magma_apply_total",
                 "Total magma apply runs by template and terminal phase (Succeeded|Failed)",
             ),
-            &["template", "namespace", "phase"],
+            &["template", "target_namespace", "phase"],
         )
         .expect("metric can be created");
 
@@ -608,7 +584,7 @@ impl Metrics {
                 "pangea_magma_resources_applied",
                 "Resources applied in the last magma apply per template (outcome.applied.len())",
             ),
-            &["template", "namespace"],
+            &["template", "target_namespace"],
         )
         .expect("metric can be created");
 
@@ -617,7 +593,7 @@ impl Metrics {
                 "pangea_magma_resources_failed",
                 "Resources that failed to apply in the last magma apply per template (outcome.failed.len())",
             ),
-            &["template", "namespace"],
+            &["template", "target_namespace"],
         )
         .expect("metric can be created");
 
@@ -626,7 +602,7 @@ impl Metrics {
                 "pangea_magma_failed_changes_total",
                 "Cumulative failed changes across all magma applies per template",
             ),
-            &["template", "namespace"],
+            &["template", "target_namespace"],
         )
         .expect("metric can be created");
 
@@ -645,12 +621,6 @@ impl Metrics {
             .expect("metric can be registered");
         registry
             .register(Box::new(drift_detected_total.clone()))
-            .expect("metric can be registered");
-        registry
-            .register(Box::new(managed_resources_total.clone()))
-            .expect("metric can be registered");
-        registry
-            .register(Box::new(tofu_operations_total.clone()))
             .expect("metric can be registered");
         registry
             .register(Box::new(pg_state_operations_total.clone()))
@@ -740,6 +710,23 @@ impl Metrics {
             .register(Box::new(magma_failed_changes_total.clone()))
             .expect("metric can be registered");
 
+        // Process-level metrics (process_cpu_seconds_total /
+        // process_resident_memory_bytes / process_open_fds /
+        // process_max_fds / process_threads / process_start_time_seconds).
+        // The `ProcessCollector` is gated by prometheus to
+        // `target_os = "linux"` (it reads /proc via procfs), so the
+        // registration is cfg-gated: live on the Linux operator pod,
+        // a no-op on macOS dev hosts. `register` may fail only if a
+        // collector with the same desc is already registered — which
+        // cannot happen for a fresh per-`Metrics` registry — so the
+        // `let _ =` swallow is safe and keeps `new()` infallible.
+        #[cfg(target_os = "linux")]
+        {
+            let process_collector =
+                prometheus::process_collector::ProcessCollector::for_self();
+            let _ = registry.register(Box::new(process_collector));
+        }
+
         Self {
             registry,
             reconciliations_total,
@@ -747,8 +734,6 @@ impl Metrics {
             templates_by_phase,
             reconciliation_duration_seconds,
             drift_detected_total,
-            managed_resources_total,
-            tofu_operations_total,
             pg_state_operations_total,
             active_reconciliations,
             compilation_duration_seconds,
@@ -866,8 +851,7 @@ impl Metrics {
     /// The two gauges are "last apply" snapshots (idempotently
     /// overwritten each apply); the two counters are monotonic. Called
     /// from `record_reconcile_cycle` whenever a magma bundle yields an
-    /// apply outcome. tofu cycles never call this (their outcome flows
-    /// through `pangea_tofu_operations_total`).
+    /// apply outcome. tofu cycles never call this.
     pub fn record_magma_apply(
         &self,
         template: &str,
@@ -893,6 +877,52 @@ impl Metrics {
                 .with_label_values(&[template, namespace])
                 .inc_by(failed);
         }
+    }
+
+    /// Idempotently materialize the magma apply-outcome series for a
+    /// template at reconcile time, BEFORE any apply has run.
+    ///
+    /// ## Why this exists (the never-fires-until-first-failure gap)
+    ///
+    /// `record_magma_apply` only touches a `(template, target_namespace)`
+    /// series on the first non-NoOp apply. Until then,
+    /// `pangea_magma_resources_failed{...}` does not exist as a series —
+    /// and Prometheus evaluates an alert expression against a
+    /// non-existent series as "no data", so `... > 0` is never true.
+    /// The canonical `PangeaTemplateFailing` alert therefore could not
+    /// fire on a template's *first* apply failure (the worst time to be
+    /// blind), because the series only came into being once a failure
+    /// had already happened.
+    ///
+    /// Seeding at reconcile entry materializes the gauges at 0 and the
+    /// `Succeeded` counter at its current value (via `inc_by(0)`), so
+    /// the series exist from the first reconcile. A subsequent real
+    /// `record_magma_apply` overwrites the gauges with the live counts —
+    /// the seed is a floor, never a clobber of real data
+    /// (`get_metric_with_label_values` is create-if-absent, and
+    /// `inc_by(0)` is a no-op on an existing counter).
+    ///
+    /// Label arity + order are IDENTICAL to `record_magma_apply` so the
+    /// seeded series and the recorded series are the same series — a
+    /// drift in label order would create a second, never-updated series.
+    pub fn seed_template(&self, template: &str, namespace: &str) {
+        // Counter: touch the Succeeded series with a no-op increment so
+        // it exists at its real value from reconcile #1. The Failed
+        // counter series is intentionally NOT seeded — counters are for
+        // rate(), and a phantom Failed=0 would not change rate() but a
+        // real Failed only ever appears when a failure happens.
+        self.magma_apply_total
+            .with_label_values(&[template, namespace, "Succeeded"])
+            .inc_by(0);
+        // Gauges: materialize at 0 so the "is it failing now?" alert has
+        // a series to evaluate before the first apply. `set(0)` is the
+        // create-if-absent path; a later real apply overwrites it.
+        self.magma_resources_failed
+            .with_label_values(&[template, namespace])
+            .set(0);
+        self.magma_resources_applied
+            .with_label_values(&[template, namespace])
+            .set(0);
     }
 
     /// Compile-specific timer. Distinct from `record_phase_duration("compiling")`
@@ -983,6 +1013,36 @@ impl Metrics {
 impl Default for Metrics {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// RAII guard for `pangea_active_reconciliations`: increments the gauge
+/// on construction and decrements it on `Drop`. Holding one for the
+/// body of a reconcile makes the gauge reflect the live in-flight
+/// count — including on the early-return / error paths, because `Drop`
+/// runs regardless of how the scope exits. Before this, the gauge was
+/// declared but never inc/dec'd, so it sat flat at 0.
+///
+/// The gauge handle is a cheap `Arc`-backed clone, so constructing a
+/// guard per reconcile is allocation-free beyond the clone.
+#[must_use = "the guard decrements pangea_active_reconciliations on drop; bind it to a name"]
+pub struct ActiveReconcileGuard {
+    gauge: IntGauge,
+}
+
+impl ActiveReconcileGuard {
+    /// Increment `pangea_active_reconciliations` and return a guard that
+    /// decrements it on drop. Bind it for the duration of a reconcile.
+    pub fn enter(metrics: &Metrics) -> Self {
+        let gauge = metrics.active_reconciliations.clone();
+        gauge.inc();
+        Self { gauge }
+    }
+}
+
+impl Drop for ActiveReconcileGuard {
+    fn drop(&mut self) {
+        self.gauge.dec();
     }
 }
 
@@ -1124,16 +1184,6 @@ mod tests {
 
         metrics.active_reconciliations.dec();
         assert_eq!(metrics.active_reconciliations.get(), 3);
-    }
-
-    #[test]
-    fn test_tofu_operations_counter() {
-        let metrics = Metrics::new();
-        metrics.tofu_operations_total.with_label_values(&["plan", "success"]).inc();
-        metrics.tofu_operations_total.with_label_values(&["apply", "failure"]).inc();
-
-        let output = metrics.gather();
-        assert!(output.contains("pangea_tofu_operations_total"));
     }
 
     #[test]
@@ -1383,5 +1433,152 @@ mod tests {
         let text = metrics.gather();
         assert!(text.contains("pangea_compile_queue_depth"));
         assert!(text.contains("pangea_compile_request_seconds"));
+    }
+
+    // ── Observability-fix coverage ──────────────────────────────────
+
+    #[test]
+    fn seed_template_materializes_failed_gauge_at_zero_before_any_apply() {
+        // The failure-signal gap: before this, the failed gauge series
+        // did not exist until the first apply FAILED, so the
+        // PangeaTemplateFailing alert (`... > 0`) could not fire on a
+        // template's first failure. Seeding makes the series exist at
+        // 0 from reconcile #1, so the alert has something to evaluate.
+        let metrics = Metrics::new();
+        // No apply has run; seed at reconcile entry.
+        metrics.seed_template("cloudflare-pleme", "pangea-system");
+        let text = metrics.gather();
+        // The series exists in gather() output before any apply.
+        assert!(
+            text.contains("pangea_magma_resources_failed"),
+            "failed gauge series missing after seed:\n{text}"
+        );
+        // And it is exactly 0 (the floor), not absent.
+        let failed_line = text
+            .lines()
+            .find(|l| {
+                l.starts_with("pangea_magma_resources_failed")
+                    && l.contains(r#"template="cloudflare-pleme""#)
+            })
+            .expect("seeded failed series should be present");
+        assert!(
+            failed_line.ends_with(" 0"),
+            "seeded failed gauge must be 0, got: {failed_line}"
+        );
+        // The applied gauge + Succeeded counter are seeded too.
+        assert!(text.contains("pangea_magma_resources_applied"));
+        assert!(text.contains("pangea_magma_apply_total"));
+    }
+
+    #[test]
+    fn seed_then_record_overwrites_not_double_counts() {
+        // The seed is a floor, not a clobber of real data: a later
+        // record_magma_apply overwrites the gauges with live counts on
+        // the SAME series (identical label arity/order), and the
+        // Succeeded counter's inc_by(0) seed leaves a subsequent
+        // real apply's count intact.
+        let metrics = Metrics::new();
+        metrics.seed_template("t1", "ns1");
+        metrics.record_magma_apply("t1", "ns1", 1494, 14);
+        // Gauge now reflects the real apply, not the seed's 0.
+        assert_eq!(
+            metrics.magma_resources_failed.with_label_values(&["t1", "ns1"]).get(),
+            14
+        );
+        assert_eq!(
+            metrics.magma_resources_applied.with_label_values(&["t1", "ns1"]).get(),
+            1494
+        );
+        // The Succeeded counter was seeded with inc_by(0); a Failed
+        // apply increments the Failed phase, leaving Succeeded at 0.
+        let text = metrics.gather();
+        // Exactly one Succeeded series for (t1, ns1), still 0 — the
+        // seed didn't create a phantom increment.
+        let succeeded_line = text
+            .lines()
+            .find(|l| {
+                l.starts_with("pangea_magma_apply_total")
+                    && l.contains(r#"phase="Succeeded""#)
+                    && l.contains(r#"template="t1""#)
+            })
+            .expect("seeded Succeeded series should exist");
+        assert!(
+            succeeded_line.ends_with(" 0"),
+            "seeded Succeeded counter must stay 0 after a Failed apply, got: {succeeded_line}"
+        );
+    }
+
+    #[test]
+    fn per_template_metrics_emit_target_namespace_not_colliding_namespace() {
+        // The scrape renames a metric-emitted `namespace` to
+        // `exported_namespace` because it collides with the pod's
+        // namespace label. Renaming the operator-emitted label to
+        // `target_namespace` removes the collision. Lock the label key
+        // on a per-template metric here.
+        let metrics = Metrics::new();
+        metrics.seed_template("t1", "ns1");
+        metrics
+            .settled
+            .with_label_values(&["t1", "ns1"])
+            .set(1);
+        let text = metrics.gather();
+        // Per-template metrics carry `target_namespace`, never a bare
+        // `namespace` label.
+        assert!(
+            text.contains(r#"target_namespace="ns1""#),
+            "per-template metric missing target_namespace label:\n{text}"
+        );
+        // No per-template series should still emit the colliding
+        // `namespace="ns1"` key. (Check the exact `namespace=` key, not
+        // the substring `target_namespace=`.)
+        let colliding: Vec<&str> = text
+            .lines()
+            .filter(|l| l.starts_with("pangea_"))
+            .filter(|l| l.contains(r#"{namespace="ns1""#) || l.contains(r#",namespace="ns1""#))
+            .collect();
+        assert!(
+            colliding.is_empty(),
+            "per-template metric still emits colliding `namespace` label:\n{}",
+            colliding.join("\n")
+        );
+    }
+
+    #[test]
+    fn reconciliation_errors_total_increments_on_error_path() {
+        // The shipped PangeaReconciliationErrors alert queries
+        // pangea_reconciliation_errors_total, which was never recorded.
+        // The central error path (run_error_policy) now increments it.
+        let metrics = Metrics::new();
+        // Simulate the central error arm bumping the counter.
+        metrics
+            .reconciliation_errors_total
+            .with_label_values(&["template"])
+            .inc();
+        let text = metrics.gather();
+        assert!(
+            text.contains("pangea_reconciliation_errors_total"),
+            "reconciliation_errors_total series missing:\n{text}"
+        );
+        let line = text
+            .lines()
+            .find(|l| l.starts_with("pangea_reconciliation_errors_total"))
+            .expect("error counter line present");
+        assert!(line.ends_with(" 1"), "expected count 1, got: {line}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn process_collector_exports_resident_memory() {
+        // The process feature + process_collector export
+        // process_resident_memory_bytes / process_cpu_seconds_total /
+        // FDs / threads. Linux-only (procfs); the registration is
+        // cfg-gated to target_os = "linux" in Metrics::new().
+        let metrics = Metrics::new();
+        let text = metrics.gather();
+        assert!(
+            text.contains("process_resident_memory_bytes"),
+            "process_collector not exporting RSS:\n{text}"
+        );
+        assert!(text.contains("process_cpu_seconds_total"));
     }
 }

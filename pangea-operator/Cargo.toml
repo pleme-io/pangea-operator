@@ -156,7 +156,12 @@ tracing-opentelemetry = "0.27"
 opentelemetry = { version = "0.26", features = ["trace"] }
 opentelemetry-otlp = { version = "0.26", features = ["tonic"] }
 opentelemetry_sdk = { version = "0.26", features = ["rt-tokio"] }
-prometheus = "0.13"
+# `process` feature pulls in libc + procfs so the process_collector
+# exports process_cpu_seconds_total / process_resident_memory_bytes /
+# open FDs / threads. The collector module is gated by prometheus to
+# `target_os = "linux"`, so registration is cfg-gated in metrics.rs
+# (no-op on macOS dev hosts; live on the Linux operator pod).
+prometheus = { version = "0.13", features = ["process"] }
 
 # Stable cross-process hash for the anomaly_tracker module's
 # error_signature primitive. Already transitively present via magma;

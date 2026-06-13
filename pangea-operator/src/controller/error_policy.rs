@@ -74,6 +74,16 @@ pub fn run_error_policy<E: Display + ?Sized>(
     backoff: Duration,
 ) -> Action {
     metrics.record_reconcile(kind, "error");
+    // pangea_reconciliation_errors_total is queried by the shipped
+    // PangeaReconciliationErrors alert but, before this, was never
+    // recorded — the alert could never fire. The central error path is
+    // the one place every controller funnels through, so incrementing
+    // here covers the whole fleet with the controller-kind name as the
+    // bounded `error_type` label value.
+    metrics
+        .reconciliation_errors_total
+        .with_label_values(&[kind.name()])
+        .inc();
     warn!(error = %error, controller = ?kind, "error policy triggered");
     Action::requeue(backoff)
 }
@@ -123,6 +133,17 @@ mod tests {
         assert!(
             text.contains("controller=\"template\"") && text.contains("result=\"error\""),
             "counter did not record template/error label set:\n{text}"
+        );
+        // The central error path also feeds the shipped
+        // PangeaReconciliationErrors alert's counter, keyed by the
+        // controller-kind name as `error_type`.
+        assert!(
+            text.contains("pangea_reconciliation_errors_total"),
+            "reconciliation_errors_total not recorded on the error path:\n{text}"
+        );
+        assert!(
+            text.contains("error_type=\"template\""),
+            "error_type label not set to the controller kind name:\n{text}"
         );
     }
 }
