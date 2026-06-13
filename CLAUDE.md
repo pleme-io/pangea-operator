@@ -30,9 +30,19 @@ For the theoretical frame, read
 Given a Pangea Ruby DSL template that declares cloud resources, the
 operator: clones the template's gem source → resolves a typed
 `ArchitectureGem` registry → runs the DSL through embedded magnus →
-synthesizes Terraform JSON → runs `tofu plan` / `tofu apply` →
-emits a typed reconcile-cycle receipt → escalates declaratively when
-things don't reach a good state.
+synthesizes Terraform JSON → **magma plan** → **magma provider-RPC
+apply** (`run_plan_with_providers`, gRPC calls into the providers
+in-process) → persists `rendered_config` + `plan` + `bundle` + state
+to Postgres (zero disk on the magma path) → emits a typed reconcile-
+cycle receipt → escalates declaratively when things don't reach a good
+state.
+
+magma is the default executor (`PANGEA_EXECUTOR=magma`,
+`PANGEA_FORBID_TOFU=true` on rio); `tofu` remains only as a
+config-selectable legacy executor (per-template `spec.executor`, or the
+DB-less fallback when no `PGPASSWORD` is wired). Humans never run plan
+or apply — they edit CRs and the operator reconciles (per the
+★★ PLATFORM-MEDIATED INFRASTRUCTURE rule in the org CLAUDE.md).
 
 Every step has a typed surface; every transition has a typed receipt;
 every reactive response has a typed cascade root. Authors stay in YAML;
@@ -51,7 +61,7 @@ contracts are enforced by Rust + Ruby + BPF + iptables underneath.
 ArchitectureGem (gem registry + smoke gate)
   └─ WorkspaceCatalog (workspace metadata + cascade root for templates)
        └─ InfrastructureTemplate (template + per-resource policy)
-              └─ tofu state in PangeaNamespace
+              └─ magma state in PangeaNamespace (Postgres; tofu-wire-compatible)
 ```
 
 ## The four-level reconciliation policy cascade
@@ -144,7 +154,7 @@ status:
       - address: cloudflare_workers_script.zuihitsu_webhook
         outcome: Updated         # Matched | Updated | Created | Destroyed
                                   # | Imported | Drifted | Failed
-        action: update            # raw tofu action
+        action: update            # raw executor action (tofu-wire grammar)
         message: null             # context for Drifted/Failed
 ```
 
@@ -158,6 +168,40 @@ Aggregate counts answer "what just converged?"; per-resource outcomes
 answer "to what?". The receipt only patches when content changes
 (steady-state matched-only cycles don't churn etcd).
 
+## DB-backed data plane (zero-disk)
+
+On the magma path **all durable reconcile data lives in Postgres,
+never pod disk** — the only sanctioned filesystem reach is loading the
+provider gRPC plugin binaries (the OS must `exec` them from a path).
+This is the ★★ MAGMA-NATIVE EXECUTION posture made concrete in the
+operator. Source: `backend/artifact_store.rs`; theory:
+[`pleme-io/theory/MAGMA-OPERATOR-BACKEND.md`](https://github.com/pleme-io/theory/blob/main/MAGMA-OPERATOR-BACKEND.md) §II-bis.
+
+- **`pangea_meta.artifacts`** — one row per
+  `(schema_name, template_name, kind)` (that triple is the PRIMARY
+  KEY; latest-wins upsert), `kind ∈ {rendered_config, plan, bundle}`.
+  Every blob carries a BLAKE3 `content_hash` written on `put` and
+  **re-verified on `get`** — a mismatch is a typed integrity error,
+  not a silent stale read.
+- **`{schema}_{template}_states.states`** — the magma state backend,
+  OpenTofu-wire-compatible (the `terraform.tfstate` v4 shape) so a
+  config-selected tofu executor reads the same rows.
+- **`put_apply_result` is atomic.** The post-apply state row and the
+  `bundle` artifact are written in **one Postgres transaction** — a
+  half-applied reconcile (state advanced but bundle stale, or vice
+  versa) is unrepresentable.
+- **Restart re-reads the plan from Postgres**, never from a pod-local
+  file — the apply→pod-roll→`ENOENT` restart-loop class is gone
+  because there is no disk plan file to lose.
+- **`artifact_store=Some` is the gate.** `PGPASSWORD` at startup wires
+  `ControllerState::with_db_pool`, which sets `artifact_store: Some(…)`
+  (the DB path). With no `PGPASSWORD` the field stays `None` and the
+  operator keeps the **legacy disk workspace** — reserved for DB-less
+  unit tests and the config-selected tofu executor.
+
+New durable datum → a typed Postgres structure, a content-addressed
+key, and an atomic writer; never a pod-disk file.
+
 ## importHints — adopt out-of-band cloud resources
 
 ```yaml
@@ -170,10 +214,11 @@ spec:
     record_id: 4567beef
 ```
 
-Before each `tofu apply`, every drift entry with `action: create`
-whose address has a hint runs `tofu import <addr> <substituted-id>`
-first. Successful imports surface as `Outcome::Imported` in the cycle
-receipt instead of `Outcome::Created`.
+Before each apply, every drift entry with `action: create` whose
+address has a hint is imported into state first (a magma import RPC on
+the magma path; `tofu import <addr> <substituted-id>` on the legacy
+tofu path). Successful imports surface as `Outcome::Imported` in the
+cycle receipt instead of `Outcome::Created`.
 
 `{{ .var }}` (or `{{ var }}`) substitutes from `spec.variables`;
 unresolved tokens emit a Warning event and skip that hint.
@@ -434,7 +479,10 @@ For canonical examples to copy from when adding a new controller:
 ```
 pangea-operator/src/
 ├── api/                    # axum HTTP routes (admission, metrics, v1)
-├── backend/                # tofu state-backend selection (postgres / s3)
+├── backend/                # magma/tofu state-backend selection (postgres / s3)
+│   └── artifact_store.rs   # pangea_meta.artifacts (rendered_config /
+│                           #   plan / bundle, BLAKE3-verified); atomic
+│                           #   put_apply_result (state + bundle, 1 tx)
 ├── controller/
 │   ├── architecture_gem_controller.rs   # M1 — gem registry + smoke
 │   ├── workspace_catalog_controller.rs  # M3 — workspace metadata
@@ -451,7 +499,8 @@ pangea-operator/src/
 │   │                                       ApprovalRouting, ReactivePolicy,
 │   │                                       FailureEscalation, …
 │   └── …
-├── executor/               # tofu / packer / variable resolution
+├── executor/               # magma (default) / tofu (legacy) / packer
+│                           #   / variable resolution
 ├── ruby/                   # CompilerBackend trait + impls + RubyOwner
 └── observability/          # metrics + tracing
 ```
