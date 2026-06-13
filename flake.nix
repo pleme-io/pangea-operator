@@ -374,10 +374,16 @@
           # `cloudflare` → `cloudflare_cloudflare`, `aws` → `hashicorp_aws`,
           # `kubernetes` → `hashicorp_kubernetes`); the bare aliases still
           # resolve but emit deprecation warnings — use the canonical names.
-          # The provider set mirrors what the rio Pangea architectures declare
-          # (cloudflare + github at minimum; aws + kubernetes are trivially
-          # available and cheap to bake). Extend this list when a new provider
-          # appears in a rendered `provider "<name>" {}` block.
+          # The provider set is the UNION of `required_providers` across the
+          # rio Pangea architectures (queried from the live rendered configs):
+          # cloudflare + random (rio-drive tunnel), cloudflare + porkbun
+          # (cloudflare-pleme nameserver delegation), plus github/aws/kubernetes
+          # for fleet headroom. INTERIM: this static bake is the seed/fallback
+          # for the dynamic DB-backed provider plane (theory/MAGMA-PROVIDER-PLANE.md)
+          # — the destination is magma fetching/caching/loading providers live
+          # from its Postgres registry as workspaces change requirements, no
+          # rebuild. Until then, extend this list when a new required_provider
+          # appears; a missing one surfaces as a ProviderUnavailable anomaly.
           magmaProviderMirror = imagePkgs.buildEnv {
             name = "magma-provider-mirror";
             paths = with imagePkgs.terraform-providers; [
@@ -385,6 +391,8 @@
               integrations_github
               hashicorp_aws
               hashicorp_kubernetes
+              hashicorp_random      # rio-drive: random_id tunnel_secret
+              porkbun               # cloudflare-pleme: porkbun_nameservers delegation
             ];
           };
         in builders.mkCrate2nixDockerImage {
