@@ -52,6 +52,17 @@ pub struct ArchitectureGemSpec {
     /// future: published-gem (RubyGems.org) and OCI-artifact modes.
     pub source: GemSource,
 
+    /// Runtime dependency gems the operator loads IN-MEMORY before this
+    /// gem — each is cloned + its `lib/` is prepended to the live
+    /// interpreter's `$LOAD_PATH` (hot, no restart), in declared order,
+    /// BEFORE the main gem is prepared, so the main gem's `require`s
+    /// resolve. This is how the operator manages an architecture gem's
+    /// own dependencies for itself (e.g. `pangea-dashboards` under
+    /// `pangea-architectures`) — **no image bundling, no rebuild to add a
+    /// gem**. Idempotent across reconcile cycles like the main gem.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<GemDependency>,
+
     /// Classes the operator EXPECTS this gem to expose. Operator
     /// refuses to advance past `Verifying` if any expected class is
     /// missing from the compiler's loaded namespace.
@@ -83,6 +94,25 @@ pub struct ArchitectureGemSpec {
     /// existing classes stay in the registry (last-known-good).
     #[serde(default)]
     pub suspend: bool,
+}
+
+/// A runtime gem dependency the operator clones + `lib/`-prepends to the
+/// live `$LOAD_PATH` before the main architecture gem. The typed border for
+/// "the operator manages a gem's own dependencies in-memory, for itself."
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GemDependency {
+    /// Gem name as it appears in `require` statements (e.g. `pangea-dashboards`).
+    pub gem_name: String,
+
+    /// Git repository to clone the dependency from. The operator clones it
+    /// into the gem cache + prepends its `lib/` to `$LOAD_PATH` (embedded
+    /// Ruby) at reconcile, before the main gem.
+    pub git_repository: GitRepositoryRef,
+
+    /// Which evaluator interprets the dependency's source. Defaults to `Ruby`.
+    #[serde(default)]
+    pub kind: SourceKind,
 }
 
 /// Where to fetch a gem's source from + which evaluator runs it.

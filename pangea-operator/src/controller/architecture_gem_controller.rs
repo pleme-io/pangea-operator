@@ -126,6 +126,41 @@ async fn reconcile(gem: Arc<ArchitectureGem>, ctx: Arc<Context>) -> Result<Actio
     // gem-cache.ensure + $LOAD_PATH prepend). Idempotent across
     // reconcile cycles. Failure here is "CompilerUnreachable"-shaped
     // because the gem isn't usable until prepare succeeds.
+    // In-memory dependency loading: clone + $LOAD_PATH-prepend each declared
+    // dependency gem BEFORE the main gem, in declared order, so the main gem's
+    // `require`s resolve. This is how the operator manages an architecture
+    // gem's own runtime deps for itself (e.g. pangea-dashboards under
+    // pangea-architectures) — hot, in-memory, NO image bundling / rebuild.
+    // Each prepare is idempotent (cache-keyed) like the main gem.
+    for dep in &gem.spec.dependencies {
+        let dep_kind = match dep.kind {
+            crate::crd::architecture_gem::SourceKind::Ruby => crate::ruby::SourceKind::Ruby,
+            crate::crd::architecture_gem::SourceKind::Lisp => crate::ruby::SourceKind::Lisp,
+            crate::crd::architecture_gem::SourceKind::Wasm => crate::ruby::SourceKind::Wasm,
+        };
+        let prep = ctx
+            .backend
+            .prepare_gem(&crate::ruby::GemSource {
+                name: dep.gem_name.clone(),
+                git_url: dep.git_repository.url.clone(),
+                git_ref: dep.git_repository.r#ref.clone(),
+                kind: dep_kind,
+            })
+            .await;
+        if let Err(e) = prep {
+            warn!(gem = %name, dependency = %dep.gem_name, error = %e, "dependency gem prepare failed");
+            patch_status_failed(
+                &ctx.client,
+                &name,
+                "DependencyPrepareFailed",
+                &format!("prepare_gem dependency '{}' failed: {e}", dep.gem_name),
+            )
+            .await?;
+            return Ok(Action::requeue(parse_interval(&gem.spec.refresh_interval)));
+        }
+        info!(gem = %name, dependency = %dep.gem_name, "prepared dependency gem (lib/ prepended to live $LOAD_PATH)");
+    }
+
     if let Some(gr) = gem.spec.source.git_repository.as_ref() {
         // Translate the CRD-side SourceKind to the backend-side mirror.
         // Default Ruby preserves backward compat: any pre-M2 CR

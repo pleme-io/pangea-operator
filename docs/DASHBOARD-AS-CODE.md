@@ -107,11 +107,17 @@ Grafana, never click.*
 - `PangeaDashboard` CRD: **shipped** (`crd/pangea_dashboard.rs`).
 - `DashboardController`: **implemented this cycle** — eval inline Ruby → sidecar
   ConfigMap → status (was a stub: `// TODO` synthesis).
-- `pangea-dashboards` on the operator's embedded `$LOAD_PATH`: **wired**.
-- Helm vocabulary (`lareira-pangea-platform` / `-workspace` / `-dashboards`):
-  **shipped**.
-- e2e on rio: a `PangeaDashboard` declared in Helm values → live on
-  `grafana.quero.cloud`.
+- `pangea-dashboards` on the operator's embedded `$LOAD_PATH`: **PENDING** —
+  the render code is complete, but the gem is not yet in the operator image
+  bundle (absent from `flake.nix` `pangeaInputs` + `pangea-compiler/Gemfile`).
+  Until it is bundled, a `PangeaDashboard` reconciles to `phase: Failed` with a
+  typed `LoadError` in `status.error` (the controller surfaces it correctly —
+  no panic, no silent success). Bundling requires the bundix regen of
+  `Gemfile.lock` + `gemset.nix` (the same follow-up the Gemfile defers for
+  `pangea-architectures`) + an operator image rebuild.
+- Helm vocabulary (`lareira-pangea-platform` / `-dashboards`): **shipped**.
+- e2e on rio: gated on the gem-bundle + image rebuild above; the worked values
+  example renders a valid `PangeaDashboard` CR today.
 
 **Skill:** `dashboard-as-code` (the operator-facing author flow).
 **Library:** `pangea-dashboards/docs/COMPONENT-LIBRARY.md` (the component vocabulary).
