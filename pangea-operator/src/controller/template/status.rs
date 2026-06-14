@@ -56,11 +56,12 @@ pub async fn update_phase(
     crate::controller::status_patch::patch_status(template, &state.client, patch)
     .await?;
 
-    state
-        .metrics
-        .templates_by_phase
-        .with_label_values(&[&phase.to_string()])
-        .inc();
+    // NOTE: `pangea_templates_by_phase` is a FLEET gauge set by the
+    // fleet-status controller (`set_templates_by_phase`, reset-then-set over
+    // every template each tick) — NOT a per-transition counter. Incrementing
+    // it here was wrong: it counted transitions (monotone, never decremented)
+    // and produced no series on a settled fleet. The single source of truth
+    // for the current phase distribution is the fleet aggregation.
 
     info!(?phase, "Updated template phase");
     Ok(())

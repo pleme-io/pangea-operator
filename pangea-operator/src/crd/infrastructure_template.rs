@@ -1296,6 +1296,26 @@ impl Default for Phase {
     }
 }
 
+impl Phase {
+    /// Every lifecycle phase, in state-machine order. The fleet
+    /// `pangea_templates_by_phase` gauge resets all of these to 0 each
+    /// aggregation tick before applying live counts, so a phase that
+    /// just emptied reads 0 — never a stale, never-decremented series.
+    pub const ALL: [Phase; 11] = [
+        Phase::Pending,
+        Phase::Verifying,
+        Phase::Verified,
+        Phase::Compiling,
+        Phase::Initializing,
+        Phase::Planning,
+        Phase::Applying,
+        Phase::Ready,
+        Phase::Drifted,
+        Phase::Failed,
+        Phase::Destroying,
+    ];
+}
+
 /// Kubernetes-style condition.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]

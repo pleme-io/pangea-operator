@@ -555,6 +555,13 @@
             shellHook = ''
               export LIBCLANG_PATH="${clang.lib}/lib"
               export PKG_CONFIG_PATH="${ruby}/lib/pkgconfig:''${PKG_CONFIG_PATH:-}"
+              # bindgen (via rb-sys) needs libc headers (stdio.h, stddef.h, …)
+              # on its clang invocation — nix doesn't expose them on the default
+              # include path. Without this, `cargo test` in this shell dies with
+              # "'stdio.h' file not found". Mirrors the image build's
+              # rubySharedEnv (see bindgenClangArgs above) so the dev shell and
+              # the hermetic build agree on the bindgen environment.
+              export BINDGEN_EXTRA_CLANG_ARGS="-I${pkgs.stdenv.cc.libc.dev}/include ''${BINDGEN_EXTRA_CLANG_ARGS:-}"
               echo "pangea-ruby-eval shell — ruby $(${ruby}/bin/ruby --version)"
               echo "  cargo test -p pangea-ruby-eval --lib --tests -- --test-threads=1"
             '';

@@ -923,6 +923,47 @@ impl Metrics {
         self.magma_resources_applied
             .with_label_values(&[template, namespace])
             .set(0);
+        // Per-template health GAUGES — same seed-at-0 rationale as the magma
+        // gauges above: a healthy template that has never failed to compile
+        // and has never been escalated should read 0 on its dashboard panel,
+        // not "no data" (which is indistinguishable from "the metric is
+        // broken"). These two gauges carry labels [target_namespace, name]
+        // (NOT [template, namespace] like the magma family) — match each
+        // metric's own arity. The matching *failure counters*
+        // (compile_failures_total / settling_failures_total /
+        // escalation_actions_total) are intentionally NOT seeded: they are
+        // rate()-driven and a phantom 0 only adds a never-incrementing series
+        // (the same reasoning as the magma `Failed` counter above).
+        self.consecutive_compile_failures
+            .with_label_values(&[namespace, template])
+            .set(0);
+        self.escalation_recommended_depth
+            .with_label_values(&[namespace, template])
+            .set(0);
+    }
+
+    /// Set the fleet-wide `pangea_templates_by_phase` gauge from a
+    /// `phase-string → count` histogram. EVERY phase in [`Phase::ALL`] is
+    /// written each call (reset-then-set): a phase whose count is absent
+    /// from `counts` is set to 0, so a phase that just emptied reads 0
+    /// instead of holding a stale, never-decremented value.
+    ///
+    /// This replaces the old per-transition `.inc()` in
+    /// `controller/template/status.rs`, which was wrong for a gauge named
+    /// "number of templates by phase": it counted *transitions* (monotone,
+    /// never decremented) and produced no series at all on a settled fleet
+    /// (no transitions ⇒ no `.inc()` ⇒ no data). The fleet-status controller
+    /// already lists every template each tick — this turns that list into a
+    /// truthful current-state gauge.
+    pub fn set_templates_by_phase(
+        &self,
+        counts: &std::collections::HashMap<String, i64>,
+    ) {
+        for phase in crate::crd::Phase::ALL {
+            let key = phase.to_string();
+            let v = counts.get(&key).copied().unwrap_or(0);
+            self.templates_by_phase.with_label_values(&[&key]).set(v);
+        }
     }
 
     /// Compile-specific timer. Distinct from `record_phase_duration("compiling")`
@@ -1468,6 +1509,73 @@ mod tests {
         // The applied gauge + Succeeded counter are seeded too.
         assert!(text.contains("pangea_magma_resources_applied"));
         assert!(text.contains("pangea_magma_apply_total"));
+    }
+
+    #[test]
+    fn seed_template_materializes_health_gauges_at_zero() {
+        // A healthy template that has never failed to compile and has never
+        // been escalated must read 0 on its dashboard panels — not "no data"
+        // (indistinguishable from a broken metric). Seeding the per-template
+        // health gauges at reconcile entry makes the series exist at 0.
+        let metrics = Metrics::new();
+        metrics.seed_template("cloudflare-pleme", "pangea-system");
+        // labels are [target_namespace, name] for these two (NOT [template, ns]).
+        assert_eq!(
+            metrics
+                .consecutive_compile_failures
+                .with_label_values(&["pangea-system", "cloudflare-pleme"])
+                .get(),
+            0
+        );
+        assert_eq!(
+            metrics
+                .escalation_recommended_depth
+                .with_label_values(&["pangea-system", "cloudflare-pleme"])
+                .get(),
+            0
+        );
+        let text = metrics.gather();
+        assert!(text.contains("pangea_template_consecutive_compile_failures"));
+        assert!(text.contains("pangea_escalation_recommended_depth"));
+        // The failure COUNTERS are intentionally NOT seeded (rate()-driven;
+        // a phantom 0 only adds a never-incrementing series).
+        assert!(
+            !text.contains("pangea_compile_failures_total{"),
+            "compile_failures_total must stay unseeded (event-driven counter):\n{text}"
+        );
+    }
+
+    #[test]
+    fn set_templates_by_phase_resets_absent_phases_to_zero() {
+        // The gauge is reset-then-set over EVERY phase each tick: a phase
+        // present in the histogram gets its live count; a phase ABSENT from
+        // the histogram is set to 0 (not left at a stale, never-decremented
+        // value). This is what makes it a truthful current-state gauge.
+        let metrics = Metrics::new();
+        let mut counts = std::collections::HashMap::new();
+        counts.insert("Ready".to_string(), 7);
+        counts.insert("Drifted".to_string(), 2);
+        metrics.set_templates_by_phase(&counts);
+        assert_eq!(metrics.templates_by_phase.with_label_values(&["Ready"]).get(), 7);
+        assert_eq!(metrics.templates_by_phase.with_label_values(&["Drifted"]).get(), 2);
+        // Every other phase is explicitly 0 (a series exists, not absent).
+        for absent in ["Pending", "Compiling", "Planning", "Applying", "Failed", "Destroying"] {
+            assert_eq!(
+                metrics.templates_by_phase.with_label_values(&[absent]).get(),
+                0,
+                "phase {absent} must be reset to 0"
+            );
+        }
+        // Now Ready empties out — the next tick must drop it to 0, not hold 7.
+        let mut next = std::collections::HashMap::new();
+        next.insert("Failed".to_string(), 1);
+        metrics.set_templates_by_phase(&next);
+        assert_eq!(
+            metrics.templates_by_phase.with_label_values(&["Ready"]).get(),
+            0,
+            "an emptied phase must reset to 0, not hold its prior count"
+        );
+        assert_eq!(metrics.templates_by_phase.with_label_values(&["Failed"]).get(), 1);
     }
 
     #[test]

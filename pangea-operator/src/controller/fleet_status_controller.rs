@@ -135,7 +135,7 @@ async fn reconcile(
     // CR (was 10 reconciles/sec).
     ctx.metrics.record_reconcile_named("fleet_status", "ok");
 
-    let new_status = aggregate_fleet_status(&ctx.client).await?;
+    let new_status = aggregate_fleet_status(&ctx.client, &ctx.metrics).await?;
 
     // Diff-gate the PATCH — same antipattern this file's siblings hit
     // during rio firefighting 2026-05-07. `aggregate_fleet_status`
@@ -196,7 +196,10 @@ fn fleet_status_changed(
 /// `PangeaFleetStatusStatus`. Each list call is bounded by the
 /// kube-apiserver — listing thousands of CRs across 12 classes runs
 /// in a few hundred ms on a healthy cluster.
-async fn aggregate_fleet_status(client: &Client) -> Result<PangeaFleetStatusStatus, FleetError> {
+async fn aggregate_fleet_status(
+    client: &Client,
+    metrics: &crate::observability::Metrics,
+) -> Result<PangeaFleetStatusStatus, FleetError> {
     let lp = ListParams::default();
 
     // ── WorkspaceCatalog ──
@@ -208,6 +211,22 @@ async fn aggregate_fleet_status(client: &Client) -> Result<PangeaFleetStatusStat
     let it_api: Api<InfrastructureTemplate> = Api::all(client.clone());
     let templates = it_api.list(&lp).await?;
     let infrastructure_templates = aggregate_templates(&templates.items);
+
+    // Fleet `pangea_templates_by_phase` gauge — the ONE place the operator
+    // sees every template's phase at once. Count by phase (a template with no
+    // status yet counts as its default phase), then reset-then-set every known
+    // phase so an emptied phase reads 0.
+    let mut phase_counts: std::collections::HashMap<String, i64> =
+        std::collections::HashMap::new();
+    for t in &templates.items {
+        let phase = t
+            .status
+            .as_ref()
+            .and_then(|s| s.phase)
+            .unwrap_or_default();
+        *phase_counts.entry(phase.to_string()).or_insert(0) += 1;
+    }
+    metrics.set_templates_by_phase(&phase_counts);
 
     // ── ArchitectureGem ──
     let agem_api: Api<ArchitectureGem> = Api::all(client.clone());
