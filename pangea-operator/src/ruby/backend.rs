@@ -198,6 +198,34 @@ pub trait CompilerBackend: Send + Sync {
         &self,
         req: CompileAnyRequest,
     ) -> Result<CompileAnyResult, BackendError>;
+
+    /// Render a `PangeaDashboard`'s inline Ruby into a Grafana
+    /// dashboard JSON **string**.
+    ///
+    /// The inline Ruby (authored against the typed
+    /// `Pangea::Dashboards::Library` + `Render::Grafana` vocabulary)
+    /// evaluates to a JSON string — the dashboard `config_json` — as
+    /// its last expression. This method evaluates that Ruby and returns
+    /// the JSON string verbatim; the controller then upserts it into a
+    /// sidecar-labelled ConfigMap.
+    ///
+    /// `extend_modules` lists Ruby modules the dashboard DSL expects to
+    /// be in scope (e.g. `["Pangea::Grafana"]`); the embedded backend
+    /// makes them requireable before the eval. The embedded backend is
+    /// the only impl with a real evaluator — HTTP returns a typed
+    /// `BackendError` (rio runs embedded).
+    ///
+    /// Default impl errors so backends that don't support dashboard
+    /// rendering surface a typed gap rather than a silent wrong answer.
+    async fn render_dashboard(
+        &self,
+        _ruby: String,
+        _extend_modules: Vec<String>,
+    ) -> Result<String, BackendError> {
+        Err(BackendError::Ruby(
+            "render_dashboard requires the embedded backend".into(),
+        ))
+    }
 }
 
 #[cfg(test)]

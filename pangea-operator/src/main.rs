@@ -3,9 +3,9 @@
 use pangea_operator::{
     controller::{
         AmiTestController, ComplianceBindingController, ComplianceScheduleController,
-        ControllerState, FlowController, ImagePipelineController, NamespaceController,
-        OperatorPolicyController, PackerBuildController, SynthesizerFormatController,
-        TemplateController,
+        ControllerState, DashboardController, FlowController, ImagePipelineController,
+        NamespaceController, OperatorPolicyController, PackerBuildController,
+        SynthesizerFormatController, TemplateController,
     },
     crd::generate_crds,
     error::Result,
@@ -386,6 +386,18 @@ async fn main() -> Result<()> {
         }
     });
 
+    // PangeaDashboard reconciler — renders a dashboard CR's inline Pangea
+    // Ruby through the shared (embedded) compiler backend into Grafana
+    // JSON, then upserts a sidecar-labelled ConfigMap the vm-stack Grafana
+    // dashboard sidecar loads. See docs/DASHBOARD-AS-CODE.md.
+    let dashboard_state = state.clone();
+    let dashboard_controller = tokio::spawn(async move {
+        let controller = DashboardController::new(dashboard_state);
+        if let Err(e) = controller.run().await {
+            error!(error = %e, "PangeaDashboard controller error");
+        }
+    });
+
     // M1 — ArchitectureGem reconciler. Reuses the shared compiler
     // backend already in state — same dispatch as every other
     // controller (template, packer, synthesizer-format).
@@ -497,6 +509,7 @@ async fn main() -> Result<()> {
     synth_format_controller.abort();
     compliance_schedule_controller.abort();
     compliance_binding_controller.abort();
+    dashboard_controller.abort();
     architecture_gem_controller.abort();
     reconciliation_loop_controller.abort();
     workspace_catalog_controller.abort();

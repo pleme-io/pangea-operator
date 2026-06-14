@@ -278,4 +278,28 @@ impl CompilerBackend for EmbeddedCompilerBackend {
                 .into(),
         ))
     }
+
+    async fn render_dashboard(
+        &self,
+        ruby: String,
+        extend_modules: Vec<String>,
+    ) -> Result<String, BackendError> {
+        // Dashboard render runs the inline DSL Ruby on a pool worker
+        // and returns the Grafana JSON string. The owner thread does
+        // the require-extend-modules + eval + string-extraction; this
+        // dispatcher just ships the request + awaits the reply.
+        self.instrumented(|tx| async move {
+            let (rtx, rrx) = oneshot::channel();
+            tx.send(RubyRequest::RenderDashboard {
+                ruby,
+                extend_modules,
+                respond: rtx,
+            })
+            .await
+            .map_err(|_| BackendError::Ruby("ruby owner channel closed".into()))?;
+            rrx.await
+                .map_err(|_| BackendError::Ruby("ruby owner reply lost".into()))?
+        })
+        .await
+    }
 }

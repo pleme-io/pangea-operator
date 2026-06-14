@@ -46,6 +46,15 @@ pub enum RubyRequest {
         source: String,
         respond: oneshot::Sender<Result<Json, BackendError>>,
     },
+    /// Render a `PangeaDashboard`'s inline Ruby into a Grafana
+    /// dashboard JSON **string**. `extend_modules` are `require`d
+    /// (dashed→slashed fallback) before the eval; the inline Ruby's
+    /// last expression must evaluate to the dashboard JSON string.
+    RenderDashboard {
+        ruby: String,
+        extend_modules: Vec<String>,
+        respond: oneshot::Sender<Result<String, BackendError>>,
+    },
     /// Permanently prepend a path to `$LOAD_PATH`. Used after the
     /// gem-cache clones a gem, so that subsequent `require`s in
     /// fixture smoke-tests / template compiles can resolve it.
@@ -197,6 +206,14 @@ fn run_owner_loop(
                     .map_err(|e| BackendError::Ruby(format!("eval: {e}")));
                 let _ = respond.send(res);
             }
+            RubyRequest::RenderDashboard {
+                ruby,
+                extend_modules,
+                respond,
+            } => {
+                let res = render_dashboard(&evaluator, &ruby, &extend_modules);
+                let _ = respond.send(res);
+            }
             RubyRequest::PrependLoadPath { path, respond } => {
                 let escaped = path
                     .to_string_lossy()
@@ -313,6 +330,99 @@ fn list_architectures(
         classes,
         version,
     })
+}
+
+/// Render a `PangeaDashboard`'s inline Ruby into a Grafana dashboard
+/// JSON **string**.
+///
+/// Two phases, both in the owner thread:
+///
+///   1. Best-effort `require` each `extend_modules` entry (trying the
+///      dashed name then the slashed form, tolerating `LoadError` —
+///      the inline Ruby is free to `require 'pangea-dashboards'`
+///      itself, so a missing pre-require here is not fatal). The whole
+///      bracket is wrapped so a `require` that raises something other
+///      than `LoadError` surfaces as a typed `BackendError`.
+///   2. `eval` the inline Ruby at the toplevel binding. Its last
+///      expression must evaluate to the dashboard JSON string (the
+///      `config_json` the typed `Render::Grafana.render` produces).
+///
+/// The result is required to be a Ruby `String` — anything else
+/// (nil, a Hash that wasn't rendered to JSON, …) is a typed error so
+/// the controller marks the CR `Failed` rather than writing a
+/// nonsense ConfigMap. No `format!()` of the dashboard JSON happens
+/// here: the Ruby `Render::Grafana` is the typed emitter; this code
+/// only carries the string it produced.
+fn render_dashboard(
+    evaluator: &RubyEvaluator,
+    ruby: &str,
+    extend_modules: &[String],
+) -> Result<String, BackendError> {
+    // Phase 1 — best-effort require of the expected modules. Each
+    // module name maps to a require path (dashed first, then slashed
+    // for gems whose entry file lives at lib/<dashed>/<x>.rb). A
+    // `Pangea::Grafana`-style module name (`::`-separated) is turned
+    // into the gem-style require path `pangea/grafana`. LoadError is
+    // swallowed (the inline Ruby may require the gem itself); any
+    // other error propagates.
+    for module in extend_modules {
+        let require_path = module.to_lowercase().replace("::", "/").replace('-', "/");
+        let dashed = module.to_lowercase().replace("::", "-");
+        let req_src = format!(
+            r#"
+            ['{path}', '{dashed}'].each do |p|
+              begin
+                require p
+                break
+              rescue LoadError
+                next
+              end
+            end
+            :ok
+            "#,
+            path = require_path.replace('\'', "\\'"),
+            dashed = dashed.replace('\'', "\\'"),
+        );
+        evaluator
+            .eval_string(&req_src)
+            .map_err(|e| BackendError::Ruby(format!("require {module}: {e}")))?;
+    }
+
+    // Phase 2 — eval the inline Ruby at the toplevel binding. We wrap
+    // the source in a Ruby string literal + `eval(..., TOPLEVEL_BINDING)`
+    // (matching the compile path) so SyntaxError surfaces with a useful
+    // filename and arbitrary content (quotes/backticks) is safe.
+    let eval_src = format!(
+        r#"eval({source_literal}, TOPLEVEL_BINDING, "(pangea-dashboard)", 1)"#,
+        source_literal = ruby_string_literal(ruby),
+    );
+    let result = evaluator
+        .eval_string(&eval_src)
+        .map_err(|e| BackendError::Ruby(format!("render dashboard eval: {e}")))?;
+
+    match result {
+        Json::String(s) => Ok(s),
+        // The Ruby `Render::Grafana.render(...)` contract is to return
+        // the JSON STRING. If the inline Ruby instead returned a
+        // Hash/Array (forgot the `.to_json` / render step), serialize
+        // it so the dashboard still lands rather than failing hard —
+        // but a scalar (nil/number/bool) is genuinely wrong.
+        other @ (Json::Object(_) | Json::Array(_)) => {
+            serde_json::to_string(&other).map_err(|e| {
+                BackendError::Ruby(format!("serialize dashboard value: {e}"))
+            })
+        }
+        other => Err(BackendError::Ruby(format!(
+            "dashboard Ruby must evaluate to a JSON string (or object/array); \
+             got {}",
+            match other {
+                Json::Null => "nil",
+                Json::Bool(_) => "a boolean",
+                Json::Number(_) => "a number",
+                _ => "an unexpected value",
+            }
+        ))),
+    }
 }
 
 /// In-process equivalent of `POST /v1/architectures/smoke-test`.
