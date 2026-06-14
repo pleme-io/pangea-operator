@@ -1,15 +1,27 @@
 name: release
 
-# Tag-triggered (v*). Three jobs run in parallel through substrate
-# primitives — Rust binaries to the GH Release, container image to
-# ghcr.io, Helm chart to ArtifactHub via OCI. Each is a thin caller
-# of the matching substrate workflow.
+# AUTO-RELEASE (★★ org directive): the embedded operator image ships on every
+# MERGE TO MAIN, tagged `embedded-amd64-<sha>` (the HelmRelease + Flux
+# ImagePolicy convention). Binaries + chart still publish on a v* tag.
+#
+# The image job runs on the rio SELF-HOSTED runner (`arc-rio-default`) because
+# the embedded build (Rust + libruby + dockerTools) exceeds GH-hosted runner
+# capacity — this is the GitOps-native replacement for the old manual
+# build-on-rio + token dance. Flux image-automation
+# (k8s/clusters/rio/infrastructure/flux-image-automation/) scans the published
+# tags and auto-bumps the HelmRelease, so a merge deploys itself end-to-end.
+#
+# ⚠ ACTIVATION GATE: the `arc-rio-default` runner only exists once the
+# pleme-arc-rio GitHub App is registered + the ARC stack is unsuspended — see
+# k8s/clusters/rio/infrastructure/arc/RUNBOOK.md. Until then, image runs on
+# `main` queue waiting for the runner.
 #
 # `secrets: inherit` is required — reusable workflows don't auto-inherit
 # the caller's secrets (GHA quirk).
 
 on:
   push:
+    branches: [main]
     tags: ['v*']
   workflow_dispatch:
     inputs:
@@ -23,24 +35,34 @@ permissions:
   id-token: write
 
 jobs:
-  binaries:
-    name: cross-arch binaries → GH Release
-    uses: pleme-io/substrate/.github/workflows/rust-binary-release.yml@main
-    with:
-      binary-name: pangea-operator
-    secrets: inherit
-
+  # The image ships on every merge — the auto-release path. Runs on the rio
+  # self-hosted ARC runner (embedded build is too heavy for GH-hosted).
   image:
     name: container image → ghcr.io
     uses: pleme-io/substrate/.github/workflows/image-push.yml@main
     with:
       imageAttr: dockerImage-operator-embedded-amd64
       imageName: pleme-io/pangea-operator
-      tag: ${{ github.ref_name }}
+      # `r<run_number>` makes the tag sortable by recency for Flux ImagePolicy
+      # (a git sha alone isn't orderable); the sha keeps it traceable.
+      tag: embedded-amd64-r${{ github.run_number }}-${{ github.sha }}
+      additionalTags: latest-embedded-amd64
+      runner: arc-rio-default
+    secrets: inherit
+
+  # Binaries + chart publish on a version tag (or manual dispatch) — not on
+  # every merge.
+  binaries:
+    name: cross-arch binaries → GH Release
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    uses: pleme-io/substrate/.github/workflows/rust-binary-release.yml@main
+    with:
+      binary-name: pangea-operator
     secrets: inherit
 
   chart:
     name: Helm chart → ArtifactHub OCI
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     uses: pleme-io/substrate/.github/workflows/helm-chart-release.yml@main
     with:
       chart-path: ./pangea-operator/charts/pangea-operator
