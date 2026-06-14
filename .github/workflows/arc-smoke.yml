@@ -1,0 +1,11 @@
+name: arc-smoke
+# Direct runs-on (no reusable workflow) to isolate ARC scale-set dispatch.
+on:
+  workflow_dispatch: {}
+jobs:
+  smoke:
+    runs-on: rio-builder
+    steps:
+      - run: |
+          echo "hello from the rio ARC self-hosted runner"
+          hostname; uname -a; nproc; free -h || true
