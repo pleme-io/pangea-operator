@@ -47,7 +47,7 @@ jobs:
       # (a git sha alone isn't orderable); the sha keeps it traceable.
       tag: embedded-amd64-r${{ github.run_number }}-${{ github.sha }}
       additionalTags: latest-embedded-amd64
-      runner: arc-rio-default
+      runner: rio-builder
     secrets: inherit
 
   # Binaries + chart publish on a version tag (or manual dispatch) — not on
