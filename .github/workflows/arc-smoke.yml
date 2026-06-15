@@ -4,7 +4,7 @@ on:
   workflow_dispatch: {}
 jobs:
   smoke:
-    runs-on: rio-builder
+    runs-on: rio-build-01
     steps:
       - run: |
           echo "hello from the rio ARC self-hosted runner"
