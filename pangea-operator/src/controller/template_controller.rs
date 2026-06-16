@@ -1397,7 +1397,7 @@ async fn handle_initializing(
         update_phase(template, Phase::Planning, state).await?;
         record_event(template, state, EventType::Normal, "Initialized", "Backend initialized successfully").await;
     } else {
-        let err_msg = format!("tofu init failed: {}", result.stderr);
+        let err_msg = format!("init failed: {}", result.stderr);
         warn!(%err_msg);
         update_phase_with_error(template, Phase::Failed, &err_msg, state).await?;
         record_event(template, state, EventType::Warning, "InitFailed", &err_msg).await;
@@ -2034,7 +2034,11 @@ async fn handle_applying(
         } else {
             format!("{}\n--- stderr ---\n{}", result.stdout, result.stderr)
         };
-        let err_msg = format!("tofu apply failed: {combined_output}");
+        // Executor-neutral label: the default executor is magma (tofu is
+        // forbidden via PANGEA_FORBID_TOFU), so a "tofu apply failed" prefix
+        // here is a lie that misroutes diagnosis. The error body already
+        // carries the provider/executor detail.
+        let err_msg = format!("apply failed: {combined_output}");
         warn!(%err_msg);
 
         // Self-heal the "Saved plan is stale" race: the cached tfplan was
@@ -2500,20 +2504,20 @@ async fn try_tofu_import(
             warn!(
                 address = %addr,
                 stderr = %r.stderr,
-                "tofu import failed; falling through to apply"
+                "import failed; falling through to apply"
             );
             record_event(
                 template,
                 state,
                 EventType::Warning,
                 "ImportFailed",
-                &format!("tofu import {addr} failed: {}", truncate_for_status(&r.stderr)),
+                &format!("import {addr} failed: {}", truncate_for_status(&r.stderr)),
             )
             .await;
             false
         }
         Err(e) => {
-            warn!(address = %addr, error = %e, "tofu import errored; falling through to apply");
+            warn!(address = %addr, error = %e, "import errored; falling through to apply");
             false
         }
     }

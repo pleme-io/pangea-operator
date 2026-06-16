@@ -360,7 +360,7 @@ pub async fn resolve_conflicts_post_apply(
                     info!(address = %addr, import_id = %import_id, "conflict-resolution: adopted into state");
                 }
                 Ok(r) => {
-                    warn!(address = %addr, stderr = %r.stderr, "conflict-resolution: tofu import failed");
+                    warn!(address = %addr, stderr = %r.stderr, "conflict-resolution: import failed");
                 }
                 Err(e) => {
                     warn!(address = %addr, error = %e, "conflict-resolution: tofu import errored");
