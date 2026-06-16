@@ -116,7 +116,7 @@ pub async fn observe_head(
     cmd.args(["ls-remote", url, git_ref])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    for (k, v) in env {
+    for (k, v) in non_interactive_git_env(env) {
         cmd.env(k, v);
     }
     let out = tokio::time::timeout(std::time::Duration::from_secs(30), cmd.output())
@@ -143,9 +143,57 @@ pub async fn observe_head(
         })
 }
 
+/// Augment a git auth env with the NON-INTERACTIVE guardrails that make
+/// a misconfigured credential helper FAIL FAST instead of hanging to the
+/// timeout (the concrete cause of the persistent `Unknown`/frozen-HEAD
+/// wedge on rio: a misfiring `GIT_ASKPASS` against a private repo blocks
+/// for the full 30s, errors, and the caller proceeds against a stale
+/// compile). Pure + testable: no subprocess, no I/O.
+///
+/// - `GIT_TERMINAL_PROMPT=0` — git never prompts on a TTY/askpass miss.
+/// - `GIT_CONFIG_NOSYSTEM=1` + `GIT_CONFIG_GLOBAL=/dev/null` — ignore any
+///   ambient/system git config (a stray `credential.helper` can't hang us).
+#[must_use]
+pub fn non_interactive_git_env(base: &[(String, String)]) -> Vec<(String, String)> {
+    let mut env: Vec<(String, String)> = base.to_vec();
+    for (k, v) in [
+        ("GIT_TERMINAL_PROMPT", "0"),
+        ("GIT_CONFIG_NOSYSTEM", "1"),
+        ("GIT_CONFIG_GLOBAL", "/dev/null"),
+    ] {
+        if !env.iter().any(|(ek, _)| ek == k) {
+            env.push((k.to_string(), v.to_string()));
+        }
+    }
+    env
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── non_interactive_git_env (pure) ───────────────────────────
+
+    #[test]
+    fn non_interactive_env_forbids_terminal_prompt_and_ambient_config() {
+        let env = non_interactive_git_env(&[("GIT_ASKPASS".into(), "/x/askpass.sh".into())]);
+        let has = |k: &str, v: &str| env.iter().any(|(ek, ev)| ek == k && ev == v);
+        assert!(has("GIT_ASKPASS", "/x/askpass.sh"), "base auth preserved");
+        assert!(has("GIT_TERMINAL_PROMPT", "0"), "no terminal prompt → fail fast, never hang");
+        assert!(has("GIT_CONFIG_NOSYSTEM", "1"));
+        assert!(has("GIT_CONFIG_GLOBAL", "/dev/null"));
+    }
+
+    #[test]
+    fn non_interactive_env_does_not_clobber_caller_overrides() {
+        // If a caller already pinned GIT_TERMINAL_PROMPT, respect it.
+        let env = non_interactive_git_env(&[("GIT_TERMINAL_PROMPT".into(), "1".into())]);
+        assert_eq!(
+            env.iter().filter(|(k, _)| k == "GIT_TERMINAL_PROMPT").count(),
+            1,
+            "no duplicate keys"
+        );
+    }
 
     // ── evaluate_source_freshness (pure) ─────────────────────────
 

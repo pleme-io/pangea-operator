@@ -134,7 +134,43 @@ pub fn create_condition(
 /// FluxCD healthChecks watches `status.conditions[type=Ready]`. This
 /// function ensures every phase transition emits well-defined conditions
 /// so FluxCD can determine readiness at any point.
-pub fn conditions_for_phase(phase: Phase, error_msg: Option<&str>) -> Vec<crate::crd::Condition> {
+/// Whether the template's compiled config is at the source's git edge.
+/// Derived from `status.compiledRevision` vs `status.observedHeadRevision`
+/// (see `template::status::source_fresh_state`). This is what gates the
+/// `Ready` condition: `Ready=True` is structurally impossible while a git
+/// source is `Behind` or `Unverified` — ending the "Ready while behind
+/// HEAD" lie. Tier-honest: this is a runtime C2 observation surface
+/// (parse-time-rejected on the condition), not a compile error —
+/// `Phase::Ready` stays a constructible enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceFreshState {
+    /// compiledRevision == observed remote HEAD — at the git edge.
+    Fresh,
+    /// The remote moved past the compiled revision (or none was ever
+    /// compiled) — behind the edge; Ready cannot be True.
+    Behind,
+    /// HEAD has not been observed yet (pre-first-observation, or the
+    /// probe is failing) — cannot claim at-HEAD; Ready cannot be True.
+    Unverified,
+    /// Non-git source (inline / configMap) — no git edge to track;
+    /// freshness does not gate Ready.
+    NotApplicable,
+}
+
+impl SourceFreshState {
+    /// Does this state permit `Ready=True`? Only when we have positively
+    /// established at-HEAD (or there is no git edge to track).
+    #[must_use]
+    pub fn permits_ready(self) -> bool {
+        matches!(self, SourceFreshState::Fresh | SourceFreshState::NotApplicable)
+    }
+}
+
+pub fn conditions_for_phase(
+    phase: Phase,
+    error_msg: Option<&str>,
+    source_fresh: SourceFreshState,
+) -> Vec<crate::crd::Condition> {
     let (ready, reconciling, drift) = match phase {
         Phase::Pending => (false, false, false),
         // M2 — Verifying = checking ArchitectureGem registry; Verified
@@ -146,7 +182,12 @@ pub fn conditions_for_phase(phase: Phase, error_msg: Option<&str>) -> Vec<crate:
         Phase::Initializing => (false, true, false),
         Phase::Planning => (false, true, false),
         Phase::Applying => (false, true, false),
-        Phase::Ready => (true, false, false),
+        // THE git-edge gate: Ready is `true` ONLY when the source is at
+        // HEAD (or non-git). A `Behind`/`Unverified` git source forces
+        // Ready=False even while phase==Ready — so "Ready while behind
+        // HEAD" cannot be advertised. The Phase enum no longer alone
+        // determines the Ready condition.
+        Phase::Ready => (source_fresh.permits_ready(), false, false),
         Phase::Drifted => (false, false, true),
         Phase::Failed => (false, false, false),
         // Self-healing park: actively retrying the compile on
@@ -160,6 +201,13 @@ pub fn conditions_for_phase(phase: Phase, error_msg: Option<&str>) -> Vec<crate:
 
     let message = match (phase, error_msg) {
         (_, Some(msg)) => msg.to_string(),
+        // Ready-but-behind/unverified is reachable: name it honestly.
+        (Phase::Ready, _) if !source_fresh.permits_ready() => match source_fresh {
+            SourceFreshState::Behind => {
+                "Source HEAD has advanced past the applied revision — recompiling".into()
+            }
+            _ => "Source HEAD not yet verified — observing the git edge".into(),
+        },
         (Phase::Ready, _) => "Infrastructure is up to date".into(),
         (Phase::Drifted, _) => "Infrastructure drift detected".into(),
         (Phase::Failed, _) => "Operation failed".into(),
@@ -173,10 +221,26 @@ pub fn conditions_for_phase(phase: Phase, error_msg: Option<&str>) -> Vec<crate:
         (phase, _) => format!("{} in progress", phase),
     };
 
+    // The SourceFresh condition makes the git-edge state first-class on
+    // the status surface (a printer column + a Flux/Prometheus signal).
+    let (sf_ok, sf_reason) = match source_fresh {
+        SourceFreshState::Fresh => (true, "AtHead"),
+        SourceFreshState::NotApplicable => (true, "NoGitSource"),
+        SourceFreshState::Behind => (false, "BehindHead"),
+        SourceFreshState::Unverified => (false, "Unverified"),
+    };
+    let sf_msg = match source_fresh {
+        SourceFreshState::Fresh => "Compiled revision is at the source's git HEAD",
+        SourceFreshState::NotApplicable => "Non-git source; no git edge to track",
+        SourceFreshState::Behind => "Compiled revision is behind the source's git HEAD",
+        SourceFreshState::Unverified => "Source git HEAD not yet observed",
+    };
+
     vec![
         create_condition("Ready", ready, &reason, &message),
         create_condition("Reconciling", reconciling, &reason, &message),
         create_condition("DriftDetected", drift, &reason, &message),
+        create_condition("SourceFresh", sf_ok, sf_reason, sf_msg),
     ]
 }
 
@@ -302,19 +366,42 @@ mod tests {
 
     #[test]
     fn test_conditions_for_phase_ready() {
-        let conditions = conditions_for_phase(Phase::Ready, None);
-        assert_eq!(conditions.len(), 3);
+        let conditions = conditions_for_phase(Phase::Ready, None, SourceFreshState::Fresh);
+        assert_eq!(conditions.len(), 4);
         assert_eq!(conditions[0].r#type, "Ready");
         assert_eq!(conditions[0].status, "True");
         assert_eq!(conditions[1].r#type, "Reconciling");
         assert_eq!(conditions[1].status, "False");
         assert_eq!(conditions[2].r#type, "DriftDetected");
         assert_eq!(conditions[2].status, "False");
+        assert_eq!(conditions[3].r#type, "SourceFresh");
+        assert_eq!(conditions[3].status, "True");
+    }
+
+    #[test]
+    fn ready_condition_false_when_behind_head() {
+        // THE headline structural invariant: phase==Ready + Behind HEAD ⇒
+        // Ready=False. "Ready while behind HEAD" is unutterable.
+        let behind = conditions_for_phase(Phase::Ready, None, SourceFreshState::Behind);
+        assert_eq!(behind[0].r#type, "Ready");
+        assert_eq!(behind[0].status, "False");
+        assert_eq!(behind[3].r#type, "SourceFresh");
+        assert_eq!(behind[3].status, "False");
+        // Unverified (HEAD never observed) also cannot claim Ready.
+        let unverified = conditions_for_phase(Phase::Ready, None, SourceFreshState::Unverified);
+        assert_eq!(unverified[0].status, "False");
+        // Fresh ⇒ Ready=True.
+        let fresh = conditions_for_phase(Phase::Ready, None, SourceFreshState::Fresh);
+        assert_eq!(fresh[0].status, "True");
+        // Non-git source ⇒ Ready=True (no edge to track).
+        let na = conditions_for_phase(Phase::Ready, None, SourceFreshState::NotApplicable);
+        assert_eq!(na[0].status, "True");
+        assert_eq!(na[3].status, "True");
     }
 
     #[test]
     fn test_conditions_for_phase_compiling() {
-        let conditions = conditions_for_phase(Phase::Compiling, None);
+        let conditions = conditions_for_phase(Phase::Compiling, None, SourceFreshState::NotApplicable);
         assert_eq!(conditions[0].r#type, "Ready");
         assert_eq!(conditions[0].status, "False");
         assert_eq!(conditions[1].r#type, "Reconciling");
@@ -325,7 +412,7 @@ mod tests {
 
     #[test]
     fn test_conditions_for_phase_drifted() {
-        let conditions = conditions_for_phase(Phase::Drifted, None);
+        let conditions = conditions_for_phase(Phase::Drifted, None, SourceFreshState::Fresh);
         assert_eq!(conditions[0].status, "False"); // Ready
         assert_eq!(conditions[1].status, "False"); // Reconciling
         assert_eq!(conditions[2].status, "True"); // DriftDetected
@@ -333,7 +420,7 @@ mod tests {
 
     #[test]
     fn test_conditions_for_phase_failed_with_error() {
-        let conditions = conditions_for_phase(Phase::Failed, Some("tofu plan failed"));
+        let conditions = conditions_for_phase(Phase::Failed, Some("tofu plan failed"), SourceFreshState::Fresh);
         assert_eq!(conditions[0].status, "False");
         assert_eq!(conditions[0].reason, "Failed");
         assert_eq!(conditions[0].message, "tofu plan failed");
@@ -341,7 +428,7 @@ mod tests {
 
     #[test]
     fn test_conditions_for_phase_pending() {
-        let conditions = conditions_for_phase(Phase::Pending, None);
+        let conditions = conditions_for_phase(Phase::Pending, None, SourceFreshState::NotApplicable);
         assert_eq!(conditions[0].status, "False"); // Not Ready
         assert_eq!(conditions[1].status, "False"); // Not Reconciling
         assert_eq!(conditions[2].status, "False"); // No drift
@@ -350,7 +437,7 @@ mod tests {
 
     #[test]
     fn test_conditions_for_phase_destroying() {
-        let conditions = conditions_for_phase(Phase::Destroying, None);
+        let conditions = conditions_for_phase(Phase::Destroying, None, SourceFreshState::Fresh);
         assert_eq!(conditions[0].status, "False");
         assert_eq!(conditions[1].status, "False");
         assert_eq!(conditions[2].status, "False");
@@ -360,7 +447,7 @@ mod tests {
     #[test]
     fn test_conditions_for_phase_active_phases_reconciling() {
         for phase in [Phase::Compiling, Phase::Initializing, Phase::Planning, Phase::Applying] {
-            let conditions = conditions_for_phase(phase, None);
+            let conditions = conditions_for_phase(phase, None, SourceFreshState::NotApplicable);
             assert_eq!(conditions[1].status, "True",
                 "Phase {:?} should have Reconciling=True", phase);
         }
@@ -368,7 +455,7 @@ mod tests {
 
     #[test]
     fn test_conditions_for_phase_custom_error_overrides_message() {
-        let conditions = conditions_for_phase(Phase::Ready, Some("override msg"));
+        let conditions = conditions_for_phase(Phase::Ready, Some("override msg"), SourceFreshState::Fresh);
         assert_eq!(conditions[0].message, "override msg");
     }
 

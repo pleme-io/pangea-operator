@@ -14,12 +14,36 @@
 use chrono::Utc;
 use tracing::info;
 
-use crate::controller::reconciler::conditions_for_phase;
+use crate::controller::reconciler::{conditions_for_phase, SourceFreshState};
 use crate::controller::ControllerState;
 use crate::crd::{
     InfrastructureTemplate, Phase, PolicyDecision, PolicyEvaluation, ResourceSummary,
 };
 use crate::error::Result;
+
+/// Derive the git-edge freshness state from the template's recorded
+/// revisions — a pure read of `spec.source` + `status`. This is what
+/// gates the `Ready` condition (`conditions_for_phase`), making
+/// "Ready while behind HEAD" unutterable on the status surface.
+///
+/// - non-git source              → `NotApplicable` (no edge to track)
+/// - HEAD never observed          → `Unverified`   (can't claim at-HEAD)
+/// - compiledRevision == observed → `Fresh`        (at the edge)
+/// - otherwise (incl. compiled None) → `Behind`
+#[must_use]
+pub fn source_fresh_state(template: &InfrastructureTemplate) -> SourceFreshState {
+    if template.spec.source.git_repository.is_none() {
+        return SourceFreshState::NotApplicable;
+    }
+    let status = template.status.as_ref();
+    let observed = status.and_then(|s| s.observed_head_revision.as_deref());
+    let compiled = status.and_then(|s| s.compiled_revision.as_deref());
+    match (compiled, observed) {
+        (_, None) => SourceFreshState::Unverified,
+        (Some(c), Some(o)) if c == o => SourceFreshState::Fresh,
+        (_, Some(_)) => SourceFreshState::Behind,
+    }
+}
 
 /// Update the phase in the template status.
 ///
@@ -37,8 +61,10 @@ pub async fn update_phase(
     let phase_changed = status.phase != Some(phase);
     status.phase = Some(phase);
     status.observed_generation = template.metadata.generation.unwrap_or(0);
-    // Always set conditions so FluxCD healthChecks see current state
-    status.conditions = conditions_for_phase(phase, None);
+    // Always set conditions so FluxCD healthChecks see current state.
+    // The Ready condition is gated on the git-edge state — a phase==Ready
+    // transition while behind HEAD still yields Ready=False.
+    status.conditions = conditions_for_phase(phase, None, source_fresh_state(template));
     // ReactivePolicy: bump phase_entered_at only on real transitions
     // — that's what phaseTimeout escalation measures against.
     if phase_changed {
@@ -82,7 +108,7 @@ pub async fn update_phase_with_error(
     status.observed_generation = template.metadata.generation.unwrap_or(0);
     status.last_error = Some(error_msg.to_string());
     status.failure_count = status.failure_count.saturating_add(1);
-    status.conditions = conditions_for_phase(phase, Some(error_msg));
+    status.conditions = conditions_for_phase(phase, Some(error_msg), source_fresh_state(template));
     if phase_changed {
         status.phase_entered_at = Some(Utc::now());
     }
@@ -166,13 +192,20 @@ fn build_apply_status(
 ) -> crate::crd::InfrastructureTemplateStatus {
     status.outputs = outputs;
     status.last_applied_at = Some(Utc::now());
-    if let Some(rev) = revision {
+    let source_fresh = if let Some(rev) = revision {
         status.last_applied_revision = Some(rev.to_string());
-    }
+        // We just compiled + applied the HEAD we cloned — record it as the
+        // observed git edge so the post-apply Ready condition reads Fresh.
+        // The next handle_ready tick re-confirms via a live ls-remote.
+        status.observed_head_revision = Some(rev.to_string());
+        SourceFreshState::Fresh
+    } else {
+        SourceFreshState::NotApplicable
+    };
     // Clear approval hashes after successful apply
     status.pending_plan_hash = None;
     status.approved_plan_hash = None;
-    status.conditions = conditions_for_phase(Phase::Ready, None);
+    status.conditions = conditions_for_phase(Phase::Ready, None, source_fresh);
     status
 }
 
@@ -216,14 +249,63 @@ pub async fn update_compiled_revision(
     Ok(())
 }
 
-/// Record a freshness observation (`status.observedHeadRevision` +
-/// `lastFreshnessCheckAt`). Throttled like
-/// `update_drift_check_timestamp`: when the observed HEAD is
-/// unchanged AND the previous check was <30s ago, skip the PATCH —
-/// the timestamp alone isn't worth a watch-loop self-trigger.
+/// The outcome of one remote-HEAD observation attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ObservationOutcome {
+    /// `ls-remote` succeeded; carries the observed remote HEAD sha.
+    Observed(String),
+    /// `ls-remote` failed/unreachable — the attempt happened but produced
+    /// no head. The ATTEMPT clock STILL advances so a wedged probe is
+    /// visibly "checking + failing", never silently frozen.
+    Unobserved,
+}
+
+/// Pure: the freshness status patch for one observation attempt, or
+/// `None` to skip the PATCH (avoids a watch-loop self-trigger).
+///
+/// - `Observed(head)` → write `observedHeadRevision` + `lastFreshnessCheckAt`;
+///   skip only when head is unchanged AND the last check was <30s ago.
+/// - `Unobserved` → advance ONLY `lastFreshnessCheckAt` (never touch
+///   `observedHeadRevision`); skip only when <30s since the last attempt.
+///
+/// This is the load-bearing correction: `lastDriftCheckAt` advances every
+/// cycle (`update_drift_check_timestamp`), so the freshness ATTEMPT clock
+/// must advance symmetrically. A failing probe can no longer freeze
+/// `observedHeadRevision`/`lastFreshnessCheckAt` for days while drift
+/// checks keep ticking — the exact rio wedge signature.
+#[must_use]
+pub fn build_freshness_patch(
+    prev_head: Option<&str>,
+    prev_check: Option<chrono::DateTime<chrono::Utc>>,
+    outcome: &ObservationOutcome,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<serde_json::Value> {
+    match outcome {
+        ObservationOutcome::Observed(head) => {
+            if prev_head == Some(head.as_str()) && freshness_check_too_recent(prev_check, now) {
+                return None;
+            }
+            Some(serde_json::json!({
+                "status": { "observedHeadRevision": head, "lastFreshnessCheckAt": now }
+            }))
+        }
+        ObservationOutcome::Unobserved => {
+            if freshness_check_too_recent(prev_check, now) {
+                return None;
+            }
+            Some(serde_json::json!({
+                "status": { "lastFreshnessCheckAt": now }
+            }))
+        }
+    }
+}
+
+/// Record one freshness observation ATTEMPT: `observedHeadRevision` on a
+/// successful observation, and `lastFreshnessCheckAt` ALWAYS. Diff-gated +
+/// 30s-throttled via [`build_freshness_patch`].
 pub async fn update_freshness_status(
     template: &InfrastructureTemplate,
-    observed_head: &str,
+    outcome: &ObservationOutcome,
     state: &ControllerState,
 ) -> Result<()> {
     let now = Utc::now();
@@ -235,24 +317,11 @@ pub async fn update_freshness_status(
         .status
         .as_ref()
         .and_then(|s| s.last_freshness_check_at);
-    if prev_head == Some(observed_head) && freshness_check_too_recent(prev_check, now) {
-        tracing::debug!(
-            head = observed_head,
-            "observedHeadRevision unchanged + checked <30s ago; skipping patch"
-        );
+    let Some(patch) = build_freshness_patch(prev_head, prev_check, outcome, now) else {
+        tracing::debug!("freshness attempt: unchanged + <30s ago; skipping patch");
         return Ok(());
-    }
-
-    let patch = serde_json::json!({
-        "status": {
-            "observedHeadRevision": observed_head,
-            "lastFreshnessCheckAt": now,
-        }
-    });
-
-    crate::controller::status_patch::patch_status(template, &state.client, patch)
-    .await?;
-
+    };
+    crate::controller::status_patch::patch_status(template, &state.client, patch).await?;
     Ok(())
 }
 
@@ -265,6 +334,45 @@ fn freshness_check_too_recent(
     match prev {
         Some(p) => now.signed_duration_since(p) < chrono::Duration::seconds(30),
         None => false,
+    }
+}
+
+#[cfg(test)]
+mod freshness_patch_tests {
+    use super::{build_freshness_patch, ObservationOutcome};
+    use chrono::{Duration, Utc};
+
+    #[test]
+    fn unobserved_advances_attempt_clock_without_touching_head() {
+        // THE rio fix: a failed probe still bumps lastFreshnessCheckAt and
+        // does NOT write observedHeadRevision — so it can't silently freeze.
+        let now = Utc::now();
+        let patch = build_freshness_patch(Some("abc"), Some(now - Duration::minutes(40)), &ObservationOutcome::Unobserved, now)
+            .expect("a stale attempt must patch the timestamp");
+        let st = &patch["status"];
+        assert!(st.get("lastFreshnessCheckAt").is_some(), "attempt clock advances");
+        assert!(st.get("observedHeadRevision").is_none(), "head untouched on a failed probe");
+    }
+
+    #[test]
+    fn observed_unchanged_recent_skips_to_avoid_churn() {
+        let now = Utc::now();
+        assert!(build_freshness_patch(Some("abc"), Some(now - Duration::seconds(5)), &ObservationOutcome::Observed("abc".into()), now).is_none());
+    }
+
+    #[test]
+    fn observed_changed_writes_head_and_clock() {
+        let now = Utc::now();
+        let patch = build_freshness_patch(Some("abc"), Some(now - Duration::seconds(5)), &ObservationOutcome::Observed("def".into()), now)
+            .expect("HEAD advance must patch");
+        assert_eq!(patch["status"]["observedHeadRevision"], "def");
+        assert!(patch["status"].get("lastFreshnessCheckAt").is_some());
+    }
+
+    #[test]
+    fn unobserved_too_recent_skips() {
+        let now = Utc::now();
+        assert!(build_freshness_patch(Some("abc"), Some(now - Duration::seconds(5)), &ObservationOutcome::Unobserved, now).is_none());
     }
 }
 

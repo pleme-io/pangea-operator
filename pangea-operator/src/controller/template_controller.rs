@@ -39,7 +39,8 @@ use super::template::freshness::{
 use super::template::provider_creds::resolve_provider_config;
 use super::template::status::{
     update_apply_status, update_compiled_revision, update_drift_check_timestamp,
-    update_freshness_status, update_pending_plan_hash, update_phase, update_phase_with_error,
+    ObservationOutcome, update_freshness_status, update_pending_plan_hash, update_phase,
+    update_phase_with_error,
     update_plan_status, update_settling_status, workspace_drift_reaction_to_policy_decision,
 };
 use super::template::cycle_receipts::{record_reconcile_cycle, truncate_for_status, CycleResult};
@@ -814,7 +815,10 @@ async fn git_auth_env(
             }
         }
     }
-    Ok(env_vars)
+    // Harden EVERY git invocation (clone/fetch on the mutation path, and
+    // ls-remote on the freshness path) so a misconfigured credential helper
+    // FAILS FAST instead of hanging to the timeout → Unknown → stale-proceed.
+    Ok(crate::controller::template::freshness::non_interactive_git_env(&env_vars))
 }
 
 /// Outcome of [`source_freshness_gate`].
@@ -853,7 +857,8 @@ async fn source_freshness_gate(
     let env = git_auth_env(template, state, workspace).await?;
     match observe_head(&git_ref.url, &git_ref.r#ref, &env).await {
         Ok(head) => {
-            update_freshness_status(template, &head, state).await?;
+            update_freshness_status(template, &ObservationOutcome::Observed(head.clone()), state)
+                .await?;
             let compiled = template
                 .status
                 .as_ref()
@@ -877,11 +882,21 @@ async fn source_freshness_gate(
         }
         Err(e) => {
             state.metrics.source_freshness_check_failures_total.inc();
-            warn!(
-                phase = phase_label,
-                error = %e,
-                "freshness check failed (ls-remote unreachable) — proceeding with HEAD unverified"
+            // Advance the ATTEMPT clock even though the probe failed — a wedged
+            // probe is now visibly "checking + failing", never silently frozen
+            // (the rio defect: lastFreshnessCheckAt stuck for days while
+            // lastDriftCheckAt kept advancing).
+            update_freshness_status(template, &ObservationOutcome::Unobserved, state).await?;
+            // Surface a TYPED, visible anomaly — never a silent steady state.
+            // (The Ready condition stays independently honest: source_fresh_state
+            // reads observed_head, which a failed probe does NOT advance, so Ready
+            // reflects the last VERIFIED edge — it never guesses at-HEAD.)
+            let msg = format!(
+                "Source git HEAD could not be observed (ls-remote failed: {e}) — HEAD \
+                 unverified; reconciling against the last-observed revision"
             );
+            warn!(phase = phase_label, error = %e, "freshness probe failed — {msg}");
+            record_event(template, state, EventType::Warning, "SourceUnobservable", &msg).await;
             Ok(FreshnessGate::Proceed(Some(Freshness::Unknown)))
         }
     }
@@ -2599,33 +2614,27 @@ async fn handle_ready(
     let interval = parse_duration(&template.spec.refresh_interval)
         .unwrap_or(DEFAULT_REQUEUE_INTERVAL);
 
-    if let Some(last_check) = template
-        .status
-        .as_ref()
-        .and_then(|s| s.last_drift_check_at)
-    {
-        let elapsed = Utc::now().signed_duration_since(last_check);
-        let interval_chrono = chrono::Duration::from_std(interval).unwrap_or(chrono::Duration::minutes(5));
-        if elapsed < interval_chrono {
-            debug!("Skipping drift check, last check was {}s ago", elapsed.num_seconds());
-            return Ok(ReconcileAction::Requeue(interval));
-        }
-    }
-
-    debug!("Running drift detection");
-
     let workspace = state.workspace_manager.get_workspace(template).await?;
 
-    // Restart-safety: same wedge as handle_planning/handle_applying, but on
-    // the Ready-phase drift check. A fresh pod that resumes a CR already at
-    // phase=Ready dispatches straight here, SKIPPING handle_compiling — so
-    // main.tf.json was never (re)written on this pod's emptyDir workspace and
-    // the executor's load_config IO-errors on the missing file, looping the
-    // ~60s drift check forever (the 2026-06-03 fleet wedge: 4 Ready-phase
-    // templates — cloudflare-pleme, rio-arc-github, rio-health-check,
-    // rio-zot-cloudflare-tunnel — os-error-2'd every cycle on the post-restart
-    // emptyDir). If the compiled config is absent, bounce back to Compiling so
-    // the clone+compile re-runs before the drift plan.
+    // FIRST BEAT — observe the remote git HEAD EVERY tick, ABOVE the drift
+    // throttle. A moved remote is a desired-state change, observed every
+    // reconcile exactly like a spec change: the gate records
+    // observedHeadRevision and, on a HEAD-advance, bounces to Compiling
+    // (re-render) immediately. ls-remote is 1 RTT, so this is cheap enough to
+    // run unthrottled. THIS is the rio-wedge fix: HEAD used to be observed
+    // only on the 32m drift cadence (and frozen entirely when the probe
+    // errored), so the operator could sit phase=Ready 25 commits behind HEAD.
+    let freshness = match source_freshness_gate(template, state, &workspace, "ready").await? {
+        FreshnessGate::Bounce(action) => return Ok(action),
+        FreshnessGate::Proceed(f) => f,
+    };
+
+    // Restart-safety: compiled main.tf.json missing (a fresh pod resumed a
+    // Ready CR onto a wiped emptyDir, skipping handle_compiling) → bounce to
+    // Compiling so clone+compile re-runs. Reached every tick now (above the
+    // throttle), so a restart self-heals immediately instead of waiting out
+    // the drift interval. (The 2026-06-03 fleet wedge: 4 Ready templates
+    // os-error-2'd every cycle on the post-restart emptyDir.)
     if !workspace.main_tf_path().exists() {
         warn!(
             template = %template.name_any(),
@@ -2636,14 +2645,23 @@ async fn handle_ready(
         return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
     }
 
-    // Freshness gate — BEFORE the plan, so the `AcceptSettled` arm
-    // below is only reachable against a Fresh (or honestly-Unknown)
-    // compile: "no changes" structurally cannot be uttered against a
-    // stale one (`freshness::ready_drift_decision`, CI-enforced).
-    let freshness = match source_freshness_gate(template, state, &workspace, "ready").await? {
-        FreshnessGate::Bounce(action) => return Ok(action),
-        FreshnessGate::Proceed(f) => f,
-    };
+    // Throttle the EXPENSIVE plan only — the cheap HEAD observation above
+    // already ran this tick. (The plan stays on the refreshInterval cadence;
+    // the freshness probe does not.)
+    if let Some(last_check) = template
+        .status
+        .as_ref()
+        .and_then(|s| s.last_drift_check_at)
+    {
+        let elapsed = Utc::now().signed_duration_since(last_check);
+        let interval_chrono = chrono::Duration::from_std(interval).unwrap_or(chrono::Duration::minutes(5));
+        if elapsed < interval_chrono {
+            debug!("Plan throttled ({}s since last); HEAD already observed this tick", elapsed.num_seconds());
+            return Ok(ReconcileAction::Requeue(interval));
+        }
+    }
+
+    debug!("Running drift detection");
 
     let plan_result = runner.plan(&workspace).await?;
 
