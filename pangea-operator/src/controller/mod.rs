@@ -33,11 +33,9 @@ pub mod flow_scheduler;
 pub mod policy_cascade;
 mod reconciler;
 pub mod settling;
-// `pub(crate)` so the magma executor (`crate::executor::magma`) can
-// reuse `template::provider_creds::merge_provider_config` — the single
-// place the spec-cred ↔ rendered-block merge precedence lives. The
-// sub-modules remain crate-internal (not part of the public surface).
-pub(crate) mod template;
+// `pub` (superset of `pub(crate)`): magma reuses template::provider_creds AND
+// the staleness_honesty integration test drives template::freshness.
+pub mod template;
 mod template_controller;
 mod namespace_controller;
 mod packer_build_controller;

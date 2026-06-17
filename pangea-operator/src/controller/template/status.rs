@@ -14,12 +14,36 @@
 use chrono::Utc;
 use tracing::info;
 
-use crate::controller::reconciler::conditions_for_phase;
+use crate::controller::reconciler::{conditions_for_phase, SourceFreshState};
 use crate::controller::ControllerState;
 use crate::crd::{
     InfrastructureTemplate, Phase, PolicyDecision, PolicyEvaluation, ResourceSummary,
 };
 use crate::error::Result;
+
+/// Derive the git-edge freshness state from the template's recorded
+/// revisions — a pure read of `spec.source` + `status`. This is what
+/// gates the `Ready` condition (`conditions_for_phase`), making
+/// "Ready while behind HEAD" unutterable on the status surface.
+///
+/// - non-git source              → `NotApplicable` (no edge to track)
+/// - HEAD never observed          → `Unverified`   (can't claim at-HEAD)
+/// - compiledRevision == observed → `Fresh`        (at the edge)
+/// - otherwise (incl. compiled None) → `Behind`
+#[must_use]
+pub fn source_fresh_state(template: &InfrastructureTemplate) -> SourceFreshState {
+    if template.spec.source.git_repository.is_none() {
+        return SourceFreshState::NotApplicable;
+    }
+    let status = template.status.as_ref();
+    let observed = status.and_then(|s| s.observed_head_revision.as_deref());
+    let compiled = status.and_then(|s| s.compiled_revision.as_deref());
+    match (compiled, observed) {
+        (_, None) => SourceFreshState::Unverified,
+        (Some(c), Some(o)) if c == o => SourceFreshState::Fresh,
+        (_, Some(_)) => SourceFreshState::Behind,
+    }
+}
 
 /// Update the phase in the template status.
 ///
@@ -37,8 +61,10 @@ pub async fn update_phase(
     let phase_changed = status.phase != Some(phase);
     status.phase = Some(phase);
     status.observed_generation = template.metadata.generation.unwrap_or(0);
-    // Always set conditions so FluxCD healthChecks see current state
-    status.conditions = conditions_for_phase(phase, None);
+    // Always set conditions so FluxCD healthChecks see current state.
+    // The Ready condition is gated on the git-edge state — a phase==Ready
+    // transition while behind HEAD still yields Ready=False.
+    status.conditions = conditions_for_phase(phase, None, source_fresh_state(template));
     // ReactivePolicy: bump phase_entered_at only on real transitions
     // — that's what phaseTimeout escalation measures against.
     if phase_changed {
@@ -83,7 +109,7 @@ pub async fn update_phase_with_error(
     status.observed_generation = template.metadata.generation.unwrap_or(0);
     status.last_error = Some(error_msg.to_string());
     status.failure_count = status.failure_count.saturating_add(1);
-    status.conditions = conditions_for_phase(phase, Some(error_msg));
+    status.conditions = conditions_for_phase(phase, Some(error_msg), source_fresh_state(template));
     if phase_changed {
         status.phase_entered_at = Some(Utc::now());
     }
@@ -130,22 +156,23 @@ pub async fn update_plan_status(
 }
 
 /// Update status after a successful apply.
-/// Clears the pending/approved plan hashes and forces the conditions
-/// to the Ready set so external observers see the new posture.
+/// Clears the pending/approved plan hashes, records the revision the
+/// apply realized (threads `status.compiledRevision` into
+/// `status.lastAppliedRevision` → the `ReconcileCycle.sourceRevision`
+/// chain, previously dead — always `None` in production), and forces
+/// the conditions to the Ready set so external observers see the new
+/// posture.
 pub async fn update_apply_status(
     template: &InfrastructureTemplate,
     outputs: Option<std::collections::BTreeMap<String, serde_json::Value>>,
+    revision: Option<&str>,
     state: &ControllerState,
 ) -> Result<()> {
-
-
-    let mut status = template.status.clone().unwrap_or_default();
-    status.outputs = outputs;
-    status.last_applied_at = Some(Utc::now());
-    // Clear approval hashes after successful apply
-    status.pending_plan_hash = None;
-    status.approved_plan_hash = None;
-    status.conditions = conditions_for_phase(Phase::Ready, None);
+    let status = build_apply_status(
+        template.status.clone().unwrap_or_default(),
+        outputs,
+        revision,
+    );
 
     let patch = serde_json::json!({ "status": status });
 
@@ -155,6 +182,201 @@ pub async fn update_apply_status(
     Ok(())
 }
 
+/// Pure post-apply status construction — extracted from
+/// `update_apply_status` so the lastAppliedRevision wiring is unit-
+/// testable without a kube client (same pattern as the other pure
+/// helpers in this module).
+fn build_apply_status(
+    mut status: crate::crd::InfrastructureTemplateStatus,
+    outputs: Option<std::collections::BTreeMap<String, serde_json::Value>>,
+    revision: Option<&str>,
+) -> crate::crd::InfrastructureTemplateStatus {
+    status.outputs = outputs;
+    status.last_applied_at = Some(Utc::now());
+    let source_fresh = if let Some(rev) = revision {
+        status.last_applied_revision = Some(rev.to_string());
+        // We just compiled + applied the HEAD we cloned — record it as the
+        // observed git edge so the post-apply Ready condition reads Fresh.
+        // The next handle_ready tick re-confirms via a live ls-remote.
+        status.observed_head_revision = Some(rev.to_string());
+        SourceFreshState::Fresh
+    } else {
+        SourceFreshState::NotApplicable
+    };
+    // Clear approval hashes after successful apply
+    status.pending_plan_hash = None;
+    status.approved_plan_hash = None;
+    status.conditions = conditions_for_phase(Phase::Ready, None, source_fresh);
+    status
+}
+
+/// Record the revision a successful compile consumed
+/// (`status.compiledRevision` + `compiledAt`). Diff-gated on the
+/// revision itself: a same-rev recompile (pod restart, drift bounce)
+/// keeps the original `compiledAt` and skips the PATCH entirely —
+/// no etcd churn, no self-trigger watch loop. `None` (inline /
+/// configMap source) is a no-op: there is no revision to be stale
+/// against.
+pub async fn update_compiled_revision(
+    template: &InfrastructureTemplate,
+    revision: Option<&str>,
+    state: &ControllerState,
+) -> Result<()> {
+    let Some(rev) = revision else {
+        return Ok(());
+    };
+    let prev = template
+        .status
+        .as_ref()
+        .and_then(|s| s.compiled_revision.as_deref());
+    if prev == Some(rev) {
+        tracing::debug!(
+            revision = rev,
+            "compiledRevision unchanged; skipping patch (avoids self-trigger watch loop)"
+        );
+        return Ok(());
+    }
+
+    let patch = serde_json::json!({
+        "status": {
+            "compiledRevision": rev,
+            "compiledAt": Utc::now(),
+        }
+    });
+
+    crate::controller::status_patch::patch_status(template, &state.client, patch)
+    .await?;
+
+    Ok(())
+}
+
+/// The outcome of one remote-HEAD observation attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ObservationOutcome {
+    /// `ls-remote` succeeded; carries the observed remote HEAD sha.
+    Observed(String),
+    /// `ls-remote` failed/unreachable — the attempt happened but produced
+    /// no head. The ATTEMPT clock STILL advances so a wedged probe is
+    /// visibly "checking + failing", never silently frozen.
+    Unobserved,
+}
+
+/// Pure: the freshness status patch for one observation attempt, or
+/// `None` to skip the PATCH (avoids a watch-loop self-trigger).
+///
+/// - `Observed(head)` → write `observedHeadRevision` + `lastFreshnessCheckAt`;
+///   skip only when head is unchanged AND the last check was <30s ago.
+/// - `Unobserved` → advance ONLY `lastFreshnessCheckAt` (never touch
+///   `observedHeadRevision`); skip only when <30s since the last attempt.
+///
+/// This is the load-bearing correction: `lastDriftCheckAt` advances every
+/// cycle (`update_drift_check_timestamp`), so the freshness ATTEMPT clock
+/// must advance symmetrically. A failing probe can no longer freeze
+/// `observedHeadRevision`/`lastFreshnessCheckAt` for days while drift
+/// checks keep ticking — the exact rio wedge signature.
+#[must_use]
+pub fn build_freshness_patch(
+    prev_head: Option<&str>,
+    prev_check: Option<chrono::DateTime<chrono::Utc>>,
+    outcome: &ObservationOutcome,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<serde_json::Value> {
+    match outcome {
+        ObservationOutcome::Observed(head) => {
+            if prev_head == Some(head.as_str()) && freshness_check_too_recent(prev_check, now) {
+                return None;
+            }
+            Some(serde_json::json!({
+                "status": { "observedHeadRevision": head, "lastFreshnessCheckAt": now }
+            }))
+        }
+        ObservationOutcome::Unobserved => {
+            if freshness_check_too_recent(prev_check, now) {
+                return None;
+            }
+            Some(serde_json::json!({
+                "status": { "lastFreshnessCheckAt": now }
+            }))
+        }
+    }
+}
+
+/// Record one freshness observation ATTEMPT: `observedHeadRevision` on a
+/// successful observation, and `lastFreshnessCheckAt` ALWAYS. Diff-gated +
+/// 30s-throttled via [`build_freshness_patch`].
+pub async fn update_freshness_status(
+    template: &InfrastructureTemplate,
+    outcome: &ObservationOutcome,
+    state: &ControllerState,
+) -> Result<()> {
+    let now = Utc::now();
+    let prev_head = template
+        .status
+        .as_ref()
+        .and_then(|s| s.observed_head_revision.as_deref());
+    let prev_check = template
+        .status
+        .as_ref()
+        .and_then(|s| s.last_freshness_check_at);
+    let Some(patch) = build_freshness_patch(prev_head, prev_check, outcome, now) else {
+        tracing::debug!("freshness attempt: unchanged + <30s ago; skipping patch");
+        return Ok(());
+    };
+    crate::controller::status_patch::patch_status(template, &state.client, patch).await?;
+    Ok(())
+}
+
+/// Same 30s rate-limit shape as `drift_check_too_recent` — see that
+/// helper's rationale.
+fn freshness_check_too_recent(
+    prev: Option<chrono::DateTime<chrono::Utc>>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    match prev {
+        Some(p) => now.signed_duration_since(p) < chrono::Duration::seconds(30),
+        None => false,
+    }
+}
+
+#[cfg(test)]
+mod freshness_patch_tests {
+    use super::{build_freshness_patch, ObservationOutcome};
+    use chrono::{Duration, Utc};
+
+    #[test]
+    fn unobserved_advances_attempt_clock_without_touching_head() {
+        // THE rio fix: a failed probe still bumps lastFreshnessCheckAt and
+        // does NOT write observedHeadRevision — so it can't silently freeze.
+        let now = Utc::now();
+        let patch = build_freshness_patch(Some("abc"), Some(now - Duration::minutes(40)), &ObservationOutcome::Unobserved, now)
+            .expect("a stale attempt must patch the timestamp");
+        let st = &patch["status"];
+        assert!(st.get("lastFreshnessCheckAt").is_some(), "attempt clock advances");
+        assert!(st.get("observedHeadRevision").is_none(), "head untouched on a failed probe");
+    }
+
+    #[test]
+    fn observed_unchanged_recent_skips_to_avoid_churn() {
+        let now = Utc::now();
+        assert!(build_freshness_patch(Some("abc"), Some(now - Duration::seconds(5)), &ObservationOutcome::Observed("abc".into()), now).is_none());
+    }
+
+    #[test]
+    fn observed_changed_writes_head_and_clock() {
+        let now = Utc::now();
+        let patch = build_freshness_patch(Some("abc"), Some(now - Duration::seconds(5)), &ObservationOutcome::Observed("def".into()), now)
+            .expect("HEAD advance must patch");
+        assert_eq!(patch["status"]["observedHeadRevision"], "def");
+        assert!(patch["status"].get("lastFreshnessCheckAt").is_some());
+    }
+
+    #[test]
+    fn unobserved_too_recent_skips() {
+        let now = Utc::now();
+        assert!(build_freshness_patch(Some("abc"), Some(now - Duration::seconds(5)), &ObservationOutcome::Unobserved, now).is_none());
+    }
+}
+
 /// Persist state-settling tracking fields to status.
 ///
 /// Updates `consecutive_drift_cycles`, `stuck_resources`, and (when
@@ -162,10 +384,19 @@ pub async fn update_apply_status(
 /// condition to reflect the current outcome — this is what an
 /// external observer (Flux healthCheck, Prometheus alert, kubectl
 /// describe) reads to know whether the system has actually converged.
+///
+/// `freshness` is the Ready-phase gate's verdict for this drift run
+/// (`None` for sources with no revision to be stale against). The
+/// Settled message names the compiled revision + observed HEAD so
+/// "no changes" is always uttered against a NAMED commit — and an
+/// `Unknown` observation says "HEAD: unverified" instead of implying
+/// a verification that never happened (tier-honest: freshness is a
+/// C2 observation renewed per check).
 pub async fn update_settling_status(
     template: &InfrastructureTemplate,
     outcome: &crate::controller::settling::SettlingOutcome,
     drift_details: &[crate::crd::DriftDetail],
+    freshness: Option<&super::freshness::Freshness>,
     state: &ControllerState,
 ) -> Result<()> {
     use crate::controller::settling::SettlingOutcome;
@@ -177,11 +408,15 @@ pub async fn update_settling_status(
         _ => Vec::new(),
     };
 
+    let compiled_rev = template
+        .status
+        .as_ref()
+        .and_then(|s| s.compiled_revision.as_deref());
     let (settled_status, settled_reason, settled_msg) = match outcome {
         SettlingOutcome::Settled => (
             "True",
             "Settled".to_string(),
-            "Drift check found no changes — desired state matches actual state.".to_string(),
+            settled_message(compiled_rev, freshness),
         ),
         SettlingOutcome::Progressing { cycles } => (
             "False",
@@ -264,6 +499,40 @@ pub async fn update_settling_status(
     .await?;
 
     Ok(())
+}
+
+/// Compose the Settled condition message. Every arm states what was
+/// actually verified — never more:
+///   * no compiled revision (inline/configMap, or legacy CR pre-
+///     recompile): the original revision-free wording;
+///   * `Fresh`: "no changes against compiled revision X (HEAD: X)";
+///   * `Unknown`: "(HEAD: unverified)" — the remote was unreachable
+///     this round; the claim is explicitly weaker;
+///   * `Stale`: unreachable in practice (the gate bounces to
+///     Compiling before settling) — named honestly anyway rather
+///     than rounded up, since the type admits it.
+fn settled_message(
+    compiled_rev: Option<&str>,
+    freshness: Option<&super::freshness::Freshness>,
+) -> String {
+    use super::freshness::Freshness;
+    match (compiled_rev, freshness) {
+        (Some(rev), Some(Freshness::Fresh)) => format!(
+            "Drift check found no changes against compiled revision {rev} (HEAD: {rev})."
+        ),
+        (Some(rev), Some(Freshness::Unknown)) => format!(
+            "Drift check found no changes against compiled revision {rev} (HEAD: unverified)."
+        ),
+        (Some(rev), Some(Freshness::Stale { head, .. })) => format!(
+            "Drift check found no changes against compiled revision {rev} (HEAD: {head} — STALE; recompile pending)."
+        ),
+        (Some(rev), None) => format!(
+            "Drift check found no changes against compiled revision {rev}."
+        ),
+        (None, _) => {
+            "Drift check found no changes — desired state matches actual state.".to_string()
+        }
+    }
 }
 
 /// Update only the last drift check timestamp.
@@ -540,5 +809,72 @@ mod tests {
             settling_status_needs_patch(&prev, &new),
             "stuck_resources change must force PATCH"
         );
+    }
+
+    // ── build_apply_status — the lastAppliedRevision wiring ──────
+    use super::build_apply_status;
+
+    #[test]
+    fn apply_status_writes_last_applied_revision() {
+        // Kills the always-None production path: the revision the
+        // apply realized lands on status, where the cycle receipt
+        // (`cycle_receipts::record_reconcile_cycle`) reads it as
+        // `sourceRevision`.
+        let prior = InfrastructureTemplateStatus {
+            compiled_revision: Some("abc123".into()),
+            ..Default::default()
+        };
+        let out = build_apply_status(prior, None, Some("abc123"));
+        assert_eq!(out.last_applied_revision.as_deref(), Some("abc123"));
+        assert!(out.last_applied_at.is_some());
+        assert!(out.pending_plan_hash.is_none());
+        assert!(out.approved_plan_hash.is_none());
+    }
+
+    #[test]
+    fn apply_status_without_revision_preserves_prior() {
+        // Inline / configMap sources have no revision; an apply must
+        // not clobber whatever lastAppliedRevision already recorded.
+        let prior = InfrastructureTemplateStatus {
+            last_applied_revision: Some("prior".into()),
+            ..Default::default()
+        };
+        let out = build_apply_status(prior, None, None);
+        assert_eq!(out.last_applied_revision.as_deref(), Some("prior"));
+    }
+
+    // ── settled_message — "no changes" against a NAMED commit ────
+    use super::super::freshness::Freshness;
+    use super::settled_message;
+
+    #[test]
+    fn settled_message_fresh_names_the_revision() {
+        let msg = settled_message(Some("abc123"), Some(&Freshness::Fresh));
+        assert!(msg.contains("compiled revision abc123"), "got: {msg}");
+        assert!(msg.contains("(HEAD: abc123)"), "got: {msg}");
+    }
+
+    #[test]
+    fn settled_message_unknown_admits_unverified_head() {
+        // The C2 honesty arm: an unreachable remote must NOT imply a
+        // verification that never happened.
+        let msg = settled_message(Some("abc123"), Some(&Freshness::Unknown));
+        assert!(msg.contains("(HEAD: unverified)"), "got: {msg}");
+    }
+
+    #[test]
+    fn settled_message_without_revision_keeps_legacy_wording() {
+        let msg = settled_message(None, None);
+        assert!(msg.contains("desired state matches actual state"), "got: {msg}");
+    }
+
+    // ── freshness_check_too_recent throttle ──────────────────────
+    use super::freshness_check_too_recent;
+
+    #[test]
+    fn freshness_check_throttle_mirrors_drift_check_shape() {
+        assert!(!freshness_check_too_recent(None, t(0)), "first check must patch");
+        assert!(freshness_check_too_recent(Some(t(0)), t(15)), "15s later skips");
+        assert!(!freshness_check_too_recent(Some(t(0)), t(30)), "30s later patches");
     }
 }

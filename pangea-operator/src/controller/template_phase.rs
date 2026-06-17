@@ -54,6 +54,7 @@ pub fn for_phase(phase: Phase) -> Option<Box<dyn ReconcilePhase>> {
         Phase::Ready => Box::new(ReadyPhase),
         Phase::Drifted => Box::new(DriftedPhase),
         Phase::Failed => Box::new(FailedPhase),
+        Phase::CompileBlocked => Box::new(CompileBlockedPhase),
         Phase::Destroying => Box::new(DestroyingPhase),
         Phase::Verifying | Phase::Verified => return None,
     })
@@ -165,6 +166,19 @@ impl ReconcilePhase for FailedPhase {
     }
 }
 
+pub struct CompileBlockedPhase;
+#[async_trait::async_trait]
+impl ReconcilePhase for CompileBlockedPhase {
+    fn name(&self) -> &'static str { "compileblocked" }
+    async fn handle(
+        &self,
+        template: &InfrastructureTemplate,
+        state: &ControllerState,
+    ) -> Result<crate::controller::reconciler::ReconcileAction> {
+        super::template_controller::handle_compile_blocked_internal(template, state).await
+    }
+}
+
 pub struct DestroyingPhase;
 #[async_trait::async_trait]
 impl ReconcilePhase for DestroyingPhase {
@@ -194,6 +208,7 @@ mod tests {
         assert!(for_phase(Phase::Ready).is_some());
         assert!(for_phase(Phase::Drifted).is_some());
         assert!(for_phase(Phase::Failed).is_some());
+        assert!(for_phase(Phase::CompileBlocked).is_some());
         assert!(for_phase(Phase::Destroying).is_some());
         // The Verifying/Verified pair is handled inline by the dispatcher.
         assert!(for_phase(Phase::Verifying).is_none());
@@ -212,6 +227,7 @@ mod tests {
         assert_eq!(ReadyPhase.name(), "ready");
         assert_eq!(DriftedPhase.name(), "drifted");
         assert_eq!(FailedPhase.name(), "failed");
+        assert_eq!(CompileBlockedPhase.name(), "compileblocked");
         assert_eq!(DestroyingPhase.name(), "destroying");
     }
 
