@@ -13,6 +13,11 @@ pub struct Metrics {
     /// Total number of reconciliations.
     pub reconciliations_total: IntCounter,
 
+    /// Source-freshness checks (git ls-remote) that could not observe the
+    /// remote HEAD — a rising rate is the loud signal that "Settled" verdicts
+    /// are running unverified.
+    pub source_freshness_check_failures_total: IntCounter,
+
     /// Total namespace reconciliations.
     pub namespace_reconciliations_total: IntCounter,
 
@@ -304,6 +309,12 @@ impl Metrics {
         let reconciliations_total = IntCounter::with_opts(Opts::new(
             "pangea_reconciliations_total",
             "Total number of InfrastructureTemplate reconciliations",
+        ))
+        .expect("metric can be created");
+
+        let source_freshness_check_failures_total = IntCounter::with_opts(Opts::new(
+            "pangea_source_freshness_check_failures_total",
+            "Freshness checks (git ls-remote) that could not observe the remote HEAD",
         ))
         .expect("metric can be created");
 
@@ -710,6 +721,10 @@ impl Metrics {
             .register(Box::new(magma_failed_changes_total.clone()))
             .expect("metric can be registered");
 
+        registry
+            .register(Box::new(source_freshness_check_failures_total.clone()))
+            .expect("metric can be registered");
+
         // Process-level metrics (process_cpu_seconds_total /
         // process_resident_memory_bytes / process_open_fds /
         // process_max_fds / process_threads / process_start_time_seconds).
@@ -730,6 +745,7 @@ impl Metrics {
         Self {
             registry,
             reconciliations_total,
+            source_freshness_check_failures_total,
             namespace_reconciliations_total,
             templates_by_phase,
             reconciliation_duration_seconds,
