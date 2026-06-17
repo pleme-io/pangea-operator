@@ -653,36 +653,9 @@ async fn handle_compiling(
             // cloned tree's `lib/` to $LOAD_PATH so `require
             // 'pangea/architectures'` resolves to the cloned composer
             // copy (not an image-baked path-gem).
-            // The cloned tree's `lib/` is the WORKSPACE identity —
-            // labeled as such so the planner treats it as
-            // authoritative for the namespaces it ships (an unlabeled
-            // raw string no longer type-checks here; see
-            // `CompileRequest.rubylib_paths`).
-            let (template_path, legacy_rubylib) = match path.split_once("\0RUBYLIB\0") {
-                Some((tp, rl)) => (
-                    tp.to_string(),
-                    vec![pangea_ruby_eval::LoadPathEntry::workspace(rl)],
-                ),
-                None => (path.to_string(), Vec::new()),
-            };
-            // Resolve the workspace Gemfile.lock into a deterministic,
-            // dependency-ordered $LOAD_PATH closure (magma-rubygems).
-            // This makes pangea-architectures (the composer) resolve to
-            // ONE canonical copy — the gem-cache clone the per-compile
-            // purge prefix matches — instead of the `_repo/lib` second
-            // copy whose stale $LOADED_FEATURES entry left
-            // `Pangea::Architectures` undefined after the module purge.
-            // A gem the closure needs but no locator hosts surfaces as a
-            // typed MissingGems error here, not a deep Ruby LoadError
-            // mid-compile. Gated on PANGEA_GEM_MANIFEST: absent (pre-
-            // rebuild images) ⇒ legacy single-lib behaviour, no regression.
-            let rubylib_paths = match resolve_workspace_load_path(&template_path) {
-                Ok(Some(resolved)) => resolved,
-                Ok(None) => legacy_rubylib,
-                Err(e) => {
-                    handle_compile_failure(template, state, &e).await?;
-                    return Err(Error::Compilation(format!("gem resolution failed: {e}")));
-                }
+            let (template_path, rubylib_paths) = match path.split_once("\0RUBYLIB\0") {
+                Some((tp, rl)) => (tp.to_string(), vec![rl.to_string()]),
+                None => (path.to_string(), Vec::<String>::new()),
             };
             crate::ruby::CompileRequest {
                 template_path: Some(template_path),
@@ -718,38 +691,6 @@ async fn handle_compiling(
                 return Err(Error::Compilation(format!("Compile failed: {e}")));
             }
         };
-
-        // The compile succeeded but may have observed load-path
-        // conflicts (planner overlaps + live-detector findings whose
-        // purge coverage made them safe). Surface each as a Warning
-        // Event — previously the typed view died in owner.rs and only
-        // flat strings hit the pod log. Capped so a pathological
-        // workspace can't flood the events API.
-        const CONFLICT_EVENT_CAP: usize = 5;
-        for c in compile_result.conflicts.iter().take(CONFLICT_EVENT_CAP) {
-            record_event(
-                template,
-                state,
-                EventType::Warning,
-                "LoadPathConflict",
-                &format!("[{}] {}", c.detector, c.message),
-            )
-            .await;
-        }
-        if compile_result.conflicts.len() > CONFLICT_EVENT_CAP {
-            record_event(
-                template,
-                state,
-                EventType::Warning,
-                "LoadPathConflict",
-                &format!(
-                    "{} further load-path conflict(s) suppressed (cap {})",
-                    compile_result.conflicts.len() - CONFLICT_EVENT_CAP,
-                    CONFLICT_EVENT_CAP,
-                ),
-            )
-            .await;
-        }
 
         compile_result.terraform_json
     };
@@ -1003,127 +944,6 @@ pub(crate) fn evaluate_compile_failure_escalation(
 /// Escalation is purely additive: the next reconcile cycle will see
 /// `phase=Failed` and skip past Compiling.
 #[tracing::instrument(skip_all, name = "handle_compile_failure")]
-/// Resolve the workspace's `Gemfile.lock` (sibling of the template
-/// file) into a deterministic, dependency-ordered `$LOAD_PATH` closure
-/// via magma-rubygems.
-///
-/// Returns `Ok(None)` when resolution is not applicable — no
-/// `PANGEA_GEM_MANIFEST` env (pre-rebuild images), no sibling
-/// `Gemfile.lock`, or no PATH-sourced gems to anchor on — in which case
-/// the caller preserves the legacy single-`_repo/lib` behaviour with no
-/// regression. Returns `Err(msg)` on a parse failure or a typed
-/// `MissingGems` (the closure needs a gem no locator hosts); the caller
-/// surfaces it through `handle_compile_failure`.
-///
-/// Roots = the workspace's PATH-sourced gems (pangea-architectures +
-/// the providers). Their transitive closure pulls in the runtime
-/// rubygems deps (dry-*, terraform-synthesizer, …) but never the
-/// rubygems-sourced dev/test gems (rspec, simplecov) the image does not
-/// bundle. Locators, in priority order: the build-emitted baked-gem
-/// manifest (`PANGEA_GEM_MANIFEST`, name → lib dir), then the per-CR gem
-/// cache (`PANGEA_GEM_CACHE_DIR`) where the ArchitectureGem composer
-/// clone lives. Resolving the composer from the gem cache (not
-/// `_repo/lib`) is the fix for the `uninitialized constant
-/// Pangea::Architectures` purge-prefix mismatch.
-///
-/// Every resolved path is returned as a typed [`LoadPathEntry`],
-/// classified by locator provenance: under `PANGEA_GEM_CACHE_DIR` ⇒
-/// `gem` (gem name derived from the `<name>-<ref>` cache dir);
-/// manifest-baked / nix-store ⇒ `other`. The label is what lets the
-/// planner derive purge directives instead of owner.rs hardcoding a
-/// path — and an unlabeled path is a compile error by construction.
-fn resolve_workspace_load_path(
-    template_path: &str,
-) -> std::result::Result<Option<Vec<pangea_ruby_eval::LoadPathEntry>>, String> {
-    use std::path::{Path, PathBuf};
-
-    // Gate: only active once the operator image ships the baked-gem
-    // manifest. Absent ⇒ legacy behaviour (safe rollout).
-    let manifest_path = match std::env::var("PANGEA_GEM_MANIFEST") {
-        Ok(p) if !p.is_empty() && Path::new(&p).is_file() => p,
-        _ => return Ok(None),
-    };
-
-    let Some(dir) = Path::new(template_path).parent() else {
-        return Ok(None);
-    };
-    let lock_path = dir.join("Gemfile.lock");
-    if !lock_path.is_file() {
-        return Ok(None);
-    }
-
-    let src = std::fs::read_to_string(&lock_path)
-        .map_err(|e| format!("read {}: {e}", lock_path.display()))?;
-    let lock = magma_rubygems::lockfile::parse(&src)
-        .map_err(|e| format!("parse {}: {e}", lock_path.display()))?;
-
-    // Roots: the workspace's PATH-sourced gems (its own pangea-* set).
-    let roots: Vec<String> = lock
-        .gems
-        .iter()
-        .filter(|g| matches!(g.source, magma_rubygems::Source::Path { .. }))
-        .map(|g| g.name.clone())
-        .collect();
-    if roots.is_empty() {
-        return Ok(None);
-    }
-
-    let manifest_json = std::fs::read_to_string(&manifest_path)
-        .map_err(|e| format!("read manifest {manifest_path}: {e}"))?;
-    let manifest = magma_rubygems::ManifestLocator::from_json(&manifest_json)
-        .map_err(|e| format!("parse manifest {manifest_path}: {e}"))?;
-    let gem_cache = std::env::var("PANGEA_GEM_CACHE_DIR")
-        .unwrap_or_else(|_| "/var/pangea/gems".to_string());
-    let gem_cache_root = PathBuf::from(&gem_cache);
-    let gem_cache_loc = magma_rubygems::GemRootsLocator::new([gem_cache_root.clone()]);
-    // Explicit trait-object element type so the two distinct concrete
-    // locator types coerce into one homogeneous Vec.
-    let inner: Vec<Box<dyn magma_rubygems::GemLocator + Send + Sync>> =
-        vec![Box::new(manifest), Box::new(gem_cache_loc)];
-    let locator = magma_rubygems::CompositeLocator::new(inner);
-
-    let env =
-        magma_rubygems::runtime::resolve_ruby_env_for_roots(&lock, &locator, &roots, "3.3.0")
-            .map_err(|e| e.to_string())?;
-    Ok(Some(
-        env.ruby_lib
-            .iter()
-            .map(|p| classify_resolved_lib_path(p, &gem_cache_root))
-            .collect(),
-    ))
-}
-
-/// Classify one resolver-produced lib dir by locator provenance:
-/// paths under the gem cache are `GemBroadcast` entries (the gem name
-/// is the cache dir's `<name>-<ref>` minus the `-<ref>` suffix);
-/// everything else (manifest-baked nix-store libs) is `Other` —
-/// trusted, never subject to drop or purge.
-fn classify_resolved_lib_path(
-    lib: &std::path::Path,
-    gem_cache_root: &std::path::Path,
-) -> pangea_ruby_eval::LoadPathEntry {
-    if lib.starts_with(gem_cache_root) {
-        // Cache layout is `<cache>/<name>-<ref>/lib`; the dir-name
-        // component right under the cache root carries the identity.
-        let dir_name = lib
-            .strip_prefix(gem_cache_root)
-            .ok()
-            .and_then(|rel| rel.components().next())
-            .and_then(|c| c.as_os_str().to_str())
-            .unwrap_or_default();
-        // `<name>-<ref>` minus the `-<ref>` suffix. Refs containing
-        // `-` would over-trim — the name is Conflict-evidence only,
-        // so the honest-best split (last `-`) suffices.
-        let gem_name = dir_name
-            .rsplit_once('-')
-            .map(|(name, _ref)| name)
-            .unwrap_or(dir_name);
-        pangea_ruby_eval::LoadPathEntry::gem(lib, gem_name)
-    } else {
-        pangea_ruby_eval::LoadPathEntry::other(lib)
-    }
-}
-
 async fn handle_compile_failure(
     template: &InfrastructureTemplate,
     state: &ControllerState,
