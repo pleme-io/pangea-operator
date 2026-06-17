@@ -6,7 +6,8 @@ metadata:
 spec:
   group: pangea.pleme.io
   names:
-    categories: []
+    categories:
+    - pangea
     kind: InfrastructureTemplate
     plural: infrastructuretemplates
     shortNames:
@@ -25,6 +26,27 @@ spec:
     - jsonPath: .status.resources.total
       name: Resources
       type: integer
+    - jsonPath: .status.cycleCount
+      name: Cycle
+      type: integer
+    - jsonPath: .status.lastCycle.summary.matched
+      name: Matched
+      type: integer
+    - jsonPath: .status.lastCycle.summary.updated
+      name: Updated
+      type: integer
+    - jsonPath: .status.lastCycle.summary.driftedUncorrected
+      name: Drifted
+      type: integer
+    - jsonPath: .status.conditions[?(@.type=='Healthy')].status
+      name: Healthy
+      type: string
+    - jsonPath: .status.autoSuspended
+      name: Suspended
+      type: boolean
+    - jsonPath: .spec.destroyProtection
+      name: Protected
+      type: boolean
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -45,9 +67,223 @@ spec:
                 items:
                   type: string
                 type: array
+              conflictPolicy:
+                description: |-
+                  Typed, cascading conflict-resolution policy — the operator's answer to "apply hit a provider conflict (the resource already exists / is already protected) that the pre-apply import sweep didn't catch." Rather than failing the cycle, the operator classifies each conflict and, for `import`-resolution conflicts, adopts the out-of-band resource via `tofu import` then re-applies (up to `maxRounds`).
+
+                  Two layers, general + specific: - GENERAL (default): unset → a bundled policy (`alreadyExists` + `alreadyProtected` → `import`, everything else → `fail`, 3 rounds) that fires automatically whenever `importPolicy.autoOnConflict` is true. Existing templates self-heal conflicts with NO spec change. - SPECIFIC: set `rules` to override per resource-type + kind (first match wins), `defaultResolution` for the unmatched fallback, and `enabled` to force on/off independent of `autoOnConflict`.
+
+                  Default: unset → bundled policy gated on `autoOnConflict`.
+                nullable: true
+                properties:
+                  defaultResolution:
+                    description: Resolution for conflicts no `rules` entry matched. Defaults to `fail` (never silently paper over an unrecognized conflict).
+                    enum:
+                    - import
+                    - skip
+                    - fail
+                    nullable: true
+                    type: string
+                  enabled:
+                    description: Master switch. `Some(true)`/`Some(false)` forces the post-apply conflict catch on/off. `None` (default) inherits from `importPolicy.autoOnConflict` — so templates already opting into auto-import get the convergence guarantee with no extra config.
+                    nullable: true
+                    type: boolean
+                  maxRounds:
+                    description: Max import→re-apply rounds before giving up (clamped to 1..=10). Default 3.
+                    format: uint32
+                    minimum: 0.0
+                    nullable: true
+                    type: integer
+                  rules:
+                    description: Specific per-(resourceType, kind) rules, first match wins.
+                    items:
+                      description: One typed conflict-resolution rule — the *specific* layer. Evaluated top-to-bottom; the first rule whose `resourceTypes` (empty = any) and `kinds` (empty = any) match the conflict wins.
+                      properties:
+                        kinds:
+                          description: Conflict kinds this rule matches. Empty = match any kind.
+                          items:
+                            description: Typed classification of a provider conflict surfaced by a failed `tofu apply`. The operator's conflict classifier (`controller::conflict::classify_apply_conflicts`) maps OpenTofu's diagnostic text onto these kinds; the [`ConflictResolutionPolicy`] then decides what to do per kind.
+                            enum:
+                            - alreadyExists
+                            - alreadyProtected
+                            - other
+                            type: string
+                          type: array
+                        resolution:
+                          description: What to do when this rule matches.
+                          enum:
+                          - import
+                          - skip
+                          - fail
+                          type: string
+                        resourceTypes:
+                          description: Tofu resource types this rule matches (e.g. `github_repository`). Empty = match any resource type.
+                          items:
+                            type: string
+                          type: array
+                      required:
+                      - resolution
+                      type: object
+                    type: array
+                type: object
+              defaultDecision:
+                description: |-
+                  Decision applied to changes that match no rule in `policies`. If unset, defaults to `autoApply` — the operator aggressively settles drift on every change at every risk level. Set this to `refuse` to make the policy list strictly opt-in (only changes explicitly allowed by a rule may be applied), or to `requireApproval` to gate everything not explicitly auto-applied.
+
+                  `spec.autoApprove` is no longer consulted by this engine; it remains in the schema for legacy compatibility but does not override `defaultDecision`.
+                enum:
+                - autoApply
+                - requireApproval
+                - refuse
+                nullable: true
+                type: string
+              destroyProtection:
+                default: false
+                description: |-
+                  Prevent destruction of the managed infrastructure.
+
+                  When enabled, the operator will refuse to run `tofu destroy` even if the CR is deleted. Plan and apply continue to work normally for drift correction. This is critical for self-managed bootstrap infrastructure — the cluster, database, and network that the operator itself runs on.
+
+                  To actually destroy protected infrastructure, first set this to false, then delete the CR.
+                type: boolean
+              executor:
+                description: |-
+                  IaC backend to use for plan/apply on this CR. Accepts `tofu` (default — OpenTofu subprocess) or `magma` (in-process Rust library via the `executor_magma` feature). When unset, falls back to the operator-wide default from the `PANGEA_EXECUTOR` env var, then to `tofu`.
+
+                  Both backends coexist indefinitely; this field is the per-CR opt-in for magma during the burn-in period. Per `theory/MAGMA-OPERATOR-BACKEND.md` §VI.
+                nullable: true
+                type: string
+              importHints:
+                additionalProperties:
+                  type: string
+                description: |-
+                  Hints used by the operator to import out-of-band cloud resources into tofu state instead of creating duplicates.
+
+                  Keys are tofu resource addresses (e.g. `cloudflare_dns_record.foo`), values are import IDs (the provider-specific shape, e.g. `<zone_id>/<record_id>` for cloudflare DNS, role name for `aws_iam_role`, etc.). Values support `{{ .varName }}` substitution from `spec.variables` — e.g. `"{{ .cloudflare_zone_id }}/foo"` resolves `varName` against `spec.variables` (string-coerced) before passing to `tofu import`.
+
+                  Operator behavior: before each `tofu apply`, for every plan action with `action: create` whose resource address matches a key here, the operator runs `tofu import <addr> <substituted-id>`. After import the resource is in state, the apply becomes a no-op or update, and the cycle receipt records the resource as `Outcome::Imported` instead of `Outcome::Created`. This is the typed answer to "auto-import any state".
+
+                  Empty map (default) = no imports — every `create` action goes straight to the apply and creates a fresh resource as before. Hint values that fail substitution are skipped with a Warning event; hint imports that fail (e.g. ID doesn't match) leave the resource for the apply to handle.
+                type: object
+              importPolicy:
+                description: |-
+                  Automatic-import policy — when set with `autoOnConflict: true`, the operator runs `tofu import` for EVERY plan `create`-action whose resource-type has a natural-ID rule (declared in `naturalIds`, fallback to operator-bundled defaults), substituting against the planned attribute values from `tofu show -json plan`. Resources that already exist in the cloud provider get adopted into state instead of failing the apply with "already exists".
+
+                  This is the typed answer to "fully consume existing infrastructure into pangea-operator." `importHints` (per-address) takes precedence; `importPolicy.naturalIds` (per-resource-type) is the fallback; operator-bundled defaults (in `controller/import.rs::bundled_natural_ids`) fill the rest. Three layers — author-explicit, then per-template type-rules, then sensible cluster-wide defaults.
+
+                  Default: unset (no auto-import; existing `importHints` behaviour preserved).
+                nullable: true
+                properties:
+                  autoOnConflict:
+                    default: false
+                    description: Master switch. When `false` (default), no auto-import fires regardless of `naturalIds` or bundled defaults — you stay on today's per-address `importHints`-only behaviour. When `true`, every `create`-action is a candidate for auto-import.
+                    type: boolean
+                  naturalIds:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      Per-resource-type natural-ID extraction templates. Keys are terraform resource types (`github_repository`, `aws_iam_role`, etc.); values are substitution templates like `{{ .planned.name }}` or `{{ .planned.zone_id }}/{{ .planned.id }}`.
+
+                      Empty map = fall through to operator-bundled defaults.
+                    type: object
+                type: object
+              outputBindings:
+                description: |-
+                  Publish selected `status.outputs` to user-defined K8s Secrets after every successful apply. Each binding picks a single output address and writes it to a named Secret/key in any namespace the operator has reach to.
+
+                  X2 of the Crossplane-absorb plan — analog of Crossplane's `writeConnectionSecretToRef`, but per-binding (not all outputs to one secret) and with a typed `sensitive` flag. Idempotent via server-side apply: re-publishes only when the value actually changes.
+
+                  Empty (default) = no secret publication; consumers read `status.outputs` JSON directly.
+                items:
+                  description: One binding of a tofu output to a K8s Secret key. Authored by the user on `InfrastructureTemplate.spec.outputBindings`; consumed by `controller/template/output_bindings.rs::apply_output_bindings` after every successful apply.
+                  properties:
+                    output:
+                      description: 'Tofu output address — looked up against `status.outputs` after apply. Examples: - `cloudflare_pages_domain.varanda.id` - `aws_iam_role.deployer.arn` Outputs the tofu run did not produce are skipped with a log line; they don''t fail the reconcile (apply already succeeded by the time bindings publish).'
+                      type: string
+                    secretRef:
+                      description: Where to write the value.
+                      properties:
+                        key:
+                          description: Key within the Secret's `.data` map.
+                          type: string
+                        name:
+                          description: Secret name. Created if missing; updated via server-side apply if existing.
+                          type: string
+                        namespace:
+                          description: Secret namespace. Required — operators don't infer from the template's namespace because templates often produce outputs consumed in another namespace. The operator must have RBAC to write Secrets in this namespace (chart 0.8.12+ grants secrets create/update/patch cluster-wide).
+                          type: string
+                        sensitive:
+                          default: false
+                          description: When true, the operator stamps a `pangea.pleme.io/sensitive=true` label on the Secret. Doesn't change K8s storage behavior — etcd encryption is orthogonal — but surfaces author intent for downstream tooling (mounted-as-env policies, audit dashboards, ESO hand-off).
+                          type: boolean
+                      required:
+                      - key
+                      - name
+                      - namespace
+                      type: object
+                  required:
+                  - output
+                  - secretRef
+                  type: object
+                type: array
               pangeaNamespace:
                 description: Pangea namespace for state isolation. This determines the PostgreSQL schema used for state storage.
                 type: string
+              policies:
+                description: |-
+                  Per-resource policy rules controlling what the operator may do without human approval. Evaluated top-to-bottom against each resource change in a plan; the FIRST matching rule's `decision` applies. Changes that match no rule fall back to `defaultDecision` (or to `autoApprove` if `defaultDecision` is unset).
+
+                  Aggregation across all changes: - any `refuse`          → operator marks plan Failed, won't apply - else any `requireApproval` → operator waits for `approvedPlanHash` - else                  → operator applies immediately
+
+                  Empty list = behave exactly as before (`autoApprove` controls everything). Use this to express things like "auto-apply low-risk DNS creates, require approval for any `cloudflare_dns_record` delete, refuse any `cloudflare_zone` destroy".
+                items:
+                  description: One policy rule. Match clauses use AND semantics (all set fields must match the change); within a clause, list entries use OR semantics (any list entry that matches counts). Empty / omitted clauses are wildcards.
+                  properties:
+                    decision:
+                      description: What the controller may do for changes this rule matches.
+                      enum:
+                      - autoApply
+                      - requireApproval
+                      - refuse
+                      type: string
+                    match:
+                      description: Match criteria. All set fields must match (AND); within each list, any entry counts (OR).
+                      properties:
+                        actions:
+                          description: 'Restrict to specific actions. Empty = any action. Valid values: `create`, `update`, `delete`, `replace`.'
+                          items:
+                            type: string
+                          type: array
+                        addressPatterns:
+                          description: Regular expressions matched against the full resource address (e.g. `^cloudflare_dns_record\\.rio-.*$`). Invalid regexes are rejected at evaluation time and logged — they never silently match nothing.
+                          items:
+                            type: string
+                          type: array
+                        attributes:
+                          description: Glob patterns against the changed-attribute names. Matches if ANY of the change's attributes matches ANY of these patterns. Useful for "require approval if `ttl` or any `secret*` field changes".
+                          items:
+                            type: string
+                          type: array
+                        resourceTypes:
+                          description: Glob patterns against the terraform resource type (e.g. `cloudflare_dns_record`, `cloudflare_*`, `aws_iam_*`). Only `*` (zero-or-more chars) is supported — keeps matching trivial and predictable.
+                          items:
+                            type: string
+                          type: array
+                        riskLevels:
+                          description: 'Restrict to specific risk levels. Empty = any risk. Valid values: `none`, `low`, `medium`, `high`.'
+                          items:
+                            type: string
+                          type: array
+                      type: object
+                    name:
+                      description: Human-readable label. Surfaced in `status.driftDetails[].matchedPolicy` and in the per-rule planSummary, so a quick `kubectl describe` shows which rule triggered which decision.
+                      type: string
+                  required:
+                  - decision
+                  - match
+                  - name
+                  type: object
+                type: array
               providerCredentials:
                 description: Provider credentials configuration.
                 nullable: true
@@ -100,6 +336,143 @@ spec:
                     required:
                     - secretRef
                     type: object
+                  github:
+                    description: 'GitHub credentials configuration. Used by templates that declare github_* providers (e.g. pangea-github''s `cloudflare_zero_trust_*` adjacent shapes — repos, runner groups, branch protection). Same shape as the cloudflare credentials block: a secretRef to a Secret containing a PAT.'
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the GitHub PAT.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
+                type: object
+              reactivePolicy:
+                description: 'Reactive policy — declarative responses to "things didn''t go to a good state". Innermost level of the cascade (gem → workspace → template). When unset at every cascade level, the operator applies sensible defaults: 5 consecutive failures → Alert, phase timeouts of 5m / 10m / 30m for Compiling / Planning / Applying → Alert, Verified=False for 10m → Alert. See the `ReactivePolicy` type in the shared `architecture_gem` module.'
+                nullable: true
+                properties:
+                  failureEscalation:
+                    description: What to do when consecutive Failed reconciles exceed threshold.
+                    nullable: true
+                    properties:
+                      maxConsecutiveFailures:
+                        default: 5
+                        description: Threshold. Default 5.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      onExhaustion:
+                        default: alert
+                        description: What to do when threshold is reached.
+                        enum:
+                        - alert
+                        - suspend
+                        - page
+                        type: string
+                      routing:
+                        description: Where to route the notification.
+                        nullable: true
+                        properties:
+                          githubIssueTemplate:
+                            description: GitHub issue template name. Operator opens an issue in the workspace's source repo.
+                            nullable: true
+                            type: string
+                          ntfyTopic:
+                            description: ntfy topic name (homelab convention — see pleme-io alertmanager-ntfy module).
+                            nullable: true
+                            type: string
+                          slackChannel:
+                            description: Slack channel (SaaS convention — Datadog/Splunk-paired clusters).
+                            nullable: true
+                            type: string
+                        type: object
+                    type: object
+                  phaseTimeout:
+                    description: What to do when stuck in a non-terminal phase too long.
+                    nullable: true
+                    properties:
+                      applying:
+                        default: 30m
+                        description: '`Applying` threshold. Default `30m`.'
+                        type: string
+                      compiling:
+                        default: 5m
+                        description: How long can `Compiling` last before escalating. Format same as refreshInterval (`5m`, `30s`, `1h`). Default `5m`.
+                        type: string
+                      onTimeout:
+                        default: alert
+                        description: What to do when the threshold is exceeded.
+                        enum:
+                        - alert
+                        - suspend
+                        - page
+                        type: string
+                      planning:
+                        default: 10m
+                        description: '`Planning` threshold. Default `10m`.'
+                        type: string
+                      routing:
+                        description: Where to route the notification.
+                        nullable: true
+                        properties:
+                          githubIssueTemplate:
+                            description: GitHub issue template name. Operator opens an issue in the workspace's source repo.
+                            nullable: true
+                            type: string
+                          ntfyTopic:
+                            description: ntfy topic name (homelab convention — see pleme-io alertmanager-ntfy module).
+                            nullable: true
+                            type: string
+                          slackChannel:
+                            description: Slack channel (SaaS convention — Datadog/Splunk-paired clusters).
+                            nullable: true
+                            type: string
+                        type: object
+                    type: object
+                  verifiedBlocked:
+                    description: What to do when `Verified=False` persists past timeout.
+                    nullable: true
+                    properties:
+                      onBlocked:
+                        default: alert
+                        description: What to do when the threshold is exceeded.
+                        enum:
+                        - alert
+                        - suspend
+                        - page
+                        type: string
+                      routing:
+                        description: Where to route the notification.
+                        nullable: true
+                        properties:
+                          githubIssueTemplate:
+                            description: GitHub issue template name. Operator opens an issue in the workspace's source repo.
+                            nullable: true
+                            type: string
+                          ntfyTopic:
+                            description: ntfy topic name (homelab convention — see pleme-io alertmanager-ntfy module).
+                            nullable: true
+                            type: string
+                          slackChannel:
+                            description: Slack channel (SaaS convention — Datadog/Splunk-paired clusters).
+                            nullable: true
+                            type: string
+                        type: object
+                      timeout:
+                        default: 10m
+                        description: How long can `Verified=False` persist. Default `10m`.
+                        type: string
+                    type: object
                 type: object
               refreshInterval:
                 default: 5m
@@ -121,6 +494,28 @@ spec:
                     format: uint32
                     minimum: 0.0
                     type: integer
+                type: object
+              settlingPolicy:
+                description: |-
+                  Bounds on how long the operator may keep cycling through drift→apply→drift loops before declaring the template stuck. State settling is the operator's primary success metric — when it can't reach a settled state after the configured number of cycles, this is escalated loudly via a `Settled=False` condition + Warning event.
+
+                  Defaults: 5 cycles, then `fail` (transition to Failed, surface the address list of resources that keep re-drifting).
+                nullable: true
+                properties:
+                  maxConsecutiveDriftCycles:
+                    default: 5
+                    description: Maximum allowed consecutive drift cycles before escalation. A "cycle" is one Ready→Drifted→(plan→apply)→Ready transition where the post-apply drift check still reports changes. Defaults to 5.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  onExhaustion:
+                    default: fail
+                    description: 'What to do when `maxConsecutiveDriftCycles` is exceeded. Defaults to `fail` — the loudest signal: phase Failed, error message naming the stuck resources, Warning event, condition `Settled=False reason=StuckInDriftLoop`. The point is to make it impossible to ignore a system that can''t reach steady state.'
+                    enum:
+                    - fail
+                    - alert
+                    - continue
+                    type: string
                 type: object
               source:
                 description: Source of the infrastructure template.
@@ -188,6 +583,36 @@ spec:
                 description: Optional specific template name to deploy if the source file contains multiple templates.
                 nullable: true
                 type: string
+              variableRefs:
+                additionalProperties:
+                  description: Cross-template variable reference. Fetches an output from another template.
+                  properties:
+                    outputKey:
+                      description: Key in the source template's status.outputs to read.
+                      type: string
+                    templateRef:
+                      description: Reference to the source template.
+                      properties:
+                        name:
+                          description: Name of the InfrastructureTemplate.
+                          type: string
+                        namespace:
+                          description: Namespace (defaults to same namespace as the referencing template).
+                          nullable: true
+                          type: string
+                      required:
+                      - name
+                      type: object
+                  required:
+                  - outputKey
+                  - templateRef
+                  type: object
+                description: |-
+                  Cross-template variable references. Resolved before compilation by fetching the referenced template's outputs.
+
+                  Example: ```yaml variableRefs: vpc_id: templateRef: { name: vpc-template } outputKey: vpc_id ```
+                nullable: true
+                type: object
               variables:
                 additionalProperties: true
                 description: Variables to pass to the template during compilation.
@@ -201,6 +626,27 @@ spec:
             description: Status of an InfrastructureTemplate.
             nullable: true
             properties:
+              approvedPlanHash:
+                description: Hash of the approved plan. Set by the user to approve a pending plan. When this matches `pendingPlanHash`, the operator proceeds to apply.
+                nullable: true
+                type: string
+              autoSuspended:
+                default: false
+                description: Set to true by a ReactivePolicy `Suspend` action. The operator halts reconcile for this template until cleared. Cleared manually via `kubectl patch ... --subresource status -p '{"status":{"autoSuspended":false}}'` (or by deleting the CR and recreating it). See `lastEscalationReason` for why the auto-suspend triggered.
+                type: boolean
+              backend:
+                description: Echo of the state backend the operator wired for this cycle. `"pg/<db_name>"` for Postgres-backed state (the magma path's canonical case), `"local"` for filesystem, `None` for stateless executors. Today this is inferable only from main.rs startup log lines — the CR doesn't say where its state lives. Adding it here closes that loop.
+                nullable: true
+                type: string
+              compiledAt:
+                description: When `compiledRevision` was produced. Only restamped when the revision actually changes (diff-gated; no etcd churn for same-rev recompiles).
+                format: date-time
+                nullable: true
+                type: string
+              compiledRevision:
+                description: 'Git commit SHA the most recent successful compile consumed (gitRepository sources only). The freshness model''s anchor: `Ready` is only settled against THIS revision; handle_ready''s gate compares it to `observedHeadRevision` and bounces to Compiling on mismatch. Before this field existed, staleness was unrepresentable in the wrong direction — no status field could express "the compile is behind the remote".'
+                nullable: true
+                type: string
               compliance:
                 description: Compliance check results.
                 nullable: true
@@ -294,6 +740,76 @@ spec:
                   - type
                   type: object
                 type: array
+              consecutiveCompileFailures:
+                default: 0
+                description: |-
+                  Number of consecutive Compiling-phase failures observed before any successful compile. Resets to zero on the first successful compile. Drives the same `SettlingPolicy.maxConsecutiveDrift Cycles` escalation as drift cycles — so a template that can't compile (missing gem, syntax error, broken DSL) eventually transitions to `phase=Failed` instead of looping in `phase=Compiling, cycleCount=0` forever.
+
+                  Why a separate counter: pre-2026-05, compile failures didn't increment `consecutive_drift_cycles` (because no cycle ever completes — cycle_count stays at 0), so settling policy never fired. Templates like `pleme-io-opensource` sat in Compiling for hours with `cannot load such file -- pangea-github`. This counter closes that gap by escalating compile failures independently of the drift-cycle path.
+                format: uint32
+                minimum: 0.0
+                type: integer
+              consecutiveDriftCycles:
+                default: 0
+                description: State-settling counter. Counts consecutive drift cycles where applying a plan does NOT result in a clean drift check. Reset to zero when a Ready→Ready transition sees no drift. Drives `SettlingPolicy` escalation.
+                format: uint32
+                minimum: 0.0
+                type: integer
+              cycleCount:
+                default: 0
+                description: Monotonic cycle counter — bumped once per completed reconcile (every plan→apply pair, or every plan-only when no changes). Lets observers detect the operator's heartbeat without polling timestamps.
+                format: uint64
+                minimum: 0.0
+                type: integer
+              driftDetails:
+                default: []
+                description: |-
+                  Per-resource drift / change detail from the last plan. Populated whenever a plan reports `has_changes`. Lets external observers see WHICH resources changed and HOW without parsing raw tofu output. Capped to 50 entries (full list available via the operator's GraphQL API for large plans).
+
+                  Always serialized (no skip-if-empty) so an explicit empty array clears the field via JSON Merge Patch — otherwise stale drift would survive a clean settle.
+                items:
+                  description: |-
+                    Per-resource drift / change detail from a plan.
+
+                    One entry per resource the plan would touch. Action is the terraform action category; risk is a heuristic so observers can quickly triage (a `delete` on a destroy-protected resource is `high`, a no-op refresh is `none`, a single-attribute update is `low`). `attributes` lists the field names that differ — values are intentionally elided so secrets don't leak into the K8s API.
+                  properties:
+                    action:
+                      description: 'Action category: create | update | delete | replace | noop.'
+                      type: string
+                    address:
+                      description: Terraform resource address (e.g. `cloudflare_dns_record.foo`).
+                      type: string
+                    attributes:
+                      description: Attribute names that differ between current and desired state. Empty for create / delete (no per-attr diff applies).
+                      items:
+                        type: string
+                      type: array
+                    matchedPolicy:
+                      description: Name of the `PolicyRule` that matched this change, or `<default>` if no rule matched and the default decision was applied. Absent means policy evaluation didn't run.
+                      nullable: true
+                      type: string
+                    policyDecision:
+                      description: 'Resolved policy decision for this specific change. Set when `spec.policies` is non-empty or `spec.defaultDecision` is non-null. Values: `autoApply` | `requireApproval` | `refuse`. Absent means policy evaluation didn''t run (legacy `autoApprove`-only mode).'
+                      nullable: true
+                      type: string
+                    risk:
+                      description: 'Risk heuristic: none | low | medium | high.'
+                      type: string
+                  required:
+                  - action
+                  - address
+                  - risk
+                  type: object
+                type: array
+              executor:
+                description: |-
+                  Echo of the IaC executor the operator selected at runtime for this template's reconcile path. `"magma"` or `"tofu"`.
+
+                  Before this field existed the only way to answer "what's the operator actually running for this CR?" was to grep its startup logs for `Wiring Postgres pool for magma state backend` etc. The operator's own declaration belongs in CR status, queryable via `kubectl get itr X -o jsonpath='{.status.executor}'`.
+
+                  Updated on every cycle (idempotent — `record_reconcile_cycle`'s content-equality guard suppresses no-op patches), so a flip caused by feature-flag or backend-availability change shows up on the next reconcile.
+                nullable: true
+                type: string
               failureCount:
                 default: 0
                 description: Number of consecutive failures.
@@ -309,6 +825,228 @@ spec:
                 description: Last successfully applied revision (content hash or git commit).
                 nullable: true
                 type: string
+              lastCycle:
+                description: 'Receipt for the most recent reconcile cycle: per-resource outcomes (Matched / Updated / Created / Destroyed / Imported / Drifted / Failed) plus aggregate counts. The shape the user reads to answer "what did the operator just do, and to what?"'
+                nullable: true
+                properties:
+                  actionDistribution:
+                    description: |-
+                      Distribution of plan action verbs across ALL planned changes (including no-op). The compact answer to "what would this cycle actually do?" — replaces having to `kubectl exec` into the pod + parse `magma-bundle.json plan.changes` by hand.
+
+                      Different from `summary` above: `summary` is post-decision (matched / updated / created / …) and rolls up untouched resources into `matched`. This is pre-decision (the action verb the plan emitted for each resource, no-op included), so it preserves the distinction between "1054 resources, none changed" (`noOp: 1054`) and "1054 resources, none managed yet" (`create: 1054`).
+
+                      `None` for tofu cycles + for cycles where the bundle wasn't available (cleanup races, executor wrote no bundle).
+                    nullable: true
+                    properties:
+                      create:
+                        default: 0
+                        description: Resources the plan would create on apply.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      delete:
+                        default: 0
+                        description: Resources the plan would destroy on apply.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      noOp:
+                        default: 0
+                        description: Resources the plan classified as no-op — declared state already matches actual state, no apply action.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      other:
+                        default: 0
+                        description: Catch-all for action verbs not bucketed above (terraform's `read`, `forget`, future additions). Keeps the rollup faithful even when the upstream vocab grows.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      replace:
+                        default: 0
+                        description: Resources the plan would destroy + recreate (terraform's `replace` action).
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      update:
+                        default: 0
+                        description: Resources the plan would update in-place on apply.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                    type: object
+                  bundleRef:
+                    description: |-
+                      Reference to the `magma-bundle.json` artifact this cycle produced. Today the bundle lives in the operator pod's emptyDir at `/var/pangea/workspaces/<ns>/<name>/magma-bundle.json` and is only readable via `kubectl exec`. Carrying its `bundleId` + `sha256` here lets observers verify the bundle they fetched matches the cycle they read about. A follow-up slice publishes the bundle as a ConfigMap and extends this struct with `name`/`namespace` fields.
+
+                      `None` for tofu cycles + cycles whose bundle couldn't be read (parse error, missing file).
+                    nullable: true
+                    properties:
+                      bundleId:
+                        description: Stable bundle identifier — the `bundle_id` field from `magma-bundle.json` (BLAKE3 over the bundle's canonical representation). Lets observers correlate cycles to bundles across compaction/cleanup AND verify the bundle they fetched matches the cycle they read about (the bundle_id is the content hash).
+                        type: string
+                      kind:
+                        description: Bundle kind discriminator from `magma-bundle.json.kind` — today always `"terraform"`; future executors (pulumi, opentofu, kubernetes) get their own discriminator.
+                        type: string
+                      sizeBytes:
+                        description: Bundle file size in bytes — UX hint ("is this a 1KB null bundle or a 3MB serious one?") and capacity-planning input for the future ConfigMap-publication slice (etcd value-size budget).
+                        format: uint64
+                        minimum: 0.0
+                        type: integer
+                    required:
+                    - bundleId
+                    - kind
+                    - sizeBytes
+                    type: object
+                  completedAt:
+                    description: When the cycle completed (after apply, or after plan-with-no-changes).
+                    format: date-time
+                    type: string
+                  cycle:
+                    description: Monotonic cycle number (mirrors `status.cycleCount` at the moment this cycle was emitted; redundant but lets observers snapshot the receipt with its cycle number atomically).
+                    format: uint64
+                    minimum: 0.0
+                    type: integer
+                  executor:
+                    description: Echo of the IaC executor that ran THIS cycle. Preserves "magma planned this" even after a future flip of `status.executor`. Mirrors `status.executor` at cycle-record time; `None` for cycles written by operator versions before the field landed (backward-compatible deserialize).
+                    nullable: true
+                    type: string
+                  lifecyclePhase:
+                    description: 'Lifecycle FSM phase recorded in the magma bundle — `"planning"`, `"applying"`, `"verifying"`, `"stable"`, `"failed"`. Honestly absent (`None`) for tofu cycles: tofu has no lifecycle FSM, so the operator never fabricates one. Magma''s lifecycle states surface here so observers can answer "where did this cycle stop?" without exec-reading the bundle.'
+                    nullable: true
+                    type: string
+                  outcomes:
+                    description: |-
+                      Per-resource outcomes for resources the cycle TOUCHED — i.e. resources that the plan reported a change on (Created / Updated / Destroyed) or that the apply failed on (Failed) or that policy gated (Drifted).
+
+                      Resources that had no planned change are NOT individually listed here (they're rolled up into `summary.matched`); listing every untouched resource per cycle would balloon status payloads unbounded. Capped at 100 entries.
+                    items:
+                      description: Per-resource cycle outcome. The typed answer to "what happened to THIS resource this cycle?".
+                      properties:
+                        action:
+                          description: Original tofu action category (`create`, `update`, `delete`, `replace`, `noop`) when known. Lets observers see the raw terraform shape behind the typed Outcome.
+                          nullable: true
+                          type: string
+                        address:
+                          description: Terraform resource address (e.g. `cloudflare_dns_record.foo`).
+                          type: string
+                        message:
+                          description: Optional context — for `Drifted` outcomes, the policy decision that gated the change; for `Failed`, the tofu error excerpt.
+                          nullable: true
+                          type: string
+                        outcome:
+                          description: What happened.
+                          enum:
+                          - Matched
+                          - Updated
+                          - Created
+                          - Destroyed
+                          - Imported
+                          - Drifted
+                          - Failed
+                          type: string
+                      required:
+                      - address
+                      - outcome
+                      type: object
+                    type: array
+                  planSummary:
+                    description: 'Human-readable plan summary, mirroring tofu''s `Plan: +X ~Y -Z` shape. Same string as top-level `status.planSummary` at the moment this cycle ran.'
+                    nullable: true
+                    type: string
+                  severityRollup:
+                    description: |-
+                      Severity rollup across this cycle's resource changes — `{cosmetic, functional, breaking}`. The user-facing answer to "how scary is this plan?". Magma populates from its native drift-classifier severities; tofu populates from the pure `action_to_severity` mapping (Cosmetic for no-op, Functional for create/update, Breaking for delete/replace). The sum equals the total change count.
+
+                      `None` when this cycle had no per-resource changes to classify (empty plan).
+                    nullable: true
+                    properties:
+                      breaking:
+                        default: 0
+                        description: Breaking changes — destroy, replace, or anything that loses data / interrupts service. The bucket operators pay attention to. Maps to magma's `critical` severity at the bundle boundary.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      cosmetic:
+                        default: 0
+                        description: Cosmetic changes — comment-level, no real effect (most no-ops fall here when surfaced from magma; tofu surfaces them via the pure action→severity mapping for no-op).
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      functional:
+                        default: 0
+                        description: Functional changes — resource updated, created, or semantically-meaningful attributes change. The default bucket for create/update.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                    type: object
+                  sourceRevision:
+                    description: Source revision the cycle reconciled against — git commit SHA for git-sourced templates, content hash for inline / configmap. Mirrors `status.lastAppliedRevision` for the cycle that just landed; lets observers correlate cycles to source changes.
+                    nullable: true
+                    type: string
+                  startedAt:
+                    description: When the cycle started (immediately after Verified gate).
+                    format: date-time
+                    type: string
+                  summary:
+                    default:
+                      created: 0
+                      destroyed: 0
+                      driftedUncorrected: 0
+                      failed: 0
+                      imported: 0
+                      matched: 0
+                      updated: 0
+                    description: Aggregate outcome counts for the cycle. `matched` = total managed resources minus everything that planned a change. Other counts are per-Outcome variant.
+                    properties:
+                      created:
+                        default: 0
+                        description: Resources newly created by this cycle's apply.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      destroyed:
+                        default: 0
+                        description: Resources destroyed by this cycle's apply.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      driftedUncorrected:
+                        default: 0
+                        description: Resources where drift was detected but NOT corrected (policy = requireApproval / refuse, or apply was skipped).
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      failed:
+                        default: 0
+                        description: Resources where the apply errored.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      imported:
+                        default: 0
+                        description: Resources adopted into state by `tofu import` (reserved — set to 0 until the import path lands in a follow-up).
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      matched:
+                        default: 0
+                        description: Resources whose declared state matched actual state — no plan action (`no-op`).
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      updated:
+                        default: 0
+                        description: Resources updated to declared state by this cycle's apply.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                    type: object
+                required:
+                - completedAt
+                - cycle
+                - startedAt
+                type: object
               lastDriftCheckAt:
                 description: Timestamp of the last drift check.
                 format: date-time
@@ -316,6 +1054,20 @@ spec:
                 type: string
               lastError:
                 description: Last error message if in Failed state.
+                nullable: true
+                type: string
+              lastEscalatedAt:
+                description: When the operator last emitted an escalation event for this template. Debounce signal — escalation actions don't re-fire every reconcile while the bad state persists; they fire once per entry into the bad state and then stay quiet until the state clears + re-enters.
+                format: date-time
+                nullable: true
+                type: string
+              lastEscalationReason:
+                description: Machine-readable reason for the last escalation. One of `FailureEscalation`, `PhaseTimeout:<phase>`, `VerifiedBlocked`. Empty when no escalation has fired.
+                nullable: true
+                type: string
+              lastFreshnessCheckAt:
+                description: When the freshness gate last successfully observed the remote HEAD. An old timestamp on a Ready template means the remote has been unreachable (the gate proceeds on Unknown but says so in the Settled condition message).
+                format: date-time
                 nullable: true
                 type: string
               lastPlannedAt:
@@ -328,15 +1080,25 @@ spec:
                 description: Last observed generation of the spec.
                 format: int64
                 type: integer
+              observedHeadRevision:
+                description: 'The remote HEAD the freshness gate last observed via `git ls-remote` (1 RTT, no clone). Tier-honest: a C2 external-world observation, renewed per check — never a compile-time proof.'
+                nullable: true
+                type: string
               outputs:
                 additionalProperties: true
                 description: Outputs from the last successful apply.
                 nullable: true
                 type: object
+              pendingPlanHash:
+                description: Hash of the pending plan awaiting approval. Set by the operator after planning. Users approve by copying this value to `approvedPlanHash` via kubectl patch or GraphQL mutation.
+                nullable: true
+                type: string
               phase:
                 description: Current phase of the template lifecycle.
                 enum:
                 - Pending
+                - Verifying
+                - Verified
                 - Compiling
                 - Initializing
                 - Planning
@@ -344,13 +1106,52 @@ spec:
                 - Ready
                 - Drifted
                 - Failed
+                - CompileBlocked
                 - Destroying
+                nullable: true
+                type: string
+              phaseEnteredAt:
+                description: When the current `phase` was entered. Reset on every phase transition. Used by ReactivePolicy.phaseTimeout to detect templates stuck in a non-terminal phase.
+                format: date-time
                 nullable: true
                 type: string
               planSummary:
                 description: Human-readable summary of the last plan.
                 nullable: true
                 type: string
+              policyEvaluation:
+                description: Aggregate result of evaluating `spec.policies` against the last plan's drift details. Drives the plan→apply gate. Absent when the template uses legacy `autoApprove`-only mode (no `policies` and no `defaultDecision`).
+                nullable: true
+                properties:
+                  aggregate:
+                    description: Worst decision across all changes. Drives the plan→apply transition.
+                    type: string
+                  autoApplyCount:
+                    default: 0
+                    description: Number of changes that resolved to `autoApply`.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  refuseCount:
+                    default: 0
+                    description: Number of changes that resolved to `refuse`. Non-zero means `aggregate == refuse` and the plan is blocked.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  refusedAddresses:
+                    description: Sample of refused resource addresses (capped at 10) to give quick triage signal in `kubectl describe`.
+                    items:
+                      type: string
+                    type: array
+                  requireApprovalCount:
+                    default: 0
+                    description: Number of changes that resolved to `requireApproval`.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                required:
+                - aggregate
+                type: object
               resources:
                 description: Summary of managed resources.
                 nullable: true
@@ -382,6 +1183,20 @@ spec:
                 type: object
               stateKey:
                 description: PostgreSQL state key path.
+                nullable: true
+                type: string
+              stuckResources:
+                default: []
+                description: |-
+                  Resource addresses that keep showing up in successive drift cycles — the "stuck" set. Computed as the intersection of drift-detail addresses across the last N cycles. Capped at 20 for status hygiene; full set available via the operator's GraphQL API. Empty when `consecutiveDriftCycles == 0`.
+
+                  Always serialized (no skip-if-empty) so explicit clearing on a settle propagates via JSON Merge Patch.
+                items:
+                  type: string
+                type: array
+              verifiedBlockedSince:
+                description: First time the `Verified` condition flipped to False. Used by ReactivePolicy.verifiedBlocked to detect templates whose gate has been blocked too long. Cleared when Verified flips back to True.
+                format: date-time
                 nullable: true
                 type: string
             type: object

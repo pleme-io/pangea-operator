@@ -33,11 +33,15 @@ use super::{
 // the call sites in this file already use.
 use super::template::finalizer::{add_finalizer, has_finalizer, remove_finalizer};
 use super::template::events::record_event;
+use super::template::freshness::{
+    evaluate_source_freshness, git_rev_parse_head, observe_head, Freshness,
+};
 use super::template::provider_creds::resolve_provider_config;
 use super::template::status::{
-    update_apply_status, update_drift_check_timestamp, update_pending_plan_hash, update_phase,
-    update_phase_with_error, update_plan_status, update_settling_status,
-    workspace_drift_reaction_to_policy_decision,
+    update_apply_status, update_compiled_revision, update_drift_check_timestamp,
+    ObservationOutcome, update_freshness_status, update_pending_plan_hash, update_phase,
+    update_phase_with_error,
+    update_plan_status, update_settling_status, workspace_drift_reaction_to_policy_decision,
 };
 use super::template::cycle_receipts::{record_reconcile_cycle, truncate_for_status, CycleResult};
 
@@ -430,6 +434,14 @@ async fn handle_compiling(
     let workspace = state.workspace_manager.get_workspace(template).await?;
     let source = &template.spec.source;
 
+    // Freshness model (§ staleness honesty): the commit this compile
+    // consumes. Captured in the gitRepository arm right after the
+    // clone/fetch lands; written to `status.compiledRevision` in the
+    // compile-success block so handle_ready's freshness gate can
+    // compare it against the observed remote HEAD. `None` for
+    // inline / configMap sources (no revision to be stale against).
+    let mut compiled_revision: Option<String> = None;
+
     // Resolve template content from source
     let content = if let Some(inline) = &source.inline {
         inline.clone()
@@ -467,55 +479,9 @@ async fn handle_compiling(
         // not durable execution state and stays on disk by design.
         let repo_dir = workspace.path.join("_repo");
 
-        // Resolve git credentials if specified
-        let mut env_vars = Vec::new();
-        if let Some(secret_ref) = &git_ref.secret_ref {
-            let ns = secret_ref
-                .namespace
-                .clone()
-                .or_else(|| template.namespace())
-                .unwrap_or_default();
-            let secret_api: Api<Secret> = Api::namespaced(state.client.clone(), &ns);
-            let secret = secret_api.get(&secret_ref.name).await.map_err(|_| {
-                Error::SecretNotFound {
-                    namespace: ns.clone(),
-                    name: secret_ref.name.clone(),
-                }
-            })?;
-
-            if let Some(data) = &secret.data {
-                // Support HTTPS token auth via username/password
-                if let Some(token) = data.get("password").or_else(|| data.get("token")) {
-                    let username = data
-                        .get("username")
-                        .map(|v| String::from_utf8_lossy(&v.0).to_string())
-                        .unwrap_or_else(|| "git".to_string());
-                    let password = String::from_utf8_lossy(&token.0).to_string();
-                    // Write credentials to separate files (avoids shell injection)
-                    workspace.write_file("_git_user", &username).await?;
-                    workspace.write_file("_git_pass", &password).await?;
-                    // GIT_ASKPASS script reads from files — no interpolation
-                    let askpass_script = workspace.path.join("_git_askpass.sh");
-                    let user_path = workspace.path.join("_git_user");
-                    let pass_path = workspace.path.join("_git_pass");
-                    let script_content = format!(
-                        "#!/bin/sh\ncase \"$1\" in\n*Username*) cat '{}' ;;\n*Password*) cat '{}' ;;\nesac",
-                        user_path.display(),
-                        pass_path.display(),
-                    );
-                    workspace.write_file("_git_askpass.sh", &script_content).await?;
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt;
-                        let _ = std::fs::set_permissions(
-                            &askpass_script,
-                            std::fs::Permissions::from_mode(0o700),
-                        );
-                    }
-                    env_vars.push(("GIT_ASKPASS".to_string(), askpass_script.to_string_lossy().to_string()));
-                }
-            }
-        }
+        // Resolve git credentials if specified (factored so the
+        // freshness gate's `observe_head` reuses the same auth env).
+        let env_vars = git_auth_env(template, state, &workspace).await?;
 
         // Clone or update (with 120s timeout)
         let git_timeout = Duration::from_secs(120);
@@ -570,6 +536,12 @@ async fn handle_compiling(
                 git_ref.url
             )));
         }
+
+        // The clone/fetch landed — record exactly which commit this
+        // compile is about to consume. Before this, NO status field
+        // could express "the compile is stale" (staleness was
+        // unrepresentable in the wrong direction).
+        compiled_revision = Some(git_rev_parse_head(&repo_dir).await?);
 
         // For gitRepository sources, do NOT read the file into memory
         // and ship it as a `source` string — that would lose the
@@ -681,9 +653,36 @@ async fn handle_compiling(
             // cloned tree's `lib/` to $LOAD_PATH so `require
             // 'pangea/architectures'` resolves to the cloned composer
             // copy (not an image-baked path-gem).
-            let (template_path, rubylib_paths) = match path.split_once("\0RUBYLIB\0") {
-                Some((tp, rl)) => (tp.to_string(), vec![rl.to_string()]),
-                None => (path.to_string(), Vec::<String>::new()),
+            // The cloned tree's `lib/` is the WORKSPACE identity —
+            // labeled as such so the planner treats it as
+            // authoritative for the namespaces it ships (an unlabeled
+            // raw string no longer type-checks here; see
+            // `CompileRequest.rubylib_paths`).
+            let (template_path, legacy_rubylib) = match path.split_once("\0RUBYLIB\0") {
+                Some((tp, rl)) => (
+                    tp.to_string(),
+                    vec![pangea_ruby_eval::LoadPathEntry::workspace(rl)],
+                ),
+                None => (path.to_string(), Vec::new()),
+            };
+            // Resolve the workspace Gemfile.lock into a deterministic,
+            // dependency-ordered $LOAD_PATH closure (magma-rubygems).
+            // This makes pangea-architectures (the composer) resolve to
+            // ONE canonical copy — the gem-cache clone the per-compile
+            // purge prefix matches — instead of the `_repo/lib` second
+            // copy whose stale $LOADED_FEATURES entry left
+            // `Pangea::Architectures` undefined after the module purge.
+            // A gem the closure needs but no locator hosts surfaces as a
+            // typed MissingGems error here, not a deep Ruby LoadError
+            // mid-compile. Gated on PANGEA_GEM_MANIFEST: absent (pre-
+            // rebuild images) ⇒ legacy single-lib behaviour, no regression.
+            let rubylib_paths = match resolve_workspace_load_path(&template_path) {
+                Ok(Some(resolved)) => resolved,
+                Ok(None) => legacy_rubylib,
+                Err(e) => {
+                    handle_compile_failure(template, state, &e).await?;
+                    return Err(Error::Compilation(format!("gem resolution failed: {e}")));
+                }
             };
             crate::ruby::CompileRequest {
                 template_path: Some(template_path),
@@ -707,16 +706,50 @@ async fn handle_compiling(
             Ok(r) => r,
             Err(e) => {
                 // Compile failure path — increment the per-template
-                // consecutive-failure counter and escalate to Failed
-                // if we hit the settling threshold. Without this,
-                // templates like `pleme-io-opensource` (missing gem)
-                // sit in Compiling cycleCount=0 indefinitely because
-                // the cycle counter only advances after a complete
-                // plan→apply, which never reaches.
+                // consecutive-failure counter and escalate if we hit
+                // the settling threshold. Without this, templates
+                // like `pleme-io-opensource` (missing gem) sit in
+                // Compiling cycleCount=0 indefinitely because the
+                // cycle counter only advances after a complete
+                // plan→apply, which never reaches. (A residual
+                // dual-load lands here too — `BackendError::DualLoad`
+                // — and rides the same ladder, LOUD by construction.)
                 handle_compile_failure(template, state, &e.to_string()).await?;
                 return Err(Error::Compilation(format!("Compile failed: {e}")));
             }
         };
+
+        // The compile succeeded but may have observed load-path
+        // conflicts (planner overlaps + live-detector findings whose
+        // purge coverage made them safe). Surface each as a Warning
+        // Event — previously the typed view died in owner.rs and only
+        // flat strings hit the pod log. Capped so a pathological
+        // workspace can't flood the events API.
+        const CONFLICT_EVENT_CAP: usize = 5;
+        for c in compile_result.conflicts.iter().take(CONFLICT_EVENT_CAP) {
+            record_event(
+                template,
+                state,
+                EventType::Warning,
+                "LoadPathConflict",
+                &format!("[{}] {}", c.detector, c.message),
+            )
+            .await;
+        }
+        if compile_result.conflicts.len() > CONFLICT_EVENT_CAP {
+            record_event(
+                template,
+                state,
+                EventType::Warning,
+                "LoadPathConflict",
+                &format!(
+                    "{} further load-path conflict(s) suppressed (cap {})",
+                    compile_result.conflicts.len() - CONFLICT_EVENT_CAP,
+                    CONFLICT_EVENT_CAP,
+                ),
+            )
+            .await;
+        }
 
         compile_result.terraform_json
     };
@@ -772,10 +805,167 @@ async fn handle_compiling(
     // forever-elevated.
     reset_compile_failure_counter(template, state).await?;
 
+    // Persist the compiled revision (git sources only). This is the
+    // anchor the freshness gate + `lastAppliedRevision` chain hang
+    // off — Ready can now only be uttered against a named commit.
+    update_compiled_revision(template, compiled_revision.as_deref(), state).await?;
+
     update_phase(template, Phase::Initializing, state).await?;
     record_event(template, state, EventType::Normal, "Compiled", "Template source resolved and written to workspace").await;
 
     Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
+}
+
+/// Assemble the git auth env for a template's `gitRepository` source:
+/// resolves the referenced Secret, writes the askpass trio into the
+/// workspace, and returns the `GIT_ASKPASS` env pair. Empty when the
+/// source has no `secretRef` (public repo). Factored out of
+/// `handle_compiling` so the freshness gate's `observe_head`
+/// (`git ls-remote`, no clone) authenticates identically.
+async fn git_auth_env(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+    workspace: &crate::executor::Workspace,
+) -> Result<Vec<(String, String)>> {
+    let mut env_vars = Vec::new();
+    let Some(git_ref) = &template.spec.source.git_repository else {
+        return Ok(env_vars);
+    };
+    if let Some(secret_ref) = &git_ref.secret_ref {
+        let ns = secret_ref
+            .namespace
+            .clone()
+            .or_else(|| template.namespace())
+            .unwrap_or_default();
+        let secret_api: Api<Secret> = Api::namespaced(state.client.clone(), &ns);
+        let secret = secret_api.get(&secret_ref.name).await.map_err(|_| {
+            Error::SecretNotFound {
+                namespace: ns.clone(),
+                name: secret_ref.name.clone(),
+            }
+        })?;
+
+        if let Some(data) = &secret.data {
+            // Support HTTPS token auth via username/password
+            if let Some(token) = data.get("password").or_else(|| data.get("token")) {
+                let username = data
+                    .get("username")
+                    .map(|v| String::from_utf8_lossy(&v.0).to_string())
+                    .unwrap_or_else(|| "git".to_string());
+                let password = String::from_utf8_lossy(&token.0).to_string();
+                // Write credentials to separate files (avoids shell injection)
+                workspace.write_file("_git_user", &username).await?;
+                workspace.write_file("_git_pass", &password).await?;
+                // GIT_ASKPASS script reads from files — no interpolation
+                let askpass_script = workspace.path.join("_git_askpass.sh");
+                let user_path = workspace.path.join("_git_user");
+                let pass_path = workspace.path.join("_git_pass");
+                let script_content = format!(
+                    "#!/bin/sh\ncase \"$1\" in\n*Username*) cat '{}' ;;\n*Password*) cat '{}' ;;\nesac",
+                    user_path.display(),
+                    pass_path.display(),
+                );
+                workspace.write_file("_git_askpass.sh", &script_content).await?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = std::fs::set_permissions(
+                        &askpass_script,
+                        std::fs::Permissions::from_mode(0o700),
+                    );
+                }
+                env_vars.push((
+                    "GIT_ASKPASS".to_string(),
+                    askpass_script.to_string_lossy().to_string(),
+                ));
+            }
+        }
+    }
+    // Harden EVERY git invocation (clone/fetch on the mutation path, and
+    // ls-remote on the freshness path) so a misconfigured credential helper
+    // FAILS FAST instead of hanging to the timeout → Unknown → stale-proceed.
+    Ok(crate::controller::template::freshness::non_interactive_git_env(&env_vars))
+}
+
+/// Outcome of [`source_freshness_gate`].
+enum FreshnessGate {
+    /// Continue the phase handler. Carries the verdict so the Settled
+    /// condition can name what was (or wasn't) verified; `None` ⇒
+    /// non-git source, freshness model not applicable.
+    Proceed(Option<Freshness>),
+    /// The compile is stale — the gate already bounced the phase to
+    /// Compiling; the handler returns this action verbatim.
+    Bounce(ReconcileAction),
+}
+
+/// The source-freshness gate (operational projection of the pure
+/// `freshness::ready_drift_decision` law — its `RecompileStale` arm,
+/// applied BEFORE any plan runs so neither "no changes" nor a drift
+/// correction can ever be derived from a stale compile). Observes the
+/// remote HEAD via `ls-remote` (1 RTT, no clone), records the
+/// observation on status, and on `Stale` bounces to Compiling — the
+/// exact shape of the missing-main-tf.json restart guards.
+///
+/// `Unknown` (ls-remote unreachable) does NOT wedge the drift loop:
+/// the handler proceeds, the
+/// `pangea_source_freshness_check_failures_total` counter ticks, and
+/// the Settled message says "HEAD: unverified". Tier-honest: a C2
+/// external-world observation, renewed per check.
+async fn source_freshness_gate(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+    workspace: &crate::executor::Workspace,
+    phase_label: &'static str,
+) -> Result<FreshnessGate> {
+    let Some(git_ref) = &template.spec.source.git_repository else {
+        return Ok(FreshnessGate::Proceed(None));
+    };
+    let env = git_auth_env(template, state, workspace).await?;
+    match observe_head(&git_ref.url, &git_ref.r#ref, &env).await {
+        Ok(head) => {
+            update_freshness_status(template, &ObservationOutcome::Observed(head.clone()), state)
+                .await?;
+            let compiled = template
+                .status
+                .as_ref()
+                .and_then(|s| s.compiled_revision.as_deref());
+            match evaluate_source_freshness(compiled, &head) {
+                Freshness::Stale { compiled, head } => {
+                    let msg = format!(
+                        "Source HEAD {} is ahead of compiled revision {} — recompiling",
+                        head,
+                        compiled.as_deref().unwrap_or("(none recorded)"),
+                    );
+                    warn!(phase = phase_label, %msg, "source stale; bouncing to Compiling");
+                    record_event(template, state, EventType::Warning, "SourceStale", &msg).await;
+                    update_phase(template, Phase::Compiling, state).await?;
+                    Ok(FreshnessGate::Bounce(ReconcileAction::Requeue(
+                        SHORT_REQUEUE_INTERVAL,
+                    )))
+                }
+                fresh => Ok(FreshnessGate::Proceed(Some(fresh))),
+            }
+        }
+        Err(e) => {
+            state.metrics.source_freshness_check_failures_total.inc();
+            // Advance the ATTEMPT clock even though the probe failed — a wedged
+            // probe is now visibly "checking + failing", never silently frozen
+            // (the rio defect: lastFreshnessCheckAt stuck for days while
+            // lastDriftCheckAt kept advancing).
+            update_freshness_status(template, &ObservationOutcome::Unobserved, state).await?;
+            // Surface a TYPED, visible anomaly — never a silent steady state.
+            // (The Ready condition stays independently honest: source_fresh_state
+            // reads observed_head, which a failed probe does NOT advance, so Ready
+            // reflects the last VERIFIED edge — it never guesses at-HEAD.)
+            let msg = format!(
+                "Source git HEAD could not be observed (ls-remote failed: {e}) — HEAD \
+                 unverified; reconciling against the last-observed revision"
+            );
+            warn!(phase = phase_label, error = %e, "freshness probe failed — {msg}");
+            record_event(template, state, EventType::Warning, "SourceUnobservable", &msg).await;
+            Ok(FreshnessGate::Proceed(Some(Freshness::Unknown)))
+        }
+    }
 }
 
 /// Default 5 matches `crd::infrastructure_template::default_max_drift_cycles`.
@@ -813,6 +1003,127 @@ pub(crate) fn evaluate_compile_failure_escalation(
 /// Escalation is purely additive: the next reconcile cycle will see
 /// `phase=Failed` and skip past Compiling.
 #[tracing::instrument(skip_all, name = "handle_compile_failure")]
+/// Resolve the workspace's `Gemfile.lock` (sibling of the template
+/// file) into a deterministic, dependency-ordered `$LOAD_PATH` closure
+/// via magma-rubygems.
+///
+/// Returns `Ok(None)` when resolution is not applicable — no
+/// `PANGEA_GEM_MANIFEST` env (pre-rebuild images), no sibling
+/// `Gemfile.lock`, or no PATH-sourced gems to anchor on — in which case
+/// the caller preserves the legacy single-`_repo/lib` behaviour with no
+/// regression. Returns `Err(msg)` on a parse failure or a typed
+/// `MissingGems` (the closure needs a gem no locator hosts); the caller
+/// surfaces it through `handle_compile_failure`.
+///
+/// Roots = the workspace's PATH-sourced gems (pangea-architectures +
+/// the providers). Their transitive closure pulls in the runtime
+/// rubygems deps (dry-*, terraform-synthesizer, …) but never the
+/// rubygems-sourced dev/test gems (rspec, simplecov) the image does not
+/// bundle. Locators, in priority order: the build-emitted baked-gem
+/// manifest (`PANGEA_GEM_MANIFEST`, name → lib dir), then the per-CR gem
+/// cache (`PANGEA_GEM_CACHE_DIR`) where the ArchitectureGem composer
+/// clone lives. Resolving the composer from the gem cache (not
+/// `_repo/lib`) is the fix for the `uninitialized constant
+/// Pangea::Architectures` purge-prefix mismatch.
+///
+/// Every resolved path is returned as a typed [`LoadPathEntry`],
+/// classified by locator provenance: under `PANGEA_GEM_CACHE_DIR` ⇒
+/// `gem` (gem name derived from the `<name>-<ref>` cache dir);
+/// manifest-baked / nix-store ⇒ `other`. The label is what lets the
+/// planner derive purge directives instead of owner.rs hardcoding a
+/// path — and an unlabeled path is a compile error by construction.
+fn resolve_workspace_load_path(
+    template_path: &str,
+) -> std::result::Result<Option<Vec<pangea_ruby_eval::LoadPathEntry>>, String> {
+    use std::path::{Path, PathBuf};
+
+    // Gate: only active once the operator image ships the baked-gem
+    // manifest. Absent ⇒ legacy behaviour (safe rollout).
+    let manifest_path = match std::env::var("PANGEA_GEM_MANIFEST") {
+        Ok(p) if !p.is_empty() && Path::new(&p).is_file() => p,
+        _ => return Ok(None),
+    };
+
+    let Some(dir) = Path::new(template_path).parent() else {
+        return Ok(None);
+    };
+    let lock_path = dir.join("Gemfile.lock");
+    if !lock_path.is_file() {
+        return Ok(None);
+    }
+
+    let src = std::fs::read_to_string(&lock_path)
+        .map_err(|e| format!("read {}: {e}", lock_path.display()))?;
+    let lock = magma_rubygems::lockfile::parse(&src)
+        .map_err(|e| format!("parse {}: {e}", lock_path.display()))?;
+
+    // Roots: the workspace's PATH-sourced gems (its own pangea-* set).
+    let roots: Vec<String> = lock
+        .gems
+        .iter()
+        .filter(|g| matches!(g.source, magma_rubygems::Source::Path { .. }))
+        .map(|g| g.name.clone())
+        .collect();
+    if roots.is_empty() {
+        return Ok(None);
+    }
+
+    let manifest_json = std::fs::read_to_string(&manifest_path)
+        .map_err(|e| format!("read manifest {manifest_path}: {e}"))?;
+    let manifest = magma_rubygems::ManifestLocator::from_json(&manifest_json)
+        .map_err(|e| format!("parse manifest {manifest_path}: {e}"))?;
+    let gem_cache = std::env::var("PANGEA_GEM_CACHE_DIR")
+        .unwrap_or_else(|_| "/var/pangea/gems".to_string());
+    let gem_cache_root = PathBuf::from(&gem_cache);
+    let gem_cache_loc = magma_rubygems::GemRootsLocator::new([gem_cache_root.clone()]);
+    // Explicit trait-object element type so the two distinct concrete
+    // locator types coerce into one homogeneous Vec.
+    let inner: Vec<Box<dyn magma_rubygems::GemLocator + Send + Sync>> =
+        vec![Box::new(manifest), Box::new(gem_cache_loc)];
+    let locator = magma_rubygems::CompositeLocator::new(inner);
+
+    let env =
+        magma_rubygems::runtime::resolve_ruby_env_for_roots(&lock, &locator, &roots, "3.3.0")
+            .map_err(|e| e.to_string())?;
+    Ok(Some(
+        env.ruby_lib
+            .iter()
+            .map(|p| classify_resolved_lib_path(p, &gem_cache_root))
+            .collect(),
+    ))
+}
+
+/// Classify one resolver-produced lib dir by locator provenance:
+/// paths under the gem cache are `GemBroadcast` entries (the gem name
+/// is the cache dir's `<name>-<ref>` minus the `-<ref>` suffix);
+/// everything else (manifest-baked nix-store libs) is `Other` —
+/// trusted, never subject to drop or purge.
+fn classify_resolved_lib_path(
+    lib: &std::path::Path,
+    gem_cache_root: &std::path::Path,
+) -> pangea_ruby_eval::LoadPathEntry {
+    if lib.starts_with(gem_cache_root) {
+        // Cache layout is `<cache>/<name>-<ref>/lib`; the dir-name
+        // component right under the cache root carries the identity.
+        let dir_name = lib
+            .strip_prefix(gem_cache_root)
+            .ok()
+            .and_then(|rel| rel.components().next())
+            .and_then(|c| c.as_os_str().to_str())
+            .unwrap_or_default();
+        // `<name>-<ref>` minus the `-<ref>` suffix. Refs containing
+        // `-` would over-trim — the name is Conflict-evidence only,
+        // so the honest-best split (last `-`) suffices.
+        let gem_name = dir_name
+            .rsplit_once('-')
+            .map(|(name, _ref)| name)
+            .unwrap_or(dir_name);
+        pangea_ruby_eval::LoadPathEntry::gem(lib, gem_name)
+    } else {
+        pangea_ruby_eval::LoadPathEntry::other(lib)
+    }
+}
+
 async fn handle_compile_failure(
     template: &InfrastructureTemplate,
     state: &ControllerState,
@@ -921,18 +1232,25 @@ async fn handle_compile_failure(
         .set(next as i64);
 
     if escalate {
-        // Threshold crossed — transition to Failed + emit Event.
+        // Threshold crossed — transition to CompileBlocked + emit
+        // Event. CompileBlocked (not Failed): the failure class is
+        // compile, which self-heals the moment a new commit compiles
+        // — its phase handler retries Compiling on backoff instead of
+        // parking until a human resets. The ladder's PauseAndAlert
+        // arm is unchanged (the handler's status patch below still
+        // sets autoSuspended when the ladder says so).
         warn!(
             template = %name,
             consecutive = next,
             max = max,
-            "Compile failure threshold reached; transitioning to Failed"
+            "Compile failure threshold reached; transitioning to CompileBlocked"
         );
         let escalation_msg = format!(
             "Compile has failed {} consecutive times (settlingPolicy.maxConsecutiveDriftCycles={}). \
              Last error: {}. Recovery ladder recommends '{}' (depth {}, after {}s unready). \
-             Resolve the underlying compile issue (missing gem, syntax error, \
-             unresolved provider, etc.) and the next reconcile will resume.",
+             Parked in CompileBlocked: compile retries on backoff and resumes \
+             automatically once the source compiles (push a fixing commit, restore \
+             the missing gem, etc.).",
             next, max, err_msg,
             recommended_action.label(), recommended_action.depth(),
             duration_unready.as_secs(),
@@ -980,9 +1298,14 @@ async fn handle_compile_failure(
         // patch. The handler's fields (e.g. autoSuspended=true from
         // PauseAndAlertHandler) take precedence on conflict; the base
         // patch supplies the always-set fields (phase, count, error).
+        // phaseEnteredAt set here because this patch bypasses
+        // update_phase (it merges the ladder handler's fields too) —
+        // handle_compile_blocked measures its retry backoff against
+        // this timestamp.
         let mut patch = serde_json::json!({
             "status": {
-                "phase": "Failed",
+                "phase": "CompileBlocked",
+                "phaseEnteredAt": chrono::Utc::now(),
                 "consecutiveCompileFailures": next,
                 "lastError": escalation_msg.clone(),
             },
@@ -1173,7 +1496,7 @@ async fn handle_initializing(
         update_phase(template, Phase::Planning, state).await?;
         record_event(template, state, EventType::Normal, "Initialized", "Backend initialized successfully").await;
     } else {
-        let err_msg = format!("tofu init failed: {}", result.stderr);
+        let err_msg = format!("init failed: {}", result.stderr);
         warn!(%err_msg);
         update_phase_with_error(template, Phase::Failed, &err_msg, state).await?;
         record_event(template, state, EventType::Warning, "InitFailed", &err_msg).await;
@@ -1219,6 +1542,34 @@ async fn handle_planning(
     let runner = state.executor_runner_for_with_creds(template).await?;
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
+
+    // Restart-safety: the workspace is a pod-local emptyDir, lost on
+    // every pod restart, but the CR `status.phase` persists in etcd. A
+    // fresh pod that resumes a CR already at phase=Planning dispatches
+    // straight here, SKIPPING handle_compiling — so main.tf.json was
+    // never (re)written on this pod, and the executor's load_config
+    // IO-errors on the missing file (`No such file or directory`),
+    // looping forever at Planning (the 2026-06-03 fleet-wide wedge:
+    // every operator redeploy re-broke pleme-io-opensource + every other
+    // template). If the compiled config is absent, bounce back to
+    // Compiling so the clone+compile re-runs before we plan.
+    if !workspace.main_tf_path().exists() {
+        warn!(
+            template = %template.name_any(),
+            "Planning: compiled main.tf.json missing (pod restart / wiped \
+             workspace) — resetting to Compiling so clone+compile re-runs"
+        );
+        update_phase(template, Phase::Compiling, state).await?;
+        return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
+    }
+
+    // Freshness gate — the no-changes→Ready edge below must never be
+    // taken against a compile the remote has already moved past.
+    if let FreshnessGate::Bounce(action) =
+        source_freshness_gate(template, state, &workspace, "planning").await?
+    {
+        return Ok(action);
+    }
 
     let plan_result = runner.plan(&workspace).await?;
 
@@ -1553,6 +1904,21 @@ async fn handle_applying(
     let workspace = state.workspace_manager.get_workspace(template).await?;
     let plan_path = workspace.plan_path();
 
+    // Restart-safety (see handle_planning): a pod that resumes a CR at
+    // phase=Applying on a fresh emptyDir workspace has no compiled
+    // main.tf.json (nor plan checkpoint) — the apply / post-apply re-plan
+    // would IO-error on the missing config. Bounce back to Compiling so
+    // the clone+compile (then plan) re-runs.
+    if !workspace.main_tf_path().exists() {
+        warn!(
+            template = %template.name_any(),
+            "Applying: compiled main.tf.json missing (pod restart / wiped \
+             workspace) — resetting to Compiling so clone+compile re-runs"
+        );
+        update_phase(template, Phase::Compiling, state).await?;
+        return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
+    }
+
     // Snapshot the drift_details that handle_planning persisted on
     // status before the apply ran — this is the per-resource change
     // set the apply just consumed (or just failed against).
@@ -1688,7 +2054,14 @@ async fn handle_applying(
             _ => None,
         };
 
-        update_apply_status(template, outputs.clone(), state).await?;
+        // The apply realized whatever the last compile produced —
+        // thread status.compiledRevision into lastAppliedRevision so
+        // the cycle receipt's sourceRevision chain goes live.
+        let applied_revision = template
+            .status
+            .as_ref()
+            .and_then(|s| s.compiled_revision.clone());
+        update_apply_status(template, outputs.clone(), applied_revision.as_deref(), state).await?;
 
         // X2: write tofu outputs to user-bound K8s Secrets. Best-
         // effort — bindings logged + metric'd; failure here doesn't
@@ -1783,7 +2156,11 @@ async fn handle_applying(
         } else {
             format!("{}\n--- stderr ---\n{}", result.stdout, result.stderr)
         };
-        let err_msg = format!("tofu apply failed: {combined_output}");
+        // Executor-neutral label: the default executor is magma (tofu is
+        // forbidden via PANGEA_FORBID_TOFU), so a "tofu apply failed" prefix
+        // here is a lie that misroutes diagnosis. The error body already
+        // carries the provider/executor detail.
+        let err_msg = format!("apply failed: {combined_output}");
         warn!(%err_msg);
 
         // ── The reacting FSM: classify every apply failure into the typed
@@ -2565,20 +2942,20 @@ async fn try_tofu_import(
             warn!(
                 address = %addr,
                 stderr = %r.stderr,
-                "tofu import failed; falling through to apply"
+                "import failed; falling through to apply"
             );
             record_event(
                 template,
                 state,
                 EventType::Warning,
                 "ImportFailed",
-                &format!("tofu import {addr} failed: {}", truncate_for_status(&r.stderr)),
+                &format!("import {addr} failed: {}", truncate_for_status(&r.stderr)),
             )
             .await;
             false
         }
         Err(e) => {
-            warn!(address = %addr, error = %e, "tofu import errored; falling through to apply");
+            warn!(address = %addr, error = %e, "import errored; falling through to apply");
             false
         }
     }
@@ -2660,6 +3037,40 @@ async fn handle_ready(
     let interval = parse_duration(&template.spec.refresh_interval)
         .unwrap_or(DEFAULT_REQUEUE_INTERVAL);
 
+    let workspace = state.workspace_manager.get_workspace(template).await?;
+
+    // FIRST BEAT — observe the remote git HEAD EVERY tick, ABOVE the drift
+    // throttle. A moved remote is a desired-state change, observed every
+    // reconcile exactly like a spec change: the gate records
+    // observedHeadRevision and, on a HEAD-advance, bounces to Compiling
+    // (re-render) immediately. ls-remote is 1 RTT, so this is cheap enough to
+    // run unthrottled. THIS is the rio-wedge fix: HEAD used to be observed
+    // only on the 32m drift cadence (and frozen entirely when the probe
+    // errored), so the operator could sit phase=Ready 25 commits behind HEAD.
+    let freshness = match source_freshness_gate(template, state, &workspace, "ready").await? {
+        FreshnessGate::Bounce(action) => return Ok(action),
+        FreshnessGate::Proceed(f) => f,
+    };
+
+    // Restart-safety: compiled main.tf.json missing (a fresh pod resumed a
+    // Ready CR onto a wiped emptyDir, skipping handle_compiling) → bounce to
+    // Compiling so clone+compile re-runs. Reached every tick now (above the
+    // throttle), so a restart self-heals immediately instead of waiting out
+    // the drift interval. (The 2026-06-03 fleet wedge: 4 Ready templates
+    // os-error-2'd every cycle on the post-restart emptyDir.)
+    if !workspace.main_tf_path().exists() {
+        warn!(
+            template = %template.name_any(),
+            "Ready: compiled main.tf.json missing (pod restart / wiped \
+             workspace) — resetting to Compiling so clone+compile re-runs"
+        );
+        update_phase(template, Phase::Compiling, state).await?;
+        return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
+    }
+
+    // Throttle the EXPENSIVE plan only — the cheap HEAD observation above
+    // already ran this tick. (The plan stays on the refreshInterval cadence;
+    // the freshness probe does not.)
     if let Some(last_check) = template
         .status
         .as_ref()
@@ -2668,14 +3079,12 @@ async fn handle_ready(
         let elapsed = Utc::now().signed_duration_since(last_check);
         let interval_chrono = chrono::Duration::from_std(interval).unwrap_or(chrono::Duration::minutes(5));
         if elapsed < interval_chrono {
-            debug!("Skipping drift check, last check was {}s ago", elapsed.num_seconds());
+            debug!("Plan throttled ({}s since last); HEAD already observed this tick", elapsed.num_seconds());
             return Ok(ReconcileAction::Requeue(interval));
         }
     }
 
     debug!("Running drift detection");
-
-    let workspace = state.workspace_manager.get_workspace(template).await?;
 
     let plan_result = runner.plan(&workspace).await?;
 
@@ -2736,7 +3145,7 @@ async fn handle_ready(
     );
     let action = crate::controller::settling::action_for(&outcome, &settling_policy);
 
-    update_settling_status(template, &outcome, &drift_details, state).await?;
+    update_settling_status(template, &outcome, &drift_details, freshness.as_ref(), state).await?;
 
     // Mirror settling state into Prometheus gauges + counters.
     let tname = template.name_any();
@@ -2895,7 +3304,15 @@ async fn handle_drifted(
     state.metrics.drift_detected_total.inc();
 
     if template.spec.auto_approve {
-        // Auto-correction: transition back through plan → apply cycle
+        // Auto-correction: transition back through plan → apply cycle.
+        // Freshness-gated — drift correction must never apply a stale
+        // compile (Stale ⇒ Compiling, not Planning).
+        let workspace = state.workspace_manager.get_workspace(template).await?;
+        if let FreshnessGate::Bounce(action) =
+            source_freshness_gate(template, state, &workspace, "drifted").await?
+        {
+            return Ok(action);
+        }
         info!("Auto-correcting drift");
         record_event(template, state, EventType::Normal, "DriftCorrection", "Auto-correcting infrastructure drift").await;
         update_phase(template, Phase::Planning, state).await?;
@@ -2914,6 +3331,14 @@ async fn handle_drifted(
             .unwrap_or(false);
 
         if approved {
+            // Same gate as the auto-correct arm: an operator approval
+            // does not make a stale compile safe to apply.
+            let workspace = state.workspace_manager.get_workspace(template).await?;
+            if let FreshnessGate::Bounce(action) =
+                source_freshness_gate(template, state, &workspace, "drifted").await?
+            {
+                return Ok(action);
+            }
             info!("Drift correction approved");
             record_event(template, state, EventType::Normal, "DriftApproved", "Drift correction approved by user").await;
             update_phase(template, Phase::Planning, state).await?;
@@ -2968,6 +3393,77 @@ async fn handle_failed(
     record_event(template, state, EventType::Normal, "Retry", &format!("Retrying after failure (attempt {})", failure_count)).await;
 
     Ok(ReconcileAction::Requeue(backoff))
+}
+
+/// Handle CompileBlocked phase — HEAD observed, compile of it cannot
+/// succeed. Public wrapper for `handle_compile_blocked` so trait impls
+/// in `controller::template_phase` can dispatch to it. The body lives
+/// here; the trait impl is the thin shim.
+pub(crate) async fn handle_compile_blocked_internal(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+) -> Result<ReconcileAction> {
+    handle_compile_blocked(template, state).await
+}
+
+/// Unlike `Failed`, CompileBlocked self-heals: park on an exponential
+/// backoff (keyed off `consecutiveCompileFailures`, measured against
+/// `phaseEnteredAt`), then retry Compiling. The loop exits the moment
+/// a commit that compiles lands on the tracked ref — `handle_compiling`
+/// resets the counter on success and the template proceeds normally.
+/// While parked, the escalation Event + ladder action (incl. the
+/// PauseAndAlert autoSuspend arm, honored upstream in
+/// `reconcile_template`) have already fired — blocked is LOUD, not
+/// silent.
+#[tracing::instrument(skip_all, name = "handle_compile_blocked")]
+async fn handle_compile_blocked(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+) -> Result<ReconcileAction> {
+    let failures = template
+        .status
+        .as_ref()
+        .map(|s| s.consecutive_compile_failures)
+        .unwrap_or(0);
+    let backoff = exponential_backoff(
+        failures,
+        template
+            .spec
+            .retry_policy
+            .as_ref()
+            .map(|p| p.backoff_seconds)
+            .unwrap_or(30),
+        600,
+    );
+
+    let elapsed = template
+        .status
+        .as_ref()
+        .and_then(|s| s.phase_entered_at)
+        .map(|t| (Utc::now() - t).to_std().unwrap_or(Duration::ZERO))
+        .unwrap_or(Duration::ZERO);
+
+    if elapsed < backoff {
+        let remaining = backoff - elapsed;
+        debug!(
+            failures,
+            remaining_secs = remaining.as_secs(),
+            "CompileBlocked: parked on backoff before next compile retry"
+        );
+        return Ok(ReconcileAction::Requeue(remaining));
+    }
+
+    info!(failures, "CompileBlocked: backoff elapsed — retrying compile");
+    update_phase(template, Phase::Compiling, state).await?;
+    record_event(
+        template,
+        state,
+        EventType::Normal,
+        "CompileRetry",
+        &format!("Retrying compile after CompileBlocked backoff (failure count {failures})"),
+    )
+    .await;
+    Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
 }
 
 /// Handle Destroying phase - run `tofu destroy` and clean up.

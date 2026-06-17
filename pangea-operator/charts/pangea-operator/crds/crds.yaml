@@ -638,6 +638,15 @@ spec:
                 description: Echo of the state backend the operator wired for this cycle. `"pg/<db_name>"` for Postgres-backed state (the magma path's canonical case), `"local"` for filesystem, `None` for stateless executors. Today this is inferable only from main.rs startup log lines — the CR doesn't say where its state lives. Adding it here closes that loop.
                 nullable: true
                 type: string
+              compiledAt:
+                description: When `compiledRevision` was produced. Only restamped when the revision actually changes (diff-gated; no etcd churn for same-rev recompiles).
+                format: date-time
+                nullable: true
+                type: string
+              compiledRevision:
+                description: 'Git commit SHA the most recent successful compile consumed (gitRepository sources only). The freshness model''s anchor: `Ready` is only settled against THIS revision; handle_ready''s gate compares it to `observedHeadRevision` and bounces to Compiling on mismatch. Before this field existed, staleness was unrepresentable in the wrong direction — no status field could express "the compile is behind the remote".'
+                nullable: true
+                type: string
               compliance:
                 description: Compliance check results.
                 nullable: true
@@ -1056,6 +1065,11 @@ spec:
                 description: Machine-readable reason for the last escalation. One of `FailureEscalation`, `PhaseTimeout:<phase>`, `VerifiedBlocked`. Empty when no escalation has fired.
                 nullable: true
                 type: string
+              lastFreshnessCheckAt:
+                description: When the freshness gate last successfully observed the remote HEAD. An old timestamp on a Ready template means the remote has been unreachable (the gate proceeds on Unknown but says so in the Settled condition message).
+                format: date-time
+                nullable: true
+                type: string
               lastPlannedAt:
                 description: Timestamp of the last successful plan.
                 format: date-time
@@ -1066,6 +1080,10 @@ spec:
                 description: Last observed generation of the spec.
                 format: int64
                 type: integer
+              observedHeadRevision:
+                description: 'The remote HEAD the freshness gate last observed via `git ls-remote` (1 RTT, no clone). Tier-honest: a C2 external-world observation, renewed per check — never a compile-time proof.'
+                nullable: true
+                type: string
               outputs:
                 additionalProperties: true
                 description: Outputs from the last successful apply.
@@ -1088,6 +1106,7 @@ spec:
                 - Ready
                 - Drifted
                 - Failed
+                - CompileBlocked
                 - Destroying
                 nullable: true
                 type: string

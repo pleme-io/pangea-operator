@@ -26,6 +26,9 @@ pub enum Phase {
     Ready,
     Drifted,
     Failed,
+    /// Self-healing park: HEAD observed, compile of it cannot
+    /// succeed; retried on backoff.
+    CompileBlocked,
     Destroying,
 }
 
@@ -42,6 +45,7 @@ impl From<CrdPhase> for Phase {
             CrdPhase::Ready => Phase::Ready,
             CrdPhase::Drifted => Phase::Drifted,
             CrdPhase::Failed => Phase::Failed,
+            CrdPhase::CompileBlocked => Phase::CompileBlocked,
             CrdPhase::Destroying => Phase::Destroying,
         }
     }
