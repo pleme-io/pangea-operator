@@ -138,6 +138,10 @@
             self = ./pangea-compiler;
             pathGems = pangeaInputsChecked;
             gemsetPath = "/gemset.nix";
+            # ABI-coherence: the gem-workspace interpreter MUST match the
+            # libruby rb-sys/magnus embeds (imagePkgs.ruby_3_3), or magnus
+            # gem load fails with 'incompatible libruby-3.4.9.so'.
+            ruby = imagePkgs.ruby_3_3;
           };
 
           # Materialise the 12 path-gems into /app/vendor/ so that
@@ -304,6 +308,10 @@
             self = ./pangea-compiler;
             pathGems = pangeaInputsChecked;
             gemsetPath = "/gemset.nix";
+            # ABI-coherence: the gem-workspace interpreter MUST match the
+            # libruby rb-sys/magnus embeds (imagePkgs.ruby_3_3), or magnus
+            # gem load fails with 'incompatible libruby-3.4.9.so'.
+            ruby = imagePkgs.ruby_3_3;
           };
 
           # Compute the full $LOAD_PATH at Nix-build time by reading
