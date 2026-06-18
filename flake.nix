@@ -437,6 +437,16 @@
           extraEnv = [
             "RUBYLIB=${fullRubylib}"
             "DRY_TYPES_WARNINGS=false"
+            # libruby on the runtime linker path, EXPLICITLY. The operator
+            # binary embeds CRuby via rb-sys/magnus and dynamically links
+            # libruby-<ver>.so. Previously it resolved only via nix's
+            # incidental auto-RPATH from buildInputs — which a nixpkgs bump
+            # silently shifted, crashing the process with
+            # "libruby-3.3.10.so.3.3: cannot open shared object file". ruby
+            # (= imagePkgs.ruby_3_3) is already in the image `contents`, so
+            # pinning LD_LIBRARY_PATH at its lib dir makes libruby resolution
+            # invariant to RPATH drift — the durable fix, not incidental.
+            "LD_LIBRARY_PATH=${ruby}/lib"
             # Durable, roll-surviving provider-plugin root. magma's
             # locate_provider walks this recursively + filename-matches
             # (magma-providers lib.rs:42-101), so pointing it at the
