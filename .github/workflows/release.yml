@@ -48,6 +48,13 @@ jobs:
       tag: embedded-amd64-r${{ github.run_number }}-${{ github.sha }}
       additionalTags: latest-embedded-amd64
       runner: rio-build-01
+      # rio-build-01 is a single homelab node (~13Gi free) — a high-nproc
+      # ruby-3.4.9 from-source compile OOM-killed (signal 9) the embedded image
+      # build (broken since 2026-06-17). Cap nix parallelism so the compile's
+      # peak RAM stays under available node memory. Tune down (cores 2 / jobs 1)
+      # if it still OOMs; up once a binary cache serves ruby-3.4.9.
+      buildCores: "4"
+      maxJobs: "2"
     secrets: inherit
 
   # Binaries + chart publish on a version tag (or manual dispatch) — not on
