@@ -55,7 +55,13 @@ jobs:
       # if it still OOMs; up once a binary cache serves ruby-3.4.9.
       buildCores: "4"
       maxJobs: "2"
-    secrets: inherit
+    secrets:
+      # BOT_PAT carries write:packages for ghcr.io/pleme-io/* — the proven
+      # ghcr-push token (matches caixa-/helm-auto-release.yml). `secrets: inherit`
+      # passes it only as secrets.BOT_PAT, but image-push expects GHCR_TOKEN, so it
+      # fell back to GITHUB_TOKEN — which lacks package-write on this org package
+      # (push failed: permission_denied: write_package). Map it explicitly.
+      GHCR_TOKEN: ${{ secrets.BOT_PAT }}
 
   # Binaries + chart publish on a version tag (or manual dispatch) — not on
   # every merge.
