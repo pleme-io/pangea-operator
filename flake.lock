@@ -2751,11 +2751,11 @@
     "pangea-github": {
       "flake": false,
       "locked": {
-        "lastModified": 1780967149,
-        "narHash": "sha256-0dR193j7ggeIxAABnfWEiUkNi3WeJF6sYP01CI0CInE=",
+        "lastModified": 1781758863,
+        "narHash": "sha256-fk0SzbBLR/FWVu3/w1s5rWMJj1r798H4VsM/GUYazC0=",
         "owner": "pleme-io",
         "repo": "pangea-github",
-        "rev": "4e4dbce63e58034afe7fad556f55be167d6651ab",
+        "rev": "0d4a52ef8752040902a5a45923664ece6e7206ed",
         "type": "github"
       },
       "original": {
