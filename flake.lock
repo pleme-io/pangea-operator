@@ -3208,11 +3208,11 @@
         "nixpkgs": "nixpkgs_15"
       },
       "locked": {
-        "lastModified": 1781818824,
-        "narHash": "sha256-hKAaEJy4lR/wjJV6N0An1eQOy4sG/9BCPVkNbCF+pX8=",
+        "lastModified": 1781819082,
+        "narHash": "sha256-07oYU+7mj9V+kBW93V25EvKZ30ClMbzVReTj6TReA4c=",
         "owner": "pleme-io",
         "repo": "substrate",
-        "rev": "54face165c7b7746a561ff3671cab926fe3261c8",
+        "rev": "6f884f3748855f0868c72cee3ad4a7784de5c986",
         "type": "github"
       },
       "original": {
