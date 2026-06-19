@@ -16,6 +16,7 @@ pub mod finalizer;
 pub mod fleet_status_controller;
 pub mod generation_filter;
 pub mod import;
+pub mod lifecycle;
 pub mod status_patch;
 pub mod operator_policy_cache;
 pub mod operator_policy_controller;
