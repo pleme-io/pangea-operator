@@ -65,6 +65,15 @@ jobs:
       # the one big crate fits regardless of concurrent node memory pressure.
       buildCores: "1"
       maxJobs: "1"
+      # Attic binary cache on rio (the runner's own node). tend prebuilds fleet
+      # closures into the `nexus` cache; pulling from it lets the heavy deps
+      # (ruby, native gems, magma, common crates) SUBSTITUTE instead of compiling
+      # cold — the actual cure for the recurring cold-cache OOMs (only the final
+      # operator crate + image layers then build locally). Read-only token,
+      # mounted as a netrc on the runner (SOPS secret arc-attic-netrc).
+      extraSubstituters: "http://rio:8080/nexus"
+      extraTrustedPublicKeys: "nexus:aZ0dDIXpfD1fIzN4z9waAWim7R8paT1qZhxQydlUZ90="
+      netrcFile: "/etc/attic/netrc"
     secrets:
       # BOT_PAT carries write:packages for ghcr.io/pleme-io/* — the proven
       # ghcr-push token (matches caixa-/helm-auto-release.yml). `secrets: inherit`
