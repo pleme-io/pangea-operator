@@ -198,3 +198,99 @@ never round up.
 Each milestone is independently shippable and leaves the operator
 strictly-better; M0 is landed and proven by `cargo test
 controller::lifecycle`.
+
+---
+
+## 7. Scaling & concurrency — the workspace seam, async, parallel
+
+The operator is not one FSM but a **composition of typed FSMs at four
+scopes**, keyed on the workspace — the seam where state isolation (one
+`PangeaNamespace` schema), gem set, git source, and the policy cascade all
+coincide. Sharding on that key is *isolation*, not mere partitioning, and the
+DB-backed/recompute-from-Postgres model is what makes it safe (no shared
+in-process mutable state to coordinate).
+
+### 7.1 The four scopes
+
+| Scope | FSM | Owns | Status |
+|---|---|---|---|
+| **Shard** | `Unassigned → Claiming → Owned → Draining → Released` | which replica reconciles which workspace; rebalance on scale change (lease-based, active-active) | designed (`controller::shard_lifecycle` — next) |
+| **Workspace** | `Unloaded → LoadingGems → Ready → Converging → Settled` (+ `GemsFailed`/`Degraded` berths, `Draining → Released`) | per-workspace ruby env, the per-workspace concurrency **budget**, the template **dependency DAG**, drain-safe handoff | **built + proven** (`controller::workspace_lifecycle`, 7 CI proofs) |
+| **Template** | the 12-phase lifecycle (M0/M1) — **now async** (gated on jobs) | one infra unit's converge loop | M0/M1 shipped |
+| **Job** | shigoto `JobPhase` | one compile/plan/apply *execution* | reuse shigoto |
+
+They nest: shard assigns a workspace → workspace loads its gems + budgets +
+DAG-orders its templates → each template advances per-phase → each phase's work
+runs as an async job. Every scope is a typed table with the four
+forcing-functions (enumeration, no-trap, reachability, comfort), so determinism
+and convergence are mechanical at *every* layer.
+
+### 7.2 Async — phases are checkpoints, not blocking calls
+
+The long, RPC-heavy, samba-paced work (compile/plan/apply) becomes **dispatched
+async jobs**; the FSM observes their DB-persisted result and advances:
+
+```
+reconcile(Planning):  no job in-flight → dispatch PlanJob(template, base_state_hash); requeue   (fast)
+PlanJob (executor pool):  magma plan over read-RPCs → Plan artifact to Postgres (content-hashed, from_state=base_hash)
+reconcile(Planning):  observe Plan artifact → has_changes → advance (Ready | Applying)
+```
+
+The **control plane** (the FSM reconcile loop) never blocks — it observes
+DB/job state and advances; the **data plane** (a bounded shigoto executor pool)
+does the heavy work. The phase-exit is a shigoto **Gate** on the job reaching a
+terminal `JobPhase` — the two FSMs compose by gating.
+
+### 7.3 Parallel — unit = template, budgeted by workspace, ordered by DAG
+
+- **Across templates** → parallel: state is per-template
+  (`{schema}_{template}_states`), so different state rows never contend.
+- **Within a workspace** → a shigoto `Dag` of templates: independents run in
+  parallel `waves()`; cross-referencing templates (output → input) get
+  dependency edges and serialize.
+- **Per template** → serial with itself (magma `StackLock` per state root —
+  cooperative join, not contend).
+- **Concurrency bound** → shigoto `BudgetTree` keyed by workspace: each
+  workspace gets a fair-share slice, so a wedged workspace cannot drain the
+  pool from the others (kills the single-reconcile-worker starvation).
+- **Across replicas** → workspace-sharded; per-namespace state isolation means
+  no cross-replica DB contention.
+
+### 7.4 The four correctness invariants (what makes async+parallel *safe*)
+
+1. **Stale-plan refusal** — `Plan<S>` carries `from_state`; a base that moved
+   between an async plan and its apply makes the apply refuse (eclusa). This is
+   what makes the async plan→apply *gap* safe.
+2. **Atomic apply** — state row + bundle in one Postgres tx → a half-applied
+   parallel reconcile is unrepresentable (shipped).
+3. **Idempotent + resumable jobs** — every job recomputes from DB; a pod roll or
+   lease handoff mid-job loses nothing.
+4. **Always-restable berth** — the comfort matrix (proven at template *and*
+   workspace scope) is what makes shard draining safe: park at a comfortable
+   phase, release the lease, a new replica resumes from Postgres. Drain-safe
+   rebalancing is the comfort property applied at the shard scope.
+
+And it **unifies the contamination fix**: a per-workspace ruby env loads only
+that workspace's `requiredGems`, so there is no second `pangea-architectures` on
+a shared `$LOAD_PATH` — the `OpenSourceRepo` shadowing and the scaling story are
+the same move.
+
+### 7.5 Scaling milestones (workspace-keyed, each shippable)
+
+- **S0 — Workspace FSM (DONE).** `controller::workspace_lifecycle` typed +
+  7-proof; the seam is now a typed convergence object.
+- **S1 — per-workspace budget.** shigoto `BudgetTree` keyed by workspace; kills
+  starvation; intra-replica, no new infra. (extends M4)
+- **S2 — async plan/apply jobs.** Split Planning/Applying into dispatch+observe
+  over a bounded shigoto pool; control/data-plane split.
+- **S3 — Workspace controller + template DAG.** Wire the Workspace FSM to a real
+  controller owning the budget + gem-env + dependency-ordered template Dag.
+- **S4 — per-workspace ruby env.** Each replica/worker loads only its
+  workspace's gems; kills the `$LOAD_PATH` shadowing by construction. (= M3)
+- **S5 — Shard FSM (active-active).** Lease-based workspace→replica assignment
+  replacing the singleton; horizontal scale; drain-safe rebalance via the
+  comfort property.
+
+Each guarantee is **tier-honest**: transition legality is parse-time-rejected
+at every scope; reachability/no-trap/comfort/budget-fairness are mechanical CI
+forcing-functions, not type-level proofs.
