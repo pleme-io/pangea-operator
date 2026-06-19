@@ -120,6 +120,20 @@ impl Phase {
         ]
     }
 
+    /// True if `self → to` is a legal edge in [`TRANSITIONS`] (by any trigger),
+    /// or a no-op re-set (`self == to`, which `update_phase` performs for
+    /// idempotent status patches). The runtime guard in `update_phase` calls
+    /// this to validate every ACTUAL phase transition against the typed FSM —
+    /// imposing the table as the live authority (lifecycle M1). An illegal
+    /// edge is logged loudly without changing behavior, so a handler that moves
+    /// the phase somewhere the FSM doesn't sanction surfaces immediately
+    /// instead of silently. Once the guard runs clean over real reconciles,
+    /// the call sites migrate to compute the destination via [`Phase::advance`]
+    /// outright (pure-authority dispatch).
+    pub fn edge_is_legal(self, to: Phase) -> bool {
+        self == to || TRANSITIONS.iter().any(|t| t.from == self && t.to == to)
+    }
+
     /// The legal triggers out of this phase, in declaration order. Pure lookup
     /// over [`TRANSITIONS`]; used to build the great error stack on an illegal
     /// transition.
@@ -527,6 +541,22 @@ mod tests {
         assert!(msg.contains("Legal triggers from `Ready`"), "{msg}");
         // Ready's real exits must be advertised:
         assert!(msg.contains("DriftDetected"), "{msg}");
+    }
+
+    /// `edge_is_legal` mirrors the table: every table edge is legal, a no-op
+    /// re-set is legal, and an edge the table doesn't contain is illegal. This
+    /// is what the runtime guard in `update_phase` enforces.
+    #[test]
+    fn edge_legality_mirrors_the_table() {
+        // every real edge is legal
+        for tr in TRANSITIONS.iter() {
+            assert!(tr.from.edge_is_legal(tr.to), "table edge {} → {} reported illegal", tr.from, tr.to);
+        }
+        // no-op re-set is legal (idempotent patches)
+        assert!(Phase::Ready.edge_is_legal(Phase::Ready));
+        // a nonsense edge is illegal
+        assert!(!Phase::Ready.edge_is_legal(Phase::Initializing), "Ready → Initializing must be illegal");
+        assert!(!Phase::Pending.edge_is_legal(Phase::Applying), "Pending → Applying must be illegal");
     }
 
     /// Spot-check the happy path advances exactly as the handlers do.

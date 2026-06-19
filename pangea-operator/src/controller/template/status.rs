@@ -59,6 +59,21 @@ pub async fn update_phase(
 
     let mut status = template.status.clone().unwrap_or_default();
     let phase_changed = status.phase != Some(phase);
+    // lifecycle M1 — impose the typed FSM as the live authority. Validate this
+    // transition against controller::lifecycle::TRANSITIONS. An edge the table
+    // doesn't sanction is logged LOUDLY (table↔handler drift surfaces in
+    // production) but behavior is preserved (we still apply `phase`), so this
+    // is stability-safe. Once the guard runs clean over real reconciles, the
+    // handlers migrate to compute the destination via Phase::advance outright.
+    let prev_phase = status.phase.unwrap_or_default();
+    if phase_changed && !prev_phase.edge_is_legal(phase) {
+        tracing::warn!(
+            prev = %prev_phase, next = %phase,
+            "FSM ILLEGAL EDGE: {prev_phase} → {phase} is not in \
+             controller::lifecycle::TRANSITIONS — handler made a transition the typed FSM \
+             does not sanction. Behavior preserved; reconcile the table or the handler."
+        );
+    }
     status.phase = Some(phase);
     status.observed_generation = template.metadata.generation.unwrap_or(0);
     // Always set conditions so FluxCD healthChecks see current state.
@@ -105,6 +120,21 @@ pub async fn update_phase_with_error(
 
     let mut status = template.status.clone().unwrap_or_default();
     let phase_changed = status.phase != Some(phase);
+    // lifecycle M1 — impose the typed FSM as the live authority. Validate this
+    // transition against controller::lifecycle::TRANSITIONS. An edge the table
+    // doesn't sanction is logged LOUDLY (table↔handler drift surfaces in
+    // production) but behavior is preserved (we still apply `phase`), so this
+    // is stability-safe. Once the guard runs clean over real reconciles, the
+    // handlers migrate to compute the destination via Phase::advance outright.
+    let prev_phase = status.phase.unwrap_or_default();
+    if phase_changed && !prev_phase.edge_is_legal(phase) {
+        tracing::warn!(
+            prev = %prev_phase, next = %phase,
+            "FSM ILLEGAL EDGE: {prev_phase} → {phase} is not in \
+             controller::lifecycle::TRANSITIONS — handler made a transition the typed FSM \
+             does not sanction. Behavior preserved; reconcile the table or the handler."
+        );
+    }
     status.phase = Some(phase);
     status.observed_generation = template.metadata.generation.unwrap_or(0);
     status.last_error = Some(error_msg.to_string());
