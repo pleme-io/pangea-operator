@@ -378,7 +378,62 @@ async fn dispatch_template_phase(
     // (which we already handled inline above).
     let handler = crate::controller::template_phase::for_phase(current_phase)
         .expect("every concrete Phase has a ReconcilePhase impl");
-    handler.handle(template, state).await
+
+    // ── Live-dispatch admission gate (the no-crash bound) ──────────────
+    // Only the EXPENSIVE phases consume a workspace-scoped budget permit:
+    // Compiling (git clone + ruby compile), Planning (magma plan), Applying
+    // (provider-RPC apply). Cheap phases — status transitions, drift
+    // checks, deletion — run ungated. When the workspace (or the global
+    // pool) is at cap we DEFER: requeue in the same phase, never drop the
+    // work; the next tick retries. The permit is RAII — held across
+    // handler.handle and freed on any exit (Ok OR Err), so an errored
+    // expensive phase never leaks a slot. At current fleet scale the
+    // generous defaults make this a no-op; it becomes load-bearing only
+    // when ready work exceeds budget. See `ControllerState.workspace_budgets`.
+    if matches!(
+        current_phase,
+        Phase::Compiling | Phase::Planning | Phase::Applying
+    ) {
+        let scope = workspace_scope(template);
+        match state.workspace_budgets.try_acquire(&scope) {
+            Some(_permit) => handler.handle(template, state).await,
+            None => {
+                // `Phase: Display` (strum) is the typed stringify surface — no format!().
+                let phase_label = current_phase.to_string();
+                state
+                    .metrics
+                    .record_admission_deferred(&scope, &phase_label);
+                tracing::debug!(
+                    scope = %scope,
+                    phase = %current_phase,
+                    "workspace concurrency budget exhausted; deferring expensive phase (will retry next tick)"
+                );
+                Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
+            }
+        }
+    } else {
+        handler.handle(template, state).await
+    }
+}
+
+/// The budget + fairness scope for a template: its workspace label
+/// (`pangea.pleme.io/workspace`), or `namespace/name` when unlabeled — so
+/// an unlabeled template is its own bucket and can neither share a budget
+/// slice with, nor be starved by, others. Mirrors the workspace identity
+/// the policy cascade already keys on.
+fn workspace_scope(template: &InfrastructureTemplate) -> String {
+    if let Some(ws) = template
+        .metadata
+        .labels
+        .as_ref()
+        .and_then(|l| l.get(crate::controller::workspace_catalog_controller::WORKSPACE_LABEL))
+    {
+        return ws.clone();
+    }
+    let ns = template.metadata.namespace.as_deref().unwrap_or("default");
+    let name = template.metadata.name.as_deref().unwrap_or("unknown");
+    // Typed slice-join, not format!() — a '/'-joined scope key (TYPED EMISSION).
+    [ns, name].join("/")
 }
 
 /// Handle Pending phase - prepare for compilation.

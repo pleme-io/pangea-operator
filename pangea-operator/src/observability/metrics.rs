@@ -278,6 +278,15 @@ pub struct Metrics {
     /// success/failure split per template without parsing CR status.
     pub magma_apply_total: IntCounterVec,
 
+    /// Times an expensive phase (Compiling|Planning|Applying) was
+    /// deferred because its workspace's concurrency budget was
+    /// exhausted (the shigoto-style admission bound wired into live
+    /// dispatch). Labels: scope (the workspace bucket), phase. A
+    /// nonzero rate means real contention — the no-crash bound is
+    /// doing its job, not a fault. Zero at small scale (generous
+    /// defaults), rising only when ready work exceeds budget.
+    pub admission_deferred_total: IntCounterVec,
+
     /// Resources successfully applied in the LAST magma apply per
     /// template (gauge — `outcome.applied.len()`). Labels: template,
     /// namespace. The "1494" half of the `applied 1494 / failed 14`
@@ -590,6 +599,15 @@ impl Metrics {
         )
         .expect("metric can be created");
 
+        let admission_deferred_total = IntCounterVec::new(
+            Opts::new(
+                "pangea_admission_deferred_total",
+                "Expensive-phase reconciles deferred by workspace concurrency budget, by scope and phase",
+            ),
+            &["scope", "phase"],
+        )
+        .expect("metric can be created");
+
         let magma_resources_applied = IntGaugeVec::new(
             Opts::new(
                 "pangea_magma_resources_applied",
@@ -712,6 +730,9 @@ impl Metrics {
             .register(Box::new(magma_apply_total.clone()))
             .expect("metric can be registered");
         registry
+            .register(Box::new(admission_deferred_total.clone()))
+            .expect("metric can be registered");
+        registry
             .register(Box::new(magma_resources_applied.clone()))
             .expect("metric can be registered");
         registry
@@ -776,10 +797,19 @@ impl Metrics {
             compile_request_seconds,
             output_bindings_published_total,
             magma_apply_total,
+            admission_deferred_total,
             magma_resources_applied,
             magma_resources_failed,
             magma_failed_changes_total,
         }
+    }
+
+    /// Bump the admission-deferred counter for a workspace scope +
+    /// phase (the expensive phase that was held back by the budget).
+    pub fn record_admission_deferred(&self, scope: &str, phase: &str) {
+        self.admission_deferred_total
+            .with_label_values(&[scope, phase])
+            .inc();
     }
 
     /// Convenience: bump the per-controller reconcile counter.

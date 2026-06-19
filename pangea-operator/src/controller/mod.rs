@@ -172,6 +172,24 @@ pub struct ControllerState {
     /// editing each call site. See `anomaly_emitter.rs` +
     /// `project_controller_detection_axis.md` (expose axis).
     pub anomaly_emitter: Arc<dyn anomaly_emitter::AnomalyEmitter>,
+
+    /// Workspace-scoped concurrency admission budget — the no-crash
+    /// bound wired into live dispatch. Before an expensive phase
+    /// (Compiling|Planning|Applying) does its provider-RPC / compile
+    /// work, `dispatch_template_phase` acquires a permit scoped to the
+    /// template's workspace; when that workspace (or the global pool)
+    /// is at cap, the phase is deferred (requeued), never dropped, and
+    /// `pangea_admission_deferred_total` ticks. This bounds concurrent
+    /// expensive work so the operator can hold a large pending set
+    /// without crashing, and no workspace can starve the others
+    /// (cross-scope isolation). Caps come from
+    /// `PANGEA_BUDGET_PER_WORKSPACE` / `PANGEA_BUDGET_GLOBAL` (defaults
+    /// 4 / 16 — generous, a no-op at current fleet scale, the bound for
+    /// when scale grows). The generic primitive is
+    /// `controller::scheduling::FairBudget` (a subset of the fleet
+    /// `shigoto-budget::BudgetTree`); ordering (`shigoto-rank`) plugs
+    /// in once dispatch grows a central pending set (S2/S3).
+    pub workspace_budgets: Arc<workspace_budget::WorkspaceBudgets>,
 }
 
 impl ControllerState {
@@ -211,6 +229,22 @@ impl ControllerState {
             anomaly_emitter::CompositeEmitter::pangea_default(metrics.clone()),
         );
 
+        // Live-dispatch admission budget (the no-crash bound). Generous
+        // env-tunable defaults: per-workspace 4, global 16 — above the
+        // current fleet's template count, so a no-op today and the bound
+        // for scale. Parse failures fall back to the default, never panic.
+        let budget_cfg = workspace_budget::BudgetConfig {
+            per_scope: std::env::var("PANGEA_BUDGET_PER_WORKSPACE")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(4),
+            global: std::env::var("PANGEA_BUDGET_GLOBAL")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(16),
+        };
+        let workspace_budgets = workspace_budget::WorkspaceBudgets::new(budget_cfg);
+
         Ok(Self {
             client,
             metrics,
@@ -231,6 +265,7 @@ impl ControllerState {
                 ),
             ),
             anomaly_emitter: anomaly_emitter_arc,
+            workspace_budgets,
         })
     }
 
