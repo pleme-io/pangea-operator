@@ -46,7 +46,6 @@
 //! graph-reachability quantifier). Say which is which; never round up.
 
 use crate::crd::Phase;
-use std::collections::BTreeSet;
 use std::fmt;
 
 /// Where a phase sits in the convergence structure.
@@ -383,7 +382,7 @@ impl std::error::Error for TransitionError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::{BTreeMap, VecDeque};
+    use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
     /// CI forcing-function #1 — exhaustive enumeration. Proves the lifecycle
     /// list covers every `Phase` variant (the legacy `Phase::ALL` omits
