@@ -107,6 +107,99 @@ pub fn schedule<'a, T: Schedulable>(
     eligible.into_iter().take(slots).collect()
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Admission control — the no-crash bound that pairs with the policy above.
+// ──────────────────────────────────────────────────────────────────────────
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+/// Admission caps. `per_scope` bounds one scope's concurrent in-flight work
+/// (the fair slice); `global` bounds the total (the pool). A scope == the
+/// fairness bucket a [`Schedulable::sched_scope`] returns.
+#[derive(Debug, Clone, Copy)]
+pub struct BudgetConfig {
+    pub per_scope: usize,
+    pub global: usize,
+}
+
+impl Default for BudgetConfig {
+    fn default() -> Self {
+        BudgetConfig { per_scope: 2, global: 8 }
+    }
+}
+
+#[derive(Default)]
+struct Inflight {
+    global: usize,
+    per_scope: HashMap<String, usize>,
+}
+
+/// Scope-fair concurrency admission. The no-crash bound: only `global` units do
+/// expensive work at once (the rest wait), and no scope exceeds `per_scope`, so
+/// a wedged scope can never starve the others. Generic over the scope string —
+/// works for workspaces, tenants, namespaces, repos. Lock held only for O(1)
+/// arithmetic, never across `.await` (deadlock-free).
+pub struct FairBudget {
+    cfg: BudgetConfig,
+    inflight: Mutex<Inflight>,
+}
+
+impl FairBudget {
+    pub fn new(cfg: BudgetConfig) -> Arc<Self> {
+        Arc::new(FairBudget { cfg, inflight: Mutex::new(Inflight::default()) })
+    }
+
+    /// Try to take a slot for `scope`. `Some(permit)` if both caps allow (the
+    /// permit frees the slot on drop), else `None` — the caller requeues.
+    /// Never blocks.
+    pub fn try_acquire(self: &Arc<Self>, scope: &str) -> Option<BudgetPermit> {
+        let mut g = self.inflight.lock().expect("budget mutex poisoned");
+        let now = *g.per_scope.get(scope).unwrap_or(&0);
+        if g.global >= self.cfg.global || now >= self.cfg.per_scope {
+            return None;
+        }
+        g.global += 1;
+        *g.per_scope.entry(scope.to_string()).or_insert(0) += 1;
+        Some(BudgetPermit { budget: Arc::clone(self), scope: scope.to_string(), released: false })
+    }
+
+    pub fn in_flight(&self, scope: &str) -> usize {
+        *self.inflight.lock().expect("budget mutex poisoned").per_scope.get(scope).unwrap_or(&0)
+    }
+
+    pub fn total_in_flight(&self) -> usize {
+        self.inflight.lock().expect("budget mutex poisoned").global
+    }
+
+    fn release(&self, scope: &str) {
+        let mut g = self.inflight.lock().expect("budget mutex poisoned");
+        g.global = g.global.saturating_sub(1);
+        if let Some(c) = g.per_scope.get_mut(scope) {
+            *c = c.saturating_sub(1);
+            if *c == 0 {
+                g.per_scope.remove(scope);
+            }
+        }
+    }
+}
+
+/// RAII admission slot — frees its slot on drop, exactly once (panic-safe).
+pub struct BudgetPermit {
+    budget: Arc<FairBudget>,
+    scope: String,
+    released: bool,
+}
+
+impl Drop for BudgetPermit {
+    fn drop(&mut self) {
+        if !self.released {
+            self.released = true;
+            self.budget.release(&self.scope);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,5 +292,61 @@ mod tests {
     fn bounded_dispatch_at_100k() {
         let pending: Vec<Mock> = (0..100_000).map(|i| Mock::new(&format!("u{i:06}"), PriorityClass::Normal)).collect();
         assert_eq!(schedule(&pending, 0, &w(), 8).len(), 8, "100k pending → bounded dispatch");
+    }
+
+    // ── admission (FairBudget) proofs ──────────────────────────────────────
+    fn budget(per_scope: usize, global: usize) -> Arc<FairBudget> {
+        FairBudget::new(BudgetConfig { per_scope, global })
+    }
+
+    #[test]
+    fn per_scope_cap_holds() {
+        let b = budget(2, 100);
+        let _p1 = b.try_acquire("a").unwrap();
+        let _p2 = b.try_acquire("a").unwrap();
+        assert!(b.try_acquire("a").is_none(), "3rd acquire on scope a refused (cap 2)");
+    }
+
+    #[test]
+    fn global_cap_holds() {
+        let b = budget(10, 3);
+        let _a = b.try_acquire("a").unwrap();
+        let _c = b.try_acquire("b").unwrap();
+        let _d = b.try_acquire("c").unwrap();
+        assert!(b.try_acquire("d").is_none(), "4th refused (global cap 3)");
+    }
+
+    #[test]
+    fn a_wedged_scope_does_not_starve_others() {
+        let b = budget(2, 100);
+        let _w1 = b.try_acquire("wedged").unwrap();
+        let _w2 = b.try_acquire("wedged").unwrap();
+        assert!(b.try_acquire("wedged").is_none(), "wedged at its cap");
+        let _o1 = b.try_acquire("other").unwrap();
+        let _o2 = b.try_acquire("other").unwrap();
+        assert_eq!(b.in_flight("other"), 2, "other unaffected by wedged being capped");
+    }
+
+    #[test]
+    fn raii_release_frees_the_slot() {
+        let b = budget(1, 10);
+        {
+            let _p = b.try_acquire("a").unwrap();
+            assert!(b.try_acquire("a").is_none());
+        }
+        assert_eq!(b.in_flight("a"), 0, "freed on drop");
+        let _p2 = b.try_acquire("a").expect("re-acquire after release");
+        assert_eq!(b.total_in_flight(), 1);
+    }
+
+    #[test]
+    fn one_scope_cannot_hog_a_contended_pool() {
+        let b = budget(2, 6);
+        let mut held = Vec::new();
+        for _ in 0..10 {
+            if let Some(p) = b.try_acquire("hog") { held.push(p); }
+        }
+        assert_eq!(b.in_flight("hog"), 2, "capped at its share, not the whole pool");
+        assert!(b.try_acquire("other").is_some(), "room remains for others");
     }
 }
