@@ -11,10 +11,10 @@
       # argument 'name'".
       url = "github:pleme-io/substrate";
     };
-    crate2nix = {
-      url = "github:nix-community/crate2nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    # crate2nix input REMOVED — the operator builds via the gen/lockfile-builder
+    # standard (committed Cargo.gen.lock delta + Cargo.build-spec.json,
+    # useLockfileBuilder=true). substrate's rust builders now default crate2nix
+    # to null, so the legacy input is no longer needed.
     forge = {
       url = "github:pleme-io/forge";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -45,13 +45,13 @@
     pangea-spot          = { url = "github:pleme-io/pangea-spot";          flake = false; };
   };
 
-  outputs = inputs@{ self, nixpkgs, substrate, crate2nix, forge, ruby-nix, ... }:
+  outputs = inputs@{ self, nixpkgs, substrate, forge, ruby-nix, ... }:
     let
       lib = nixpkgs.lib;
 
       # Operator (Rust) — substrate service-flake outputs.
       base = (import "${substrate}/lib/build/rust/service-flake.nix" {
-        inherit nixpkgs substrate forge crate2nix;
+        inherit nixpkgs substrate forge;
       }) {
         inherit self;
         serviceName = "pangea-operator";
@@ -333,9 +333,10 @@
           bundlerLibPaths = imagePkgs.lib.removeSuffix "\n" (builtins.readFile fullRubylibFile);
           fullRubylib = "${gemWs.rubylib}:${bundlerLibPaths}";
 
+          # gen/lockfile-builder path (useLockfileBuilder defaults true) — no
+          # crate2nix needed; the builder defaults the arg to null.
           builders = import "${substrate}/lib/build/rust/crate2nix-builders.nix" {
             pkgs = imagePkgs;
-            crate2nix = crate2nix.packages.${imageSystem}.default;
           };
           arch = if imageSystem == "aarch64-linux" then "arm64" else "amd64";
           # Anchor every path-gem SOURCE into the image closure. RUBYLIB
