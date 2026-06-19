@@ -18,6 +18,7 @@ pub mod generation_filter;
 pub mod import;
 pub mod lifecycle;
 pub mod workspace_lifecycle;
+pub mod shard_lifecycle;
 pub mod status_patch;
 pub mod operator_policy_cache;
 pub mod operator_policy_controller;

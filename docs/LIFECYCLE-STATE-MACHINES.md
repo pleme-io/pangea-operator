@@ -214,7 +214,7 @@ in-process mutable state to coordinate).
 
 | Scope | FSM | Owns | Status |
 |---|---|---|---|
-| **Shard** | `Unassigned → Claiming → Owned → Draining → Released` | which replica reconciles which workspace; rebalance on scale change (lease-based, active-active) | designed (`controller::shard_lifecycle` — next) |
+| **Shard** | `Unassigned → Claiming → Owned → Draining → Released` | which replica reconciles which workspace; rebalance on scale change (lease-based, active-active) | **built + proven** (`controller::shard_lifecycle`, 7 CI proofs; two good terminals Owned/Released; every active phase safely resets on `LeaseLost`) |
 | **Workspace** | `Unloaded → LoadingGems → Ready → Converging → Settled` (+ `GemsFailed`/`Degraded` berths, `Draining → Released`) | per-workspace ruby env, the per-workspace concurrency **budget**, the template **dependency DAG**, drain-safe handoff | **built + proven** (`controller::workspace_lifecycle`, 7 CI proofs) |
 | **Template** | the 12-phase lifecycle (M0/M1) — **now async** (gated on jobs) | one infra unit's converge loop | M0/M1 shipped |
 | **Job** | shigoto `JobPhase` | one compile/plan/apply *execution* | reuse shigoto |
