@@ -57,7 +57,13 @@ jobs:
       # under node memory. Slower but deterministically no-OOM (reliability >
       # speed on a one-node homelab). Raise again only once a binary cache serves
       # the gem + ruby builds so they substitute instead of recompiling.
-      buildCores: "2"
+      #
+      # cores:1 (was 2): even at maxJobs:1 the SINGLE rust_pangea-operator crate
+      # compile (codegen-units=1 + LTO + the large embedded-ruby/magma binary) is
+      # one memory-heavy rustc that OOM-killed (signal 9) on r40 when the node was
+      # under load. cores:1 makes that rustc single-threaded → lowest peak RAM, so
+      # the one big crate fits regardless of concurrent node memory pressure.
+      buildCores: "1"
       maxJobs: "1"
     secrets:
       # BOT_PAT carries write:packages for ghcr.io/pleme-io/* — the proven
