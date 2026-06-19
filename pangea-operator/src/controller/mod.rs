@@ -19,6 +19,8 @@ pub mod import;
 pub mod lifecycle;
 pub mod workspace_lifecycle;
 pub mod shard_lifecycle;
+pub mod workspace_budget;
+pub mod reconcile_scheduler;
 pub mod status_patch;
 pub mod operator_policy_cache;
 pub mod operator_policy_controller;

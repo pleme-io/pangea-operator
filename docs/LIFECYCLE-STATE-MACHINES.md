@@ -294,3 +294,48 @@ the same move.
 Each guarantee is **tier-honest**: transition legality is parse-time-rejected
 at every scope; reachability/no-trap/comfort/budget-fairness are mechanical CI
 forcing-functions, not type-level proofs.
+
+### 7.6 Reconcile at 100k — admission + an algorithmic "what's next"
+
+Converging **100,000 units without crashing, in the most valuable order** is
+two cooperating layers, both built + proven:
+
+**Layer A — admission control (the no-crash bound).**
+`controller::workspace_budget::WorkspaceBudgets` (6 proofs): a hard cap on
+*in-flight expensive work* — `global` (the pool) and `per_workspace` (fair
+slice). 100k units can be *pending*; only `global` ever do expensive work at
+once, the rest wait. Bounded RPC / memory / DB ⇒ backpressure, never collapse.
+**Cross-workspace isolation is proven**: a wedged workspace holds at most its
+slice and cannot starve the others. Permits are RAII (panic-safe release).
+
+**Layer B — the scheduling policy (the algorithmic "what's next").**
+`controller::reconcile_scheduler` (6 proofs): given far more eligible work than
+admission slots, a **total, deterministic order** over typed `ReconcileDemand`s:
+
+1. **priority class** (Critical ≻ High ≻ Normal ≻ Low) — hard tiers (proven:
+   a Critical at zero urgency preempts a maximally-urgent Normal);
+2. **within class, `urgency`** = weighted(staleness + behind-HEAD + drift
+   magnitude + **fairness deficit**) — most-stale / biggest-gap first
+   (efficiency), and the unbounded-growing fairness deficit guarantees **no
+   permanent starvation** (proven: a repeatedly-skipped unit's deficit
+   eventually overtakes a busy rival);
+3. **stable id tiebreak** — deterministic schedules.
+
+Two **eligibility gates** run before ranking: **dependency readiness** (can't
+jump the template-DAG / gem-readiness) and a **backoff window** (a wedged unit
+can't burn admission slots retrying — proven excluded inside its window, and
+proven to re-enter after it). Net: 100k pending → exactly `slots` dispatched,
+chosen by value + fairness, gated against waste.
+
+**Sharding closes the loop to true 100k**: the Shard FSM (§7.1) splits the
+100k workspaces across N replicas (lease-based, drain-safe), so each replica
+runs admission + scheduling over its `100k/N` shard, all over the per-namespace
+-isolated DB.
+
+**This is a fleet-wide primitive, not an operator quirk.** The shape —
+`shigoto::BudgetTree` (admission) + a typed fair-priority scheduling policy +
+dependency/backoff gates — is exactly what *any* pleme-io reconcile loop needs
+(Viggy promessas, eclusa, breathe). The intent is to lift `WorkspaceBudgets` +
+`reconcile_scheduler` into the substrate (shigoto) as the canonical
+anti-starvation + fair-scheduling primitive so it lives **everywhere**, not
+re-invented per controller.
