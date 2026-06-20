@@ -74,7 +74,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # which is the canonical way to drop status-only watch events at the
 # stream layer (defense-in-depth on top of every controller's status-
 # write diff-gate). See controller::generation_filter.
-kube = { version = "0.98", features = ["runtime", "derive", "unstable-runtime"] }
+kube = { version = "4.0", features = ["runtime", "derive", "unstable-runtime"] }
 k8s-openapi = { version = "0.24", features = ["v1_31"] }
 schemars = { version = "0.8", features = ["chrono"] }
 
