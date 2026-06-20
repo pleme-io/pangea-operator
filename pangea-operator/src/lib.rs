@@ -44,6 +44,7 @@ pub mod controller;
 pub mod error;
 pub mod executor;
 pub mod executor_migration;
+pub mod leader;
 pub mod observability;
 pub mod ruby;
 
