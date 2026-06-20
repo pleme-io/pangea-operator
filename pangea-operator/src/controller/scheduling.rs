@@ -107,6 +107,47 @@ pub fn schedule<'a, T: Schedulable>(
     eligible.into_iter().take(slots).collect()
 }
 
+/// The DISPATCH ENGINE — the single decision a central reconcile queue makes each
+/// tick: of everything pending, which units actually run *now*, in what order,
+/// without crashing. This composes the two bounds into one pass:
+///
+/// 1. **rank** ([`schedule`]) decides the ORDER — most-valuable-first
+///    (priority × urgency × fairness-deficit), eligibility-gated.
+/// 2. **budget** ([`FairBudget`]) decides the COUNT + per-scope FAIRNESS — it
+///    admits in rank order until the global pool or a scope's slice is full, so
+///    one workspace can never monopolize the pool (anti-starvation) and total
+///    in-flight work is bounded (no-crash).
+///
+/// Returns the admitted units paired with their RAII [`BudgetPermit`] — the
+/// caller dispatches each and drops the permit on completion (freeing the slot).
+/// A unit that ranks high but whose scope is saturated is simply skipped this
+/// tick and retried next (its fairness-deficit rises, so it wins soon) — never
+/// dropped. This is the function the S2/S3 workspace dispatch queue calls; at
+/// 100k pending it still returns in O(n log n) rank + O(admitted) acquire, and
+/// the live in-flight count never exceeds the budget regardless of n.
+#[must_use]
+pub fn pick_admitted<'a, T: Schedulable>(
+    pending: &'a [T],
+    now_secs: u64,
+    weights: &UrgencyWeights,
+    budget: &std::sync::Arc<FairBudget>,
+) -> Vec<(&'a T, BudgetPermit)> {
+    let mut admitted = Vec::new();
+    // Rank the whole eligible set (slots=len ⇒ full order), then admit greedily
+    // in that order subject to the budget — the narrowest of global/per-scope caps
+    // binds, exactly as the no-crash bound requires.
+    for unit in schedule(pending, now_secs, weights, pending.len()) {
+        match budget.try_acquire(unit.sched_scope()) {
+            Some(permit) => admitted.push((unit, permit)),
+            // Scope (or global pool) full — skip; the unit retries next tick with
+            // a higher fairness-deficit. Keep scanning: a LATER unit in a
+            // different, non-saturated scope can still be admitted (fairness).
+            None => continue,
+        }
+    }
+    admitted
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Admission control — the no-crash bound that pairs with the policy above.
 // ──────────────────────────────────────────────────────────────────────────
@@ -348,5 +389,60 @@ mod tests {
         }
         assert_eq!(b.in_flight("hog"), 2, "capped at its share, not the whole pool");
         assert!(b.try_acquire("other").is_some(), "room remains for others");
+    }
+
+    // ── the composed dispatch engine: rank ⊕ budget ────────────────────────
+    fn in_scope(id: &str, scope: &str, class: PriorityClass) -> Mock {
+        let mut m = Mock::new(id, class);
+        m.scope = scope.into();
+        m
+    }
+
+    /// Most-valuable-first WITHIN the budget: same scope, per_scope=2 ⇒ exactly
+    /// the top-2-by-rank are admitted, the 3rd skipped (scope full), none dropped.
+    #[test]
+    fn pick_admits_top_ranked_within_budget() {
+        let b = budget(2, 10); // per_scope 2
+        let crit = in_scope("crit", "ws", PriorityClass::Critical);
+        let mut loud = in_scope("loud", "ws", PriorityClass::Normal);
+        loud.drift = 999;
+        let quiet = in_scope("quiet", "ws", PriorityClass::Low);
+        let pending = vec![quiet, loud, crit];
+        // BIND the result — the permits are RAII; dropping the Vec frees them.
+        let admitted = pick_admitted(&pending, 0, &w(), &b);
+        let got: Vec<&str> = admitted.iter().map(|(u, _)| u.sched_id()).collect();
+        assert_eq!(got, vec!["crit", "loud"], "Critical then loud-Normal admitted; Low skipped (scope at cap)");
+        assert_eq!(b.in_flight("ws"), 2, "exactly the per-scope cap in flight while the permits are held");
+    }
+
+    /// Anti-starvation across scopes: a saturated scope does NOT block admission
+    /// of a lower-ranked unit in a different, free scope.
+    #[test]
+    fn pick_does_not_let_a_saturated_scope_block_other_scopes() {
+        let b = budget(1, 10); // per_scope 1
+        let mut hot1 = in_scope("hot1", "hot", PriorityClass::Critical);
+        hot1.drift = 999;
+        let hot2 = in_scope("hot2", "hot", PriorityClass::Critical); // same scope, loses the 1 slot
+        let cold = in_scope("cold", "cold", PriorityClass::Low); // different scope, still admitted
+        let pending = vec![hot1, hot2, cold];
+        let got: Vec<&str> = pick_admitted(&pending, 0, &w(), &b).iter().map(|(u, _)| u.sched_id()).collect();
+        assert!(got.contains(&"hot1") && got.contains(&"cold"), "hot1 + cold admitted: {got:?}");
+        assert!(!got.contains(&"hot2"), "hot2 skipped — hot scope at cap (but cold not blocked)");
+    }
+
+    /// Bounded: the global pool cap is never exceeded no matter how much pends,
+    /// and dropping the permits frees the pool (RAII).
+    #[test]
+    fn pick_is_globally_bounded_and_permits_release() {
+        let b = budget(10, 3); // global 3
+        let pending: Vec<Mock> = (0..1000)
+            .map(|i| in_scope(&format!("u{i}"), &format!("ws{i}"), PriorityClass::Normal))
+            .collect();
+        {
+            let admitted = pick_admitted(&pending, 0, &w(), &b);
+            assert_eq!(admitted.len(), 3, "1000 pending → at most the global cap admitted");
+            assert_eq!(b.total_in_flight(), 3);
+        } // permits dropped here
+        assert_eq!(b.total_in_flight(), 0, "RAII release frees the whole pool on completion");
     }
 }
