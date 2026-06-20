@@ -287,11 +287,15 @@ async fn embedded_backend_smoke() {
     // (no clone), and the backend's prepare_gem should prepend its
     // lib path. Distinct gem name from the previous step so we can
     // observe the "first call → prepend" behavior.
-    let prepared_gem_dir = tmp.join("pangea-prepared-gem-stub");
+    // SHA git_ref so GemCache::ensure() takes the immutable cache-HIT branch
+    // (is_sha_ref → return as-is, NO git fetch). The entry dir must ALSO contain
+    // a .git/ — ensure() now treats a .git-less dir as stale and re-clones
+    // (which needs network). Pre-seed both so the hit path runs fully offline.
+    let prepared_ref = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4";
+    let prepared_gem_dir = tmp.join(format!("pangea-prepared-gem-{prepared_ref}"));
     let prepared_lib_dir = prepared_gem_dir.join("lib");
     std::fs::create_dir_all(&prepared_lib_dir).expect("mkdir -p prepared lib");
-    // The cache hit branch tolerates a missing .git as long as lib
-    // exists.
+    std::fs::create_dir_all(prepared_gem_dir.join(".git")).expect("mkdir -p prepared .git");
     std::fs::write(
         prepared_lib_dir.join("prepared_gem.rb"),
         b"module PreparedGem; STAMP = \"42\".freeze; end\n",
@@ -306,7 +310,7 @@ async fn embedded_backend_smoke() {
         .prepare_gem(&pangea_operator::ruby::GemSource {
             name: "pangea-prepared-gem".to_string(),
             git_url: "https://example.invalid/pangea-prepared-gem.git".to_string(),
-            git_ref: "stub".to_string(),
+            git_ref: prepared_ref.to_string(),
             kind: pangea_operator::ruby::SourceKind::Ruby,
         })
         .await
@@ -340,7 +344,7 @@ async fn embedded_backend_smoke() {
         .prepare_gem(&pangea_operator::ruby::GemSource {
             name: "pangea-prepared-gem".to_string(),
             git_url: "https://example.invalid/pangea-prepared-gem.git".to_string(),
-            git_ref: "stub".to_string(),
+            git_ref: prepared_ref.to_string(),
             kind: pangea_operator::ruby::SourceKind::Ruby,
         })
         .await
