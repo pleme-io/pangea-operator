@@ -2968,11 +2968,11 @@
         "nixpkgs": "nixpkgs_14"
       },
       "locked": {
-        "lastModified": 1781834063,
-        "narHash": "sha256-9+GtCFfMczBV90ugr6lc7yUVPNFVNqxnGRqGB3540u4=",
+        "lastModified": 1781966061,
+        "narHash": "sha256-dVL4zyMu9wU0x0TmzKI5vJ1QiLI776cO8TM9qQIMftk=",
         "owner": "pleme-io",
         "repo": "substrate",
-        "rev": "1b6f41b77e8192b58456a7360f982270db37c71d",
+        "rev": "90d4c8a32d2b1e00d0b1e00c4f5d99c5a3538963",
         "type": "github"
       },
       "original": {
