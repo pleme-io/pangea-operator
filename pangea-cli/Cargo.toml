@@ -20,7 +20,13 @@ clap = { workspace = true, features = ["wrap_help"] }
 
 # GraphQL client
 cynic.workspace = true
-reqwest.workspace = true
+# NOT reqwest.workspace (=0.12): cynic 3.13's `http-reqwest` ReqwestExt (the
+# source of `.run_graphql()`) is implemented for reqwest 0.13's RequestBuilder.
+# Building requests with the workspace's 0.12 RequestBuilder made `run_graphql`
+# resolve to nothing (E0599), which broke `cargo test --workspace` (and thus the
+# whole repo's test gate). Pin THIS crate to 0.13 to match cynic; the operator
+# keeps 0.12 (two reqwest majors already coexist in the lock).
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
 
 # Async runtime
 tokio.workspace = true
