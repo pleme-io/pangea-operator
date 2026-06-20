@@ -307,7 +307,9 @@ mod tests {
             assert!(parsed.is_ok(), "Invalid YAML in CRD document {}: {:?}", count, parsed.err());
             count += 1;
         }
-        assert_eq!(count, 14, "Expected 14 CRD documents");
+        // 15 CRD kinds (see src/crd/*.rs): the 14 originals + reconciliation_loop
+        // (roda). Update this when adding/removing a CustomResource.
+        assert_eq!(count, 15, "Expected 15 CRD documents");
     }
 
     // ── Item H — CRD upgrade-compat tests ────────────────────────
