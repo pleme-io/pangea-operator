@@ -1380,6 +1380,45 @@ async fn handle_initializing(
     Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
 }
 
+/// Restart-safety predicate for the plan / apply / ready phase guards:
+/// is the compiled config available for this reconcile to read?
+///
+/// Two source-of-truth paths — see `handle_compiling`:
+///   - **DB-backed magma** (`executor == magma` AND an artifact store is
+///     wired): the rendered config lives in Postgres (`put_rendered_config`)
+///     and `main.tf.json` is INTENTIONALLY never written to the pod-local
+///     emptyDir (the zero-disk magma handoff). Checking only the disk file
+///     looped DB-backed templates FOREVER at Planning/Applying/Ready — the
+///     config is present in Postgres but absent on disk, so the unconditional
+///     `main.tf.json` guard bounced every cycle (the pleme-io-opensource
+///     `+N`-plan-never-applies wedge). Probe the Postgres row instead.
+///   - **disk** (tofu, or the magma disk-fallback): the compiled config IS
+///     `main.tf.json` on disk; a fresh pod that resumed PAST `handle_compiling`
+///     has none → bounce to Compiling so clone+compile re-runs.
+///
+/// Keys MUST match `handle_compiling`'s `put_rendered_config`:
+/// schema = `pangea_{spec.pangeaNamespace}`, template = `name_any()`.
+async fn compiled_config_available(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+    main_tf_on_disk: bool,
+) -> Result<bool> {
+    let magma_db_backed =
+        state.executor_for(template).name() == "magma" && state.artifact_store.is_some();
+    if !magma_db_backed {
+        return Ok(main_tf_on_disk);
+    }
+    let schema_name = format!("pangea_{}", template.spec.pangea_namespace);
+    let present = state
+        .artifact_store
+        .as_ref()
+        .expect("magma_db_backed implies artifact_store.is_some()")
+        .get_rendered_config(&schema_name, &template.name_any())
+        .await?
+        .is_some();
+    Ok(present)
+}
+
 /// Handle Planning phase - run `tofu plan` and analyze changes.
 /// Public wrapper for `handle_planning` so trait impls in
 /// `controller::template_phase` can dispatch to it. The body lives
@@ -1428,11 +1467,12 @@ async fn handle_planning(
     // every operator redeploy re-broke pleme-io-opensource + every other
     // template). If the compiled config is absent, bounce back to
     // Compiling so the clone+compile re-runs before we plan.
-    if !workspace.main_tf_path().exists() {
+    if !compiled_config_available(template, state, workspace.main_tf_path().exists()).await? {
         warn!(
             template = %template.name_any(),
-            "Planning: compiled main.tf.json missing (pod restart / wiped \
-             workspace) — resetting to Compiling so clone+compile re-runs"
+            "Planning: compiled config missing (pod restart / wiped workspace, \
+             and no Postgres rendered_config) — resetting to Compiling so \
+             clone+compile re-runs"
         );
         update_phase(template, Phase::Compiling, state).await?;
         return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
@@ -1784,11 +1824,12 @@ async fn handle_applying(
     // main.tf.json (nor plan checkpoint) — the apply / post-apply re-plan
     // would IO-error on the missing config. Bounce back to Compiling so
     // the clone+compile (then plan) re-runs.
-    if !workspace.main_tf_path().exists() {
+    if !compiled_config_available(template, state, workspace.main_tf_path().exists()).await? {
         warn!(
             template = %template.name_any(),
-            "Applying: compiled main.tf.json missing (pod restart / wiped \
-             workspace) — resetting to Compiling so clone+compile re-runs"
+            "Applying: compiled config missing (pod restart / wiped workspace, \
+             and no Postgres rendered_config) — resetting to Compiling so \
+             clone+compile re-runs"
         );
         update_phase(template, Phase::Compiling, state).await?;
         return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
@@ -2933,11 +2974,12 @@ async fn handle_ready(
     // throttle), so a restart self-heals immediately instead of waiting out
     // the drift interval. (The 2026-06-03 fleet wedge: 4 Ready templates
     // os-error-2'd every cycle on the post-restart emptyDir.)
-    if !workspace.main_tf_path().exists() {
+    if !compiled_config_available(template, state, workspace.main_tf_path().exists()).await? {
         warn!(
             template = %template.name_any(),
-            "Ready: compiled main.tf.json missing (pod restart / wiped \
-             workspace) — resetting to Compiling so clone+compile re-runs"
+            "Ready: compiled config missing (pod restart / wiped workspace, \
+             and no Postgres rendered_config) — resetting to Compiling so \
+             clone+compile re-runs"
         );
         update_phase(template, Phase::Compiling, state).await?;
         return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
