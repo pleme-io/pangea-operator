@@ -10,6 +10,7 @@ use pangea_operator::{
     crd::generate_crds,
     error::Result,
     executor::ExecutorConfig,
+    leader::{Leadership, LeaderConfig, LeaderElector},
     observability::{init_tracing, run_health_server, Metrics},
 };
 
@@ -77,6 +78,18 @@ impl Config {
             grpc_addr,
             generate_crds,
         }
+    }
+}
+
+/// Leader election is ON by default; `LEADER_ELECTION=false|0|off|no` disables
+/// it (single-instance deployments, local runs, tests).
+fn leader_election_enabled() -> bool {
+    match std::env::var("LEADER_ELECTION") {
+        Ok(v) => {
+            let v = v.trim().to_ascii_lowercase();
+            !(v == "false" || v == "0" || v == "off" || v == "no")
+        }
+        Err(_) => true,
     }
 }
 
@@ -313,6 +326,57 @@ async fn main() -> Result<()> {
 
     info!(%config.health_addr, %config.metrics_addr, "Health + metrics servers started");
 
+    // Install the SIGTERM/SIGINT drain handler EARLY — before leader election —
+    // so a follower pod still waiting for the lease exits promptly when
+    // Kubernetes scales it down or rolls it.
+    let shutdown = ShutdownController::install();
+
+    // ── Leader election ────────────────────────────────────────────────────
+    // Exactly one pod reconciles at a time (magma/tofu hold per-workspace state
+    // locks). The health/readiness servers above are ALREADY live and do NOT
+    // depend on the lease, so under a RollingUpdate a broken new image never
+    // becomes Ready while the old leader keeps the lease and keeps reconciling
+    // — a bad rollout is a no-op, not an outage. Only when the new pod is Ready
+    // does k8s terminate the old one, releasing the lease for a clean handoff.
+    // Set LEADER_ELECTION=false to disable (single-instance / local / tests).
+    let leader_handle = if leader_election_enabled() {
+        let cfg = LeaderConfig::from_env();
+        let elector = LeaderElector::new(client.clone(), cfg);
+        info!(
+            identity = %elector.identity(),
+            lease = %elector.lease_name(),
+            "Leader election enabled — acquiring lease before starting controllers"
+        );
+        // Acquire leadership, but bail cleanly if we are drained while still a
+        // follower waiting for the lease.
+        let mut acquire_drain = shutdown.token();
+        let outcome = tokio::select! {
+            _ = acquire_drain.wait_ref() => None,
+            o = elector.acquire() => Some(o),
+        };
+        match outcome {
+            None => {
+                info!("Shutdown received while awaiting leadership — exiting without starting controllers");
+                return Ok(());
+            }
+            // RBAC/Lease API unavailable — run as a singleton (pre-leader-
+            // election behavior). No renew task; nothing to step down from.
+            Some(Leadership::Unavailable) => None,
+            Some(Leadership::Acquired) => {
+                info!("Acquired leadership — starting controllers");
+                // Keep the lease renewed in the background; the task returns if
+                // leadership is ever lost, which we treat as a shutdown trigger.
+                let renew = elector.clone();
+                Some(tokio::spawn(async move {
+                    renew.keep_renewed().await;
+                }))
+            }
+        }
+    } else {
+        info!("Leader election disabled (LEADER_ELECTION=false) — starting controllers immediately");
+        None
+    };
+
     // Spawn controllers
     let template_state = state.clone();
     let template_controller = tokio::spawn(async move {
@@ -493,11 +557,24 @@ async fn main() -> Result<()> {
         info!(%config.graphql_addr, "GraphQL server started");
     }
 
-    // Install SIGTERM/SIGINT handler and wait for drain.
-    let shutdown = ShutdownController::install();
-    shutdown.token().wait().await;
-
-    info!("Shutdown signal received, stopping operator");
+    // Wait for either a SIGTERM/SIGINT drain OR loss of leadership (another pod
+    // took the lease). Either way, stop the controllers and exit; Kubernetes
+    // restarts us as a follower if it was a leadership loss.
+    match leader_handle {
+        Some(handle) => {
+            let mut drain = shutdown.token();
+            tokio::select! {
+                _ = drain.wait_ref() => info!("Shutdown signal received, stopping operator"),
+                _ = handle => warn!(
+                    "Lost leadership lease — stopping controllers so a single reconciler is preserved"
+                ),
+            }
+        }
+        None => {
+            shutdown.token().wait().await;
+            info!("Shutdown signal received, stopping operator");
+        }
+    }
 
     // Abort controllers (they run forever)
     template_controller.abort();
