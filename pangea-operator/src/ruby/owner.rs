@@ -11,10 +11,12 @@
 //! [`RubyOwner::shutdown`] is called.
 
 use pangea_ruby_eval::{
-    boot_ruby_unchecked, json_to_ruby, parse_yaml_fixture, RubyEvaluator,
+    boot_ruby_unchecked, json_to_ruby, parse_yaml_fixture, workspace_mirrors_gem, RubyEvaluator,
 };
 use serde_json::Value as Json;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use super::gem_cache::GemCache;
 use std::thread::JoinHandle;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{error, info, warn};
@@ -678,49 +680,61 @@ fn compile_template(
     // See `pangea_ruby_eval::CompileContext` doc for the full design
     // + memory/project_ruby_pool_double_load_fix.md for the bug
     // class this defends against.
-    let load_paths: Vec<std::path::PathBuf> = req
-        .rubylib_paths
-        .iter()
-        .map(std::path::PathBuf::from)
+    // ── Gem-mirror SKIP-PREPEND (the dual-gem-load fix) ──────────────────────
+    // A workspace clone whose `_repo/lib` IS pangea-architectures (a "gem mirror"
+    // — every `workspaces/*` template's source) must NOT be prepended to
+    // `$LOAD_PATH` nor purged from `$LOADED_FEATURES`. Doing so (the prior
+    // `with_purge_modules` + `purge_feature_prefixes` strategy) forces a SECOND
+    // execution of the gem's Dry::Struct files, whose attribute registry survives
+    // the constant purge → "Attribute :x has already been defined" mid-require →
+    // `uninitialized constant Pangea::Architectures::OpenSourceRepo` (the
+    // pleme-io-opensource wedge). Skipping the prepend lets `require` resolve to
+    // the already-loaded gem copy: single execution, no redefinition. The mirror
+    // decision is DERIVED from the baked gem's actual load tree
+    // (`workspace_mirrors_gem`) — the planner's structural answer (owner.rs §700),
+    // not the hardcoded gem path the old `purge_feature_prefixes` used. Proven by
+    // `tests/dual_gem_load.rs`; the gem-mirror primitive is unit-tested in
+    // pangea-ruby-eval.
+    let gem_libs: Vec<PathBuf> = std::fs::read_dir(GemCache::from_env().base_dir())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path().join("lib"))
+        .filter(|p| p.is_dir())
         .collect();
+    let mut non_mirror_libs: Vec<PathBuf> = Vec::new();
+    let mut mirror_detected = false;
+    for rl in &req.rubylib_paths {
+        let clone = PathBuf::from(rl);
+        if gem_libs.iter().any(|g| workspace_mirrors_gem(&clone, g, &["pangea/"])) {
+            mirror_detected = true; // skip prepend + skip purge for this clone
+        } else {
+            non_mirror_libs.push(clone);
+        }
+    }
 
     let ctx = pangea_ruby_eval::CompileContext::new()
-        .with_load_paths(load_paths)
-        .with_env(env_overrides.clone())
-        // Pangea::Architectures is the canonical bug-prone module
-        // (Dry::Struct classes with strict attribute-redefinition
-        // semantics; loaded by prepare_gem at runtime + by every
-        // workspace compile). Purging before each compile gives the
-        // workspace a fresh definition surface.
-        //
-        // Sibling namespaces (Pangea::Resources, Pangea::Helpers) are
-        // NOT purged here: production attempts to extend the purge
-        // list risk re-require cascades that hit Ruby's stack limit
-        // (the bug we already paid for once on 2026-05-28). The
-        // structural answer is the planner's source classification +
-        // module-discovery loop (project_controller_detection_axis.md)
-        // — derive the purge surface from the broadcast gem's actual
-        // load tree, not from a hardcoded list that drifts.
-        .with_purge_modules(["Pangea::Architectures"])
-        // Scoped tightly to the bundle's exact path. Earlier attempts
-        // used /nix/store/ — too broad, unloaded pangea-core +
-        // dry-struct + dry-types, triggering re-require cascades that
-        // hit Ruby's stack limit. Only purge what the workspace will
-        // genuinely shadow.
-        //
-        // The gem-cache prefix alone is INSUFFICIENT for a GIT-SOURCE
-        // template (e.g. cloudflare-pleme), which loads Pangea::Architectures
-        // from its OWN clone lib (a `rubylib_paths` entry), NOT the
-        // prepare_gem cache. `with_purge_modules` removes the constant, but
-        // unless the clone-lib path's `$LOADED_FEATURES` entries are also
-        // purged the subsequent `require` is a no-op (feature still "loaded")
-        // → the constant is never redefined → "uninitialized constant
-        // Pangea::Architectures" on every git-source compile. Adding each
-        // `rubylib_paths` root is STILL workspace-scoped (the template's own
-        // clone dirs) — never /nix/store — so no shared-gem re-require
-        // cascade. Inline templates have empty rubylib_paths → list is just
-        // the gem-cache prefix, unchanged behavior.
-        .with_purge_feature_prefixes(purge_feature_prefixes(&req.rubylib_paths));
+        .with_load_paths(non_mirror_libs.clone())
+        .with_env(env_overrides.clone());
+    // A mirror compile uses the already-loaded gem as-is: NO module purge, NO
+    // feature purge (purging would force the gem reload → redefinition). When NO
+    // mirror is present, preserve the EXACT prior workspace-wins purge strategy so
+    // genuinely-distinct templates don't regress.
+    let ctx = if mirror_detected {
+        ctx
+    } else {
+        let non_mirror_strs: Vec<String> =
+            non_mirror_libs.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+        // No mirror → the prior workspace-wins purge strategy, scoped to the
+        // NON-mirror clones (a mirror clone is never prepended, so never purged).
+        // Pangea::Architectures is the canonical bug-prone Dry::Struct module;
+        // sibling namespaces stay un-purged (extending the list re-triggered the
+        // 2026-05-28 stack-limit cascade). The clone-lib prefixes are required so a
+        // genuinely-distinct git-source template re-requires its own copy (else the
+        // 'uninitialized constant Pangea::Architectures' no-op-require bug).
+        ctx.with_purge_modules(["Pangea::Architectures"])
+            .with_purge_feature_prefixes(purge_feature_prefixes(&non_mirror_strs))
+    };
 
     let (synthesis_json, warnings) = evaluator
         .compile_in_context(&ctx, |ev| {

@@ -140,6 +140,13 @@ async fn dual_gem_load_reproduces_uninitialized_open_source_repo() {
     // of 'dry-struct' resolves to the single surviving registry.
     pool.broadcast_prepend_load_path(stubs.clone()).await.expect("prepend stubs");
 
+    // A minimal TerraformSynthesizer so the compile's synthesis phase completes
+    // (production bundles terraform-synthesizer; the harness doesn't). Lets a
+    // SUCCESSFUL mirror compile return Ok — the real proof the dual-load is gone.
+    eval(&pool, "class TerraformSynthesizer; def synthesis; {}; end; end; nil")
+        .await
+        .expect("define TerraformSynthesizer stub");
+
     // STEP A — prime the gem copy: prepend the gem lib, require types once →
     // OpenSourceRepo defined, attribute :cluster_name registered once.
     pool.broadcast_prepend_load_path(gem_lib.clone()).await.expect("prepend gem lib");
@@ -155,10 +162,14 @@ async fn dual_gem_load_reproduces_uninitialized_open_source_repo() {
     // file at a distinct abs path) and report class+message. This is what the
     // purge+reload does under the hood; surfacing the message tells M1 whether
     // the stub model is faithful to real dry-struct.
+    // NOTE: bracket $LOAD_PATH (save/restore) — the probe must NOT pollute the
+    // VM's $LOAD_PATH for STEP B (an un-bracketed unshift would permanently put the
+    // clone at the head, making STEP B's require resolve to the clone and defeating
+    // the skip-prepend fix — a harness artifact, not the real path).
     let probe = eval(
         &pool,
         &format!(
-            "$LOAD_PATH.unshift({:?}); begin; load({:?}); 'NO-RAISE'; rescue Exception => e; e.class.to_s + ': ' + e.message; end",
+            "saved = $LOAD_PATH.dup; $LOAD_PATH.unshift({:?}); begin; load({:?}); 'NO-RAISE'; rescue Exception => e; e.class.to_s + ': ' + e.message; ensure; $LOAD_PATH.replace(saved); end",
             ws_lib.to_string_lossy(),
             ws_lib.join("pangea/architectures/types.rb").to_string_lossy(),
         ),
@@ -175,6 +186,15 @@ async fn dual_gem_load_reproduces_uninitialized_open_source_repo() {
         "M1: the dual-load mechanism did not reproduce in the probe. Got: {probe}"
     );
 
+    // DEBUG: VM state going into STEP B (is the gem types.rb already loaded?).
+    let state = eval(
+        &pool,
+        "[$LOAD_PATH.first(3), $LOADED_FEATURES.grep(/architectures.types/), Pangea::Architectures.const_defined?(:OpenSourceRepo)].inspect",
+    )
+    .await
+    .unwrap();
+    eprintln!("PRE-STEP-B VM STATE => {state}");
+
     // ── STEP B — the git-source compile: the real backend purge+reload path ──
     let backend = EmbeddedCompilerBackend::new(pool.clone());
     let req = CompileRequest {
@@ -186,28 +206,27 @@ async fn dual_gem_load_reproduces_uninitialized_open_source_repo() {
     };
     let result = backend.compile(req).await;
 
-    // ── PRE-FIX assertion (RED): the dual-mount purge+reload re-runs the clone
-    // copy → Dry::Struct attribute redefinition → OpenSourceRepo never defines. ──
-    let err = match result {
-        Err(e) => e.to_string(),
-        Ok(_) => panic!(
-            "BUG NOT REPRODUCED: the dual-mount compile SUCCEEDED — expected the \
-             redefinition/uninitialized-constant failure. The repro is not faithful yet."
-        ),
-    };
-    eprintln!("M0 BACKEND COMPILE (real purge+reload path) => Err: {err}");
-    // The real backend's `compile eval` surfaces the Ruby exception as its object
-    // inspect (`#<RuntimeError:0x...>`) — message dropped by the eval-error
-    // formatter — but the probe above proved it IS the `attribute already defined`
-    // redefinition. In production this same RuntimeError aborts the require chain
-    // so `OpenSourceRepo` never finishes → `uninitialized constant`. Accept either
-    // the redefinition message OR the RuntimeError surfacing OR the downstream form.
-    assert!(
-        err.contains("has already been defined")
-            || err.contains("RuntimeError")
-            || err.contains("uninitialized constant Pangea::Architectures::OpenSourceRepo"),
-        "the dual-mount compile failed, but not via the dual-load redefinition. Got: {err}"
-    );
+    // ── POST-FIX assertion (GREEN): the gem-mirror skip-prepend fix detects that
+    // the clone lib mirrors the baked gem, so it is NOT prepended and NOT purged →
+    // the template's `require` resolves to the already-loaded gem copy (single
+    // execution) → no Dry::Struct redefinition → OpenSourceRepo resolves → compile
+    // succeeds. (The PROBE above shows the raw double-load STILL raises — the fix
+    // works by AVOIDING the second execution, not by suppressing the symptom.) ──
+    match &result {
+        Ok(_) => eprintln!("M2 FIX VERIFIED: the dual-mount compile now SUCCEEDS (gem-mirror skip-prepend)"),
+        Err(e) => {
+            let msg = e.to_string();
+            // A regression would surface the redefinition / uninitialized constant.
+            assert!(
+                !msg.contains("has already been defined")
+                    && !msg.contains("RuntimeError")
+                    && !msg.contains("uninitialized constant Pangea::Architectures::OpenSourceRepo"),
+                "FIX REGRESSED — the dual-load failure is back: {msg}"
+            );
+            panic!("the mirror compile failed for an unrelated reason (not the dual-load bug): {msg}");
+        }
+    }
+    assert!(result.is_ok(), "the gem-mirror compile must succeed with the skip-prepend fix");
 
     let _keep: &Arc<RubyPool> = &pool; // keep the VM alive to the end
     let _ = PathBuf::from(&tmp); // tmp left for inspection

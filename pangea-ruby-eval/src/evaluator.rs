@@ -376,6 +376,41 @@ pub fn detect_load_path_conflicts(
         .collect()
 }
 
+/// Is `gem_lib` a **full mirror** shadowed by `workspace_lib`? — i.e. every
+/// logical `.rb` file the gem exposes under `prefixes` is ALSO exposed by the
+/// workspace. This is the gem-mirror signal: a workspace whose `_repo/lib` *is*
+/// the gem (pangea-architectures itself — pleme-io-opensource, cloudflare-pleme,
+/// every `workspaces/*` template). For a mirror, the workspace clone must NOT be
+/// prepended to `$LOAD_PATH` and NOT be purged from `$LOADED_FEATURES`: doing so
+/// forces a SECOND execution of the gem's Dry::Struct files (whose attribute
+/// registry survives the constant purge) → "Attribute :x has already been
+/// defined" mid-require → `uninitialized constant`. Skipping the prepend lets
+/// `require` resolve to the already-loaded gem copy — single execution, no
+/// redefinition. This is the load-bearing fix for the dual-gem-load wedge;
+/// proven by `pangea-operator/tests/dual_gem_load.rs`.
+///
+/// Returns `false` when the gem exposes no files under `prefixes` (nothing to
+/// mirror) or when any gem file is absent from the workspace (a genuinely
+/// distinct workspace that must keep the workspace-wins purge strategy).
+pub fn workspace_mirrors_gem(workspace_lib: &Path, gem_lib: &Path, prefixes: &[&str]) -> bool {
+    use std::collections::{BTreeMap, BTreeSet};
+    let logical = |lib: &Path| -> BTreeSet<String> {
+        let mut acc: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
+        for prefix in prefixes {
+            let root = lib.join(prefix.trim_end_matches('/'));
+            if root.is_dir() {
+                scan_rb_files(&root, lib, &mut acc);
+            }
+        }
+        acc.into_keys().collect()
+    };
+    let gem_files = logical(gem_lib);
+    if gem_files.is_empty() {
+        return false;
+    }
+    gem_files.is_subset(&logical(workspace_lib))
+}
+
 /// Source classification for one `$LOAD_PATH` candidate. Drives
 /// `plan_load_paths` decisions: a `WorkspaceRepo` entry is
 /// authoritative for its own files, so an overlapping `GemBroadcast`
@@ -1478,6 +1513,37 @@ mod tests {
         let dir = root.join("pangea");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(format!("{name}.rb")), "module Pangea; end\n").unwrap();
+    }
+
+    #[test]
+    fn workspace_mirrors_gem_detects_full_mirror_and_rejects_distinct() {
+        let tmp = TempDir::new().unwrap();
+        let gem = tmp.path().join("gem_lib");
+        let mirror_ws = tmp.path().join("mirror_ws_lib");
+        let distinct_ws = tmp.path().join("distinct_ws_lib");
+        for p in [&gem, &mirror_ws, &distinct_ws] {
+            std::fs::create_dir_all(p).unwrap();
+        }
+        // The gem exposes pangea/architectures.rb (its signature file).
+        make_pangea_rb(&gem, "architectures");
+        // A FULL MIRROR exposes the same logical file (the pangea-architectures
+        // workspace case — pleme-io-opensource, cloudflare-pleme).
+        make_pangea_rb(&mirror_ws, "architectures");
+        // A DISTINCT workspace exposes a different file (no mirror).
+        make_pangea_rb(&distinct_ws, "something_else");
+
+        assert!(
+            workspace_mirrors_gem(&mirror_ws, &gem, &["pangea/"]),
+            "a workspace exposing the gem's files IS a mirror → skip prepend/purge"
+        );
+        assert!(
+            !workspace_mirrors_gem(&distinct_ws, &gem, &["pangea/"]),
+            "a workspace with its own distinct files is NOT a mirror → keep purge strategy"
+        );
+        // An empty gem mirrors nothing (guard against a vacuous subset==true).
+        let empty_gem = tmp.path().join("empty_gem");
+        std::fs::create_dir_all(&empty_gem).unwrap();
+        assert!(!workspace_mirrors_gem(&mirror_ws, &empty_gem, &["pangea/"]));
     }
 
     #[test]
