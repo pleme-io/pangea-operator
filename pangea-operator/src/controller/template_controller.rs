@@ -332,7 +332,31 @@ async fn reconcile_template(
     // at `dispatch_template_phase` below; reconcile_template stays focused
     // on the surrounding lifecycle (deletion, finalizers, gen-tracking,
     // gating) and delegates the body work to phase handlers.
-    let action = dispatch_template_phase(current_phase, &template, &state).await?;
+    let action = match dispatch_template_phase(current_phase, &template, &state).await {
+        Ok(action) => action,
+        Err(e) => {
+            // HONEST FEEDBACK. A hard reconcile error otherwise escapes via `?`
+            // to `error_policy`, which only WARN-logs + requeues — the CR status
+            // stays frozen at its current phase (a silent spin). Record the real
+            // reason on the CR (Phase::Failed + .status.lastError) BEFORE
+            // propagating, so the convergence→delivery feedback is honest: an
+            // operator sees e.g. "Magma execution failed: substrate preflight
+            // violations: resources declared but no terraform.required_providers"
+            // on `.status` and fixes the config, instead of staring at a stuck
+            // "Planning". The soft-failure paths (handlers returning Ok with a
+            // recorded Failed) are unaffected — this catches only the un-recorded
+            // hard `Err`s. Best-effort: a status-patch failure must NOT mask the
+            // original error — log it and still surface `e` for escalation/backoff.
+            let err_msg = format!("{e}");
+            if let Err(pe) =
+                update_phase_with_error(&template, Phase::Failed, &err_msg, &state).await
+            {
+                warn!(error = %pe, "failed to record reconcile error on CR status");
+            }
+            record_event(&template, &state, EventType::Warning, "ReconcileFailed", &err_msg).await;
+            return Err(e);
+        }
+    };
 
     Ok(action.into())
 }
@@ -667,6 +691,15 @@ async fn handle_compiling(
     } else {
         return Err(Error::InvalidSource("No template source specified".into()));
     };
+
+    // Non-git sources (inline / configMap) have no remote HEAD to anchor
+    // freshness — record the content-revision as the compiledRevision so a
+    // later config EDIT is detectable by `compiled_config_available`. Git
+    // already set compiled_revision to its HEAD SHA above; this fills only the
+    // non-git case. (For git, `content` is the \0PATH\0 sentinel, never hashed.)
+    if compiled_revision.is_none() {
+        compiled_revision = Some(content_revision(&content));
+    }
 
     // Distinguish three modes:
     //   1. content starts with `{` → already-rendered Terraform JSON, use as-is.
@@ -1483,6 +1516,50 @@ async fn handle_initializing(
 ///
 /// Keys MUST match `handle_compiling`'s `put_rendered_config`:
 /// schema = `pangea_{spec.pangeaNamespace}`, template = `name_any()`.
+/// Stable content-addressed revision of a NON-GIT source's content — the
+/// non-git analogue of the git `compiledRevision` SHA. blake3 (the same hash
+/// the artifact store uses), 16-hex-char prefix, `cm:`-tagged so it can never
+/// be mistaken for a 40-char git SHA in `status.compiledRevision`.
+pub(crate) fn content_revision(content: &str) -> String {
+    let h = blake3::hash(content.as_bytes()).to_hex().to_string();
+    format!("cm:{}", &h[..16])
+}
+
+/// Current content-revision of a NON-GIT (inline / configMap) source, or
+/// `None` for a git source (which tracks freshness via its HEAD SHA) or a
+/// source whose content can't be read right now. This is what lets a
+/// ConfigMap/inline config EDIT be DETECTED: git sources observe a moving
+/// remote HEAD, but non-git sources previously had no change signal at all,
+/// so the operator served the stale Postgres-cached render forever.
+async fn non_git_source_revision(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+) -> Result<Option<String>> {
+    let source = &template.spec.source;
+    let content = if let Some(inline) = &source.inline {
+        inline.clone()
+    } else if let Some(cm_ref) = &source.config_map_ref {
+        let ns = cm_ref
+            .namespace
+            .clone()
+            .or_else(|| template.namespace())
+            .unwrap_or_default();
+        let cm_api: Api<ConfigMap> = Api::namespaced(state.client.clone(), &ns);
+        match cm_api.get_opt(&cm_ref.name).await? {
+            Some(cm) => match cm.data.as_ref().and_then(|d| d.get(&cm_ref.key)).cloned() {
+                Some(c) => c,
+                // Key missing — don't claim freshness; let the compile path
+                // surface the real error instead of silently using the cache.
+                None => return Ok(None),
+            },
+            None => return Ok(None), // ConfigMap gone — same.
+        }
+    } else {
+        return Ok(None); // git source (or none): not a non-git revision.
+    };
+    Ok(Some(content_revision(&content)))
+}
+
 async fn compiled_config_available(
     template: &InfrastructureTemplate,
     state: &ControllerState,
@@ -1501,7 +1578,33 @@ async fn compiled_config_available(
         .get_rendered_config(&schema_name, &template.name_any())
         .await?
         .is_some();
-    Ok(present)
+    if !present {
+        return Ok(false);
+    }
+    // NON-GIT SOURCE FRESHNESS. The cached render is only "available" if the
+    // source content is UNCHANGED since it was compiled. Git sources track
+    // this via the HEAD-SHA freshness gate; non-git (configMap/inline) sources
+    // had NO change detection, so a ConfigMap edit left the operator serving
+    // the stale Postgres render indefinitely (the config never reconverged).
+    // Compare the current source content-revision to status.compiledRevision;
+    // on mismatch the cache is stale → not "available" → re-compile. (A legacy
+    // CR whose compiledRevision predates this — None — mismatches once and
+    // converges by exactly one recompile, same as the git legacy-CR case.)
+    if let Some(current_rev) = non_git_source_revision(template, state).await? {
+        let compiled_rev = template
+            .status
+            .as_ref()
+            .and_then(|s| s.compiled_revision.as_deref());
+        if compiled_rev != Some(current_rev.as_str()) {
+            info!(
+                compiled = ?compiled_rev,
+                current = %current_rev,
+                "non-git source changed since compile — re-compiling (configMap/inline freshness)"
+            );
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Handle Planning phase - run `tofu plan` and analyze changes.
@@ -2596,6 +2699,25 @@ fn suggested_import_hint(address: &str) -> String {
 fn is_self_healable_apply_error(stderr: &str) -> bool {
     // The canonical opentofu / terraform stale-plan banner.
     stderr.contains("Saved plan is stale")
+}
+
+#[cfg(test)]
+mod source_freshness_tests {
+    use super::content_revision;
+
+    #[test]
+    fn content_revision_is_stable_and_change_sensitive() {
+        let a = content_revision("resource \"aws_vpc\" \"x\" {}");
+        // Deterministic: same content → same revision (so a fresh config does
+        // NOT churn into an endless re-compile loop).
+        assert_eq!(a, content_revision("resource \"aws_vpc\" \"x\" {}"));
+        // cm:-tagged + fixed width — never mistaken for a 40-char git SHA.
+        assert!(a.starts_with("cm:"), "got {a}");
+        assert_eq!(a.len(), 3 + 16);
+        // A config EDIT changes the revision → forces exactly one re-compile.
+        let b = content_revision("resource \"aws_vpc\" \"x\" { tags = {} }");
+        assert_ne!(a, b, "changed content must yield a different revision");
+    }
 }
 
 #[cfg(test)]
