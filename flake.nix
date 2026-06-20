@@ -59,7 +59,11 @@
         packageName = "pangea-operator";
         moduleDir = null;
         nixosModuleFile = null;
-        extraContents = pkgs: with pkgs; [ opentofu packer git busybox ];
+        # packer is unfree (HashiCorp BSL relicense) — pull it from an
+        # allowUnfree nixpkgs so `nix flake check` doesn't refuse it
+        # (substrate's service-flake passes a `pkgs` without allowUnfree).
+        extraContents = pkgs: with pkgs; [ opentofu git busybox ]
+          ++ [ (import nixpkgs { inherit (pkgs.stdenv.hostPlatform) system; config.allowUnfree = true; }).packer ];
       };
 
       pangeaInputs = {
@@ -431,10 +435,15 @@
           # wedge). Both gemWs.rubylib and these values derive from the SAME
           # pangeaInputsChecked, so adding the path-gem source closures here
           # guarantees every RUBYLIB entry resolves in the image.
+          # packer is unfree (HashiCorp BSL relicense) — from an allowUnfree
+          # nixpkgs so `nix flake check` doesn't refuse it.
           extraContents = pkgs: (with pkgs; [
-            ruby_3_3 opentofu packer git busybox
+            ruby_3_3 opentofu git busybox
             gemWs.env
-          ]) ++ [ pathGemAnchor magmaProviderMirror ];
+          ]) ++ [
+            (import nixpkgs { inherit (pkgs.stdenv.hostPlatform) system; config.allowUnfree = true; }).packer
+            pathGemAnchor magmaProviderMirror
+          ];
           extraEnv = [
             "RUBYLIB=${fullRubylib}"
             "DRY_TYPES_WARNINGS=false"
