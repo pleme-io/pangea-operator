@@ -689,7 +689,11 @@ fn compile_template(
     // the constant purge → "Attribute :x has already been defined" mid-require →
     // `uninitialized constant Pangea::Architectures::OpenSourceRepo` (the
     // pleme-io-opensource wedge). Skipping the prepend lets `require` resolve to
-    // the already-loaded gem copy: single execution, no redefinition. The mirror
+    // the already-loaded gem copy: single execution, no redefinition. TRADE-OFF: a
+    // mirror compiles against the BAKED gem, not its Flux-pulled clone — a gem older
+    // than workspace HEAD uses older architecture *code* (org.yaml *data* loads by
+    // absolute path, unaffected). prepare_gem re-bakes the latest so the window is
+    // small; the alternative is the double-load crash. The mirror
     // decision is DERIVED from the baked gem's actual load tree
     // (`workspace_mirrors_gem`) — the planner's structural answer (owner.rs §700),
     // not the hardcoded gem path the old `purge_feature_prefixes` used. Proven by
@@ -703,14 +707,30 @@ fn compile_template(
         .filter(|p| p.is_dir())
         .collect();
     let mut non_mirror_libs: Vec<PathBuf> = Vec::new();
-    let mut mirror_detected = false;
+    let mut mirror_libs: Vec<PathBuf> = Vec::new();
     for rl in &req.rubylib_paths {
         let clone = PathBuf::from(rl);
         if gem_libs.iter().any(|g| workspace_mirrors_gem(&clone, g, &["pangea/"])) {
-            mirror_detected = true; // skip prepend + skip purge for this clone
+            mirror_libs.push(clone); // skip prepend + skip purge for this clone
         } else {
             non_mirror_libs.push(clone);
         }
+    }
+    let mirror_detected = !mirror_libs.is_empty();
+    // Observability — the rollout must be WATCHABLE per-template, and the silent-
+    // fallback failure mode (gem cache unreadable ⇒ no mirror detected ⇒ the old
+    // purge bug silently returns) must be VISIBLE, not silent.
+    if mirror_detected {
+        info!(
+            template = ?req.template_name, ?mirror_libs,
+            "gem-mirror skip-prepend ACTIVE — using the already-loaded gem (dual-gem-load fix)"
+        );
+    } else if !req.rubylib_paths.is_empty() && gem_libs.is_empty() {
+        warn!(
+            template = ?req.template_name, gem_cache_base = ?GemCache::from_env().base_dir(),
+            "gem-mirror detection found NO baked gem libs — falling back to the purge strategy; \
+             if this is a pangea-architectures workspace the dual-gem-load wedge may recur"
+        );
     }
 
     let ctx = pangea_ruby_eval::CompileContext::new()
