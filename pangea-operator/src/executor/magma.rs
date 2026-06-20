@@ -209,6 +209,14 @@ pub struct MagmaExecutorConfig<S: StateBackend + ?Sized> {
     /// rendered config / pod-env fallback alone applies, the pre-fix
     /// behavior).
     pub provider_configs: std::collections::BTreeMap<String, serde_json::Value>,
+    /// TEST-ONLY: use magma's structural in-memory apply (`run_plan`)
+    /// instead of the real provider-RPC apply (`run_plan_with_providers`).
+    /// Production leaves this `false` — apply/destroy drive real provider
+    /// binaries over gRPC. Unit tests (InMemoryStateBackend, no provider
+    /// binaries available) set it `true` so the plan→apply→state→destroy
+    /// plumbing + lifecycle FSM are exercised without spawning a real
+    /// provider (which CI has none of — that path is integration-tested).
+    pub structural_apply: bool,
 }
 
 impl<S: StateBackend + ?Sized> Default for MagmaExecutorConfig<S>
@@ -228,6 +236,7 @@ where
             audit_log_path:  None,
             artifact_store:  None,
             provider_configs: std::collections::BTreeMap::new(),
+            structural_apply: false,
         }
     }
 }
@@ -246,6 +255,7 @@ impl<S: StateBackend + ?Sized> Clone for MagmaExecutorConfig<S> {
             audit_log_path:  self.audit_log_path.clone(),
             artifact_store:  self.artifact_store.clone(),
             provider_configs: self.provider_configs.clone(),
+            structural_apply: self.structural_apply,
         }
     }
 }
@@ -815,7 +825,14 @@ where
                 ctx = ctx.with_provider_config(name, value);
             }
         }
-        let outcome = magma_apply::engine::run_plan_with_providers(&plan, &mut state, &ctx).await;
+        let outcome = if self.cfg.structural_apply {
+            // TEST-ONLY structural apply: mutate magma state directly, no
+            // provider-RPC (CI has no provider binaries). See `structural_apply`.
+            magma_apply::run_plan(&plan, &mut state)
+                .map_err(|e| Error::MagmaExecution(format!("structural apply: {e}")))?
+        } else {
+            magma_apply::engine::run_plan_with_providers(&plan, &mut state, &ctx).await
+        };
         // DB-backed path: DO NOT write state here. The state write is
         // deferred into the atomic `put_apply_result` op below so the
         // state row + the apply receipt (bundle) land in ONE Postgres
@@ -1059,7 +1076,14 @@ where
                 ctx = ctx.with_provider_config(name, value);
             }
         }
-        let outcome = magma_apply::engine::run_plan_with_providers(&plan, &mut state, &ctx).await;
+        let outcome = if self.cfg.structural_apply {
+            // TEST-ONLY structural destroy: remove from magma state directly,
+            // no provider DestroyResource RPC. See `structural_apply`.
+            magma_apply::run_plan(&plan, &mut state)
+                .map_err(|e| Error::MagmaExecution(format!("structural destroy: {e}")))?
+        } else {
+            magma_apply::engine::run_plan_with_providers(&plan, &mut state, &ctx).await
+        };
         // Destroy emits no bundle, so there is no state+receipt atomicity
         // pairing here — the emptied state goes straight through the
         // state backend (Postgres) via the magma backend on both paths.
@@ -1138,6 +1162,8 @@ mod tests {
 
     fn fixture_config() -> MagmaExecutorConfig<InMemoryStateBackend> {
         MagmaExecutorConfig {
+            // Unit tests have no provider binaries — structural apply.
+            structural_apply: true,
             state_backend:   Arc::new(InMemoryStateBackend::new()),
             schema_name:     "test_schema".into(),
             template_name:   "test_template".into(),
@@ -1308,6 +1334,7 @@ mod tests {
         // MagmaExecutor instances over a SHARED InMemoryStateBackend.
         let store: Arc<InMemoryStateBackend> = Arc::new(InMemoryStateBackend::new());
         let make_executor = || MagmaExecutor::new(MagmaExecutorConfig {
+            structural_apply: true,
             state_backend:   Arc::clone(&store),
             schema_name:     "s".into(),
             template_name:   "t".into(),
@@ -1364,6 +1391,7 @@ mod tests {
         // other's resources.
         let store: Arc<InMemoryStateBackend> = Arc::new(InMemoryStateBackend::new());
         let make = |state_name: &str| MagmaExecutor::new(MagmaExecutorConfig {
+            structural_apply: true,
             state_backend:   Arc::clone(&store),
             schema_name:     "s".into(),
             template_name:   "t".into(),
@@ -1466,6 +1494,7 @@ mod tests {
     #[tokio::test]
     async fn tofu_shape_persistence_writes_canonical_provider_form() {
         let cfg = MagmaExecutorConfig {
+            structural_apply: true,
             state_backend:   Arc::new(InMemoryStateBackend::new()),
             schema_name:     "s".into(),
             template_name:   "t".into(),
@@ -1516,6 +1545,7 @@ mod tests {
         // backend never sees it. This is the substrate's "promises
         // become theorems" property in operator form.
         let cfg = MagmaExecutorConfig {
+            structural_apply: true, // (moot: this test rejects at preflight, never applies)
             state_backend:   Arc::new(InMemoryStateBackend::new()),
             schema_name:     "s".into(),
             template_name:   "t".into(),

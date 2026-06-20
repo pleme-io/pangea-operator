@@ -37,6 +37,9 @@ pub mod workspace_catalog_controller;
 mod flow_controller;
 pub mod flow_scheduler;
 pub mod policy_cascade;
+pub mod config_cascade;
+pub mod template_dependency;
+pub mod template_dag;
 mod reconciler;
 pub mod settling;
 // `pub` (superset of `pub(crate)`): magma reuses template::provider_creds AND
@@ -413,6 +416,8 @@ impl ControllerState {
         let state_name = "default".to_string();
 
         let cfg = MagmaExecutorConfig {
+            // Production: real provider-RPC apply/destroy (run_plan_with_providers).
+            structural_apply: false,
             state_backend,
             schema_name,
             template_name,
