@@ -507,7 +507,11 @@ fn smoke_test(
           klass.build(synth, $pangea_inputs)
           result = synth.synthesis
           {{ "passed" => !result.nil? && !result.empty? }}
-        rescue StandardError => e
+        rescue StandardError, LoadError => e
+          # LoadError (e.g. `require 'terraform-synthesizer'` failing) is a
+          # ScriptError, NOT a StandardError — a bare `rescue StandardError`
+          # lets it escape and hard-crashes smoke_test, violating its
+          # "always Ok, typed failure inside" contract. Catch it explicitly.
           {{ "passed" => false, "error" => e.message }}
         ensure
           $pangea_inputs = nil

@@ -62,6 +62,22 @@ async fn embedded_backend_smoke() {
         "expected missing-gem error, got: {err}"
     );
 
+    // Step 3 reaches the smoke_test class-resolution path, which first does
+    // `require 'terraform-synthesizer'`. The operator image bundles that gem,
+    // but CI's bare Ruby does not — stub a minimal one on $LOAD_PATH so the
+    // require succeeds and the test exercises the CLASS lookup (not the gem
+    // load). (Production robustness for gem-less envs is owner.rs catching the
+    // LoadError; here we want the real class-resolution behavior.)
+    let ts_stub = tempdir_for_test();
+    std::fs::write(
+        ts_stub.join("terraform-synthesizer.rb"),
+        b"class TerraformSynthesizer; def initialize; @manifest = {}; end; def synthesis; @manifest; end; end\n",
+    )
+    .expect("write terraform-synthesizer stub");
+    pool.broadcast_prepend_load_path(ts_stub.clone())
+        .await
+        .expect("prepend terraform-synthesizer stub");
+
     // Step 3 — M8.3: absolute fixture path skips the gem lookup; Rust
     // reads + SHA-256 + YAML parses the file; injected as $pangea_inputs.
     // Class still doesn't exist (we don't load any pangea-* gem in
@@ -392,6 +408,7 @@ async fn embedded_backend_smoke() {
     // Cleanup
     std::env::remove_var("PANGEA_GEM_CACHE_DIR");
     let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&ts_stub);
 
     // RubyPool has no explicit shutdown (the single-owner `shutdown()` is
     // gone); dropping the Arc at end-of-test drops the workers, and their
