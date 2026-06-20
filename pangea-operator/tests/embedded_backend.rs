@@ -1,6 +1,6 @@
 //! End-to-end test of the embedded compiler backend path.
 //!
-//! Spawns a `RubyOwner`, wraps it in `EmbeddedCompilerBackend`,
+//! Spawns a 1-worker `RubyPool`, wraps it in `EmbeddedCompilerBackend`,
 //! exercises `list_architectures` and `smoke_test` through the trait
 //! that reconcilers consume in production.
 //!
@@ -10,19 +10,27 @@
 //!
 //! All assertions are bundled into one #[test] because CRuby is
 //! one-init-per-process: each `RubyOwner::spawn` calls `Init_ruby`,
-//! which panics on second call. We share one owner across all
-//! sub-steps.
+//! which panics on second call. We share one pool (a single worker,
+//! so exactly one Ruby VM) across all sub-steps — `next_sender()` on a
+//! 1-worker pool always returns that worker, so the direct `Eval`
+//! sends and the backend's dispatch hit the same VM.
 
 #![cfg(feature = "embedded_ruby")]
 
 use pangea_operator::ruby::{
-    CompileRequest, CompilerBackend, EmbeddedCompilerBackend, GemCache, RubyOwner, SmokeRequest,
+    CompileRequest, CompilerBackend, EmbeddedCompilerBackend, GemCache, RubyPool, SmokeRequest,
 };
+use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn embedded_backend_smoke() {
-    let owner = RubyOwner::spawn(vec![]).await.expect("spawn ruby owner");
-    let backend = EmbeddedCompilerBackend::new(owner.tx_handle());
+    // 1 worker: the backend dispatches via the pool's round-robin
+    // next_sender(), and with a single worker every dispatch (plus the
+    // direct Eval sends below) lands on the same Ruby VM — required so
+    // the stub TerraformSynthesizer installed by Eval is visible to
+    // compile().
+    let pool = Arc::new(RubyPool::spawn(1, vec![]).await.expect("spawn ruby pool"));
+    let backend = EmbeddedCompilerBackend::new(pool.clone());
 
     // Step 1 — listing an unknown gem returns empty classes/version
     // (matches the sidecar's behavior; the operator surfaces this as
@@ -105,8 +113,7 @@ async fn embedded_backend_smoke() {
     {
         use pangea_operator::ruby::RubyRequest;
         let (rtx, rrx) = tokio::sync::oneshot::channel();
-        owner
-            .tx_handle()
+        pool.next_sender()
             .send(RubyRequest::Eval {
                 source: r#"
                 class TerraformSynthesizer
@@ -255,8 +262,7 @@ async fn embedded_backend_smoke() {
     )
     .expect("write fake gem entrypoint");
 
-    owner
-        .prepend_load_path(lib_dir.clone())
+    pool.broadcast_prepend_load_path(lib_dir.clone())
         .await
         .expect("prepend_load_path round-trip");
 
@@ -277,7 +283,7 @@ async fn embedded_backend_smoke() {
     .expect("write prepared_gem entrypoint");
 
     let backend_with_cache = pangea_operator::ruby::EmbeddedCompilerBackend::with_cache(
-        owner.tx_handle(),
+        pool.clone(),
         cache.clone(),
     );
     backend_with_cache
@@ -293,8 +299,7 @@ async fn embedded_backend_smoke() {
     {
         use pangea_operator::ruby::RubyRequest;
         let (rtx, rrx) = tokio::sync::oneshot::channel();
-        owner
-            .tx_handle()
+        pool.next_sender()
             .send(RubyRequest::Eval {
                 source: r#"
                 require 'prepared_gem'
@@ -365,8 +370,7 @@ async fn embedded_backend_smoke() {
     {
         use pangea_operator::ruby::RubyRequest;
         let (rtx, rrx) = tokio::sync::oneshot::channel();
-        owner
-            .tx_handle()
+        pool.next_sender()
             .send(RubyRequest::Eval {
                 source: format!(
                     r#"
@@ -389,7 +393,10 @@ async fn embedded_backend_smoke() {
     std::env::remove_var("PANGEA_GEM_CACHE_DIR");
     let _ = std::fs::remove_dir_all(&tmp);
 
-    owner.shutdown().await;
+    // RubyPool has no explicit shutdown (the single-owner `shutdown()` is
+    // gone); dropping the Arc at end-of-test drops the workers, and their
+    // OS threads are reaped on process exit.
+    drop(pool);
 }
 
 /// Per-test temp dir. We can't pull in `tempfile` for one helper, and
