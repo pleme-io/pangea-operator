@@ -11,7 +11,7 @@
 pub mod ami_test;
 pub mod architecture_gem;
 mod infrastructure_flow;
-mod infrastructure_template;
+pub mod infrastructure_template;
 pub mod image_pipeline;
 pub mod operator_policy;
 mod packer_build;

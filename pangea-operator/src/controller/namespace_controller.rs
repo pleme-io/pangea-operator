@@ -325,6 +325,7 @@ mod deep_tests {
                 backend,
                 default_tags: Default::default(),
                 default_providers: None,
+                default_variables: None,
                 default_compliance_profiles: vec![],
                 suspend: false,
             },
