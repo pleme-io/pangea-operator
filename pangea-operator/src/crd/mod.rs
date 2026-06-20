@@ -135,12 +135,29 @@ pub use image_pipeline::{
 use kube::CustomResourceExt;
 
 /// Generate an opaque JSON object schema (type: object with no properties).
-/// Used for `serde_json::Value` fields that hold arbitrary JSON.
+/// Used for `serde_json::Value` fields that hold an arbitrary JSON OBJECT
+/// (config / inline tf.json / tofu state — all object-shaped).
 pub fn opaque_json_schema(_gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
     schemars::schema::Schema::Object(schemars::schema::SchemaObject {
         instance_type: Some(schemars::schema::InstanceType::Object.into()),
         ..Default::default()
     })
+}
+
+/// Generate an "any JSON value" schema via `x-kubernetes-preserve-unknown-fields`
+/// — accepts object/array/scalar alike. Required for a structural CRD field that
+/// can hold ANY JSON (vs [`opaque_json_schema`], which pins `type: object` and so
+/// would reject a scalar). Use for fields like a mocked upstream output, which
+/// is usually a scalar (an ID/ARN string), not an object. A bare
+/// `serde_json::Value` field WITHOUT one of these helpers emits a typeless
+/// schema that Kubernetes rejects ("type: Required value: must not be empty").
+pub fn any_json_schema(_gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+    let mut obj = schemars::schema::SchemaObject::default();
+    obj.extensions.insert(
+        "x-kubernetes-preserve-unknown-fields".to_string(),
+        serde_json::Value::Bool(true),
+    );
+    schemars::schema::Schema::Object(obj)
 }
 
 /// Generate CRD manifests for all Pangea custom resources.

@@ -398,6 +398,12 @@ pub struct VariableRef {
     /// gates APPLY until the real output lands (a mocked value is never applied).
     /// `null`/absent ⇒ the upstream must be Ready before this template proceeds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    // A mocked upstream output is arbitrary JSON (usually a scalar ID/ARN).
+    // Without an explicit schema, schemars emits a typeless schema for
+    // serde_json::Value, which Kubernetes rejects as non-structural
+    // ("mockOutput.type: Required value: must not be empty") — this broke the
+    // chart 0.8.26 CRD apply and blocked every operator upgrade.
+    #[schemars(schema_with = "super::any_json_schema")]
     pub mock_output: Option<serde_json::Value>,
 }
 
