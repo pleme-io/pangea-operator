@@ -49,6 +49,16 @@ pub struct WorkspaceCatalogSpec {
     #[serde(default)]
     pub policy: WorkspacePolicy,
 
+    /// Workspace-default VARIABLES inherited by every template in this
+    /// workspace — the Terragrunt `root.hcl` / `include` analogue (config
+    /// inheritance, P1). A template's own `spec.variables` deep-merges ONTO
+    /// these (innermost-wins per key; nested objects merge recursively), so a
+    /// template inherits fleet/workspace defaults and overrides only what it
+    /// needs. Resolved by `controller::config_cascade` at compile time, layered
+    /// `PangeaNamespace.defaultVariables → this → template.spec.variables`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variables: Option<std::collections::BTreeMap<String, serde_json::Value>>,
+
     /// Suspend reconciliation of every template under this catalog.
     #[serde(default)]
     pub suspend: bool,

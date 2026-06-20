@@ -391,6 +391,14 @@ pub struct VariableRef {
 
     /// Key in the source template's status.outputs to read.
     pub output_key: String,
+
+    /// Plan-time fallback value used when the upstream template's real output
+    /// isn't available yet (Terragrunt `mock_outputs` parity, P2). With a mock,
+    /// this template can PLAN before its upstream has applied; the operator still
+    /// gates APPLY until the real output lands (a mocked value is never applied).
+    /// `null`/absent ⇒ the upstream must be Ready before this template proceeds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mock_output: Option<serde_json::Value>,
 }
 
 /// Reference to another InfrastructureTemplate.

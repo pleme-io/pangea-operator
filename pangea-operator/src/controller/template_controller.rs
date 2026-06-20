@@ -436,6 +436,41 @@ fn workspace_scope(template: &InfrastructureTemplate) -> String {
     [ns, name].join("/")
 }
 
+/// Resolve a template's cross-template dependencies (P2/P3, Terragrunt
+/// `dependency.<x>.outputs` + `run-all`): for each `spec.variableRefs` entry,
+/// fetch the referenced upstream template's `status.outputs` and resolve the
+/// reference (real output, else `mockOutput`, else recorded unresolved). The
+/// pure resolution lives in `controller::template_dependency`; this is just the
+/// kube fetch around it. Returns the resolution; the caller injects
+/// `all_variables()` and gates on `unresolved_templates` (the run-all wait).
+async fn resolve_template_dependencies(
+    refs: &std::collections::BTreeMap<String, crate::crd::infrastructure_template::VariableRef>,
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+) -> crate::controller::template_dependency::DependencyResolution {
+    use crate::controller::template_dependency::{resolve_dependency_vars, DepRef, UpstreamOutputs};
+    let own_ns = template.metadata.namespace.as_deref().unwrap_or("default");
+    let mut dep_refs = std::collections::BTreeMap::new();
+    let mut upstream: UpstreamOutputs = std::collections::BTreeMap::new();
+    for (var_name, vref) in refs {
+        let up_name = vref.template_ref.name.clone();
+        dep_refs.insert(
+            var_name.clone(),
+            DepRef { template: up_name.clone(), output_key: vref.output_key.clone(), mock: vref.mock_output.clone() },
+        );
+        if !upstream.contains_key(&up_name) {
+            let up_ns = vref.template_ref.namespace.as_deref().unwrap_or(own_ns);
+            let up_api: kube::Api<InfrastructureTemplate> = kube::Api::namespaced(state.client.clone(), up_ns);
+            if let Ok(Some(up)) = up_api.get_opt(&up_name).await {
+                if let Some(outs) = up.status.as_ref().and_then(|s| s.outputs.clone()) {
+                    upstream.insert(up_name, outs);
+                }
+            }
+        }
+    }
+    resolve_dependency_vars(&dep_refs, &upstream)
+}
+
 /// Handle Pending phase - prepare for compilation.
 /// Public wrapper for `handle_pending` so trait impls in
 /// `controller::template_phase` can dispatch to it. The body lives
@@ -649,12 +684,62 @@ async fn handle_compiling(
         // Ruby DSL — dispatch via the CompilerBackend trait. Pre-M8.2
         // this was a direct reqwest to the compiler sidecar; now the
         // backend chooses HTTP-or-embedded.
-        // Variables from spec.variables (explicit, plain values)
-        let mut variables = template
-            .spec
-            .variables
-            .clone()
-            .unwrap_or_default();
+        // CONFIG INHERITANCE CASCADE (P1, Terragrunt `root.hcl`/`include` parity):
+        // the effective variables are the deep-merge of the outer scopes' defaults
+        // and the template's own — `PangeaNamespace.defaultVariables` (outermost)
+        // → `WorkspaceCatalog.variables` → `template.spec.variables` (innermost,
+        // wins per key; nested objects merge recursively). A template inherits
+        // fleet/workspace defaults and overrides only what it needs. Lookups are
+        // best-effort: a missing namespace/workspace simply contributes no layer
+        // (behaviour-preserving for templates with no parent).
+        let ns_defaults = {
+            let pns_api: kube::Api<crate::crd::PangeaNamespace> = kube::Api::all(state.client.clone());
+            pns_api
+                .get_opt(&template.spec.pangea_namespace)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|ns| ns.spec.default_variables)
+                .unwrap_or_default()
+        };
+        let ws_defaults = crate::controller::workspace_catalog_controller::parent_catalog_for_template(
+            &state.client,
+            template,
+        )
+        .await
+        .ok()
+        .flatten()
+        .and_then(|wsc| wsc.spec.variables)
+        .unwrap_or_default();
+        let template_vars = template.spec.variables.clone().unwrap_or_default();
+        let mut variables = crate::controller::config_cascade::resolve_variables(&[
+            &ns_defaults,
+            &ws_defaults,
+            &template_vars,
+        ]);
+
+        // CROSS-TEMPLATE DEPENDENCY + OUTPUTS (P2/P3, Terragrunt
+        // `dependency.<x>.outputs` + `run-all`): resolve `spec.variableRefs`
+        // against upstream templates' `status.outputs`, then inject the values
+        // as variables (deps win over inherited defaults — they're the innermost
+        // intent). If an upstream isn't Ready and has no `mockOutput`, this is
+        // the run-all GATE: requeue until the upstream converges, exactly as
+        // `terragrunt run-all` blocks a unit on its dependencies.
+        if let Some(refs) = &template.spec.variable_refs {
+            if !refs.is_empty() {
+                let resolution = resolve_template_dependencies(refs, template, state).await;
+                if !resolution.unresolved_templates.is_empty() {
+                    info!(
+                        unresolved = ?resolution.unresolved_templates,
+                        "run-all gate: waiting on upstream template outputs (no value yet, no mock) — requeueing"
+                    );
+                    return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
+                }
+                for (k, v) in resolution.all_variables() {
+                    variables.insert(k, v);
+                }
+            }
+        }
 
         // Plus every key from any providerCredentials secret —
         // Pangea workspace templates use `ENV.fetch('CF_API_TOKEN')`

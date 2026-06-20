@@ -35,6 +35,14 @@ pub struct PangeaNamespaceSpec {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub default_tags: BTreeMap<String, String>,
 
+    /// Namespace-default VARIABLES inherited by every template using this
+    /// namespace — the OUTERMOST layer of the config-inheritance cascade (P1,
+    /// Terragrunt `root.hcl` parity). Deep-merged under the workspace's and the
+    /// template's variables (`controller::config_cascade`); a template inherits
+    /// these fleet-wide defaults and overrides per key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_variables: Option<BTreeMap<String, serde_json::Value>>,
+
     /// Default provider configuration for templates in this namespace.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_providers: Option<DefaultProviders>,
