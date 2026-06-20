@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "cargo_lock_sha256": "cb0b4c85981da1511686d9481b0ec6da6f1327a640a68eb3798bbc5a4dd6efeb",
+  "cargo_lock_sha256": "12ff3dcb307a5c15f5a954f38befe656ee661f682d8953619204a393e1bdb6f2",
   "target_resolves": {
     "base": {
       "Inflector-0.11.4": {
@@ -6257,6 +6257,7 @@
         ],
         "build_dependencies": [],
         "features": [
+          "aws-lc-rs",
           "http1",
           "log",
           "logging",
@@ -12128,10 +12129,10 @@
           },
           {
             "name": "reqwest",
-            "package_key": "reqwest-0.12.28",
+            "package_key": "reqwest-0.13.4",
             "kind": "normal",
             "features": [
-              "rustls-tls",
+              "rustls",
               "json"
             ],
             "uses_default_features": false,
@@ -14557,14 +14558,26 @@
           }
         ],
         "features": [
+          "aws-lc-rs",
           "ring",
           "runtime-tokio",
           "rustls",
+          "rustls-aws-lc-rs",
           "rustls-ring"
         ]
       },
       "quinn-proto-0.11.14": {
         "runtime_dependencies": [
+          {
+            "name": "aws_lc_rs",
+            "package_key": "aws-lc-rs-1.17.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
           {
             "name": "bytes",
             "package_key": "bytes-1.11.1",
@@ -14685,7 +14698,9 @@
         ],
         "build_dependencies": [],
         "features": [
+          "aws-lc-rs",
           "ring",
+          "rustls-aws-lc-rs",
           "rustls-ring"
         ]
       },
@@ -15687,6 +15702,16 @@
             "tree": "target"
           },
           {
+            "name": "hyper_rustls",
+            "package_key": "hyper-rustls-0.27.9",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": "cfg(not(all(target_arch = \"wasm32\", any(target_os = \"unknown\", target_os = \"none\"))))",
+            "tree": "target"
+          },
+          {
             "name": "hyper_util",
             "package_key": "hyper-util-0.1.20",
             "kind": "normal",
@@ -15719,6 +15744,51 @@
           {
             "name": "pin_project_lite",
             "package_key": "pin-project-lite-0.2.17",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": "cfg(not(all(target_arch = \"wasm32\", any(target_os = \"unknown\", target_os = \"none\"))))",
+            "tree": "target"
+          },
+          {
+            "name": "quinn",
+            "package_key": "quinn-0.11.9",
+            "kind": "normal",
+            "features": [
+              "runtime-tokio"
+            ],
+            "uses_default_features": false,
+            "optional": true,
+            "target": "cfg(not(all(target_arch = \"wasm32\", any(target_os = \"unknown\", target_os = \"none\"))))",
+            "tree": "target"
+          },
+          {
+            "name": "rustls",
+            "package_key": "rustls-0.23.40",
+            "kind": "normal",
+            "features": [
+              "std",
+              "tls12"
+            ],
+            "uses_default_features": false,
+            "optional": true,
+            "target": "cfg(not(all(target_arch = \"wasm32\", any(target_os = \"unknown\", target_os = \"none\"))))",
+            "tree": "target"
+          },
+          {
+            "name": "rustls_pki_types",
+            "package_key": "rustls-pki-types-1.14.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": "cfg(not(all(target_arch = \"wasm32\", any(target_os = \"unknown\", target_os = \"none\"))))",
+            "tree": "target"
+          },
+          {
+            "name": "rustls_platform_verifier",
+            "package_key": "rustls-platform-verifier-0.7.0",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -15772,6 +15842,16 @@
             "tree": "target"
           },
           {
+            "name": "tokio_rustls",
+            "package_key": "tokio-rustls-0.26.4",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": "cfg(not(all(target_arch = \"wasm32\", any(target_os = \"unknown\", target_os = \"none\"))))",
+            "tree": "target"
+          },
+          {
             "name": "tower",
             "package_key": "tower-0.5.3",
             "kind": "normal",
@@ -15818,7 +15898,11 @@
         ],
         "build_dependencies": [],
         "features": [
-          "json"
+          "__rustls",
+          "__rustls-aws-lc-rs",
+          "__tls",
+          "json",
+          "rustls"
         ]
       },
       "rmp-0.8.15": {
@@ -20467,6 +20551,7 @@
         ],
         "build_dependencies": [],
         "features": [
+          "aws-lc-rs",
           "aws_lc_rs",
           "default",
           "logging",
@@ -23734,6 +23819,74 @@
             "build_dependencies": [],
             "features": []
           },
+          "rustls-platform-verifier-0.7.0": {
+            "runtime_dependencies": [
+              {
+                "name": "core_foundation",
+                "package_key": "core-foundation-0.10.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": "cfg(any(target_vendor = \"apple\"))",
+                "tree": "target"
+              },
+              {
+                "name": "core_foundation_sys",
+                "package_key": "core-foundation-sys-0.8.7",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": "cfg(any(target_vendor = \"apple\"))",
+                "tree": "target"
+              },
+              {
+                "name": "log",
+                "package_key": "log-0.4.30",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "rustls",
+                "package_key": "rustls-0.23.40",
+                "kind": "normal",
+                "features": [
+                  "std"
+                ],
+                "uses_default_features": false,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "security_framework",
+                "package_key": "security-framework-3.7.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": "cfg(any(target_vendor = \"apple\"))",
+                "tree": "target"
+              },
+              {
+                "name": "security_framework_sys",
+                "package_key": "security-framework-sys-2.17.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": "cfg(any(target_vendor = \"apple\"))",
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": []
+          },
           "security-framework-2.11.1": {
             "runtime_dependencies": [
               {
@@ -23885,7 +24038,9 @@
               "OSX_10_10",
               "OSX_10_11",
               "OSX_10_12",
-              "OSX_10_9"
+              "OSX_10_13",
+              "OSX_10_9",
+              "default"
             ]
           }
         }
@@ -24416,6 +24571,74 @@
             "build_dependencies": [],
             "features": []
           },
+          "rustls-platform-verifier-0.7.0": {
+            "runtime_dependencies": [
+              {
+                "name": "core_foundation",
+                "package_key": "core-foundation-0.10.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": "cfg(any(target_vendor = \"apple\"))",
+                "tree": "target"
+              },
+              {
+                "name": "core_foundation_sys",
+                "package_key": "core-foundation-sys-0.8.7",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": "cfg(any(target_vendor = \"apple\"))",
+                "tree": "target"
+              },
+              {
+                "name": "log",
+                "package_key": "log-0.4.30",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "rustls",
+                "package_key": "rustls-0.23.40",
+                "kind": "normal",
+                "features": [
+                  "std"
+                ],
+                "uses_default_features": false,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "security_framework",
+                "package_key": "security-framework-3.7.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": "cfg(any(target_vendor = \"apple\"))",
+                "tree": "target"
+              },
+              {
+                "name": "security_framework_sys",
+                "package_key": "security-framework-sys-2.17.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": "cfg(any(target_vendor = \"apple\"))",
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": []
+          },
           "security-framework-2.11.1": {
             "runtime_dependencies": [
               {
@@ -24567,7 +24790,9 @@
               "OSX_10_10",
               "OSX_10_11",
               "OSX_10_12",
-              "OSX_10_9"
+              "OSX_10_13",
+              "OSX_10_9",
+              "default"
             ]
           }
         }
@@ -25198,6 +25423,74 @@
             ],
             "build_dependencies": [],
             "features": []
+          },
+          "rustls-platform-verifier-0.7.0": {
+            "runtime_dependencies": [
+              {
+                "name": "log",
+                "package_key": "log-0.4.30",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "rustls",
+                "package_key": "rustls-0.23.40",
+                "kind": "normal",
+                "features": [
+                  "std"
+                ],
+                "uses_default_features": false,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "rustls_native_certs",
+                "package_key": "rustls-native-certs-0.8.3",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": "cfg(all(unix, not(target_os = \"android\"), not(target_vendor = \"apple\"), not(target_arch = \"wasm32\")))",
+                "tree": "target"
+              },
+              {
+                "name": "webpki",
+                "package_key": "rustls-webpki-0.103.13",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": false,
+                "target": "cfg(all(unix, not(target_os = \"android\"), not(target_vendor = \"apple\"), not(target_arch = \"wasm32\")))",
+                "tree": "target"
+              },
+              {
+                "name": "webpki",
+                "package_key": "rustls-webpki-0.103.13",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": false,
+                "target": "cfg(target_arch = \"wasm32\")",
+                "tree": "target"
+              },
+              {
+                "name": "webpki",
+                "package_key": "rustls-webpki-0.103.13",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": false,
+                "target": "cfg(target_os = \"android\")",
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": []
           }
         }
       },
@@ -25822,6 +26115,74 @@
                 "uses_default_features": true,
                 "optional": false,
                 "target": null,
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": []
+          },
+          "rustls-platform-verifier-0.7.0": {
+            "runtime_dependencies": [
+              {
+                "name": "log",
+                "package_key": "log-0.4.30",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "rustls",
+                "package_key": "rustls-0.23.40",
+                "kind": "normal",
+                "features": [
+                  "std"
+                ],
+                "uses_default_features": false,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "rustls_native_certs",
+                "package_key": "rustls-native-certs-0.8.3",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": "cfg(all(unix, not(target_os = \"android\"), not(target_vendor = \"apple\"), not(target_arch = \"wasm32\")))",
+                "tree": "target"
+              },
+              {
+                "name": "webpki",
+                "package_key": "rustls-webpki-0.103.13",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": false,
+                "target": "cfg(all(unix, not(target_os = \"android\"), not(target_vendor = \"apple\"), not(target_arch = \"wasm32\")))",
+                "tree": "target"
+              },
+              {
+                "name": "webpki",
+                "package_key": "rustls-webpki-0.103.13",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": false,
+                "target": "cfg(target_arch = \"wasm32\")",
+                "tree": "target"
+              },
+              {
+                "name": "webpki",
+                "package_key": "rustls-webpki-0.103.13",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": false,
+                "target": "cfg(target_os = \"android\")",
                 "tree": "target"
               }
             ],
@@ -26502,6 +26863,74 @@
             ],
             "build_dependencies": [],
             "features": []
+          },
+          "rustls-platform-verifier-0.7.0": {
+            "runtime_dependencies": [
+              {
+                "name": "log",
+                "package_key": "log-0.4.30",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "rustls",
+                "package_key": "rustls-0.23.40",
+                "kind": "normal",
+                "features": [
+                  "std"
+                ],
+                "uses_default_features": false,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "rustls_native_certs",
+                "package_key": "rustls-native-certs-0.8.3",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": "cfg(all(unix, not(target_os = \"android\"), not(target_vendor = \"apple\"), not(target_arch = \"wasm32\")))",
+                "tree": "target"
+              },
+              {
+                "name": "webpki",
+                "package_key": "rustls-webpki-0.103.13",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": false,
+                "target": "cfg(all(unix, not(target_os = \"android\"), not(target_vendor = \"apple\"), not(target_arch = \"wasm32\")))",
+                "tree": "target"
+              },
+              {
+                "name": "webpki",
+                "package_key": "rustls-webpki-0.103.13",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": false,
+                "target": "cfg(target_arch = \"wasm32\")",
+                "tree": "target"
+              },
+              {
+                "name": "webpki",
+                "package_key": "rustls-webpki-0.103.13",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": false,
+                "target": "cfg(target_os = \"android\")",
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": []
           }
         }
       },
@@ -27172,6 +27601,74 @@
                 "uses_default_features": true,
                 "optional": false,
                 "target": null,
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": []
+          },
+          "rustls-platform-verifier-0.7.0": {
+            "runtime_dependencies": [
+              {
+                "name": "log",
+                "package_key": "log-0.4.30",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "rustls",
+                "package_key": "rustls-0.23.40",
+                "kind": "normal",
+                "features": [
+                  "std"
+                ],
+                "uses_default_features": false,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "rustls_native_certs",
+                "package_key": "rustls-native-certs-0.8.3",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": "cfg(all(unix, not(target_os = \"android\"), not(target_vendor = \"apple\"), not(target_arch = \"wasm32\")))",
+                "tree": "target"
+              },
+              {
+                "name": "webpki",
+                "package_key": "rustls-webpki-0.103.13",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": false,
+                "target": "cfg(all(unix, not(target_os = \"android\"), not(target_vendor = \"apple\"), not(target_arch = \"wasm32\")))",
+                "tree": "target"
+              },
+              {
+                "name": "webpki",
+                "package_key": "rustls-webpki-0.103.13",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": false,
+                "target": "cfg(target_arch = \"wasm32\")",
+                "tree": "target"
+              },
+              {
+                "name": "webpki",
+                "package_key": "rustls-webpki-0.103.13",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": false,
+                "target": "cfg(target_os = \"android\")",
                 "tree": "target"
               }
             ],
@@ -28412,6 +28909,9 @@
       "edition": "2018"
     },
     "rustls-pki-types-1.14.1": {
+      "edition": "2021"
+    },
+    "rustls-platform-verifier-0.7.0": {
       "edition": "2021"
     },
     "rustls-webpki-0.103.13": {
