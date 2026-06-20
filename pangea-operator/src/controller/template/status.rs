@@ -92,7 +92,33 @@ pub async fn update_phase(
         status.failure_count = 0;
     }
 
-    let patch = serde_json::json!({ "status": status });
+    // Field-scoped status patch — write ONLY the fields a phase transition
+    // OWNS. The previous `json!({ "status": status })` re-sent the ENTIRE
+    // in-memory status (a stale reconcile-start snapshot) on every
+    // transition, clobbering fields that sibling field-scoped helpers
+    // (`update_compiled_revision`, `update_freshness_status`) had ALREADY
+    // written earlier in the SAME reconcile: handle_compiling runs
+    // `update_compiled_revision(HEAD)` then `update_phase(Initializing)`, and
+    // the latter rewound `compiledRevision` back to the snapshot value. That
+    // froze `compiledRevision`/`observedHeadRevision`, so the freshness gate
+    // saw the compile as perpetually "behind HEAD" → bounced
+    // Planning→Compiling forever (the +N-plan-never-applies wedge on every
+    // DB-backed template). Mirroring the sibling helpers' field-scoped shape
+    // makes the writes COMPOSE instead of clobber. (A JSON merge-patch only
+    // touches the keys present here; `null` clears a field.)
+    let mut status_patch = serde_json::json!({
+        "phase": status.phase,
+        "observedGeneration": status.observed_generation,
+        "conditions": status.conditions,
+    });
+    if phase_changed {
+        status_patch["phaseEnteredAt"] = serde_json::json!(status.phase_entered_at);
+    }
+    if phase != Phase::Failed {
+        status_patch["lastError"] = serde_json::Value::Null;
+        status_patch["failureCount"] = serde_json::json!(0u32);
+    }
+    let patch = serde_json::json!({ "status": status_patch });
 
     crate::controller::status_patch::patch_status(template, &state.client, patch)
     .await?;
@@ -144,7 +170,21 @@ pub async fn update_phase_with_error(
         status.phase_entered_at = Some(Utc::now());
     }
 
-    let patch = serde_json::json!({ "status": status });
+    // Field-scoped status patch (see `update_phase`) — write only the fields a
+    // failure transition owns, so it composes with the sibling field-scoped
+    // helpers instead of clobbering compiledRevision/observedHeadRevision back
+    // to the stale reconcile-start snapshot.
+    let mut status_patch = serde_json::json!({
+        "phase": status.phase,
+        "observedGeneration": status.observed_generation,
+        "conditions": status.conditions,
+        "lastError": status.last_error,
+        "failureCount": status.failure_count,
+    });
+    if phase_changed {
+        status_patch["phaseEnteredAt"] = serde_json::json!(status.phase_entered_at);
+    }
+    let patch = serde_json::json!({ "status": status_patch });
 
     crate::controller::status_patch::patch_status(template, &state.client, patch)
     .await?;
