@@ -94,8 +94,23 @@ pub fn evaluate(
         PolicyDecision::Refuse
     } else if require_approval_count > 0 {
         PolicyDecision::RequireApproval
-    } else {
+    } else if auto_apply_count > 0 {
+        // At least one drift was classified, and every classified drift is
+        // auto-apply (no refuse, no approval). Honour that.
         PolicyDecision::AutoApply
+    } else {
+        // NOTHING was classified — the drift slice was empty. This is the
+        // greenfield / create-only case: `drift_details()` enumerates drift on
+        // EXISTING resources, not `create` actions, so a plan that only creates
+        // resources arrives here with zero drifts. The aggregate must reflect
+        // the configured `fallback` (defaultDecision) so `requireApproval`
+        // gates creates too — NOT silently auto-apply. With defaultDecision
+        // unset, `fallback` is AutoApply, preserving the documented aggressive
+        // default for unconfigured templates. (Before this fix, the `else`
+        // hardcoded AutoApply, so a create-only plan auto-applied even under
+        // defaultDecision: requireApproval — root cause of the 2026-06-20
+        // akeyless-dev unapproved-apply incident.)
+        fallback
     };
 
     let evaluation = PolicyEvaluation {
@@ -362,6 +377,50 @@ mod tests {
         let out = evaluate(&[], Some(PolicyDecision::RequireApproval), &drifts);
         assert_eq!(out.aggregate, PolicyDecision::RequireApproval);
         assert_eq!(out.evaluation.require_approval_count, 1);
+    }
+
+    // ── Regression: the 2026-06-20 akeyless-dev unapproved-apply incident ──
+    // A greenfield/create-only plan arrives with an EMPTY drift slice
+    // (`drift_details()` enumerates drift on existing resources, not creates).
+    // The aggregate must still honour `defaultDecision`, NOT silently auto-apply.
+    #[test]
+    fn empty_drifts_with_require_approval_gates() {
+        // No rules, no drifts, defaultDecision=requireApproval → must GATE.
+        let out = evaluate(&[], Some(PolicyDecision::RequireApproval), &[]);
+        assert_eq!(
+            out.aggregate,
+            PolicyDecision::RequireApproval,
+            "create-only plan (empty drifts) must honour requireApproval, not auto-apply"
+        );
+    }
+
+    #[test]
+    fn empty_drifts_with_refuse_refuses() {
+        let out = evaluate(&[], Some(PolicyDecision::Refuse), &[]);
+        assert_eq!(out.aggregate, PolicyDecision::Refuse);
+    }
+
+    #[test]
+    fn empty_drifts_unset_default_stays_autoapply() {
+        // Unconfigured templates keep the documented aggressive default.
+        let out = evaluate(&[], None, &[]);
+        assert_eq!(out.aggregate, PolicyDecision::AutoApply);
+    }
+
+    #[test]
+    fn all_drifts_autoapply_does_not_regress() {
+        // A non-empty drift slice that all classifies as auto-apply must stay
+        // AutoApply even though defaultDecision=requireApproval would gate an
+        // UNclassified change — the explicit rule wins per resource.
+        let rules = vec![rule(
+            "allow-dns",
+            PolicyDecision::AutoApply,
+            vec!["cloudflare_dns_record"], vec![], vec![], vec![], vec![],
+        )];
+        let drifts = vec![drift("cloudflare_dns_record.foo", "update", "low", vec![])];
+        let out = evaluate(&rules, Some(PolicyDecision::RequireApproval), &drifts);
+        assert_eq!(out.aggregate, PolicyDecision::AutoApply);
+        assert_eq!(out.evaluation.auto_apply_count, 1);
     }
 
     #[test]
