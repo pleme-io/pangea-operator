@@ -102,14 +102,15 @@ web-sys = "0.3"
 js-sys = "0.3"
 
 [profile.release]
-# lto=false (was fat `true`): fat LTO pulls EVERY crate's IR into ONE rustc at
-# the final link — a single whole-program pass that ignores codegen-units and
-# peaks well above rio's small builder's ~12-16Gi, OOM-killing (signal 9) the
-# operator-crate compile on nearly every release. It defeated the 0787c87
-# codegen-units/opt-level cap (LTO collapses to one process anyway). A
-# control-plane operator is I/O-bound (kube API, Postgres, Ruby eval, provider
-# RPC) — no-LTO costs ~nothing at runtime and makes the build reliably fit.
-lto = false
-codegen-units = 16
-opt-level = 2
+# NOTE: the OOM cure (lto off) is applied to the OPERATOR CRATE ONLY, in
+# flake.nix via `-Clto=off` on the `pangea-operator` derivation — NOT here.
+# Turning lto off in this WORKSPACE profile changes every dependency's drv
+# hash, forcing a full cold rebuild of the entire tree; on rio's single small
+# builder (which also runs the k3s cluster) that rebuild exhausts RAM and the
+# kernel OOM-killer fells random innocent crates (clang-sys, kube-client, …).
+# Keeping these values matches the cached dep closure so deps SUBSTITUTE and
+# only the operator crate compiles (lto-off, low memory). See flake.nix.
+lto = true
+codegen-units = 1
+opt-level = "z"
 strip = true
