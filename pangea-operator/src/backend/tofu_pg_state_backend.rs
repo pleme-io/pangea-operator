@@ -65,31 +65,6 @@ impl TofuPgStateBackend {
     }
 }
 
-/// Postgres SQLSTATE for `undefined_table` — raised by a `SELECT` against a
-/// schema/table that does not exist.
-const UNDEFINED_TABLE: &str = "42P01";
-
-/// Does this SQLSTATE mean "the relation does not exist"?
-///
-/// Pure + testable; the call sites extract the code from the live
-/// `sqlx::Error`. OpenTofu's `pg` backend creates the
-/// `{schema}_{template}_states` schema + `states` table lazily on the first
-/// *write*. A template that has never applied — every `autoApprove: false`
-/// plan-only adoption, which is the canonical "state-match existing infra"
-/// entry point — therefore has no such table yet. A READ against it returns
-/// `42P01`, which means **no state persisted** (a fresh workspace), NOT a
-/// hard failure. Mapping it to an empty result honors the `StateBackend`
-/// contract (`Ok(None)` = fresh workspace) and lets a plan-only reconcile
-/// surface its diff instead of wedging in `Failed`.
-fn sqlstate_is_undefined_table(code: Option<&str>) -> bool {
-    code == Some(UNDEFINED_TABLE)
-}
-
-/// `true` when a `sqlx::Error` is a Postgres `undefined_table` (42P01).
-fn is_undefined_table(e: &sqlx::Error) -> bool {
-    sqlstate_is_undefined_table(e.as_database_error().and_then(|d| d.code()).as_deref())
-}
-
 #[async_trait]
 impl StateBackend for TofuPgStateBackend {
     async fn get_state(
@@ -102,20 +77,11 @@ impl StateBackend for TofuPgStateBackend {
         // `data` is TEXT in the OpenTofu pg backend; read as String.
         let query = format!("SELECT id, name, data FROM {table} WHERE name = $1 LIMIT 1");
 
-        let row: Option<(i64, String, Option<String>)> = match sqlx::query_as(&query)
+        let row: Option<(i64, String, Option<String>)> = sqlx::query_as(&query)
             .bind(state_name)
             .fetch_optional(self.pool.as_ref())
             .await
-        {
-            Ok(r) => r,
-            // The state table is created lazily on first apply; a never-applied
-            // (plan-only) template has none yet → that is "no state", not an error.
-            Err(e) if is_undefined_table(&e) => {
-                debug!(table, "state table absent (never applied) — treating as no state");
-                return Ok(None);
-            }
-            Err(e) => return Err(Error::Database(e)),
-        };
+            .map_err(Error::Database)?;
 
         Ok(row.map(|(id, name, data)| StateEntry {
             id,
@@ -197,18 +163,10 @@ impl StateBackend for TofuPgStateBackend {
     ) -> Result<Vec<StateEntry>> {
         let table = Self::states_table(schema_name, template_name);
         let query = format!("SELECT id, name, data FROM {table} ORDER BY id DESC");
-        let rows: Vec<(i64, String, Option<String>)> = match sqlx::query_as(&query)
+        let rows: Vec<(i64, String, Option<String>)> = sqlx::query_as(&query)
             .fetch_all(self.pool.as_ref())
             .await
-        {
-            Ok(r) => r,
-            // Never-applied template → no state table yet → empty list, not an error.
-            Err(e) if is_undefined_table(&e) => {
-                debug!(table, "state table absent (never applied) — no states to list");
-                return Ok(vec![]);
-            }
-            Err(e) => return Err(Error::Database(e)),
-        };
+            .map_err(Error::Database)?;
         Ok(rows
             .into_iter()
             .map(|(id, name, data)| StateEntry {
@@ -245,26 +203,5 @@ mod tests {
         let t = TofuPgStateBackend::states_table("pangea_x\"y", "t");
         assert_eq!(t, "\"pangea_x\"\"y_t_states\".states");
         assert!(!t.contains("x\"y"), "raw quote must be escaped");
-    }
-
-    #[test]
-    fn undefined_table_sqlstate_is_recognized_as_no_state() {
-        // 42P01 (undefined_table) on a READ must be treated as "no state yet"
-        // — the never-applied plan-only adoption path. Regression for the
-        // akeyless-dev canary: a missing state table wedged the reconcile in
-        // Failed ("relation … does not exist") instead of surfacing the plan.
-        assert!(sqlstate_is_undefined_table(Some(UNDEFINED_TABLE)));
-        assert!(sqlstate_is_undefined_table(Some("42P01")));
-    }
-
-    #[test]
-    fn other_sqlstates_still_propagate_as_errors() {
-        // Only undefined_table is swallowed; every other DB error must surface
-        // (we never want to silently treat a real failure as empty state).
-        assert!(!sqlstate_is_undefined_table(None));
-        assert!(!sqlstate_is_undefined_table(Some("42501"))); // insufficient_privilege
-        assert!(!sqlstate_is_undefined_table(Some("08006"))); // connection_failure
-        assert!(!sqlstate_is_undefined_table(Some("23505"))); // unique_violation
-        assert!(!sqlstate_is_undefined_table(Some("")));
     }
 }
