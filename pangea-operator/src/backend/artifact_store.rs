@@ -418,17 +418,28 @@ impl ArtifactStore {
     /// ```sql
     /// CREATE SCHEMA IF NOT EXISTS "<schema>";
     /// CREATE TABLE IF NOT EXISTS "<schema>".states (
-    ///   id   SERIAL PRIMARY KEY,
-    ///   name TEXT   UNIQUE,
+    ///   id   BIGSERIAL PRIMARY KEY,
+    ///   name TEXT      UNIQUE,
     ///   data TEXT
     /// );
     /// ```
     /// `name` is `UNIQUE` so the `ON CONFLICT (name)` upsert in
     /// [`put_apply_result`] / `TofuPgStateBackend::save_state` has the
-    /// arbiter constraint it requires; `id SERIAL PRIMARY KEY` matches
-    /// the `RETURNING id` / `id bigint` the readers in
-    /// `tofu_pg_state_backend.rs` expect. A later tofu read against the
-    /// same table therefore still works (byte-identical layout).
+    /// arbiter constraint it requires. `id` is `BIGSERIAL` (int8 / bigint),
+    /// NOT `SERIAL` (int4): `magma_backend::Backend::read_state` selects the
+    /// `id` column first and decodes it as `i64`, so a `SERIAL` (int4) column
+    /// makes read_state fail with "Rust type `i64` (as SQL type `INT8`) is not
+    /// compatible with SQL type `INT4`" the moment the table exists and is
+    /// read. `bigint` is also what the `RETURNING id` / `id bigint` readers in
+    /// `tofu_pg_state_backend.rs` expect, so a later tofu read still works.
+    /// (Fixed 2026-06-20: the original `SERIAL` blocked every magma read once
+    /// `ensure_state_table` started provisioning the table on the read path.)
+    ///
+    /// The trailing idempotent `ALTER COLUMN id TYPE BIGINT` widens any table
+    /// that a prior build already created as `SERIAL`/int4 — `CREATE TABLE IF
+    /// NOT EXISTS` alone would leave the old int4 column in place. int4→int8 is
+    /// a lossless widening and the attached sequence stays valid, so the ALTER
+    /// is a safe no-op once the column is already bigint.
     ///
     /// Identifiers are gated through [`live_state_schema`] →
     /// [`is_valid_identifier`] (the injection guard), so no caller input
@@ -448,12 +459,21 @@ impl ArtifactStore {
 
         let create_table = format!(
             "CREATE TABLE IF NOT EXISTS {schema}.states ( \
-                id   SERIAL PRIMARY KEY, \
-                name TEXT   UNIQUE, \
+                id   BIGSERIAL PRIMARY KEY, \
+                name TEXT      UNIQUE, \
                 data TEXT \
              )"
         );
         sqlx::query(&create_table)
+            .execute(self.pool.as_ref())
+            .await
+            .map_err(Error::Database)?;
+
+        // Idempotently widen a pre-existing int4 `id` (created by a prior
+        // build's `SERIAL` DDL) to int8 so `magma_backend::read_state`'s i64
+        // decode matches. No-op once already bigint; lossless widening.
+        let widen_id = format!("ALTER TABLE {schema}.states ALTER COLUMN id TYPE BIGINT");
+        sqlx::query(&widen_id)
             .execute(self.pool.as_ref())
             .await
             .map_err(Error::Database)?;
