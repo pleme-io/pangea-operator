@@ -496,17 +496,19 @@
               PROTOC = "${imagePkgs.protobuf}/bin/protoc";
             };
             # The operator crate is enormous (embedded Ruby + magma + kube +
-            # async-graphql + opentelemetry + sqlx + tonic). Compiling it at
-            # opt-level=3 + codegen-units=1 peaks high enough to OOM-kill
-            # (signal 9) on rio's single small builder node (~12Gi free), and
-            # nix caches that build failure so re-runs replay it instantly.
-            # Cap peak compile memory: split codegen into 16 units + opt-level=2
-            # — negligible runtime cost for a control-plane operator, and it
-            # changes the crate's .drv hash so the build also escapes the
-            # cached prior OOM failure (a fresh, lower-memory compile).
+            # async-graphql + opentelemetry + sqlx + tonic). It OOM-killed
+            # (signal 9) on rio's small builder (~12-16Gi) on nearly every
+            # release. The 0787c87 codegen-units/opt-level cap wasn't enough:
+            # `lto=true` (fat LTO) is the real hog — it loads EVERY crate's IR
+            # into ONE rustc at the final link, a whole-program pass that
+            # ignores codegen-units. `-Clto=off` (+ the profile's lto=false)
+            # kills that pass so peak memory is one codegen unit's compile,
+            # which fits reliably. Negligible runtime cost for an I/O-bound
+            # control-plane operator. Also changes the .drv hash, so the build
+            # escapes any cached prior OOM failure (a fresh, lower-memory compile).
             pangea-operator = oldAttrs: {
               extraRustcOpts = (oldAttrs.extraRustcOpts or [])
-                ++ [ "-Ccodegen-units=16" "-Copt-level=2" ];
+                ++ [ "-Ccodegen-units=16" "-Copt-level=2" "-Clto=off" ];
             };
           };
         };
