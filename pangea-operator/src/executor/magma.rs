@@ -283,6 +283,24 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
         OperatorBackend::with_shape(store, self.cfg.backend_shape)
     }
 
+    /// Provision the OpenTofu pg-backend `<schema>_<template>_states.states`
+    /// table BEFORE any state read. With `PANGEA_FORBID_TOFU=true`, `tofu init`
+    /// (which would `CREATE SCHEMA … states`) never runs, so a brand-new
+    /// template has no `.states` table and the very first `read_state` fails
+    /// "relation does not exist" — even though an absent state IS simply an
+    /// empty state (a first plan = all-creates). Idempotent (`IF NOT EXISTS`);
+    /// a no-op once the table exists and a no-op on the in-memory path (no
+    /// artifact store). Mirrors the same ensure already done on the WRITE path
+    /// (`put_apply_result`) — the read path needed it too.
+    async fn ensure_state_table(&self) -> Result<()> {
+        if let Some(store) = self.cfg.artifact_store.as_ref() {
+            store
+                .ensure_tofu_states_table(&self.cfg.schema_name, &self.cfg.template_name)
+                .await?;
+        }
+        Ok(())
+    }
+
     fn bundle_checkpoint_path(work_dir: &Path) -> PathBuf {
         work_dir.join("magma-bundle.json")
     }
@@ -628,6 +646,7 @@ where
         }
 
         let backend = self.make_backend();
+        self.ensure_state_table().await?;
         let state = magma_backend::Backend::read_state(&backend)
             .await
             .map_err(|e| Error::MagmaExecution(format!("read state: {e}")))?;
@@ -786,6 +805,7 @@ where
         };
 
         let backend = self.make_backend();
+        self.ensure_state_table().await?;
         let mut state = magma_backend::Backend::read_state(&backend)
             .await
             .map_err(|e| Error::MagmaExecution(format!("read state: {e}")))?;
@@ -1033,6 +1053,7 @@ where
     async fn destroy(&self, work_dir: &Path, _auto_approve: bool) -> Result<TofuResult> {
         let started = Instant::now();
         let backend = self.make_backend();
+        self.ensure_state_table().await?;
         let mut state = magma_backend::Backend::read_state(&backend)
             .await
             .map_err(|e| Error::MagmaExecution(format!("read state: {e}")))?;
@@ -1112,6 +1133,7 @@ where
     async fn output(&self, _work_dir: &Path) -> Result<TofuResult> {
         let started = Instant::now();
         let backend = self.make_backend();
+        self.ensure_state_table().await?;
         let state = magma_backend::Backend::read_state(&backend)
             .await
             .map_err(|e| Error::MagmaExecution(format!("read state: {e}")))?;
