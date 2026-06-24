@@ -1,0 +1,45 @@
+name: crd-drift
+
+# Forcing-function: the helmworks chart's pangea-operator CRDs MUST equal what
+# this operator's Rust structs generate via `--generate-crds`. A struct field
+# added without regenerating the chart CRD (the class that caused the
+# 2026-06-16 ~2-day outage + the dashboard-as-code activation cascade) fails
+# here, at the PR, instead of silently on the cluster.
+#
+# Runs on cheap GH-hosted runners: `--no-default-features` drops `embedded_ruby`
+# (libruby) + `executor_magma`, and `generate_crds()` is pure kube/schemars —
+# so no self-hosted ARC runner is needed.
+
+on: [push, pull_request]
+
+jobs:
+  crd-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout operator
+        uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Regenerate CRDs from the Rust structs (no libruby)
+        run: |
+          cargo run -p pangea-operator --bin pangea-operator \
+            --no-default-features -- --generate-crds > /tmp/all-crds.yaml
+          echo "generated $(grep -c '^kind: CustomResourceDefinition' /tmp/all-crds.yaml) CRDs"
+
+      - name: Checkout helmworks (public — no token)
+        uses: actions/checkout@v4
+        with:
+          repository: pleme-io/helmworks
+          path: _helmworks
+
+      - name: PyYAML
+        run: python3 -m pip install --quiet pyyaml
+
+      - name: CRD drift gate
+        run: |
+          python3 scripts/check-crd-drift.py \
+            /tmp/all-crds.yaml \
+            _helmworks/charts/pangea-operator/crds \
+            scripts/crd-drift-baseline.txt

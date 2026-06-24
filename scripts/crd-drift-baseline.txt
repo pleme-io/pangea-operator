@@ -1,0 +1,15 @@
+# crd-drift-baseline.txt — CRDs with KNOWN pre-existing drift (chart CRD lags the
+# Rust struct). The crd-drift gate WARNS on these and FAILS on any OTHER drift.
+#
+# This is a ratchet: new drift is blocked immediately; this debt is tracked and
+# burned down one CRD at a time. To clear an entry: regenerate the CRD
+# (`--generate-crds`), confirm the change is ADDITIVE (CreateReplace prunes
+# removed fields from live CRs — see the architecturegem activation 2026-06-24),
+# overwrite helmworks/charts/pangea-operator/crds/<name>.yaml + bump the chart,
+# then delete the line here.
+#
+# Surfaced 2026-06-24 by the gate's first run (architecturegem was the third —
+# already regenerated + shipped in chart 0.8.28).
+
+infrastructuretemplates.pangea.pleme.io
+operatorpolicies.pangea.pleme.io
