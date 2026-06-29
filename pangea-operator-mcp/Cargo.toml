@@ -1,0 +1,30 @@
+[package]
+name = "pangea-operator-mcp"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The MCP surface a model uses to OBSERVE + CONTROL a running pangea-operator — list/get InfrastructureTemplates (status.lastCycle), force reconcile, suspend/resume, read WorkspaceCatalog verify state + ArchitectureGem load phases, restart + status-check the operator Deployment. The CRDs ARE the state (a typed kube facade, not a second store); behind a PangeaStore trait so the tools are mock-tested without a cluster."
+
+[lib]
+name = "pangea_operator_mcp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "pangea-operator-mcp"
+path = "src/main.rs"
+
+[dependencies]
+rmcp = { version = "0.15", features = ["server", "transport-io"] }
+kube = { workspace = true }
+k8s-openapi = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+chrono = { workspace = true }
+async-trait = "0.1"

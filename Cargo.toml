@@ -6,6 +6,7 @@ members = [
     "pangea-operator",
     "pangea-cli",
     "pangea-ruby-eval",
+    "pangea-operator-mcp",
 ]
 
 [workspace.package]
