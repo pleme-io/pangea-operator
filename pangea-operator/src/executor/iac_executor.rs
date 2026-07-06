@@ -22,6 +22,7 @@
 //! (`RecordingExecutor`) lives in `executor/recording.rs`.
 
 use crate::error::Result;
+use crate::executor::plan_change::PlannedChange;
 use crate::executor::tofu::TofuResult;
 
 use async_trait::async_trait;
@@ -103,6 +104,36 @@ pub trait IacExecutor: Send + Sync + 'static {
         address: &str,
         id: &str,
     ) -> Result<TofuResult>;
+
+    /// Magma-native, **disk-free**, **tofu-format-free** plan readback
+    /// for import discovery.
+    ///
+    /// Carries **no `&Path`** — the whole point is that the default
+    /// (magma) surface names no filesystem path. The prepass calls this
+    /// FIRST; only when it returns `Ok(None)` does the caller fall back
+    /// to the legacy `show_plan(&Path)` + tofu-format string parse.
+    ///
+    /// Contract:
+    ///   * `Ok(Some(changes))` — this executor produced the typed plan
+    ///     in-process / from the DB (magma DB-backed, or the recording
+    ///     mock). On the magma DB path this reaches **ZERO filesystem**.
+    ///   * `Ok(None)` — this executor does not produce typed changes
+    ///     here (tofu; or disk-fallback magma with no artifact store —
+    ///     the interim unit-test path). The caller routes to the legacy
+    ///     `show_plan` path. This is the object-safe default.
+    ///   * `Err(..)` — a DB-backed magma executor with no persisted plan
+    ///     row (the plan phase must persist it before discovery) is a
+    ///     **LOUD typed error**, never a silent empty — the silent empty
+    ///     is the exact ~17-day-wedge shape this method exists to kill.
+    ///
+    /// Per the org ★★ MAGMA-NATIVE EXECUTION directive: the default path
+    /// reaches no filesystem, and tofu-format string parsing is off the
+    /// magma path entirely. Object-safe (no generics / `Self` / `&Path`),
+    /// so `Arc<dyn IacExecutor>` still compiles — see
+    /// `iac_executor_is_object_safe`.
+    async fn planned_changes(&self) -> Result<Option<Vec<PlannedChange>>> {
+        Ok(None)
+    }
 }
 
 #[cfg(test)]

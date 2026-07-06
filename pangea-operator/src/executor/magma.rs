@@ -75,6 +75,7 @@ use magma_operator_backend::{AsyncStateStore, BackendShape, OperatorBackend, Sto
 use crate::backend::state_backend::StateBackend;
 use crate::error::{Error, Result};
 use crate::executor::iac_executor::IacExecutor;
+use crate::executor::plan_change::PlannedChange;
 use crate::executor::tofu::TofuResult;
 
 // ── StateBackendAsync — adapter into magma-operator-backend ────────
@@ -299,6 +300,39 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
                 .await?;
         }
         Ok(())
+    }
+
+    /// Read the typed plan the plan phase persisted, **from the DB-backed
+    /// artifact store only** — ZERO filesystem.
+    ///
+    ///   * `Ok(Some(plan))` — DB-backed executor, plan row present.
+    ///   * `Err(MagmaExecution)` — DB-backed executor, **no plan row**:
+    ///     the plan phase must persist it before apply / discovery. This
+    ///     is a LOUD typed error (never a silent empty, never an
+    ///     os-error-2 restart loop).
+    ///   * `Ok(None)` — this executor is NOT DB-backed (no `artifact_store`
+    ///     — the disk-fallback / unit-test path). The caller decides how
+    ///     to read the disk checkpoint (apply) or route to the legacy
+    ///     `show_plan` path (planned_changes).
+    ///
+    /// Dedups the DB-plan read shared by `apply()` and `planned_changes()`.
+    async fn read_db_plan(&self) -> Result<Option<magma_types::Plan>> {
+        match &self.cfg.artifact_store {
+            Some(store) => {
+                let plan = store
+                    .get_plan(&self.cfg.schema_name, &self.cfg.template_name)
+                    .await?
+                    .ok_or_else(|| {
+                        Error::MagmaExecution(format!(
+                            "no plan in artifact store for {}/{}; \
+                             the plan phase must persist it before apply",
+                            self.cfg.schema_name, self.cfg.template_name
+                        ))
+                    })?;
+                Ok(Some(plan))
+            }
+            None => Ok(None),
+        }
     }
 
     fn bundle_checkpoint_path(work_dir: &Path) -> PathBuf {
@@ -545,6 +579,28 @@ fn to_universal_plan(plan: &magma_types::Plan) -> magma_converge::Plan {
     magma_converge::Plan::new("terraform", changes)
 }
 
+/// Project a `magma_types::Plan` into the executor-agnostic
+/// [`PlannedChange`] border for import discovery. Renders each address
+/// as `{type}.{name}` — byte-identical to `to_universal_plan` (above)
+/// and the tofu-format strings — so `naturalIds` / `importHints` /
+/// create-set lookups never miss. No filesystem, no tofu-format channel.
+///
+/// Tier-honest: the address drops `module` / `key` (as the whole magma
+/// path already does); keyed / nested resources are a named pre-existing
+/// gap (the pleme-io-opensource `github_repository` fleet is flat).
+fn planned_changes_from_magma_plan(plan: &magma_types::Plan) -> Vec<PlannedChange> {
+    use crate::executor::plan_change::{PlanAction, ResourceKindClass};
+    plan.resource_changes
+        .iter()
+        .map(|rc| PlannedChange {
+            address: format!("{}.{}", rc.address.type_id.0, rc.address.name),
+            action: PlanAction::from(&rc.action),
+            after: rc.after.clone(),
+            kind: ResourceKindClass::from(&rc.address.kind),
+        })
+        .collect()
+}
+
 fn changes_tofu_result(stdout: String, started: Instant) -> TofuResult {
     // tofu's `-detailed-exitcode` returns 2 when changes are pending.
     // We honor the same contract so callers' `has_changes()` works.
@@ -783,18 +839,12 @@ where
         // is a typed error (no disk fallback on the Some path, no
         // os-error-2 restart-loop class). Disk fallback → the
         // `magma-plan.json` checkpoint.
-        let plan: magma_types::Plan = match &self.cfg.artifact_store {
-            Some(store) => store
-                .get_plan(&self.cfg.schema_name, &self.cfg.template_name)
-                .await?
-                .ok_or_else(|| {
-                    Error::MagmaExecution(format!(
-                        "no plan in artifact store for {}/{}; \
-                         the plan phase must persist it before apply",
-                        self.cfg.schema_name, self.cfg.template_name
-                    ))
-                })?,
+        let plan: magma_types::Plan = match self.read_db_plan().await? {
+            Some(plan) => plan,
             None => {
+                // Disk fallback (no artifact store — the unit-test /
+                // interim disk mode). Reads the `magma-plan.json`
+                // checkpoint from the workspace dir.
                 let checkpoint = plan_file
                     .map(PathBuf::from)
                     .unwrap_or_else(|| Self::plan_checkpoint_path(work_dir));
@@ -1172,6 +1222,30 @@ where
         );
         Ok(err_tofu_result(stderr, started))
     }
+
+    /// Magma-native, disk-free import-discovery readback (the P1a fix).
+    ///
+    /// On the DB-backed (production) path this reads the SAME typed plan
+    /// row `apply()` consumes (`read_db_plan` → `ArtifactStore::get_plan`)
+    /// — **ZERO filesystem** — and maps each magma `ResourceChange` into
+    /// the executor-agnostic [`PlannedChange`] border. No tofu-format
+    /// re-serialization, no `tokio::fs::read`.
+    ///
+    /// A DB-backed executor with no persisted plan row is a LOUD typed
+    /// `Err` (propagated from `read_db_plan`), never a silent empty.
+    ///
+    /// On the disk-fallback path (no `artifact_store` — unit tests /
+    /// interim disk mode) this returns `Ok(None)`, so the prepass routes
+    /// to the legacy `show_plan` path unchanged. Tier: the DB path is
+    /// disk-free by-construction (no `&Path` reaches this method); the
+    /// disk-fallback `None` arm is only-mitigated interim, retired when
+    /// the artifact store is always wired.
+    async fn planned_changes(&self) -> Result<Option<Vec<PlannedChange>>> {
+        match self.read_db_plan().await? {
+            Some(plan) => Ok(Some(planned_changes_from_magma_plan(&plan))),
+            None => Ok(None),
+        }
+    }
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
@@ -1315,6 +1389,76 @@ mod tests {
         let result = exec.import(tmp.path(), "aws_iam_role.x", "arn:1").await.unwrap();
         assert!(!result.success);
         assert!(result.stderr.contains("not yet implemented"));
+    }
+
+    #[tokio::test]
+    async fn planned_changes_returns_none_on_disk_fallback() {
+        // A magma executor WITHOUT an artifact store (the unit-test /
+        // interim disk-fallback path) produces no typed changes here — it
+        // returns Ok(None) so the import prepass routes to the legacy
+        // `show_plan` path. This exercises the tofu/None branch the fix
+        // preserves for back-compat.
+        let exec = MagmaExecutor::new(fixture_config());
+        let out = exec.planned_changes().await.unwrap();
+        assert!(out.is_none(), "disk-fallback magma must return Ok(None)");
+    }
+
+    #[test]
+    fn planned_changes_from_magma_plan_maps_create_managed_only() {
+        use crate::executor::plan_change::{PlanAction, ResourceKindClass};
+
+        let addr = |kind: magma_types::ResourceKind, ty: &str, name: &str| {
+            magma_types::ResourceAddress {
+                module:  magma_types::ModulePath::root(),
+                kind,
+                type_id: magma_types::ResourceTypeId(ty.into()),
+                name:    name.into(),
+                key:     None,
+            }
+        };
+        let plan = magma_types::Plan {
+            id:             magma_types::PlanId([0u8; 32]),
+            created_at:     chrono::Utc::now(),
+            config_root:    std::path::PathBuf::from("/nonexistent"),
+            variables:      Default::default(),
+            resource_changes: vec![
+                // A create-that-exists managed resource — the breathe class.
+                magma_types::ResourceChange {
+                    address: addr(magma_types::ResourceKind::Managed, "github_repository", "breathe"),
+                    action:  magma_types::Action::Create,
+                    before:  None,
+                    after:   Some(json!({ "name": "breathe" })),
+                    reasons: vec![magma_types::ChangeReason::NewResource],
+                },
+                // A data source read — must NOT appear in discovery.
+                magma_types::ResourceChange {
+                    address: addr(magma_types::ResourceKind::Data, "github_user", "me"),
+                    action:  magma_types::Action::Read,
+                    before:  None,
+                    after:   Some(json!({ "login": "me" })),
+                    reasons: vec![],
+                },
+            ],
+            output_changes: vec![],
+        };
+
+        let changes = planned_changes_from_magma_plan(&plan);
+        assert_eq!(changes.len(), 2, "mapper is total over resource_changes");
+
+        // The managed create renders `{type}.{name}`, carries its planned
+        // `after`, and is classed Managed.
+        let create = &changes[0];
+        assert_eq!(create.address, "github_repository.breathe");
+        assert_eq!(create.action, PlanAction::Create);
+        assert_eq!(create.kind, ResourceKindClass::Managed);
+        assert_eq!(
+            create.after.as_ref().and_then(|a| a.get("name")).and_then(|v| v.as_str()),
+            Some("breathe")
+        );
+
+        // The data source is Read/Data — discovery excludes it downstream.
+        assert_eq!(changes[1].action, PlanAction::Read);
+        assert_eq!(changes[1].kind, ResourceKindClass::Data);
     }
 
     #[tokio::test]

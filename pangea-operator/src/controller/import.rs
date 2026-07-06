@@ -19,6 +19,166 @@
 
 use std::collections::BTreeMap;
 
+use crate::executor::plan_change::{PlanAction, PlannedChange, ResourceKindClass};
+
+/// A resolved import target: an address to adopt via `import`, the
+/// substituted import id, and the resolution source (`"hint"` for a
+/// per-address `importHints` entry, `"auto"` for a `naturalIds` / bundled
+/// default). Consumed by the prepass to dispatch `try_tofu_import`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportTarget {
+    pub address: String,
+    pub id: String,
+    pub source: String,
+}
+
+/// A create-action that could NOT be resolved to an import id. Carried
+/// out of the pure resolver so the async caller emits the matching typed
+/// event / warning — keeping [`resolve_import_targets`] ControllerState-
+/// free (the "pure core + injectable seam" delivery method).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportSkip {
+    /// A per-address `importHints` entry referenced an unset variable.
+    Hint { address: String, missing: String },
+    /// An auto-import `naturalIds` substitution failed. `server_assigned`
+    /// flags the canonical null-on-create attributes (`planned.id` /
+    /// `planned.arn` / `planned.self_link`) so the caller can emit the
+    /// actionable "use spec.importHints" suggestion.
+    Auto {
+        address: String,
+        template: String,
+        missing: String,
+        server_assigned: bool,
+    },
+}
+
+/// Split an executor's typed `planned_changes()` output into the two
+/// inputs import discovery needs: the create-action addresses (`Managed`
+/// resources only — never a Data source / Output / Local value) and the
+/// per-address planned `after` attrs.
+///
+/// This is the **magma-native, disk-free** replacement for
+/// `extract_create_addresses_from_plan` + `parse_planned_attrs` — no
+/// stringly tofu-`show -json` channel, no `tokio::fs::read`. A `None`
+/// planned `after` maps to `serde_json::Value::Null`, which
+/// [`substitute_with_planned`] treats identically to a missing attribute
+/// (preserving the server-assigned-null semantics).
+pub fn discovery_from_planned_changes(
+    changes: &[PlannedChange],
+) -> (Vec<String>, BTreeMap<String, serde_json::Value>) {
+    let mut creates = Vec::new();
+    let mut planned = BTreeMap::new();
+    for c in changes {
+        if c.action == PlanAction::Create && c.kind == ResourceKindClass::Managed {
+            creates.push(c.address.clone());
+            planned.insert(
+                c.address.clone(),
+                c.after.clone().unwrap_or(serde_json::Value::Null),
+            );
+        }
+    }
+    (creates, planned)
+}
+
+/// The pure core of the import prepass.
+///
+/// Given the create-action addresses + their planned `after` attrs
+/// (produced EITHER from an executor's typed `planned_changes()` on the
+/// magma path via [`discovery_from_planned_changes`], OR from the legacy
+/// tofu `show -json` parse via `extract_create_addresses_from_plan` +
+/// `parse_planned_attrs`), resolve every address to an [`ImportTarget`]
+/// via the three-layer cascade:
+///
+///   1. `spec.importHints` — per-address override (highest priority).
+///   2. `spec.importPolicy.naturalIds` — per-resource-type templates.
+///   3. Operator-bundled defaults ([`bundled_natural_ids`]).
+///
+/// Layers 2/3 only fire when `import_policy.auto_on_conflict` is `true`.
+/// ControllerState-free, executor-free, synchronous — the testable core.
+/// Returns the resolved targets + the unresolved skips (for the caller to
+/// surface as typed events).
+pub fn resolve_import_targets(
+    create_addresses: &[String],
+    planned_by_addr: &BTreeMap<String, serde_json::Value>,
+    import_hints: &BTreeMap<String, String>,
+    import_policy: Option<&crate::crd::ImportPolicy>,
+    variables: &BTreeMap<String, serde_json::Value>,
+) -> (Vec<ImportTarget>, Vec<ImportSkip>) {
+    use crate::controller::template_controller::substitute_import_id;
+    use std::collections::HashSet;
+
+    let auto_import = import_policy.map(|p| p.auto_on_conflict).unwrap_or(false);
+    let create_set: HashSet<&str> = create_addresses.iter().map(String::as_str).collect();
+
+    let mut targets: Vec<ImportTarget> = Vec::new();
+    let mut skips: Vec<ImportSkip> = Vec::new();
+    let mut covered: HashSet<String> = HashSet::new();
+
+    // Layer 1: per-address importHints (highest priority — the user
+    // explicitly named these resources).
+    for (addr, id_template) in import_hints {
+        if !create_set.contains(addr.as_str()) {
+            continue;
+        }
+        match substitute_import_id(id_template, variables) {
+            Ok(id) => {
+                targets.push(ImportTarget {
+                    address: addr.clone(),
+                    id,
+                    source: "hint".to_string(),
+                });
+                covered.insert(addr.clone());
+            }
+            Err(missing) => skips.push(ImportSkip::Hint {
+                address: addr.clone(),
+                missing,
+            }),
+        }
+    }
+
+    // Layers 2 + 3: naturalIds / bundled defaults for every create-action
+    // not already covered by an explicit hint. Only when autoOnConflict.
+    if auto_import {
+        let user_natural_ids = import_policy
+            .map(|p| p.natural_ids.clone())
+            .unwrap_or_default();
+        for addr in create_addresses {
+            if covered.contains(addr) {
+                continue;
+            }
+            let id_template = match resolve_natural_id(addr, &user_natural_ids) {
+                Some(t) => t,
+                None => continue,
+            };
+            let planned_attrs = planned_by_addr
+                .get(addr)
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            match substitute_with_planned(&id_template, &planned_attrs, variables) {
+                Ok(id) => targets.push(ImportTarget {
+                    address: addr.clone(),
+                    id,
+                    source: "auto".to_string(),
+                }),
+                Err(missing) => {
+                    let server_assigned = matches!(
+                        missing.as_str(),
+                        "planned.id" | "planned.arn" | "planned.self_link"
+                    );
+                    skips.push(ImportSkip::Auto {
+                        address: addr.clone(),
+                        template: id_template,
+                        missing,
+                        server_assigned,
+                    });
+                }
+            }
+        }
+    }
+
+    (targets, skips)
+}
+
 /// Operator-bundled per-resource-type natural-ID templates.
 ///
 /// Keys are terraform resource types; values are substitution
@@ -531,6 +691,159 @@ mod tests {
             err, "planned.id",
             "null value in plan must be treated identically to missing \
              attribute — both indicate server-assigned-ness on create"
+        );
+    }
+
+    // ── P1a: magma-native, disk-free import discovery ───────────────
+    //
+    // These lock in the fix for the breathe class: under the disk-free
+    // magma path, a create-that-exists must be IMPORT-discovered (adopted)
+    // rather than blindly re-created (422 → cycle Failed). The proof runs
+    // WITHOUT ControllerState / PgPool / network — the pure resolver + the
+    // typed `planned_changes()` seam are the testable core.
+
+    use crate::crd::ImportPolicy;
+    use crate::executor::plan_change::{PlanAction, PlannedChange, ResourceKindClass};
+
+    fn auto_policy() -> ImportPolicy {
+        ImportPolicy {
+            auto_on_conflict: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn discovery_from_planned_changes_filters_managed_creates() {
+        let changes = vec![
+            PlannedChange {
+                address: "github_repository.breathe".into(),
+                action: PlanAction::Create,
+                kind: ResourceKindClass::Managed,
+                after: Some(serde_json::json!({ "name": "breathe" })),
+            },
+            // A managed NON-create — excluded.
+            PlannedChange {
+                address: "github_repository.existing".into(),
+                action: PlanAction::NoOp,
+                kind: ResourceKindClass::Managed,
+                after: Some(serde_json::json!({ "name": "existing" })),
+            },
+            // A data source create-ish read — excluded (not Managed).
+            PlannedChange {
+                address: "github_user.me".into(),
+                action: PlanAction::Read,
+                kind: ResourceKindClass::Data,
+                after: Some(serde_json::json!({ "login": "me" })),
+            },
+        ];
+        let (creates, planned) = discovery_from_planned_changes(&changes);
+        assert_eq!(creates, vec!["github_repository.breathe".to_string()]);
+        assert_eq!(
+            planned["github_repository.breathe"]["name"].as_str(),
+            Some("breathe")
+        );
+        assert!(!planned.contains_key("github_user.me"));
+    }
+
+    #[test]
+    fn create_that_exists_github_repo_resolves_to_import_target() {
+        // The core assertion: a `github_repository.breathe` Create whose
+        // planned `after.name == "breathe"` resolves to an import target
+        // with id "breathe" (bundled `{{ .planned.name }}`), source "auto".
+        let creates = vec!["github_repository.breathe".to_string()];
+        let mut planned = BTreeMap::new();
+        planned.insert(
+            "github_repository.breathe".to_string(),
+            serde_json::json!({ "name": "breathe" }),
+        );
+        let policy = auto_policy();
+        let (targets, skips) = resolve_import_targets(
+            &creates,
+            &planned,
+            &BTreeMap::new(),
+            Some(&policy),
+            &BTreeMap::new(),
+        );
+        assert!(skips.is_empty(), "no unresolved skips expected: {skips:?}");
+        assert_eq!(
+            targets,
+            vec![ImportTarget {
+                address: "github_repository.breathe".into(),
+                id: "breathe".into(),
+                source: "auto".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn no_auto_import_resolves_nothing_without_hints() {
+        // autoOnConflict=false + no hints → zero targets (today's
+        // importHints-only behavior preserved).
+        let creates = vec!["github_repository.breathe".to_string()];
+        let mut planned = BTreeMap::new();
+        planned.insert(
+            "github_repository.breathe".to_string(),
+            serde_json::json!({ "name": "breathe" }),
+        );
+        let (targets, _skips) = resolve_import_targets(
+            &creates,
+            &planned,
+            &BTreeMap::new(),
+            Some(&ImportPolicy::default()),
+            &BTreeMap::new(),
+        );
+        assert!(targets.is_empty());
+    }
+
+    #[tokio::test]
+    async fn magma_disk_free_planned_changes_import_discovers_create_that_exists() {
+        // End-to-end over the injectable executor seam: the RecordingExecutor
+        // returns a typed plan via `planned_changes()` (the magma DB-backed,
+        // disk-free path) — NO show_plan, NO plan file, NO tofu-format parse.
+        // discovery + resolution then IMPORT-discover the create-that-exists.
+        use crate::executor::iac_executor::IacExecutor;
+        use crate::executor::recording::RecordingExecutor;
+
+        let exec = RecordingExecutor::new();
+        exec.set_planned_changes(vec![PlannedChange {
+            address: "github_repository.breathe".into(),
+            action: PlanAction::Create,
+            kind: ResourceKindClass::Managed,
+            after: Some(serde_json::json!({ "name": "breathe" })),
+        }]);
+
+        // The prepass's first move: the typed, disk-free readback.
+        let changes = exec
+            .planned_changes()
+            .await
+            .unwrap()
+            .expect("recording executor returns Some typed changes");
+
+        // No `show_plan` was consulted — the disk-free path.
+        assert!(
+            !exec.recorded_calls().iter().any(|c| c.command == "show"),
+            "planned_changes must not touch show_plan (disk-free)"
+        );
+
+        let (creates, planned) = discovery_from_planned_changes(&changes);
+        let policy = auto_policy();
+        let (targets, _skips) = resolve_import_targets(
+            &creates,
+            &planned,
+            &BTreeMap::new(),
+            Some(&policy),
+            &BTreeMap::new(),
+        );
+
+        // The create-that-exists is discovered FOR IMPORT (id "breathe"),
+        // not left to be blindly create-failed.
+        assert_eq!(
+            targets,
+            vec![ImportTarget {
+                address: "github_repository.breathe".into(),
+                id: "breathe".into(),
+                source: "auto".into(),
+            }]
         );
     }
 }

@@ -18,7 +18,6 @@ use kube::{
     },
     ResourceExt,
 };
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, instrument, warn};
@@ -2780,58 +2779,23 @@ fn extract_create_addresses_from_plan(plan_json: &str) -> Vec<String> {
         .collect()
 }
 
-
-/// Run the pre-apply import sweep. Returns the set of addresses
-/// successfully imported so the cycle receipt can mark them as
-/// `Outcome::Imported` instead of whatever the apply-time plan
-/// derives (the plan-after-import would say no-op or update — the
-/// USER-facing outcome is "we adopted this resource").
-///
-/// Failures are non-fatal: a hint with bad substitution is skipped
-/// with a Warning event; an import that fails (wrong ID, resource
-/// gone, already-managed) is logged but doesn't block the apply.
-async fn run_import_prepass(
-    template: &InfrastructureTemplate,
-    state: &ControllerState,
+/// Legacy tofu-path plan readback for import discovery: `tofu show -json`
+/// stdout, or `""` on a non-success / empty / errored read (best-effort —
+/// the prepass proceeds without pre-apply import; the post-apply conflict
+/// catch covers). Reached ONLY on the `planned_changes() == Ok(None)`
+/// fall-through (tofu, or disk-fallback magma) — the magma DB path never
+/// touches this stringly channel.
+async fn read_legacy_show_plan_json(
+    executor: &dyn crate::executor::IacExecutor,
     workspace_path: &std::path::Path,
     plan_path: &std::path::Path,
-    prior_drifts: &[DriftDetail],
-) -> Vec<String> {
-    use crate::controller::import::{
-        bundled_natural_ids, parse_planned_attrs, resolve_natural_id, substitute_with_planned,
-    };
-
-    let executor = state.executor_for(template);
-
-    let auto_import = template
-        .spec
-        .import_policy
-        .as_ref()
-        .map(|p| p.auto_on_conflict)
-        .unwrap_or(false);
-
-    // Short-circuit when neither auto-import nor declared hints fire.
-    if template.spec.import_hints.is_empty() && !auto_import {
-        return Vec::new();
-    }
-
-    // Read the plan JSON ONCE and derive create_addresses from it
-    // directly — NOT from prior_drifts. Drift details on status are
-    // capped at 50 entries (k8s object size limit), but the actual
-    // tofu plan can have hundreds of creates. Reading the plan file
-    // bypasses the cap entirely so the prepass sees every create-
-    // action it could import. prior_drifts is kept as a fallback
-    // path for callers that don't have a plan file available.
-    let plan_json = match executor.show_plan(workspace_path, plan_path).await {
+) -> String {
+    match executor.show_plan(workspace_path, plan_path).await {
         Ok(r) if r.success && !r.stdout.is_empty() => r.stdout,
         Ok(r) => {
             // NON-SILENT: a non-success or empty `tofu show -json` is the
             // exact failure that silently disabled auto-import and stuck
-            // the pleme-io-opensource posture for ~17 days. Surface it
-            // loudly so the mechanism is visible in the operator log. The
-            // executor read-to-end fix should keep this from firing on
-            // large plans; the post-apply conflict catch covers the gap
-            // if it does fire.
+            // the pleme-io-opensource posture for ~17 days.
             warn!(
                 success = r.success,
                 exit_code = r.exit_code,
@@ -2851,51 +2815,143 @@ async fn run_import_prepass(
             );
             String::new()
         }
+    }
+}
+
+
+/// Run the pre-apply import sweep. Returns the set of addresses
+/// successfully imported so the cycle receipt can mark them as
+/// `Outcome::Imported` instead of whatever the apply-time plan
+/// derives (the plan-after-import would say no-op or update — the
+/// USER-facing outcome is "we adopted this resource").
+///
+/// Failures are non-fatal: a hint with bad substitution is skipped
+/// with a Warning event; an import that fails (wrong ID, resource
+/// gone, already-managed) is logged but doesn't block the apply.
+async fn run_import_prepass(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+    workspace_path: &std::path::Path,
+    plan_path: &std::path::Path,
+    prior_drifts: &[DriftDetail],
+) -> Vec<String> {
+    use crate::controller::import::{
+        discovery_from_planned_changes, parse_planned_attrs, resolve_import_targets, ImportSkip,
     };
-    let plan_create_addresses = extract_create_addresses_from_plan(&plan_json);
-    let plan_creates_n = plan_create_addresses.len();
-    let create_addresses_owned: Vec<String> = if !plan_create_addresses.is_empty() {
-        plan_create_addresses
-    } else {
-        prior_drifts
-            .iter()
-            .filter(|d| d.action == "create")
-            .map(|d| d.address.clone())
-            .collect()
+
+    let executor = state.executor_for(template);
+
+    let auto_import = template
+        .spec
+        .import_policy
+        .as_ref()
+        .map(|p| p.auto_on_conflict)
+        .unwrap_or(false);
+
+    // Short-circuit when neither auto-import nor declared hints fire.
+    if template.spec.import_hints.is_empty() && !auto_import {
+        return Vec::new();
+    }
+
+    let variables = template.spec.variables.clone().unwrap_or_default();
+
+    // Create-action discovery — magma-native + disk-free FIRST.
+    //
+    // Prefer the executor's typed, disk-free `planned_changes()` readback:
+    // the magma DB-backed path (production) + the RecordingExecutor test
+    // mock return `Some(..)` off the SAME typed plan `apply()` consumes —
+    // ZERO filesystem, NO tofu-format string re-parse. tofu + disk-fallback
+    // magma return `None` → the byte-identical legacy `tofu show -json`
+    // path (drift-details capped at 50; the plan bypasses the cap). A
+    // DB-backed magma with no persisted plan row is a LOUD typed `Err`
+    // (never a silent empty — that silent empty is the exact ~17-day
+    // pleme-io-opensource wedge shape). Per the org ★★ MAGMA-NATIVE
+    // EXECUTION directive (disk-free by default) + ★★ TYPED-SPEC border.
+    let (create_addresses_owned, planned_by_addr): (
+        Vec<String>,
+        std::collections::BTreeMap<String, serde_json::Value>,
+    ) = match executor.planned_changes().await {
+        Ok(Some(changes)) => {
+            let (creates, planned) = discovery_from_planned_changes(&changes);
+            info!(
+                total_create_addresses = creates.len(),
+                source = "planned_changes",
+                "import prepass: create-action discovery (magma-native typed plan, disk-free)"
+            );
+            (creates, planned)
+        }
+        Ok(None) => {
+            // Legacy tofu / disk-fallback path: read + parse the tofu
+            // `show -json` payload (byte-identical to the prior behavior),
+            // with prior_drifts as the fallback for callers without a plan.
+            let plan_json =
+                read_legacy_show_plan_json(executor.as_ref(), workspace_path, plan_path).await;
+            let plan_create_addresses = extract_create_addresses_from_plan(&plan_json);
+            let plan_creates_n = plan_create_addresses.len();
+            let creates: Vec<String> = if !plan_create_addresses.is_empty() {
+                plan_create_addresses
+            } else {
+                prior_drifts
+                    .iter()
+                    .filter(|d| d.action == "create")
+                    .map(|d| d.address.clone())
+                    .collect()
+            };
+            info!(
+                plan_json_len = plan_json.len(),
+                plan_creates = plan_creates_n,
+                total_create_addresses = creates.len(),
+                source = if plan_creates_n > 0 { "plan" } else { "prior_drifts" },
+                "import prepass: create-action discovery"
+            );
+            // parse_planned_attrs is best-effort — only the auto-import
+            // layers below consume it.
+            let planned = if auto_import {
+                parse_planned_attrs(&plan_json)
+            } else {
+                std::collections::BTreeMap::new()
+            };
+            (creates, planned)
+        }
+        Err(e) => {
+            // LOUD, non-fatal: a DB-backed magma with no persisted plan
+            // (or an artifact-store read error). Do NOT silently disable
+            // import — surface it + skip pre-apply import THIS cycle. The
+            // reconcile continues; the post-apply conflict catch AND
+            // magma's reactive on-conflict adopt (magma_apply engine)
+            // cover the gap so breathe still converges.
+            warn!(
+                error = %e,
+                "import prepass: executor.planned_changes() errored (no persisted magma plan?) — \
+                 pre-apply import disabled this cycle (post-apply conflict catch + magma reactive \
+                 adopt cover)."
+            );
+            return Vec::new();
+        }
     };
-    info!(
-        plan_json_len = plan_json.len(),
-        plan_creates = plan_creates_n,
-        total_create_addresses = create_addresses_owned.len(),
-        source = if plan_creates_n > 0 { "plan" } else { "prior_drifts" },
-        "import prepass: create-action discovery"
-    );
+
     if create_addresses_owned.is_empty() {
         return Vec::new();
     }
-    let create_addresses: Vec<&str> =
-        create_addresses_owned.iter().map(|s| s.as_str()).collect();
 
-    let variables = template.spec.variables.clone().unwrap_or_default();
-    let mut covered: HashSet<String> = HashSet::new();
-    // (address, import_id, source_label). Resolved synchronously up
-    // front — no I/O — then dispatched concurrently below.
-    let mut import_targets: Vec<(String, String, String)> = Vec::new();
+    // Resolve every create-action to an import target via the three-layer
+    // cascade (importHints → naturalIds → bundled). Pure, ControllerState-
+    // free core — no I/O, no tofu-format parse.
+    let (targets, skips) = resolve_import_targets(
+        &create_addresses_owned,
+        &planned_by_addr,
+        &template.spec.import_hints,
+        template.spec.import_policy.as_ref(),
+        &variables,
+    );
 
-    // Layer 1: per-address importHints (existing behaviour, highest
-    // priority — the user explicitly named these resources).
-    for (addr, id_template) in &template.spec.import_hints {
-        if !create_addresses.contains(&addr.as_str()) {
-            continue;
-        }
-        match substitute_import_id(id_template, &variables) {
-            Ok(id) => {
-                import_targets.push((addr.clone(), id, "hint".to_string()));
-                covered.insert(addr.clone());
-            }
-            Err(missing) => {
+    // Surface unresolved skips as typed events / warnings (kept out of the
+    // pure resolver so it stays sync + state-free).
+    for skip in &skips {
+        match skip {
+            ImportSkip::Hint { address, missing } => {
                 warn!(
-                    address = %addr,
+                    address = %address,
                     missing_var = %missing,
                     "import hint substitution failed; skipping"
                 );
@@ -2905,83 +2961,32 @@ async fn run_import_prepass(
                     EventType::Warning,
                     "ImportHintSkipped",
                     &format!(
-                        "Import hint for {addr} references unset variable {{{{ .{missing} }}}}; skipping"
+                        "Import hint for {address} references unset variable {{{{ .{missing} }}}}; skipping"
                     ),
                 )
                 .await;
             }
-        }
-    }
-
-    // Layer 2 + 3: auto-import via importPolicy.naturalIds (or
-    // bundled defaults) for every create-action not already covered
-    // by an explicit hint. Only fires when autoOnConflict is true.
-    if auto_import {
-        // Plan JSON already parsed above (shared with create_addresses
-        // derivation). parse_planned_attrs is best-effort — an empty
-        // map just means substitution will fail per-address and the
-        // address gets skipped (we fall back to the apply, which then
-        // fails in a debuggable way).
-        let planned_by_addr = parse_planned_attrs(&plan_json);
-
-        let user_natural_ids = template
-            .spec
-            .import_policy
-            .as_ref()
-            .map(|p| p.natural_ids.clone())
-            .unwrap_or_default();
-
-        for addr in &create_addresses {
-            if covered.contains(*addr) {
-                continue;
+            ImportSkip::Auto {
+                address,
+                template: id_template,
+                missing,
+                server_assigned,
+            } => {
+                warn!(
+                    address = %address,
+                    template = %id_template,
+                    missing = %missing,
+                    suggestion = if *server_assigned {
+                        "Server-assigned attribute is null on create-action plans. \
+                         Add `spec.importHints[<address>] = \"<known-cloud-id>\"` and re-reconcile."
+                    } else {
+                        "Required attribute not in plan. Either declare it on the workspace \
+                         DSL resource block, or add a per-address `spec.importHints` entry."
+                    },
+                    "auto-import: substitution failed; skipping"
+                );
             }
-            let id_template = match resolve_natural_id(addr, &user_natural_ids) {
-                Some(t) => t,
-                None => {
-                    debug!(
-                        address = %addr,
-                        "auto-import: no naturalIds rule for resource type; skipping"
-                    );
-                    continue;
-                }
-            };
-            let planned_attrs = planned_by_addr
-                .get(*addr)
-                .cloned()
-                .unwrap_or(serde_json::Value::Null);
-            match substitute_with_planned(&id_template, &planned_attrs, &variables) {
-                Ok(id) => {
-                    import_targets.push(((*addr).to_string(), id, "auto".to_string()));
-                }
-                Err(missing) => {
-                    // Common cause: the template references a
-                    // server-assigned attribute (e.g. `planned.id`,
-                    // `planned.arn`) that's null on create-action
-                    // plans. The fix is per-address `spec.importHints`
-                    // with the cloud-side ID, looked up out-of-band.
-                    let server_assigned_hint = matches!(
-                        missing.as_str(),
-                        "planned.id" | "planned.arn" | "planned.self_link"
-                    );
-                    warn!(
-                        address = %addr,
-                        template = %id_template,
-                        missing = %missing,
-                        suggestion = if server_assigned_hint {
-                            "Server-assigned attribute is null on create-action plans. \
-                             Add `spec.importHints[<address>] = \"<known-cloud-id>\"` and re-reconcile."
-                        } else {
-                            "Required attribute not in plan. Either declare it on the workspace \
-                             DSL resource block, or add a per-address `spec.importHints` entry."
-                        },
-                        "auto-import: substitution failed; skipping"
-                    );
-                }
-            };
         }
-        // Replace bundled_natural_ids fn-pointer warning with explicit use to avoid
-        // dead_code on the import. (The fn is invoked transitively via resolve_natural_id.)
-        let _ = bundled_natural_ids;
     }
 
     // Dispatch all resolved imports concurrently. Each `tofu import`
@@ -2992,7 +2997,7 @@ async fn run_import_prepass(
     // each). Empirically against pleme-io-opensource (~459 imports)
     // serial=1/15s = 7000s+ ≈ 2h; buffer_unordered(10) ≈ 12-15min.
     const IMPORT_CONCURRENCY: usize = 10;
-    let total_targets = import_targets.len();
+    let total_targets = targets.len();
     if total_targets > 0 {
         info!(
             total = total_targets,
@@ -3000,18 +3005,18 @@ async fn run_import_prepass(
             "Running import prepass concurrently"
         );
     }
-    let imported: Vec<String> = futures::stream::iter(import_targets.into_iter())
-        .map(|(addr, import_id, source_label)| async move {
+    let imported: Vec<String> = futures::stream::iter(targets.into_iter())
+        .map(|t| async move {
             let ok = try_tofu_import(
                 template,
                 state,
                 workspace_path,
-                &addr,
-                &import_id,
-                &source_label,
+                &t.address,
+                &t.id,
+                &t.source,
             )
             .await;
-            if ok { Some(addr) } else { None }
+            if ok { Some(t.address) } else { None }
         })
         .buffer_unordered(IMPORT_CONCURRENCY)
         .filter_map(|maybe_addr| async move { maybe_addr })
@@ -3088,7 +3093,7 @@ async fn try_tofu_import(
 /// `template` with string-coerced values from `variables`. Returns
 /// `Err(missing_var)` on the first unresolved token so the caller
 /// can surface it as a typed event.
-fn substitute_import_id(
+pub(crate) fn substitute_import_id(
     template: &str,
     variables: &std::collections::BTreeMap<String, serde_json::Value>,
 ) -> std::result::Result<String, String> {

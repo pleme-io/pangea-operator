@@ -5,6 +5,10 @@
 
 pub mod backend_select;
 pub mod iac_executor;
+// Typed, executor-agnostic, disk-free import-discovery border. Not
+// feature-gated — the `IacExecutor::planned_changes` method + the tofu
+// path reference it regardless of `executor_magma`. See module docs.
+pub mod plan_change;
 pub mod recording;
 mod tofu;
 mod workspace;
@@ -37,6 +41,7 @@ pub mod workspace_runner;
 
 pub use backend_select::ExecutorBackend;
 pub use iac_executor::IacExecutor;
+pub use plan_change::{PlanAction, PlannedChange, ResourceKindClass};
 pub use recording::{RecordedCall, RecordingExecutor};
 pub use tofu::{TofuExecutor, TofuCommand, TofuResult, FailedChangeRecord};
 pub use workspace::{Workspace, WorkspaceManager};

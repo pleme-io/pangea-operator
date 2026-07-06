@@ -14,6 +14,7 @@
 
 use crate::error::Result;
 use crate::executor::iac_executor::IacExecutor;
+use crate::executor::plan_change::PlannedChange;
 use crate::executor::tofu::TofuResult;
 
 use async_trait::async_trait;
@@ -44,6 +45,12 @@ pub struct RecordedCall {
 pub struct RecordingExecutor {
     calls: Mutex<Vec<RecordedCall>>,
     canned: Mutex<VecDeque<TofuResult>>,
+    /// Injectable typed plan for `planned_changes()`. `None` (default)
+    /// keeps every existing recording test on the legacy `show_plan`
+    /// path (the trait default returns `Ok(None)`); `Some(..)` opts into
+    /// the magma-native disk-free discovery path so a test can prove a
+    /// create-that-exists is IMPORT-discovered, not create-failed.
+    canned_plan: Mutex<Option<Vec<PlannedChange>>>,
 }
 
 impl RecordingExecutor {
@@ -54,7 +61,17 @@ impl RecordingExecutor {
         Self {
             calls: Mutex::new(Vec::new()),
             canned: Mutex::new(VecDeque::new()),
+            canned_plan: Mutex::new(None),
         }
+    }
+
+    /// Inject a canned typed plan so `planned_changes()` returns
+    /// `Ok(Some(changes))` — simulating the magma DB-backed, disk-free
+    /// discovery path. Until this is called, `planned_changes()` returns
+    /// `Ok(None)` (the trait default) so existing recording tests are
+    /// unaffected.
+    pub fn set_planned_changes(&self, changes: Vec<PlannedChange>) {
+        *self.canned_plan.lock().unwrap() = Some(changes);
     }
 
     /// Queue a canned response. Responses are returned FIFO. When the
@@ -196,6 +213,10 @@ impl IacExecutor for RecordingExecutor {
             work_dir,
             vec![address.to_string(), id.to_string()],
         ))
+    }
+
+    async fn planned_changes(&self) -> Result<Option<Vec<PlannedChange>>> {
+        Ok(self.canned_plan.lock().unwrap().clone())
     }
 }
 
