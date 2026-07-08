@@ -893,8 +893,24 @@ async fn handle_compiling(
                 .map_err(|e| Error::Compilation(format!("rendered terraform JSON is not valid JSON: {e}")))?;
             let schema_name = format!("pangea_{}", template.spec.pangea_namespace);
             let template_name = template.name_any();
+            // Record the source revision this render was produced AT — the
+            // git HEAD SHA (git sources) or the `cm:` content hash
+            // (inline/configMap), the SAME value written to
+            // `status.compiledRevision` a few lines below via
+            // `update_compiled_revision`. `compiled_config_available`
+            // compares the stored revision against `status.compiledRevision`
+            // to decide whether a cached render is still current, so the put
+            // (compile) and the get (reuse) MUST agree on the revision — the
+            // revision extension of the "Keys MUST match" invariant. Without
+            // it, a git source whose HEAD advanced kept serving the render
+            // from the OLDER revision (the stale-render class this fixes).
             store
-                .put_rendered_config(&schema_name, &template_name, &value)
+                .put_rendered_config(
+                    &schema_name,
+                    &template_name,
+                    &value,
+                    compiled_revision.as_deref(),
+                )
                 .await?;
             info!("Rendered config persisted to Postgres artifact store (zero-disk magma handoff)");
         }
@@ -1559,6 +1575,43 @@ async fn non_git_source_revision(
     Ok(Some(content_revision(&content)))
 }
 
+/// Pure reuse decision: is a cached `rendered_config` still current?
+///
+/// The cached render is reusable **iff** the `source_revision` it was
+/// produced at (recorded on the artifact row by `handle_compiling`'s
+/// `put_rendered_config`) equals the revision the operator now believes
+/// it should be at (`status.compiledRevision`). This unifies git and
+/// non-git: for git, `compiled_revision` is the HEAD SHA the freshness
+/// gate keeps current; for non-git it is the `cm:` content hash of the
+/// current source content.
+///
+/// `stored_revision == None` (no row, or a legacy row written before the
+/// `source_revision` column existed) ⇒ stale ⇒ recompile once — the same
+/// converge-by-one-recompile discipline as a legacy CR with no
+/// `compiled_revision`. A mismatch ⇒ stale (the render is from an older
+/// revision — the git stale-render class this fixes). Pure + kube-free so
+/// the law is a unit test, not an operational hope.
+fn rendered_config_is_current(
+    stored_revision: Option<&str>,
+    current_revision: Option<&str>,
+) -> bool {
+    match (stored_revision, current_revision) {
+        // The artifact records the revision it was rendered from AND we
+        // know the revision we should be at — reuse only on an exact match.
+        (Some(stored), Some(current)) => stored == current,
+        // The artifact has no recorded revision (legacy row / NULL) — treat
+        // as stale so exactly one recompile stamps the revision.
+        (None, _) => false,
+        // We can't determine the current revision (e.g. a configMap/inline
+        // source became unreadable this tick, or no compiledRevision anchor
+        // yet). Don't force a recompile on an unknowable current revision —
+        // the freshness gate / compile path surfaces the real error. This
+        // preserves the pre-fix "present ⇒ available" behavior only when the
+        // current revision is genuinely undeterminable.
+        (Some(_), None) => true,
+    }
+}
+
 async fn compiled_config_available(
     template: &InfrastructureTemplate,
     state: &ControllerState,
@@ -1570,38 +1623,60 @@ async fn compiled_config_available(
         return Ok(main_tf_on_disk);
     }
     let schema_name = format!("pangea_{}", template.spec.pangea_namespace);
-    let present = state
+    let store = state
         .artifact_store
         .as_ref()
-        .expect("magma_db_backed implies artifact_store.is_some()")
-        .get_rendered_config(&schema_name, &template.name_any())
+        .expect("magma_db_backed implies artifact_store.is_some()");
+    let template_name = template.name_any();
+
+    let present = store
+        .get_rendered_config(&schema_name, &template_name)
         .await?
         .is_some();
     if !present {
         return Ok(false);
     }
-    // NON-GIT SOURCE FRESHNESS. The cached render is only "available" if the
-    // source content is UNCHANGED since it was compiled. Git sources track
-    // this via the HEAD-SHA freshness gate; non-git (configMap/inline) sources
-    // had NO change detection, so a ConfigMap edit left the operator serving
-    // the stale Postgres render indefinitely (the config never reconverged).
-    // Compare the current source content-revision to status.compiledRevision;
-    // on mismatch the cache is stale → not "available" → re-compile. (A legacy
-    // CR whose compiledRevision predates this — None — mismatches once and
-    // converges by exactly one recompile, same as the git legacy-CR case.)
-    if let Some(current_rev) = non_git_source_revision(template, state).await? {
-        let compiled_rev = template
+
+    // UNIFIED SOURCE-REVISION REUSE GATE (git + non-git). The cached render
+    // is only "available" if the revision it was produced from still matches
+    // the revision the operator should be at. Previously this checked ONLY
+    // non-git sources (via `non_git_source_revision`), so git sources
+    // returned `true` UNCONDITIONALLY once a row was present — the operator
+    // stamped `status.compiledRevision` to a new HEAD while continuing to
+    // serve the render produced from the OLDER revision (the git-sourced
+    // stale-render class: an org.yaml/source change silently never applied).
+    //
+    // The stored revision is read from the artifact row; the current
+    // revision is `status.compiledRevision` for git (the freshness gate,
+    // which observes the remote HEAD via `observe_head`, keeps this current
+    // and bounces to Compiling on a moved HEAD) and `non_git_source_revision`
+    // for inline/configMap (the current content hash). On mismatch or an
+    // unrecorded stored revision the cache is stale → recompile → bounce to
+    // Compiling.
+    let stored_revision = store
+        .get_rendered_config_revision(&schema_name, &template_name)
+        .await?;
+    let current_revision = match non_git_source_revision(template, state).await? {
+        // Non-git (inline/configMap): the current content hash.
+        Some(rev) => Some(rev),
+        // Git (or no revision anchor yet): `status.compiledRevision` — the
+        // HEAD SHA the freshness gate advances. Do NOT re-resolve the remote
+        // HEAD here (a redundant `ls-remote` RTT the freshness gate already
+        // owns); `compiledRevision` IS the observed-HEAD anchor.
+        None => template
             .status
             .as_ref()
-            .and_then(|s| s.compiled_revision.as_deref());
-        if compiled_rev != Some(current_rev.as_str()) {
-            info!(
-                compiled = ?compiled_rev,
-                current = %current_rev,
-                "non-git source changed since compile — re-compiling (configMap/inline freshness)"
-            );
-            return Ok(false);
-        }
+            .and_then(|s| s.compiled_revision.clone()),
+    };
+
+    if !rendered_config_is_current(stored_revision.as_deref(), current_revision.as_deref()) {
+        info!(
+            stored = ?stored_revision,
+            current = ?current_revision,
+            "cached rendered_config is from a different source revision — re-compiling \
+             (unified git + non-git freshness gate)"
+        );
+        return Ok(false);
     }
     Ok(true)
 }
@@ -2702,7 +2777,7 @@ fn is_self_healable_apply_error(stderr: &str) -> bool {
 
 #[cfg(test)]
 mod source_freshness_tests {
-    use super::content_revision;
+    use super::{content_revision, rendered_config_is_current};
 
     #[test]
     fn content_revision_is_stable_and_change_sensitive() {
@@ -2716,6 +2791,97 @@ mod source_freshness_tests {
         // A config EDIT changes the revision → forces exactly one re-compile.
         let b = content_revision("resource \"aws_vpc\" \"x\" { tags = {} }");
         assert_ne!(a, b, "changed content must yield a different revision");
+    }
+
+    // ── rendered_config_is_current — the unified reuse law (git + non-git) ──
+    //
+    // These pin the decision `compiled_config_available` makes AFTER it
+    // confirms a rendered_config row is present: reuse the cached render iff
+    // its recorded source_revision matches the revision the operator should
+    // be at (status.compiledRevision for git; the cm: content hash for
+    // non-git). The pre-fix bug was that git sources reused UNCONDITIONALLY;
+    // the headline regression test below is `git_head_advanced_*`.
+
+    #[test]
+    fn git_head_advanced_makes_cached_render_stale() {
+        // THE load-bearing regression. A git-sourced template: the render in
+        // Postgres was produced at an OLD HEAD, but the observed HEAD (kept on
+        // status.compiledRevision by the freshness gate) has advanced. The
+        // cached render is NOT current → recompile. Before the fix this
+        // returned `available` unconditionally and the source change silently
+        // never applied.
+        let old_head = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
+        let new_head = "ffeeddccbbaa00112233445566778899aabbccdd";
+        assert!(
+            !rendered_config_is_current(Some(old_head), Some(new_head)),
+            "a moved git HEAD must make the older-revision render stale (recompile)"
+        );
+    }
+
+    #[test]
+    fn git_head_unchanged_reuses_cached_render() {
+        // The negative: when the render's revision equals the current HEAD,
+        // reuse it — the gate must not force gratuitous recompiles.
+        let head = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
+        assert!(
+            rendered_config_is_current(Some(head), Some(head)),
+            "an unchanged git HEAD must reuse the cached render (no recompile churn)"
+        );
+    }
+
+    #[test]
+    fn non_git_content_edit_makes_cached_render_stale() {
+        // The preserved non-git behavior, now expressed via the SAME unified
+        // gate: an inline/configMap edit changes the cm: content hash, so the
+        // stored render (from the old content) is stale → recompile.
+        let old_rev = content_revision("resource \"aws_vpc\" \"x\" {}");
+        let new_rev = content_revision("resource \"aws_vpc\" \"x\" { tags = {} }");
+        assert_ne!(old_rev, new_rev);
+        assert!(
+            !rendered_config_is_current(Some(&old_rev), Some(&new_rev)),
+            "a non-git content edit must make the cached render stale (recompile)"
+        );
+    }
+
+    #[test]
+    fn non_git_content_unchanged_reuses_cached_render() {
+        // Preserved non-git behavior: unchanged content reuses the render.
+        let rev = content_revision("resource \"aws_vpc\" \"x\" {}");
+        assert!(
+            rendered_config_is_current(Some(&rev), Some(&rev)),
+            "unchanged non-git content must reuse the cached render"
+        );
+    }
+
+    #[test]
+    fn legacy_null_stored_revision_recompiles_once() {
+        // A legacy artifact row written before the source_revision column
+        // existed carries NULL → treated as stale so exactly one recompile
+        // stamps the revision. Same converge-by-one-recompile discipline as a
+        // legacy CR with no compiledRevision.
+        let head = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
+        assert!(
+            !rendered_config_is_current(None, Some(head)),
+            "a NULL stored revision (legacy row) must recompile once to stamp it"
+        );
+        // Also stale when both are unknown — a legacy row + no anchor still
+        // recompiles once rather than trusting an unrevisioned blob.
+        assert!(!rendered_config_is_current(None, None));
+    }
+
+    #[test]
+    fn undeterminable_current_revision_reuses_present_render() {
+        // If we can't determine the current revision (e.g. a configMap became
+        // transiently unreadable this tick) but the artifact DOES carry a
+        // recorded revision, reuse the present render rather than forcing a
+        // recompile on an unknowable target — the freshness/compile path
+        // surfaces the real error. Preserves the pre-fix "present ⇒ available"
+        // behavior only in this genuinely-undeterminable case.
+        let head = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
+        assert!(
+            rendered_config_is_current(Some(head), None),
+            "an undeterminable current revision must not force a spurious recompile"
+        );
     }
 }
 
