@@ -294,6 +294,21 @@ Chart `helmworks/charts/pangea-operator` 0.7.8+ ships:
   Suspended` on `kubectl get infrastructuretemplate`.
 - `install.crds: Create` + `upgrade.crds: CreateReplace` so additive
   schema changes flow through chart upgrades.
+- **0.8.30 `config:` — tiered-config surface (enjulho: config-as-reconciled-Helm).**
+  A `config:` values block + `templates/tiered-config.yaml` consume the
+  `pleme-lib.tieredConfig` mixin, rendering the operator's shikumi
+  `OperatorConfig` **file tier** as a reconciled ConfigMap the `ConfigStore`
+  discovers + hot-reloads. **DESTINATION FORM, default-off**
+  (`config.file.enabled: false`) — the live render is byte-unchanged. Secrets
+  (`PGPASSWORD` / `PANGEA_API_TOKEN` / `PANGEA_GEM_AUTH_TOKEN`) are NEVER
+  rendered by the mixin; they stay direct env / secretKeyRef (the operator's
+  deliberate secret exclusion, `src/config.rs`). **Follow-on (the cutover):**
+  `OperatorConfig` (`src/config.rs`) resolves env + the pod-identity discovered
+  tier only — it has no shikumi `ConfigStore` FILE discovery yet. Teaching it to
+  discover `/etc/pangea/config.yaml` as the file tier makes the ConfigMap a live
+  read and completes the env → reconciled-Helm cutover; until then the
+  ConfigMap is the committed target, not consumed. Behavior-preserving +
+  parity-tested when landed, same discipline as the env-surface migration.
 
 The HR's image must be the `<sha>-embedded` variant (built with
 `embedded_ruby` feature on).
