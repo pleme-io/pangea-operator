@@ -128,6 +128,26 @@ impl ArtifactStore {
         .await
         .map_err(Error::Database)?;
 
+        // `source_revision` — the source revision (git HEAD SHA or the
+        // `cm:` content hash of an inline/configMap source) the stored
+        // artifact was PRODUCED AT. Nullable + additive: a legacy row
+        // written before this column existed carries NULL, which the
+        // reuse gate treats as "revision unknown → stale", forcing
+        // exactly one recompile (the same converge-by-one-recompile
+        // discipline as the legacy-CR `compiled_revision == None` case).
+        // This is what lets `compiled_config_available` reject a cached
+        // `rendered_config` produced from an OLDER revision — the fix for
+        // the git-sourced stale-render class where a source change was
+        // stamped onto `status.compiledRevision` but the operator kept
+        // serving the render from the prior revision. Idempotent
+        // `ADD COLUMN IF NOT EXISTS` at the same table-ensure site.
+        sqlx::query(
+            "ALTER TABLE pangea_meta.artifacts ADD COLUMN IF NOT EXISTS source_revision TEXT",
+        )
+        .execute(self.pool.as_ref())
+        .await
+        .map_err(Error::Database)?;
+
         // Prime the self-healing flag so the startup ensure (main.rs)
         // primes it too — subsequent ops skip the redundant re-ensure.
         self.ensured.store(true, Ordering::Relaxed);
@@ -139,12 +159,20 @@ impl ArtifactStore {
     /// BLAKE3 content hash of the stored bytes. The blob's identity is
     /// `(schema, template, kind)`; re-storing the same kind replaces
     /// the prior blob and stamps `updated_at`.
+    ///
+    /// `source_revision` records the source revision (git HEAD SHA or the
+    /// `cm:` content hash of an inline/configMap source) this artifact was
+    /// produced at, so the reuse gate can compare like-for-like against the
+    /// revision the operator now believes it should be at
+    /// (`status.compiledRevision`). `None` leaves the column NULL — treated
+    /// as "revision unknown → stale" by the reuse gate.
     async fn put(
         &self,
         schema: &str,
         template: &str,
         kind: &str,
         bytes: &[u8],
+        source_revision: Option<&str>,
     ) -> Result<String> {
         self.ensure_ready().await?;
         let content_hash = blake3::hash(bytes).to_hex().to_string();
@@ -152,12 +180,13 @@ impl ArtifactStore {
         sqlx::query(
             r#"
             INSERT INTO pangea_meta.artifacts
-                (schema_name, template_name, kind, content_hash, data, updated_at)
-            VALUES ($1, $2, $3, $4, $5, NOW())
+                (schema_name, template_name, kind, content_hash, data, source_revision, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, NOW())
             ON CONFLICT (schema_name, template_name, kind) DO UPDATE SET
-                content_hash = EXCLUDED.content_hash,
-                data         = EXCLUDED.data,
-                updated_at   = NOW()
+                content_hash    = EXCLUDED.content_hash,
+                data            = EXCLUDED.data,
+                source_revision = EXCLUDED.source_revision,
+                updated_at      = NOW()
             "#,
         )
         .bind(schema)
@@ -165,11 +194,17 @@ impl ArtifactStore {
         .bind(kind)
         .bind(&content_hash)
         .bind(bytes)
+        .bind(source_revision)
         .execute(self.pool.as_ref())
         .await
         .map_err(Error::Database)?;
 
-        debug!(schema, template, kind, content_hash, bytes = bytes.len(), "artifact stored");
+        debug!(
+            schema, template, kind, content_hash,
+            source_revision = source_revision.unwrap_or("(none)"),
+            bytes = bytes.len(),
+            "artifact stored"
+        );
         Ok(content_hash)
     }
 
@@ -215,14 +250,24 @@ impl ArtifactStore {
     /// back through [`get_rendered_config`] and feeds
     /// `MagmaExecutor::load_config_from_value`). Returns the content
     /// hash.
+    ///
+    /// `source_revision` is the revision this render was produced FROM —
+    /// the git HEAD SHA on `status.compiledRevision` (git sources) or the
+    /// `cm:` content hash (inline/configMap sources). It is recorded so a
+    /// later phase guard can decide whether the cached render still
+    /// matches the revision the operator now believes it should be at,
+    /// and recompile on mismatch. `None` leaves the column NULL (treated
+    /// as stale by the reuse gate → one recompile).
     pub async fn put_rendered_config(
         &self,
         schema: &str,
         template: &str,
         value: &serde_json::Value,
+        source_revision: Option<&str>,
     ) -> Result<String> {
         let bytes = serde_json::to_vec(value).map_err(Error::Serialization)?;
-        self.put(schema, template, kind::RENDERED_CONFIG, &bytes).await
+        self.put(schema, template, kind::RENDERED_CONFIG, &bytes, source_revision)
+            .await
     }
 
     /// Read the compile→plan rendered terraform JSON. `Ok(None)` when
@@ -239,6 +284,37 @@ impl ArtifactStore {
                 Ok(Some(value))
             }
         }
+    }
+
+    /// The `source_revision` recorded alongside the stored rendered
+    /// config (the git HEAD SHA / `cm:` content hash it was produced
+    /// from), or `None` when there is no rendered-config row yet OR a
+    /// legacy row (written before the `source_revision` column existed)
+    /// carries NULL. The reuse gate treats both `None` cases as "not a
+    /// match for the current revision" → recompile once. This is the
+    /// revision half of the reuse check; the bytes come from
+    /// [`get_rendered_config`].
+    pub async fn get_rendered_config_revision(
+        &self,
+        schema: &str,
+        template: &str,
+    ) -> Result<Option<String>> {
+        self.ensure_ready().await?;
+        let row: Option<(Option<String>,)> = sqlx::query_as(
+            r#"
+            SELECT source_revision
+            FROM pangea_meta.artifacts
+            WHERE schema_name = $1 AND template_name = $2 AND kind = $3
+            "#,
+        )
+        .bind(schema)
+        .bind(template)
+        .bind(kind::RENDERED_CONFIG)
+        .fetch_optional(self.pool.as_ref())
+        .await
+        .map_err(Error::Database)?;
+
+        Ok(row.and_then(|(rev,)| rev))
     }
 
     /// Fetch the raw bundle blob bytes (the `serde_json::to_vec(&Bundle)`
@@ -500,7 +576,10 @@ impl ArtifactStore {
         plan: &magma_types::Plan,
     ) -> Result<String> {
         let bytes = serde_json::to_vec(plan).map_err(Error::Serialization)?;
-        self.put(schema, template, kind::PLAN, &bytes).await
+        // The plan/bundle artifacts are not revision-gated for reuse
+        // (only rendered_config is — that is the compile→plan handoff the
+        // freshness class turns stale). Store with NULL source_revision.
+        self.put(schema, template, kind::PLAN, &bytes, None).await
     }
 
     /// Read the typed magma plan checkpoint. `Ok(None)` when the plan
@@ -528,7 +607,7 @@ impl ArtifactStore {
         bundle: &magma_bundle::Bundle,
     ) -> Result<String> {
         let bytes = serde_json::to_vec(bundle).map_err(Error::Serialization)?;
-        self.put(schema, template, kind::BUNDLE, &bytes).await
+        self.put(schema, template, kind::BUNDLE, &bytes, None).await
     }
 
     /// Read the typed magma compliance bundle. `Ok(None)` when no
