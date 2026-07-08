@@ -43,9 +43,50 @@
 
 use crate::value::ruby_value_to_json;
 use crate::EvalError;
-use magnus::{RArray, Ruby, TryConvert, Value};
+use magnus::{value::ReprValue, RArray, Ruby, TryConvert, Value};
 use serde_json::Value as Json;
 use std::path::{Path, PathBuf};
+
+/// Render a `magnus::Error` into a rich, diagnosable string: class + message +
+/// backtrace.
+///
+/// The default `format!("{e}")` on a `magnus::Error::Exception` delegates to
+/// Ruby's `Object#inspect` when the exception's message equals its class name
+/// (a bare `raise RuntimeError` / a message-less raise) — yielding the useless
+/// `#<RuntimeError:0x00007f...>` address form with NO message and NO
+/// backtrace. Every compile/eval failure the operator persisted to
+/// `status.lastError` was therefore un-diagnosable (the raise-site was
+/// discarded). Pull `class.name` + `message` + `backtrace` off the exception
+/// value explicitly so the file:line that raised survives into status.
+///
+/// Non-exception errors (`Error::Jump` / `Error::Error(class, msg)`) keep the
+/// default `Display` — those already carry their text.
+fn format_ruby_error(e: &magnus::Error) -> String {
+    let magnus::error::ErrorType::Exception(exc) = e.error_type() else {
+        return format!("{e}");
+    };
+    let class = exc
+        .funcall::<_, _, Value>("class", ())
+        .and_then(|c| c.funcall::<_, _, String>("name", ()))
+        .unwrap_or_else(|_| "Exception".to_string());
+    let msg = exc.funcall::<_, _, String>("message", ()).unwrap_or_default();
+    let bt: Vec<String> = exc
+        .funcall::<_, _, RArray>("backtrace", ())
+        .and_then(|arr| arr.to_vec::<String>())
+        .unwrap_or_default();
+    if bt.is_empty() {
+        format!("{class}: {msg}")
+    } else {
+        // Cap the backtrace so a runaway frame count can't bloat status.
+        let frames = bt
+            .iter()
+            .take(30)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n    ");
+        format!("{class}: {msg}\n    {frames}")
+    }
+}
 
 /// Manifest declaring the Ruby state a single compile needs.
 ///
@@ -834,7 +875,7 @@ impl RubyEvaluator {
         let val: Value = self
             .ruby
             .eval(source)
-            .map_err(|e| EvalError::RubyException(format!("{e}")))?;
+            .map_err(|e| EvalError::RubyException(format_ruby_error(&e)))?;
         ruby_value_to_json(val)
     }
 
@@ -947,7 +988,7 @@ impl RubyEvaluator {
         let _: Value = self
             .ruby
             .eval(&src)
-            .map_err(|e| EvalError::RubyException(format!("{e}")))?;
+            .map_err(|e| EvalError::RubyException(format_ruby_error(&e)))?;
         Ok(())
     }
 
@@ -1125,7 +1166,12 @@ impl RubyEvaluator {
         let _: Value = self
             .ruby
             .eval(src)
-            .map_err(|e| EvalError::RubyException(format!("install_dry_types_compat_patch: {e}")))?;
+            .map_err(|e| {
+                EvalError::RubyException(format!(
+                    "install_dry_types_compat_patch: {}",
+                    format_ruby_error(&e)
+                ))
+            })?;
         Ok(())
     }
 
@@ -1289,7 +1335,12 @@ impl RubyEvaluator {
         let _: Value = self
             .ruby
             .eval(&src)
-            .map_err(|e| EvalError::RubyException(format!("purge_for_workspace_compile: {e}")))?;
+            .map_err(|e| {
+                EvalError::RubyException(format!(
+                    "purge_for_workspace_compile: {}",
+                    format_ruby_error(&e)
+                ))
+            })?;
         Ok(())
     }
 }
