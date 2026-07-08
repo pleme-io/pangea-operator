@@ -162,6 +162,31 @@ pub enum SourceKind {
     Wasm,
 }
 
+/// Which `Pangea::Alerts::Render` module renders a PangeaAlert's AST.
+/// Backend-agnostic mirror of `crd::pangea_alert::AlertBackend` — kept
+/// in the ruby module so the `CompilerBackend` trait stays free of
+/// kube-rs / schemars deps (same split as [`SourceKind`]). Selects the
+/// operator-side render "per spec.backend".
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AlertRenderBackend {
+    /// `Pangea::Alerts::Render::Victoria` → VMRule.
+    #[default]
+    Victoria,
+    /// `Pangea::Alerts::Render::Prometheus` → PrometheusRule.
+    Prometheus,
+}
+
+impl AlertRenderBackend {
+    /// The fully-qualified Ruby renderer constant the owner thread
+    /// calls `.render(ast)` on.
+    pub fn renderer_const(&self) -> &'static str {
+        match self {
+            AlertRenderBackend::Victoria => "Pangea::Alerts::Render::Victoria",
+            AlertRenderBackend::Prometheus => "Pangea::Alerts::Render::Prometheus",
+        }
+    }
+}
+
 #[async_trait]
 pub trait CompilerBackend: Send + Sync {
     /// Make a gem available for subsequent `list_architectures` /
@@ -224,6 +249,32 @@ pub trait CompilerBackend: Send + Sync {
     ) -> Result<String, BackendError> {
         Err(BackendError::Ruby(
             "render_dashboard requires the embedded backend".into(),
+        ))
+    }
+
+    /// Render a `PangeaAlert`'s inline Ruby into an alert-rule manifest
+    /// **JSON string** (a `VMRule` or `PrometheusRule`, per `backend`).
+    ///
+    /// The inline Ruby (authored against the typed `Pangea::Alerts`
+    /// DSL) evaluates to a `Pangea::Alerts::Types::Alerts` AST as its
+    /// last expression; the embedded backend renders that AST with the
+    /// `backend`-selected `Pangea::Alerts::Render::*` module and returns
+    /// the manifest as a JSON string. The controller then parses it,
+    /// stamps owner-ref + `dest=` label, and upserts the rule CR. (An
+    /// inline Ruby that pre-renders a Hash/String is passed through.)
+    ///
+    /// Mirrors [`Self::render_dashboard`]: the embedded backend is the
+    /// only impl with a real evaluator — HTTP returns a typed
+    /// `BackendError` (rio runs embedded). The default impl errors so a
+    /// gap surfaces rather than a silent wrong answer.
+    async fn render_alert(
+        &self,
+        _ruby: String,
+        _extend_modules: Vec<String>,
+        _backend: AlertRenderBackend,
+    ) -> Result<String, BackendError> {
+        Err(BackendError::Ruby(
+            "render_alert requires the embedded backend".into(),
         ))
     }
 }

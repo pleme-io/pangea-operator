@@ -302,4 +302,31 @@ impl CompilerBackend for EmbeddedCompilerBackend {
         })
         .await
     }
+
+    async fn render_alert(
+        &self,
+        ruby: String,
+        extend_modules: Vec<String>,
+        backend: super::backend::AlertRenderBackend,
+    ) -> Result<String, BackendError> {
+        // Alert render runs the inline DSL Ruby on a pool worker: the
+        // owner thread requires the pangea-alerts renderers, evals the
+        // inline Ruby to a `Pangea::Alerts` AST, and renders it with the
+        // `backend`-selected renderer into a rule-manifest JSON string.
+        // This dispatcher just ships the request + awaits the reply.
+        self.instrumented(|tx| async move {
+            let (rtx, rrx) = oneshot::channel();
+            tx.send(RubyRequest::RenderAlert {
+                ruby,
+                extend_modules,
+                backend,
+                respond: rtx,
+            })
+            .await
+            .map_err(|_| BackendError::Ruby("ruby owner channel closed".into()))?;
+            rrx.await
+                .map_err(|_| BackendError::Ruby("ruby owner reply lost".into()))?
+        })
+        .await
+    }
 }

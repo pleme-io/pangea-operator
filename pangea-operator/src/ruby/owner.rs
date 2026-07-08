@@ -57,6 +57,16 @@ pub enum RubyRequest {
         extend_modules: Vec<String>,
         respond: oneshot::Sender<Result<String, BackendError>>,
     },
+    /// Render a `PangeaAlert`'s inline Ruby into an alert-rule manifest
+    /// JSON **string**. The inline Ruby's last expression is a
+    /// `Pangea::Alerts::Types::Alerts` AST; the owner renders it with
+    /// the `backend`-selected `Pangea::Alerts::Render::*` module.
+    RenderAlert {
+        ruby: String,
+        extend_modules: Vec<String>,
+        backend: super::backend::AlertRenderBackend,
+        respond: oneshot::Sender<Result<String, BackendError>>,
+    },
     /// Permanently prepend a path to `$LOAD_PATH`. Used after the
     /// gem-cache clones a gem, so that subsequent `require`s in
     /// fixture smoke-tests / template compiles can resolve it.
@@ -214,6 +224,15 @@ fn run_owner_loop(
                 respond,
             } => {
                 let res = render_dashboard(&evaluator, &ruby, &extend_modules);
+                let _ = respond.send(res);
+            }
+            RubyRequest::RenderAlert {
+                ruby,
+                extend_modules,
+                backend,
+                respond,
+            } => {
+                let res = render_alert(&evaluator, &ruby, &extend_modules, backend);
                 let _ = respond.send(res);
             }
             RubyRequest::PrependLoadPath { path, respond } => {
@@ -417,6 +436,109 @@ fn render_dashboard(
         other => Err(BackendError::Ruby(format!(
             "dashboard Ruby must evaluate to a JSON string (or object/array); \
              got {}",
+            match other {
+                Json::Null => "nil",
+                Json::Bool(_) => "a boolean",
+                Json::Number(_) => "a number",
+                _ => "an unexpected value",
+            }
+        ))),
+    }
+}
+
+/// Render a `PangeaAlert`'s inline Ruby into an alert-rule manifest
+/// JSON string, mirroring [`render_dashboard`].
+///
+/// Two phases, both in the owner thread:
+///
+///   1. Best-effort `require` each `extend_modules` entry PLUS the
+///      pangea-alerts renderers (`pangea/alerts`,
+///      `pangea/alerts/render/victoria`,
+///      `pangea/alerts/render/prometheus`) — all `LoadError`-tolerant,
+///      since the inline Ruby is free to `require 'pangea-dashboards'`
+///      (the gem that ships `Pangea::Alerts`) itself.
+///   2. `eval` the inline Ruby at the toplevel binding. Its last
+///      expression is a `Pangea::Alerts::Types::Alerts` AST; the owner
+///      renders it with the `backend`-selected `Pangea::Alerts::Render`
+///      module and returns `JSON.generate(manifest)`. An inline Ruby
+///      that instead returns a pre-rendered Hash/String is passed
+///      through — so `spec.backend` is load-bearing for the AST case
+///      (the documented shape) without forbidding a hand-rendered one.
+///
+/// No `format!()` of the manifest happens here: the Ruby
+/// `Render::{Victoria,Prometheus}` is the typed emitter; this code only
+/// carries the JSON string it produced.
+fn render_alert(
+    evaluator: &RubyEvaluator,
+    ruby: &str,
+    extend_modules: &[String],
+    backend: super::backend::AlertRenderBackend,
+) -> Result<String, BackendError> {
+    // Phase 1 — best-effort require of the expected modules + the alert
+    // renderers. Same dashed/slashed fallback as render_dashboard;
+    // LoadError swallowed (the inline Ruby may require the gem itself).
+    let mut requires: Vec<String> = extend_modules
+        .iter()
+        .map(|m| m.to_lowercase().replace("::", "/").replace('-', "/"))
+        .collect();
+    requires.extend([
+        "pangea/alerts".to_string(),
+        "pangea/alerts/dsl".to_string(),
+        "pangea/alerts/render/victoria".to_string(),
+        "pangea/alerts/render/prometheus".to_string(),
+    ]);
+    for require_path in &requires {
+        let req_src = format!(
+            r#"
+            begin
+              require '{path}'
+            rescue LoadError
+              nil
+            end
+            :ok
+            "#,
+            path = require_path.replace('\'', "\\'"),
+        );
+        evaluator
+            .eval_string(&req_src)
+            .map_err(|e| BackendError::Ruby(format!("require {require_path}: {e}")))?;
+    }
+
+    // Phase 2 — eval the inline Ruby to an AST (or a pre-rendered
+    // manifest) then render per the operator-selected backend. The
+    // inline source is embedded as a Ruby string literal + evaled at
+    // TOPLEVEL_BINDING (matching the compile / dashboard paths) so a
+    // SyntaxError surfaces with a useful filename and arbitrary content
+    // is injection-safe.
+    let renderer = backend.renderer_const();
+    let eval_src = format!(
+        r#"
+        require 'json'
+        __pangea_alert = eval({source_literal}, TOPLEVEL_BINDING, "(pangea-alert)", 1)
+        if __pangea_alert.is_a?(String)
+          __pangea_alert
+        elsif __pangea_alert.is_a?(Hash)
+          JSON.generate(__pangea_alert)
+        else
+          JSON.generate({renderer}.render(__pangea_alert))
+        end
+        "#,
+        source_literal = ruby_string_literal(ruby),
+        renderer = renderer,
+    );
+    let result = evaluator
+        .eval_string(&eval_src)
+        .map_err(|e| BackendError::Ruby(format!("render alert eval: {e}")))?;
+
+    match result {
+        Json::String(s) => Ok(s),
+        // Defensive: the wrapper above JSON.generates, so a String is
+        // the contract. Tolerate an object/array (some evaluator paths
+        // decode a JSON string back to a value) by re-serializing.
+        other @ (Json::Object(_) | Json::Array(_)) => serde_json::to_string(&other)
+            .map_err(|e| BackendError::Ruby(format!("serialize alert value: {e}"))),
+        other => Err(BackendError::Ruby(format!(
+            "alert Ruby must render to a JSON manifest string; got {}",
             match other {
                 Json::Null => "nil",
                 Json::Bool(_) => "a boolean",

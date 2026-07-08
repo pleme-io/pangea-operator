@@ -122,6 +122,10 @@ pub struct ControllerSuspend {
     #[serde(default)]
     pub dashboard: bool,
 
+    /// Pause `alert_controller` (PangeaAlert).
+    #[serde(default)]
+    pub alert: bool,
+
     /// Pause `ami_test_controller`.
     #[serde(default)]
     pub ami_test: bool,
@@ -306,6 +310,7 @@ pub enum ControllerKind {
     ImagePipeline,
     Flow,
     Dashboard,
+    Alert,
     AmiTest,
     PackerBuild,
     SynthesizerFormat,
@@ -324,6 +329,7 @@ impl ControllerKind {
             ControllerKind::ImagePipeline => "imagePipeline",
             ControllerKind::Flow => "flow",
             ControllerKind::Dashboard => "dashboard",
+            ControllerKind::Alert => "alert",
             ControllerKind::AmiTest => "amiTest",
             ControllerKind::PackerBuild => "packerBuild",
             ControllerKind::SynthesizerFormat => "synthesizerFormat",
@@ -346,6 +352,7 @@ impl ControllerSuspend {
             ControllerKind::ImagePipeline => self.image_pipeline,
             ControllerKind::Flow => self.flow,
             ControllerKind::Dashboard => self.dashboard,
+            ControllerKind::Alert => self.alert,
             ControllerKind::AmiTest => self.ami_test,
             ControllerKind::PackerBuild => self.packer_build,
             ControllerKind::SynthesizerFormat => self.synthesizer_format,

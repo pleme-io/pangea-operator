@@ -54,6 +54,7 @@ mod synthesizer_format_controller;
 mod compliance_schedule_controller;
 mod compliance_binding_controller;
 mod dashboard_controller;
+mod alert_controller;
 
 pub use reconciler::*;
 pub use flow_controller::FlowController;
@@ -66,6 +67,7 @@ pub use synthesizer_format_controller::SynthesizerFormatController;
 pub use compliance_schedule_controller::ComplianceScheduleController;
 pub use compliance_binding_controller::ComplianceBindingController;
 pub use dashboard_controller::DashboardController;
+pub use alert_controller::AlertController;
 pub use operator_policy_controller::OperatorPolicyController;
 
 use crate::backend::StateBackend;

@@ -4398,6 +4398,185 @@ spec:
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
+  name: pangeaalerts.pangea.pleme.io
+spec:
+  group: pangea.pleme.io
+  names:
+    categories:
+    - pangea
+    kind: PangeaAlert
+    plural: pangeaalerts
+    shortNames:
+    - pa
+    singular: pangeaalert
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.backend
+      name: Backend
+      type: string
+    - jsonPath: .spec.routing.destination
+      name: Dest
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.renderedResourceName
+      name: Rule
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for PangeaAlertSpec via `CustomResource`
+        properties:
+          spec:
+            description: PangeaAlert synthesizes an alert-rule CR from Pangea Ruby DSL.
+            properties:
+              backend:
+                default: vmrule
+                description: Which alert-rule CRD the AST renders into. `vmrule` (default) emits a VictoriaMetrics `operator.victoriametrics.com/v1beta1 VMRule`; `prometheusrule` emits a `monitoring.coreos.com/v1 PrometheusRule`. The two are spec- interchangeable (vmalert reads both); the field is the typed seam that selects the target CRD.
+                enum:
+                - vmrule
+                - prometheusrule
+                type: string
+              extendModules:
+                default:
+                - Pangea::Alerts
+                description: Ruby modules to `require` before evaluating the inline DSL. Defaults to `["Pangea::Alerts"]` for alert-builder access.
+                items:
+                  type: string
+                type: array
+              routing:
+                default:
+                  destination: luis
+                description: Routing metadata stamped onto the rendered rule CR. The `destination` becomes a `dest=<destination>` label so alert pipelines can select rules by owner without parsing the expr.
+                properties:
+                  destination:
+                    default: luis
+                    description: Where this alert's notifications belong. Stamped onto the rule CR as a `dest=<destination>` label.
+                    enum:
+                    - luis
+                    - akeyless
+                    - 2f
+                    type: string
+                type: object
+              source:
+                description: Alert source — inline Ruby DSL or reference to a ConfigMap. The inline Ruby builds a `Pangea::Alerts` AST (its last expression); the operator renders it per `spec.backend`.
+                oneOf:
+                - required:
+                  - inline
+                - required:
+                  - configMapRef
+                properties:
+                  configMapRef:
+                    description: Reference to a ConfigMap containing the Ruby source.
+                    properties:
+                      key:
+                        description: Key within the ConfigMap.
+                        type: string
+                      name:
+                        description: ConfigMap name.
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                  inline:
+                    description: Inline Ruby code that builds a `Pangea::Alerts` AST as its last expression (or a pre-rendered rule-manifest Hash/JSON string).
+                    properties:
+                      ruby:
+                        description: Ruby source. Its last expression must evaluate to a `Pangea::Alerts::Types::Alerts` AST (built via the `Pangea::Alerts::DSL::AlertsBuilder`), which the operator renders per `spec.backend`.
+                        type: string
+                    required:
+                    - ruby
+                    type: object
+                type: object
+              suspend:
+                default: false
+                description: When true, the alert controller skips synthesis + rule publish entirely. Compose with the cluster-scoped `OperatorPolicy/default` for fleet-wide pause.
+                type: boolean
+            required:
+            - source
+            type: object
+          status:
+            description: Status of a PangeaAlert. Mirrors [`crate::crd::pangea_dashboard::PangeaDashboardStatus`].
+            nullable: true
+            properties:
+              conditions:
+                description: Kubernetes-style conditions.
+                items:
+                  description: Kubernetes-style condition.
+                  properties:
+                    lastTransitionTime:
+                      description: Last time the condition transitioned.
+                      format: date-time
+                      type: string
+                    message:
+                      description: Human-readable message.
+                      type: string
+                    reason:
+                      description: Machine-readable reason for the condition.
+                      type: string
+                    status:
+                      description: Status of the condition (True, False, Unknown).
+                      type: string
+                    type:
+                      description: Type of condition.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              error:
+                description: Error message if phase is Failed.
+                nullable: true
+                type: string
+              observedGeneration:
+                default: 0
+                description: Last observed generation.
+                format: int64
+                type: integer
+              phase:
+                description: Current lifecycle phase.
+                enum:
+                - Pending
+                - Synthesizing
+                - Ready
+                - Failed
+                nullable: true
+                type: string
+              renderedResourceKind:
+                description: Kind of the generated rule CR (`VMRule` / `PrometheusRule`).
+                nullable: true
+                type: string
+              renderedResourceName:
+                description: Name of the generated rule CR (VMRule / PrometheusRule).
+                nullable: true
+                type: string
+              sourceHash:
+                description: BLAKE3 hash of the last successfully rendered Ruby source. Used for change detection to avoid unnecessary re-renders.
+                nullable: true
+                type: string
+            type: object
+        required:
+        - spec
+        title: PangeaAlert
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
   name: architecturegems.pangea.pleme.io
 spec:
   group: pangea.pleme.io

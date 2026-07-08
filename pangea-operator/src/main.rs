@@ -2,10 +2,10 @@
 
 use pangea_operator::{
     controller::{
-        AmiTestController, ComplianceBindingController, ComplianceScheduleController,
-        ControllerState, DashboardController, FlowController, ImagePipelineController,
-        NamespaceController, OperatorPolicyController, PackerBuildController,
-        SynthesizerFormatController, TemplateController,
+        AlertController, AmiTestController, ComplianceBindingController,
+        ComplianceScheduleController, ControllerState, DashboardController, FlowController,
+        ImagePipelineController, NamespaceController, OperatorPolicyController,
+        PackerBuildController, SynthesizerFormatController, TemplateController,
     },
     crd::generate_crds,
     error::Result,
@@ -492,6 +492,19 @@ async fn main() -> Result<()> {
         }
     });
 
+    // PangeaAlert reconciler — sibling of the dashboard path: renders an
+    // alert CR's inline Pangea Ruby through the shared (embedded)
+    // compiler backend into a VMRule / PrometheusRule manifest, then
+    // upserts that rule CR (owner-referenced + dest-labelled) the
+    // vmalert / prometheus-operator stack loads.
+    let alert_state = state.clone();
+    let alert_controller = tokio::spawn(async move {
+        let controller = AlertController::new(alert_state);
+        if let Err(e) = controller.run().await {
+            error!(error = %e, "PangeaAlert controller error");
+        }
+    });
+
     // M1 — ArchitectureGem reconciler. Reuses the shared compiler
     // backend already in state — same dispatch as every other
     // controller (template, packer, synthesizer-format).
@@ -635,6 +648,7 @@ async fn main() -> Result<()> {
     compliance_schedule_controller.abort();
     compliance_binding_controller.abort();
     dashboard_controller.abort();
+    alert_controller.abort();
     architecture_gem_controller.abort();
     reconciliation_loop_controller.abort();
     workspace_catalog_controller.abort();

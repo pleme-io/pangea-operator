@@ -19,6 +19,7 @@ mod pangea_namespace;
 pub mod synthesizer_format;
 pub mod compliance_schedule;
 pub mod compliance_binding;
+pub mod pangea_alert;
 pub mod pangea_dashboard;
 pub mod pangea_fleet_status;
 pub mod reconciliation_loop;
@@ -86,6 +87,13 @@ pub use compliance_binding::{
 pub use pangea_dashboard::{
     DashboardSource, PangeaDashboard, PangeaDashboardPhase, PangeaDashboardSpec,
     PangeaDashboardStatus,
+};
+
+// Re-export PangeaAlert types — declare-once alert-rule pipeline
+// (sibling of PangeaDashboard).
+pub use pangea_alert::{
+    AlertBackend, AlertDestination, AlertRouting, AlertSource, PangeaAlert, PangeaAlertPhase,
+    PangeaAlertSpec, PangeaAlertStatus,
 };
 
 // Re-export ArchitectureGem types (M1 — workspace reconciliation hardening)
@@ -225,6 +233,15 @@ pub fn generate_crds() -> String {
             .expect("Failed to serialize PangeaDashboard CRD"),
     );
 
+    // PangeaAlert: declare-once alert-rule pipeline (renders a
+    // VMRule / PrometheusRule from inline Pangea Ruby). Sibling of
+    // PangeaDashboard.
+    crds.push_str("---\n");
+    crds.push_str(
+        &serde_yaml::to_string(&PangeaAlert::crd())
+            .expect("Failed to serialize PangeaAlert CRD"),
+    );
+
     // M1 — ArchitectureGem: typed registry + smoke-test gate.
     crds.push_str("---\n");
     crds.push_str(
@@ -307,6 +324,7 @@ mod tests {
         assert!(crds.contains("ComplianceSchedule"), "Missing ComplianceSchedule CRD");
         assert!(crds.contains("ComplianceBinding"), "Missing ComplianceBinding CRD");
         assert!(crds.contains("PangeaDashboard"), "Missing PangeaDashboard CRD");
+        assert!(crds.contains("PangeaAlert"), "Missing PangeaAlert CRD");
         assert!(crds.contains("ArchitectureGem"), "Missing ArchitectureGem CRD");
         assert!(crds.contains("WorkspaceCatalog"), "Missing WorkspaceCatalog CRD");
         assert!(crds.contains("OperatorPolicy"), "Missing OperatorPolicy CRD");
@@ -325,9 +343,10 @@ mod tests {
             assert!(parsed.is_ok(), "Invalid YAML in CRD document {}: {:?}", count, parsed.err());
             count += 1;
         }
-        // 15 CRD kinds (see src/crd/*.rs): the 14 originals + reconciliation_loop
-        // (roda). Update this when adding/removing a CustomResource.
-        assert_eq!(count, 15, "Expected 15 CRD documents");
+        // 16 CRD kinds (see src/crd/*.rs): the 14 originals +
+        // reconciliation_loop (roda) + pangea_alert. Update this when
+        // adding/removing a CustomResource.
+        assert_eq!(count, 16, "Expected 16 CRD documents");
     }
 
     // ── Item H — CRD upgrade-compat tests ────────────────────────
@@ -363,6 +382,7 @@ mod tests {
             "ComplianceSchedule",
             "ComplianceBinding",
             "PangeaDashboard",
+            "PangeaAlert",
             "ArchitectureGem",
             "WorkspaceCatalog",
             "OperatorPolicy",
