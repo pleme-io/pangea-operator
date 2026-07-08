@@ -55,7 +55,7 @@ pub use magma::{MagmaExecutor, MagmaExecutorConfig, StateBackendAsync};
 use std::path::PathBuf;
 
 /// Configuration for the executor.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutorConfig {
     /// Path to the OpenTofu binary.
     pub tofu_binary: PathBuf,
@@ -134,6 +134,25 @@ impl ExecutorConfig {
             packer_timeout_secs,
             ruby_binary,
             verbose,
+        }
+    }
+
+    /// Build from the typed [`crate::config::OperatorConfig`] executor
+    /// section. Byte-identical to [`Self::from_env`] for any given
+    /// environment (pinned by `config::tests::boot_parity_executor_config_*`);
+    /// this is the migrated startup path, `from_env` stays for back-compat +
+    /// tests.
+    #[must_use]
+    pub fn from_operator_config(cfg: &crate::config::OperatorConfig) -> Self {
+        let e = &cfg.executor;
+        Self {
+            tofu_binary: PathBuf::from(&e.tofu_binary),
+            packer_binary: PathBuf::from(&e.packer_binary),
+            workspace_base: PathBuf::from(&e.workspace_base),
+            timeout_secs: e.timeout_secs,
+            packer_timeout_secs: e.packer_timeout_secs,
+            ruby_binary: e.ruby_binary.as_ref().map(PathBuf::from),
+            verbose: e.verbose,
         }
     }
 }

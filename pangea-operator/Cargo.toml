@@ -145,6 +145,15 @@ serde.workspace = true
 serde_json.workspace = true
 serde_yaml = "0.9"
 
+# Typed configuration surface — shikumi's tiered progressive-discovery
+# fold (bare → discovered → prescribed_default → file → env → runtime) with
+# per-leaf `Provenance`. `src/config.rs` implements `TieredConfig` over the
+# operator's full env surface. figment is the Dict/Value builder for the
+# discovered + env overlays (already transitive via shikumi; declared direct
+# so the source of truth is clear). See ★★ CONFIGURATION MANAGEMENT.
+shikumi = { git = "https://github.com/pleme-io/shikumi", version = "0.1.0" }
+figment = "0.10"
+
 # Observability
 tracing.workspace = true
 tracing-subscriber.workspace = true

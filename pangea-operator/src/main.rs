@@ -22,7 +22,9 @@ use std::{env, net::SocketAddr, sync::Arc};
 use tracing::{error, info, warn};
 use tsunagu::ShutdownController;
 
-/// Application configuration from environment variables.
+/// Server listen addresses, projected from the typed
+/// [`pangea_operator::config::OperatorConfig`] `servers` section. The parse
+/// (+ panic-on-invalid) semantics match the legacy `env::var(...).parse()`.
 struct Config {
     /// Health server address.
     health_addr: SocketAddr,
@@ -37,46 +39,30 @@ struct Config {
     /// gRPC server address.
     #[cfg(feature = "grpc")]
     grpc_addr: SocketAddr,
-
-    /// Generate CRDs and exit.
-    generate_crds: bool,
 }
 
 impl Config {
-    /// Load configuration from environment.
-    fn from_env() -> Self {
-        let health_addr = env::var("HEALTH_ADDR")
-            .unwrap_or_else(|_| "0.0.0.0:8080".to_string())
-            .parse()
-            .expect("Invalid HEALTH_ADDR");
-
-        let metrics_addr = env::var("METRICS_ADDR")
-            .unwrap_or_else(|_| "0.0.0.0:9090".to_string())
-            .parse()
-            .expect("Invalid METRICS_ADDR");
-
-        #[cfg(feature = "graphql")]
-        let graphql_addr = env::var("GRAPHQL_ADDR")
-            .unwrap_or_else(|_| "0.0.0.0:8081".to_string())
-            .parse()
-            .expect("Invalid GRAPHQL_ADDR");
-
-        #[cfg(feature = "grpc")]
-        let grpc_addr = env::var("GRPC_ADDR")
-            .unwrap_or_else(|_| "0.0.0.0:50051".to_string())
-            .parse()
-            .expect("Invalid GRPC_ADDR");
-
-        let generate_crds = env::args().any(|arg| arg == "--generate-crds");
-
+    /// Project the server addresses out of the resolved typed config.
+    fn from_operator(cfg: &pangea_operator::config::OperatorConfig) -> Self {
         Self {
-            health_addr,
-            metrics_addr,
+            health_addr: cfg
+                .servers
+                .health_addr
+                .parse()
+                .expect("Invalid HEALTH_ADDR"),
+            metrics_addr: cfg
+                .servers
+                .metrics_addr
+                .parse()
+                .expect("Invalid METRICS_ADDR"),
             #[cfg(feature = "graphql")]
-            graphql_addr,
+            graphql_addr: cfg
+                .servers
+                .graphql_addr
+                .parse()
+                .expect("Invalid GRAPHQL_ADDR"),
             #[cfg(feature = "grpc")]
-            grpc_addr,
-            generate_crds,
+            grpc_addr: cfg.servers.grpc_addr.parse().expect("Invalid GRPC_ADDR"),
         }
     }
 }
@@ -103,10 +89,9 @@ async fn main() -> Result<()> {
     // aws-lc-rs explicitly. Idempotent — ignore the already-installed Err.
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
-    let config = Config::from_env();
-
-    // Handle CRD generation
-    if config.generate_crds {
+    // Handle CRD generation (a CLI arg, not env config — checked before
+    // tracing so the output stays clean for redirection).
+    if env::args().any(|arg| arg == "--generate-crds") {
         print!("{}", generate_crds());
         return Ok(());
     }
@@ -132,6 +117,18 @@ async fn main() -> Result<()> {
         "Starting Pangea Operator"
     );
 
+    // Resolve the whole operator configuration through the shikumi progressive
+    // fold (bare → discovered[pod identity] → prescribed_default → env
+    // overlay) and log which tier set each value. This is the typed successor
+    // to the scattered `std::env::var` reads; see src/config.rs. Provenance
+    // logging is a real operability win — "why is the executor magma / the
+    // namespace X?" becomes a boot log line.
+    let resolved = pangea_operator::config::OperatorConfig::resolve();
+    pangea_operator::config::OperatorConfig::log_provenance(resolved.provenance());
+    let op_cfg = resolved.into_value();
+
+    let config = Config::from_operator(&op_cfg);
+
     // Create Kubernetes client
     let client = Client::try_default()
         .await
@@ -142,8 +139,10 @@ async fn main() -> Result<()> {
     // Initialize metrics
     let metrics = Arc::new(Metrics::new());
 
-    // Load executor configuration from environment
-    let executor_config = ExecutorConfig::from_env();
+    // Load executor configuration from the typed config (was
+    // ExecutorConfig::from_env() — byte-identical, pinned by config parity
+    // tests).
+    let executor_config = ExecutorConfig::from_operator_config(&op_cfg);
     info!(
         tofu_binary = ?executor_config.tofu_binary,
         workspace_base = ?executor_config.workspace_base,
@@ -158,13 +157,11 @@ async fn main() -> Result<()> {
     //                                                  `embedded_ruby` is
     //                                                  compiled in)
     // See theory/PANGEA-WORKSPACE-RECONCILIATION.md § M8.2.
-    let compiler_endpoint = std::env::var("COMPILER_ENDPOINT")
-        .unwrap_or_else(|_| "http://localhost:8082".to_string());
+    let compiler_endpoint = op_cfg.compiler.endpoint.clone();
     // Sidecar sunset (2026-06-02): default to in-process magnus. The HTTP
     // sidecar is legacy; embedded is the strategy. An explicit
     // PANGEA_COMPILER_BACKEND=http remains only as a migration escape hatch.
-    let backend_kind = std::env::var("PANGEA_COMPILER_BACKEND")
-        .unwrap_or_else(|_| "embedded".to_string());
+    let backend_kind = op_cfg.compiler.backend.clone();
     let compiler_backend: std::sync::Arc<dyn pangea_operator::ruby::CompilerBackend> =
         match backend_kind.as_str() {
             #[cfg(feature = "embedded_ruby")]
@@ -174,10 +171,7 @@ async fn main() -> Result<()> {
                 // surfaces this in helm values + flips the rio
                 // default to 4 once the metrics from S1 confirm
                 // the pool is healthy.
-                let n_workers: usize = std::env::var("PANGEA_RUBY_WORKERS")
-                    .ok()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(1);
+                let n_workers: usize = op_cfg.compiler.ruby_workers;
                 info!(workers = n_workers, "Compiler backend: embedded magnus + gem cache");
                 let cache = pangea_operator::ruby::GemCache::from_env();
                 let pool = pangea_operator::ruby::RubyPool::spawn(n_workers, vec![])
@@ -240,14 +234,13 @@ async fn main() -> Result<()> {
             state
         }
         Some(pg_password) => {
-            let pg_host = env::var("PGHOST")
-                .unwrap_or_else(|_| "pangea-database-rw.pangea-system.svc.cluster.local".to_string());
-            let pg_port: u16 = env::var("PGPORT")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(5432);
-            let pg_user = env::var("PGUSER").unwrap_or_else(|_| "postgres".to_string());
-            let pg_database = env::var("PGDATABASE").unwrap_or_else(|_| "pangea_state".to_string());
+            // Non-secret coordinates come from the typed config; PGPASSWORD
+            // stays a direct env read (a secret, deliberately absent from the
+            // serialized config surface).
+            let pg_host = op_cfg.database.host.clone();
+            let pg_port: u16 = op_cfg.database.port;
+            let pg_user = op_cfg.database.user.clone();
+            let pg_database = op_cfg.database.database.clone();
 
             let connect_options = sqlx::postgres::PgConnectOptions::new()
                 .host(&pg_host)

@@ -39,6 +39,9 @@
 
 pub mod backend;
 pub mod chart_values;
+// Typed shikumi progressive-discovery config surface (the operator's whole
+// env surface as one TieredConfig). See src/config.rs.
+pub mod config;
 pub mod crd;
 pub mod controller;
 pub mod error;
