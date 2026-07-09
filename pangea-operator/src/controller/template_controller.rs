@@ -289,17 +289,63 @@ async fn reconcile_template(
             // re-reads the stale in-memory `auto_suspended` before the
             // gen handler returns.
         } else {
-            // No corrective signal — stay parked (log + requeue).
-            info!(
-                "Template auto-suspended by ReactivePolicy (status.autoSuspended=true); \
-                 edit the spec to correct + resume, or clear it manually. \
-                 lastEscalationReason: {:?}",
-                template
-                    .status
-                    .as_ref()
-                    .and_then(|s| s.last_escalation_reason.as_deref())
-            );
-            return Ok(Action::requeue(DEFAULT_REQUEUE_INTERVAL));
+            // No corrective .spec edit. But a park must never be
+            // permanent: a template auto-suspended by a TRANSIENT cause
+            // (a provider process that later respawns clean, a DB blip, a
+            // provider rate-limit, an operator-image fix that changed the
+            // operator's behavior without changing this template's spec)
+            // would otherwise sit parked forever, because gen == obs means
+            // the corrective-edit gate above never fires. That is the #1
+            // stuck class this reaction exists to kill.
+            //
+            // Circuit-breaker HALF-OPEN probe: once
+            // AUTO_SUSPEND_PROBE_INTERVAL has elapsed since the park
+            // (status.lastEscalatedAt), let exactly ONE reconcile fall
+            // through and re-attempt. If the cause has cleared,
+            // `apply_reactive_policy` resolves `Escalation::Healthy` and
+            // `next_auto_suspended()` writes autoSuspended=false — the
+            // template self-resumes with no human action. If it fails
+            // again, escalation re-fires, `lastEscalatedAt` refreshes, and
+            // the breaker re-opens for another full interval (bounded
+            // low-frequency retry, never a hammer). The only downstream
+            // reads of `auto_suspended` are this gate (verified single
+            // site), so falling through with the on-cluster latch still
+            // true is safe — nothing below re-parks on the stale value.
+            let last_escalated_at = template
+                .status
+                .as_ref()
+                .and_then(|s| s.last_escalated_at);
+            if auto_suspend_probe_due(
+                Utc::now(),
+                last_escalated_at,
+                auto_suspend_probe_interval(),
+            ) {
+                info!(
+                    ?last_escalated_at,
+                    probe_interval_secs = AUTO_SUSPEND_PROBE_INTERVAL_SECS,
+                    "Auto-suspend circuit breaker HALF-OPEN: probe interval elapsed since park; \
+                     re-attempting the parked template to check whether its cause has cleared. \
+                     A clean reconcile self-clears autoSuspended; a failing one re-parks."
+                );
+                // Fall through to the normal reconcile path (gen == obs, so
+                // the generation handler below is a no-op and control
+                // reaches compile/plan/apply/verify → apply_reactive_policy).
+            } else {
+                // Breaker still OPEN — stay parked, requeue, re-check the
+                // probe clock next cycle.
+                info!(
+                    ?last_escalated_at,
+                    "Template auto-suspended by ReactivePolicy (status.autoSuspended=true); \
+                     circuit breaker OPEN, next HALF-OPEN probe pending. \
+                     Edit the spec to correct + resume immediately, or clear it manually. \
+                     lastEscalationReason: {:?}",
+                    template
+                        .status
+                        .as_ref()
+                        .and_then(|s| s.last_escalation_reason.as_deref())
+                );
+                return Ok(Action::requeue(DEFAULT_REQUEUE_INTERVAL));
+            }
         }
     }
 
@@ -4086,6 +4132,44 @@ fn auto_suspend_gate_should_clear(current_gen: i64, observed_gen: i64) -> bool {
     current_gen != observed_gen
 }
 
+/// Interval (seconds) a template stays parked (circuit breaker OPEN)
+/// before the auto-suspend gate lets one reconcile fall through as a
+/// HALF-OPEN probe. Sized well above `DEFAULT_REQUEUE_INTERVAL` (5 min)
+/// so parked templates re-probe on a low-frequency cadence — bounded
+/// retry, never a hammer — while still guaranteeing a transient-cause
+/// park self-heals within one interval rather than requiring a human
+/// spec edit. Kept as a plain `i64` (not a `const chrono::Duration`,
+/// whose constructors are not `const fn`); the `Duration` is built at
+/// the two use sites via `auto_suspend_probe_interval()`.
+const AUTO_SUSPEND_PROBE_INTERVAL_SECS: i64 = 30 * 60;
+
+/// The parked-template HALF-OPEN probe interval as a `chrono::Duration`.
+fn auto_suspend_probe_interval() -> chrono::Duration {
+    chrono::Duration::seconds(AUTO_SUSPEND_PROBE_INTERVAL_SECS)
+}
+
+/// Never-stuck breaker HALF-OPEN decision for the auto-suspend entry
+/// gate's no-corrective-edit branch. Returns `true` when a parked
+/// template is due for a probe reconcile — i.e. when
+/// `AUTO_SUSPEND_PROBE_INTERVAL` has elapsed since it was parked
+/// (`status.lastEscalatedAt`), so the operator should re-attempt the
+/// reconcile to discover whether the (possibly transient) cause has
+/// cleared.
+///
+/// A missing `last_escalated_at` (parked without a recorded timestamp —
+/// shouldn't happen, but defend against it) returns `true`: fail toward
+/// unsticking, never toward a permanent, un-timestamped park.
+fn auto_suspend_probe_due(
+    now: chrono::DateTime<chrono::Utc>,
+    last_escalated_at: Option<chrono::DateTime<chrono::Utc>>,
+    probe_interval: chrono::Duration,
+) -> bool {
+    match last_escalated_at {
+        None => true,
+        Some(parked_at) => now.signed_duration_since(parked_at) >= probe_interval,
+    }
+}
+
 /// Returns true iff `prev` already carries the suspended-condition
 /// set semantically. Thin wrapper around the lifted helper so the
 /// suspended-skip call site reads naturally.
@@ -4232,6 +4316,62 @@ mod auto_suspend_gate_tests {
         assert!(
             auto_suspend_gate_should_clear(1, 0),
             "a real generation vs the default observed=0 must clear the park"
+        );
+    }
+}
+
+#[cfg(test)]
+mod auto_suspend_probe_tests {
+    //! Lock in the never-stuck HALF-OPEN probe decision. Without it a
+    //! template parked by a TRANSIENT cause (provider crash later
+    //! respawned clean, DB blip, rate-limit, an operator-image fix that
+    //! changed operator behavior without touching this template's spec)
+    //! sits parked forever, because gen == obs means the corrective-edit
+    //! gate never fires. The probe guarantees a bounded, low-frequency
+    //! re-attempt so a cleared cause self-resumes with no human action.
+    use super::{auto_suspend_probe_due, auto_suspend_probe_interval};
+    use chrono::{Duration, Utc};
+
+    #[test]
+    fn probe_fires_once_the_interval_has_elapsed() {
+        let now = Utc::now();
+        let parked_at = now - auto_suspend_probe_interval() - Duration::seconds(1);
+        assert!(
+            auto_suspend_probe_due(now, Some(parked_at), auto_suspend_probe_interval()),
+            "a park older than the probe interval must be due for a HALF-OPEN probe"
+        );
+    }
+
+    #[test]
+    fn probe_holds_while_still_within_the_interval() {
+        let now = Utc::now();
+        let parked_at = now - (auto_suspend_probe_interval() - Duration::seconds(1));
+        assert!(
+            !auto_suspend_probe_due(now, Some(parked_at), auto_suspend_probe_interval()),
+            "a park younger than the probe interval must stay OPEN (no premature probe hammer)"
+        );
+    }
+
+    #[test]
+    fn probe_fires_exactly_at_the_interval_boundary() {
+        // `>=`: a park aged exactly one interval is due (deterministic
+        // boundary, not an off-by-one that could wedge at the edge).
+        let now = Utc::now();
+        let parked_at = now - auto_suspend_probe_interval();
+        assert!(
+            auto_suspend_probe_due(now, Some(parked_at), auto_suspend_probe_interval()),
+            "a park aged exactly the probe interval must be due"
+        );
+    }
+
+    #[test]
+    fn missing_timestamp_fails_toward_unsticking() {
+        // A parked template with no recorded park time must NOT become a
+        // permanent, un-timestamped park — probe immediately.
+        let now = Utc::now();
+        assert!(
+            auto_suspend_probe_due(now, None, auto_suspend_probe_interval()),
+            "a park with no lastEscalatedAt must probe immediately (fail toward unsticking)"
         );
     }
 }
