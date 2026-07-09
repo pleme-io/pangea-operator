@@ -569,17 +569,30 @@ impl ArtifactStore {
 #[cfg(feature = "executor_magma")]
 impl ArtifactStore {
     /// Persist the typed magma plan checkpoint (was `magma-plan.json`).
+    ///
+    /// `source_revision` records the source revision the plan was
+    /// COMPUTED FROM — the same value the `rendered_config` it was
+    /// derived from carries (the plan phase reads the render via
+    /// `get_rendered_config`, then plans against it, so a fresh plan is
+    /// always same-revision as the render currently in the store). It is
+    /// recorded so the apply-phase reuse gate can reject a plan produced
+    /// from an OLDER revision than the render now in the store — the
+    /// sibling of the `rendered_config` stale-render fix. A cached plan
+    /// whose `source_revision` no longer matches the render's is stale:
+    /// apply would re-execute a noOp plan and a source change (e.g.
+    /// org.yaml) would silently never converge. `None` leaves the column
+    /// NULL — treated as "revision unknown → stale" by the reuse gate,
+    /// forcing exactly one plan recompute.
     pub async fn put_plan(
         &self,
         schema: &str,
         template: &str,
         plan: &magma_types::Plan,
+        source_revision: Option<&str>,
     ) -> Result<String> {
         let bytes = serde_json::to_vec(plan).map_err(Error::Serialization)?;
-        // The plan/bundle artifacts are not revision-gated for reuse
-        // (only rendered_config is — that is the compile→plan handoff the
-        // freshness class turns stale). Store with NULL source_revision.
-        self.put(schema, template, kind::PLAN, &bytes, None).await
+        self.put(schema, template, kind::PLAN, &bytes, source_revision)
+            .await
     }
 
     /// Read the typed magma plan checkpoint. `Ok(None)` when the plan
@@ -598,16 +611,57 @@ impl ArtifactStore {
         }
     }
 
+    /// The `source_revision` recorded alongside the stored plan (the
+    /// revision it was computed from), or `None` when there is no plan
+    /// row yet OR a legacy row (written before plan revisions were
+    /// recorded) carries NULL. The apply-phase reuse gate treats both
+    /// `None` cases as "not a match for the current revision" →
+    /// recompute once. This is the revision half of the plan-reuse
+    /// check; the bytes come from [`get_plan`]. Mirrors
+    /// [`get_rendered_config_revision`].
+    pub async fn get_plan_revision(
+        &self,
+        schema: &str,
+        template: &str,
+    ) -> Result<Option<String>> {
+        self.ensure_ready().await?;
+        let row: Option<(Option<String>,)> = sqlx::query_as(
+            r#"
+            SELECT source_revision
+            FROM pangea_meta.artifacts
+            WHERE schema_name = $1 AND template_name = $2 AND kind = $3
+            "#,
+        )
+        .bind(schema)
+        .bind(template)
+        .bind(kind::PLAN)
+        .fetch_optional(self.pool.as_ref())
+        .await
+        .map_err(Error::Database)?;
+
+        Ok(row.and_then(|(rev,)| rev))
+    }
+
     /// Persist the typed magma compliance bundle (was
     /// `magma-bundle.json`).
+    ///
+    /// `source_revision` records the revision the bundle's plan was
+    /// computed from, kept uniform with [`put_plan`] so the plan and its
+    /// companion bundle carry the same revision stamp (the "Keys/revision
+    /// MUST match" invariant extended to plan + bundle). The bundle is
+    /// not itself a reuse-gated artifact, but stamping it keeps the two
+    /// compile→plan handoff artifacts revision-coherent. `None` leaves
+    /// the column NULL.
     pub async fn put_bundle(
         &self,
         schema: &str,
         template: &str,
         bundle: &magma_bundle::Bundle,
+        source_revision: Option<&str>,
     ) -> Result<String> {
         let bytes = serde_json::to_vec(bundle).map_err(Error::Serialization)?;
-        self.put(schema, template, kind::BUNDLE, &bytes, None).await
+        self.put(schema, template, kind::BUNDLE, &bytes, source_revision)
+            .await
     }
 
     /// Read the typed magma compliance bundle. `Ok(None)` when no
