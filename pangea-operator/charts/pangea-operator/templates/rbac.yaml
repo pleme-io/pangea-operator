@@ -148,6 +148,50 @@ rules:
     verbs:
       - update
 
+  # PangeaAlert — declare-once alert rules; the AlertController reconciles
+  # each into an owned VMRule / PrometheusRule and self-patches status.
+  - apiGroups:
+      - pangea.pleme.io
+    resources:
+      - pangeaalerts
+      - pangeaalerts/status
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+
+  # Alert-rule CRs the AlertController renders + owns via ownerReference:
+  # VMRule (operator.victoriametrics.com, the default) and PrometheusRule
+  # (monitoring.coreos.com). Without these the controller 403s on upsert.
+  - apiGroups:
+      - operator.victoriametrics.com
+    resources:
+      - vmrules
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - monitoring.coreos.com
+    resources:
+      - prometheusrules
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+
   # Leader election
   - apiGroups:
       - coordination.k8s.io

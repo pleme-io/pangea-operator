@@ -7,7 +7,7 @@ description: |
   JSON, runs tofu plan/apply, and emits typed cycle receipts with declarative
   reactive escalation policies.
 type: application
-version: 0.1.2
+version: 0.1.3
 appVersion: "0.1.1"
 kubeVersion: ">=1.27.0-0"
 home: https://github.com/pleme-io/pangea-operator
