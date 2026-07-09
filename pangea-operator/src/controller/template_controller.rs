@@ -499,7 +499,56 @@ async fn reconcile_template(
         }
     };
 
+    // ★★ Every-reconcile post-reconcile hook (the load-bearing generalization).
+    // ReactivePolicy (apply_reactive_policy) previously ran ONLY on the failure
+    // path (status.rs update_phase_with_error → post_reconcile_pipeline), so a
+    // SUCCESSFUL/Ready reconcile never ran it: the Healthy self-clear of
+    // autoSuspended (next_auto_suspended's Escalation::Healthy → false branch)
+    // was effectively dead on success, and the verified-blocked clock + the
+    // Healthy=True condition only refreshed when a template FAILED. Run it here
+    // on EVERY phase-completing reconcile, on FRESH status (re-GET — the
+    // reconcile-start `template` Arc is a stale snapshot that server-side-merge
+    // PATCHes never mutate). Loop-safe by two independent brakes: the /status
+    // subresource write cannot bump metadata.generation (so the generation
+    // predicate on the watch stream drops the refire) and reactive_policy_status_
+    // unchanged skips the PATCH entirely in steady state (zero-write on healthy
+    // Ready templates). The failure paths KEEP their own run_for_template call
+    // (status.rs:197) so every early-return caller — including handle_destroying,
+    // which returns at :201 and never reaches here — retains its escalation
+    // ladder; the harmless double-run on soft-failures that also flow here is
+    // suppressed by the diff-gate + the ReactivePolicyTriggered event debounce.
+    run_post_reconcile_on_fresh(&template, &state).await;
+
     Ok(action.into())
+}
+
+/// Run the post-reconcile pipeline (ReactivePolicy escalation + the Healthy
+/// self-clear of `autoSuspended` + the verified-blocked clock) on FRESH status.
+///
+/// The `template` handed to `reconcile_template` is the reconcile-START `Arc`
+/// snapshot; every status write this cycle is a server-side-merge PATCH that
+/// does NOT mutate that snapshot, so evaluating escalation against it would read
+/// `failureCount` / `phase` / `autoSuspended` one cycle stale — making the first
+/// escalation and the Healthy self-clear dishonest (e.g. a template that just
+/// succeeded to Ready with failureCount reset to 0 would still be judged against
+/// its pre-reset count). Re-GET before running. Best-effort: a failed GET, or a
+/// template deleted mid-cycle, is logged and skipped, never fatal — the reconcile
+/// has already produced its `Action` by the time we reach here.
+async fn run_post_reconcile_on_fresh(template: &InfrastructureTemplate, state: &ControllerState) {
+    let name = template.name_any();
+    let ns = template.namespace().unwrap_or_default();
+    let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &ns);
+    match api.get_opt(&name).await {
+        Ok(Some(fresh)) => {
+            crate::controller::post_reconcile_pipeline::run_for_template(&fresh, state).await;
+        }
+        Ok(None) => {
+            tracing::debug!(%name, %ns, "post-reconcile: template gone on re-GET; skipping reactive policy");
+        }
+        Err(e) => {
+            warn!(error = %e, %name, %ns, "post-reconcile re-GET failed; skipping reactive policy this cycle (non-fatal)");
+        }
+    }
 }
 
 /// State-machine dispatch for `InfrastructureTemplate` reconcile phases.
