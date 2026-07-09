@@ -175,7 +175,19 @@ async fn apply_reactive_policy(
         message: healthy_message,
     });
 
-    let new_auto_suspended = suspend_now || prior_status.auto_suspended;
+    // Self-clearing breaker: a clean reconcile (no reactive policy
+    // firing this pass, `Escalation::Healthy`) resets the auto-suspend
+    // latch to `false`. Previously this was a monotonic latch
+    // (`suspend_now || prior_status.auto_suspended`) that, once set,
+    // was NEVER written false — nothing in the operator ever cleared
+    // it, so a template that tripped the breaker was parked forever
+    // until a human `kubectl patch`ed `status.autoSuspended=false`.
+    // arc-github/drive/zot sat parked 20-54 days on a compile that had
+    // since gone green. Making the breaker self-clear on a healthy
+    // reconcile closes the #1 stuck source: the moment the underlying
+    // condition clears (evaluate returns Healthy), the park lifts.
+    let new_auto_suspended =
+        next_auto_suspended(&escalation, suspend_now, prior_status.auto_suspended);
 
     // Diff-gate: skip the PATCH when none of the observable fields
     // would actually change. Without this gate, every template
@@ -282,6 +294,32 @@ async fn apply_reactive_policy(
     Ok(())
 }
 
+/// The self-clearing auto-suspend breaker decision.
+///
+/// Returns the value `status.autoSuspended` should take this reconcile:
+///
+///   * `Escalation::Healthy` (no reactive policy fired this pass) → the
+///     breaker RESETS to `false`. This is the self-clear: once the
+///     underlying condition that tripped the breaker clears, the park
+///     lifts on the very next clean reconcile — nothing waits for a
+///     human `kubectl patch`.
+///   * otherwise → the prior monotonic behaviour: latch on when a
+///     Suspend action fires this pass (`suspend_now`) and stay latched
+///     while a (possibly different) escalation is still firing
+///     (`prior`), so an Alert/Page escalation immediately after a
+///     Suspend does not un-park a still-bad template.
+fn next_auto_suspended(
+    escalation: &crate::controller::reactive::Escalation,
+    suspend_now: bool,
+    prior: bool,
+) -> bool {
+    use crate::controller::reactive::Escalation;
+    match escalation {
+        Escalation::Healthy => false,
+        _ => suspend_now || prior,
+    }
+}
+
 /// Whether a `Phase` is one we will forcibly reset to `Failed` when a
 /// `PhaseTimeout:*` escalation fires. The reconcile-driving phases
 /// (everything that does work and can therefore get stuck) are in;
@@ -359,9 +397,65 @@ fn reactive_policy_status_unchanged(
 
 #[cfg(test)]
 mod tests {
-    use super::reactive_policy_status_unchanged;
-    use crate::crd::{Condition, InfrastructureTemplateStatus};
+    use super::{next_auto_suspended, reactive_policy_status_unchanged};
+    use crate::controller::reactive::Escalation;
+    use crate::crd::{Condition, InfrastructureTemplateStatus, ReactiveAction};
     use chrono::TimeZone;
+
+    fn triggered(action: ReactiveAction) -> Escalation {
+        Escalation::Triggered {
+            action,
+            reason: "some-reason".into(),
+            message: "some-message".into(),
+            routing: None,
+        }
+    }
+
+    #[test]
+    fn reactive_healthy_self_clears_auto_suspend() {
+        // A prior-suspended template (autoSuspended=true) that reconciles
+        // cleanly (Escalation::Healthy, no policy firing) must self-clear
+        // to false — this is the fix for the forever-parked #1 stuck
+        // source. The value is what the PATCH will write.
+        let new_auto_suspended = next_auto_suspended(&Escalation::Healthy, false, true);
+        assert!(
+            !new_auto_suspended,
+            "a healthy reconcile must self-clear the auto-suspend latch (true → false)"
+        );
+
+        // And because the value flips true → false, the diff-gate must
+        // NOT suppress the PATCH — the clear has to reach the cluster.
+        let prev = InfrastructureTemplateStatus {
+            conditions: vec![cond("Healthy", "True", "NoEscalations", "no reactive policies have fired")],
+            auto_suspended: true, // prior park
+            ..Default::default()
+        };
+        let new_cond = vec![cond("Healthy", "True", "NoEscalations", "no reactive policies have fired")];
+        assert!(
+            !reactive_policy_status_unchanged(&prev, &new_cond, None, new_auto_suspended, None, None),
+            "clearing autoSuspended true → false must force a PATCH so the park lift reaches the cluster"
+        );
+    }
+
+    #[test]
+    fn reactive_suspend_action_latches_auto_suspend() {
+        // A Suspend action this pass latches the breaker on.
+        assert!(
+            next_auto_suspended(&triggered(ReactiveAction::Suspend), true, false),
+            "a Suspend escalation must latch autoSuspended on"
+        );
+    }
+
+    #[test]
+    fn reactive_nonhealthy_alert_preserves_prior_suspension() {
+        // An Alert/Page escalation immediately after a Suspend must NOT
+        // un-park a still-bad template: prior latch is preserved while
+        // any escalation is still firing.
+        assert!(
+            next_auto_suspended(&triggered(ReactiveAction::Alert), false, true),
+            "a non-Healthy escalation must preserve a prior auto-suspension (no premature un-park)"
+        );
+    }
 
     fn cond(typ: &str, status: &str, reason: &str, msg: &str) -> Condition {
         Condition {

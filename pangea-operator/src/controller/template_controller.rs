@@ -241,15 +241,66 @@ async fn reconcile_template(
         .map(|s| s.auto_suspended)
         .unwrap_or(false);
     if auto_suspended {
-        info!(
-            "Template auto-suspended by ReactivePolicy (status.autoSuspended=true); \
-             clear it manually to resume. lastEscalationReason: {:?}",
-            template
-                .status
-                .as_ref()
-                .and_then(|s| s.last_escalation_reason.as_deref())
-        );
-        return Ok(Action::requeue(DEFAULT_REQUEUE_INTERVAL));
+        // Never-stuck: a corrective .spec edit self-clears the park.
+        // Previously this gate short-circuited BEFORE the
+        // generation-change handler below (:305), so even fixing the
+        // config that tripped the breaker could not un-park the
+        // template — a human had to `kubectl patch autoSuspended=false`.
+        // arc-github/drive/zot sat parked 20-54 days on a compile that
+        // had since gone green. A generation bump (metadata.generation
+        // vs status.observedGeneration diverging) is an explicit
+        // corrective signal: clear the latch and FALL THROUGH so the
+        // generation-change handler resets to Pending and re-compiles
+        // against the new spec. Also self-clears when reactive policy
+        // (`apply_reactive_policy`) resolves to Healthy on a clean
+        // reconcile — this gate is the belt to that suspenders.
+        let observed_gen = template
+            .status
+            .as_ref()
+            .map(|s| s.observed_generation)
+            .unwrap_or(0);
+        let current_gen = template.metadata.generation.unwrap_or(0);
+        if auto_suspend_gate_should_clear(current_gen, observed_gen) {
+            info!(
+                current_gen,
+                observed_gen,
+                "Template was auto-suspended but its spec changed (corrective edit) — \
+                 clearing status.autoSuspended and re-reconciling against the new spec"
+            );
+            let clear_patch = serde_json::json!({
+                "status": { "autoSuspended": false }
+            });
+            crate::controller::status_patch::patch_status(&*template, &state.client, clear_patch)
+                .await
+                .map_err(crate::error::Error::Kube)?;
+            record_event(
+                &template,
+                &state,
+                EventType::Normal,
+                "AutoSuspendCleared",
+                "Spec changed since auto-suspension; clearing autoSuspended and re-reconciling",
+            )
+            .await;
+            // Fall through: the code below reaches the generation-change
+            // handler (current_gen != observed_gen), which cleans the
+            // workspace and resets to Pending, then returns. `template`
+            // is an `Arc` (immutable); the on-cluster clear PATCH above
+            // is authoritative, and no code on this fall-through path
+            // re-reads the stale in-memory `auto_suspended` before the
+            // gen handler returns.
+        } else {
+            // No corrective signal — stay parked (log + requeue).
+            info!(
+                "Template auto-suspended by ReactivePolicy (status.autoSuspended=true); \
+                 edit the spec to correct + resume, or clear it manually. \
+                 lastEscalationReason: {:?}",
+                template
+                    .status
+                    .as_ref()
+                    .and_then(|s| s.last_escalation_reason.as_deref())
+            );
+            return Ok(Action::requeue(DEFAULT_REQUEUE_INTERVAL));
+        }
     }
 
     // Check if suspended — emit conditions so FluxCD sees definitive state.
@@ -302,6 +353,19 @@ async fn reconcile_template(
     // Detect spec changes (generation mismatch) — clean workspace and restart from Pending.
     // This ensures stale .terraform state, lock files, and cached providers are cleared
     // when the template source or configuration changes.
+    //
+    // Render invalidation (never-stuck Reaction D): the reset to Pending
+    // routes through Pending → Compiling, and `handle_compiling` ALWAYS
+    // recompiles and overwrites the Postgres `rendered_config` row via
+    // `put_rendered_config` — so the stale render is not reused after a
+    // spec change. The disk `workspace.clean()` covers the disk-fallback
+    // path; the DB path is invalidated by the mandatory recompile plus the
+    // generation-aware reuse gate in `compiled_config_available`
+    // (`generation_invalidates_render`), which forces a recompile whenever
+    // `generation` is ahead of `observedGeneration` even for a
+    // `spec.variables`-only edit that leaves the source-content revision
+    // unchanged. Before the generation-aware gate, such an edit could serve
+    // the OLD render off the new spec until a manual pod restart.
     let observed_gen = template
         .status
         .as_ref()
@@ -1602,14 +1666,45 @@ fn rendered_config_is_current(
         // The artifact has no recorded revision (legacy row / NULL) — treat
         // as stale so exactly one recompile stamps the revision.
         (None, _) => false,
-        // We can't determine the current revision (e.g. a configMap/inline
-        // source became unreadable this tick, or no compiledRevision anchor
-        // yet). Don't force a recompile on an unknowable current revision —
-        // the freshness gate / compile path surfaces the real error. This
-        // preserves the pre-fix "present ⇒ available" behavior only when the
-        // current revision is genuinely undeterminable.
-        (Some(_), None) => true,
+        // A stored render exists but we CANNOT determine the current source
+        // revision. Previously this returned `true` ("present ⇒ available"),
+        // which SILENTLY certified a possibly-stale render as current when
+        // the current source became unreadable this tick (a configMap key
+        // deleted, the ConfigMap gone — `non_git_source_revision` returns
+        // `Ok(None)` for those). Serving a stale render off an unreadable
+        // source is the never-stuck masking hazard this fixes: force a
+        // recompile instead. The compile path then either re-reads the
+        // source (if it recovered) or surfaces the real "source unreadable"
+        // error loudly — never masks it as "current".
+        //
+        // Safe for the legitimate git-first-compile case: on the very first
+        // git compile there is no stored render, so `(None, _) => false`
+        // fires first and this arm is never reached; once a git render
+        // exists the freshness gate has stamped `status.compiledRevision`,
+        // so `current` is `Some(head)` (this arm again unreached). Reaching
+        // here with a stored render but no derivable current revision is an
+        // anomalous state that correctly warrants exactly one recompile.
+        (Some(_), None) => false,
     }
+}
+
+/// Whether a cached render is invalidated by a spec/generation change.
+///
+/// `true` when the live `metadata.generation` is AHEAD of the last
+/// phase-transition's `status.observedGeneration` — i.e. a spec edit
+/// landed that the operator has not yet re-compiled through. This makes
+/// the reuse gate honor ANY spec change, not only a source-content
+/// change: a `spec.variables`-only edit (or any non-source spec field)
+/// bumps `generation` but leaves the source-content revision unchanged,
+/// so the revision-only gate could otherwise serve a stale render off
+/// the new spec until a manual pod restart. Generation-awareness closes
+/// that: a spec change forces a recompile.
+///
+/// Only fires when generation is strictly ahead (`>`), never on a stale
+/// or equal observed generation, so it can never churn a settled
+/// template.
+fn generation_invalidates_render(current_gen: i64, observed_gen: i64) -> bool {
+    current_gen > observed_gen
 }
 
 async fn compiled_config_available(
@@ -1622,6 +1717,31 @@ async fn compiled_config_available(
     if !magma_db_backed {
         return Ok(main_tf_on_disk);
     }
+
+    // Generation-aware invalidation (never-stuck Reaction D): a spec edit
+    // that bumps `metadata.generation` past `status.observedGeneration`
+    // invalidates the cached render even if the SOURCE CONTENT revision is
+    // unchanged (a `spec.variables`-only edit). Without this, the
+    // revision-only reuse gate below would certify the stale render as
+    // current and the operator would serve the OLD render off the new spec
+    // until a manual pod restart. A recompile re-derives against the new
+    // spec and re-persists the render.
+    let current_gen = template.metadata.generation.unwrap_or(0);
+    let observed_gen = template
+        .status
+        .as_ref()
+        .map(|s| s.observed_generation)
+        .unwrap_or(0);
+    if generation_invalidates_render(current_gen, observed_gen) {
+        info!(
+            current_gen,
+            observed_gen,
+            "cached rendered_config predates a spec/generation change — re-compiling \
+             (generation-aware reuse gate)"
+        );
+        return Ok(false);
+    }
+
     let schema_name = format!("pangea_{}", template.spec.pangea_namespace);
     let store = state
         .artifact_store
@@ -2777,7 +2897,41 @@ fn is_self_healable_apply_error(stderr: &str) -> bool {
 
 #[cfg(test)]
 mod source_freshness_tests {
-    use super::{content_revision, rendered_config_is_current};
+    use super::{content_revision, generation_invalidates_render, rendered_config_is_current};
+
+    // ── generation_invalidates_render — the spec/generation reuse guard ──
+
+    #[test]
+    fn spec_generation_ahead_invalidates_the_render() {
+        // A spec edit bumped generation past the last-observed generation:
+        // the cached render predates the edit → force a recompile even if
+        // the source-content revision is unchanged (variables-only edit).
+        assert!(
+            generation_invalidates_render(6, 5),
+            "generation ahead of observedGeneration must invalidate the cached render"
+        );
+    }
+
+    #[test]
+    fn caught_up_generation_does_not_invalidate() {
+        // observedGeneration has caught up to generation → no pending spec
+        // change → the revision-based gate decides reuse; do not churn.
+        assert!(
+            !generation_invalidates_render(5, 5),
+            "an equal generation must NOT force a recompile (no pending spec change)"
+        );
+    }
+
+    #[test]
+    fn stale_observed_generation_never_forces_recompile() {
+        // Defensive: an observedGeneration somehow AHEAD of generation
+        // (clock/replay anomaly) must not loop the render — only a strictly
+        // ahead generation invalidates.
+        assert!(
+            !generation_invalidates_render(4, 5),
+            "observedGeneration ahead of generation must not force a recompile"
+        );
+    }
 
     #[test]
     fn content_revision_is_stable_and_change_sensitive() {
@@ -2870,17 +3024,22 @@ mod source_freshness_tests {
     }
 
     #[test]
-    fn undeterminable_current_revision_reuses_present_render() {
-        // If we can't determine the current revision (e.g. a configMap became
-        // transiently unreadable this tick) but the artifact DOES carry a
-        // recorded revision, reuse the present render rather than forcing a
-        // recompile on an unknowable target — the freshness/compile path
-        // surfaces the real error. Preserves the pre-fix "present ⇒ available"
-        // behavior only in this genuinely-undeterminable case.
+    fn undeterminable_current_revision_forces_recompile_not_masking() {
+        // NEVER-STUCK (Reaction D): a stored render + an UNDETERMINABLE
+        // current revision must NOT be certified as current. Previously
+        // this returned `true` ("present ⇒ available"), which silently
+        // served a possibly-stale render when the current source became
+        // unreadable this tick (a configMap key deleted / ConfigMap gone —
+        // `non_git_source_revision` returns `Ok(None)` there). That is the
+        // masking hazard: the operator kept serving the OLD render off a
+        // source it could no longer read. It must force a recompile so the
+        // compile path either re-reads the recovered source or surfaces the
+        // real "source unreadable" error loudly.
         let head = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
         assert!(
-            rendered_config_is_current(Some(head), None),
-            "an undeterminable current revision must not force a spurious recompile"
+            !rendered_config_is_current(Some(head), None),
+            "an unreadable/undeterminable current source revision must NOT silently \
+             certify the stored render as current — force a recompile-or-fail"
         );
     }
 }
@@ -3913,6 +4072,20 @@ impl From<ReconcileAction> for Action {
     }
 }
 
+/// Never-stuck breaker self-clear decision for the auto-suspend entry
+/// gate. Returns `true` when a template that is `status.autoSuspended`
+/// should have the latch cleared and be re-reconciled — i.e. when the
+/// live `metadata.generation` differs from the last-observed
+/// `status.observedGeneration`, which is the operator's explicit
+/// "the spec changed since we parked it" corrective signal.
+///
+/// Returns `false` when the generation is unchanged: no corrective
+/// edit landed, so the template stays parked (log + requeue) rather
+/// than churning the same known-bad spec.
+fn auto_suspend_gate_should_clear(current_gen: i64, observed_gen: i64) -> bool {
+    current_gen != observed_gen
+}
+
 /// Returns true iff `prev` already carries the suspended-condition
 /// set semantically. Thin wrapper around the lifted helper so the
 /// suspended-skip call site reads naturally.
@@ -4016,6 +4189,49 @@ mod suspended_diff_tests {
         assert!(
             !suspended_conditions_already_set(&prev, &new),
             "extras in prev must force PATCH so our authoritative set wins"
+        );
+    }
+}
+
+#[cfg(test)]
+mod auto_suspend_gate_tests {
+    //! Lock in the never-stuck self-clear decision for the auto-suspend
+    //! entry gate. Previously the gate short-circuited BEFORE the
+    //! generation-change handler, so a corrective .spec edit could not
+    //! un-park a template (arc-github/drive/zot parked 20-54 days).
+    //! The full clear+fall-through path (kube PATCH, event, gen handler)
+    //! is integration-testable only (needs a live kube::Client +
+    //! ControllerState); the decision that gates it is pure and locked
+    //! in here.
+    use super::auto_suspend_gate_should_clear;
+
+    #[test]
+    fn spec_change_clears_the_park() {
+        // metadata.generation bumped past the last-observed generation
+        // = an explicit corrective edit landed → clear + re-reconcile.
+        assert!(
+            auto_suspend_gate_should_clear(7, 5),
+            "a generation bump (corrective spec edit) must clear the auto-suspend park"
+        );
+    }
+
+    #[test]
+    fn unchanged_generation_stays_parked() {
+        // No corrective edit → stay parked (log + requeue), do not churn
+        // the same known-bad spec.
+        assert!(
+            !auto_suspend_gate_should_clear(5, 5),
+            "an unchanged generation must NOT clear the park (no corrective signal)"
+        );
+    }
+
+    #[test]
+    fn fresh_never_observed_generation_clears() {
+        // observedGeneration defaults to 0 before the first successful
+        // reconcile; a real generation (>=1) differs → the gate opens.
+        assert!(
+            auto_suspend_gate_should_clear(1, 0),
+            "a real generation vs the default observed=0 must clear the park"
         );
     }
 }
