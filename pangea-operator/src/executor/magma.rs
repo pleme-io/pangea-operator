@@ -78,6 +78,55 @@ use crate::executor::iac_executor::IacExecutor;
 use crate::executor::plan_change::PlannedChange;
 use crate::executor::tofu::TofuResult;
 
+/// Typed outcome of reading the persisted plan from the DB-backed
+/// artifact store. The three states let `apply()` / `planned_changes()`
+/// tell a genuinely-missing OR stale plan row (regenerate) from a
+/// torn/corrupt one (hard error — surfaced by `read_db_plan`'s `?`) from
+/// the non-DB-backed disk/unit-test path.
+///
+/// This is the never-stuck fix: a MISSING (absent OR stale) row is a
+/// cache-miss to regenerate from, NOT a terminal `Err` that wedges the
+/// reconcile.
+enum DbPlanRead {
+    /// DB-backed executor, plan row present AND still current (its
+    /// `source_revision` matches the render currently in the store).
+    Present(magma_types::Plan),
+    /// DB-backed executor, plan row genuinely absent OR STALE (its
+    /// `source_revision` no longer matches the render's — the plan was
+    /// computed from an older revision). Callers regenerate the plan
+    /// rather than dead-ending or applying a stale (noOp) plan.
+    Missing,
+    /// No `artifact_store` — the disk-fallback / unit-test path.
+    NotDbBacked,
+}
+
+/// The apply-phase plan-reuse decision (the sibling of
+/// `rendered_config_is_current` in the controller). A persisted plan is
+/// reusable **iff** the `source_revision` it was computed from equals the
+/// `source_revision` of the `rendered_config` now in the store. The
+/// render fix keeps the render's recorded revision current (it re-derives
+/// on a moved source HEAD / changed inline content), so this enforces
+/// "the plan must have been computed from the render currently in the
+/// store" — reject a plan derived from an older render (which would apply
+/// a noOp and silently never converge a source change).
+///
+///   * `(Some(p), Some(r))` — reuse iff `p == r`.
+///   * `(None, _)` — the plan carries no recorded revision (a legacy /
+///     NULL row) ⇒ stale ⇒ recompute once (converge-by-one-recompute).
+///   * `(Some(_), None)` — a stored plan but no derivable render revision
+///     (no render row, or a legacy/NULL render row). Can't prove the plan
+///     is current ⇒ stale ⇒ recompute. Safe: the very first plan on the
+///     DB path is preceded by a compile that stamps the render revision,
+///     so a genuine first-plan reaches `apply()` with a matching render
+///     revision, not this arm.
+fn plan_reuse_is_current(plan_revision: Option<&str>, render_revision: Option<&str>) -> bool {
+    match (plan_revision, render_revision) {
+        (Some(plan_rev), Some(render_rev)) => plan_rev == render_rev,
+        (None, _) => false,
+        (Some(_), None) => false,
+    }
+}
+
 // ── StateBackendAsync — adapter into magma-operator-backend ────────
 
 /// Wraps the operator's `StateBackend` (which is keyed by the
@@ -305,33 +354,82 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
     /// Read the typed plan the plan phase persisted, **from the DB-backed
     /// artifact store only** — ZERO filesystem.
     ///
-    ///   * `Ok(Some(plan))` — DB-backed executor, plan row present.
-    ///   * `Err(MagmaExecution)` — DB-backed executor, **no plan row**:
-    ///     the plan phase must persist it before apply / discovery. This
-    ///     is a LOUD typed error (never a silent empty, never an
-    ///     os-error-2 restart loop).
-    ///   * `Ok(None)` — this executor is NOT DB-backed (no `artifact_store`
-    ///     — the disk-fallback / unit-test path). The caller decides how
-    ///     to read the disk checkpoint (apply) or route to the legacy
-    ///     `show_plan` path (planned_changes).
+    /// Returns a typed three-state [`DbPlanRead`] so the caller can tell a
+    /// genuinely-MISSING-OR-STALE plan row (a cache-miss → regenerate)
+    /// apart from a torn/corrupt one (a hard `Err`) and from the
+    /// non-DB-backed path:
+    ///
+    ///   * `DbPlanRead::Present(plan)` — DB-backed, plan row present AND
+    ///     current (its `source_revision` matches the render's).
+    ///   * `DbPlanRead::Missing`       — DB-backed, **no plan row OR a
+    ///     STALE one** (the row was never written, was deleted, or its
+    ///     `source_revision` no longer matches the render currently in the
+    ///     store — the plan was computed from an older revision). This is a
+    ///     CACHE-MISS, not an error: `apply()` / `planned_changes()`
+    ///     regenerate the plan rather than dead-ending or applying a stale
+    ///     (noOp) plan. It mirrors the compile-cache-miss path
+    ///     (recompute-not-fail). Previously an absent row surfaced as a
+    ///     LOUD `Err(MagmaExecution)` (→ STUCK until a pod restart) and a
+    ///     stale-but-present row was applied blindly (a source change
+    ///     silently never converged — the stale-plan class this fixes).
+    ///   * `DbPlanRead::NotDbBacked`   — no `artifact_store` (disk-fallback
+    ///     / unit-test path). The caller reads the disk checkpoint (apply)
+    ///     or routes to the legacy `show_plan` path (planned_changes).
+    ///
+    /// A TORN/CORRUPT row is NOT one of these states: `get_plan` re-verifies
+    /// the stored blob's BLAKE3 content hash and returns `Err` on mismatch,
+    /// which propagates through the `?` below unchanged (a corrupt row must
+    /// surface loudly — regenerating over garbage would mask real
+    /// data-integrity failures).
     ///
     /// Dedups the DB-plan read shared by `apply()` and `planned_changes()`.
-    async fn read_db_plan(&self) -> Result<Option<magma_types::Plan>> {
+    async fn read_db_plan(&self) -> Result<DbPlanRead> {
         match &self.cfg.artifact_store {
             Some(store) => {
-                let plan = store
+                // `?` propagates a torn/corrupt row as a hard Err (BLAKE3
+                // mismatch / serde failure). `Ok(None)` = genuinely absent
+                // = a cache-miss the caller regenerates from.
+                let Some(plan) = store
                     .get_plan(&self.cfg.schema_name, &self.cfg.template_name)
                     .await?
-                    .ok_or_else(|| {
-                        Error::MagmaExecution(format!(
-                            "no plan in artifact store for {}/{}; \
-                             the plan phase must persist it before apply",
-                            self.cfg.schema_name, self.cfg.template_name
-                        ))
-                    })?;
-                Ok(Some(plan))
+                else {
+                    return Ok(DbPlanRead::Missing);
+                };
+
+                // Revision gate (sibling of the controller's rendered_config
+                // reuse gate): a stored plan is reusable ONLY if the revision
+                // it was computed from still matches the render currently in
+                // the store. The render fix keeps the render's revision
+                // current on a moved source HEAD / changed inline content; a
+                // plan whose recorded revision is older was computed from a
+                // stale render → applying it re-executes a noOp and a source
+                // change (org.yaml) silently never converges. A stale (or
+                // legacy/NULL-revision) plan is a CACHE-MISS the caller
+                // regenerates from — not a hard error, not a stale apply.
+                let plan_revision = store
+                    .get_plan_revision(&self.cfg.schema_name, &self.cfg.template_name)
+                    .await?;
+                let render_revision = store
+                    .get_rendered_config_revision(
+                        &self.cfg.schema_name,
+                        &self.cfg.template_name,
+                    )
+                    .await?;
+                if plan_reuse_is_current(plan_revision.as_deref(), render_revision.as_deref()) {
+                    Ok(DbPlanRead::Present(plan))
+                } else {
+                    tracing::info!(
+                        schema = %self.cfg.schema_name,
+                        template = %self.cfg.template_name,
+                        plan_revision = plan_revision.as_deref().unwrap_or("(none)"),
+                        render_revision = render_revision.as_deref().unwrap_or("(none)"),
+                        "read_db_plan: cached plan is stale relative to the current render \
+                         (revision mismatch) — treating as a cache-miss so the plan recomputes"
+                    );
+                    Ok(DbPlanRead::Missing)
+                }
             }
-            None => Ok(None),
+            None => Ok(DbPlanRead::NotDbBacked),
         }
     }
 
@@ -709,13 +807,38 @@ where
         let plan = magma_plan::plan(&cfg, &state)
             .map_err(|e| Error::MagmaExecution(format!("magma_plan: {e}")))?;
 
+        // The revision this plan was COMPUTED FROM: the source_revision of
+        // the rendered_config it was derived from (loaded above via
+        // load_config_routed → get_rendered_config). Stamping the plan with
+        // it lets apply() reject a cached plan produced from an OLDER render
+        // than the one now in the store — the sibling of the rendered_config
+        // stale-render fix. On the disk-fallback path there is no artifact
+        // store, so no revision to read (the disk plan is never revision-
+        // gated — a single-workspace file, not a cross-cycle cache).
+        let plan_source_revision: Option<String> = match &self.cfg.artifact_store {
+            Some(store) => {
+                store
+                    .get_rendered_config_revision(
+                        &self.cfg.schema_name,
+                        &self.cfg.template_name,
+                    )
+                    .await?
+            }
+            None => None,
+        };
+
         // Persist the typed plan so apply() (a separate reconcile)
         // picks it up. DB-backed path → Postgres (`put_plan`), zero
         // disk. Disk fallback → `magma-plan.json` checkpoint.
         match &self.cfg.artifact_store {
             Some(store) => {
                 store
-                    .put_plan(&self.cfg.schema_name, &self.cfg.template_name, &plan)
+                    .put_plan(
+                        &self.cfg.schema_name,
+                        &self.cfg.template_name,
+                        &plan,
+                        plan_source_revision.as_deref(),
+                    )
                     .await?;
             }
             None if self.cfg.plan_checkpoint => {
@@ -783,7 +906,12 @@ where
         match &self.cfg.artifact_store {
             Some(store) => {
                 store
-                    .put_bundle(&self.cfg.schema_name, &self.cfg.template_name, &bundle)
+                    .put_bundle(
+                        &self.cfg.schema_name,
+                        &self.cfg.template_name,
+                        &bundle,
+                        plan_source_revision.as_deref(),
+                    )
                     .await?;
             }
             None => {
@@ -835,13 +963,45 @@ where
     ) -> Result<TofuResult> {
         let started = Instant::now();
         // Read the typed plan the plan() phase persisted. DB-backed path
-        // → Postgres (`get_plan`) — a normal cache read; a missing row
-        // is a typed error (no disk fallback on the Some path, no
-        // os-error-2 restart-loop class). Disk fallback → the
-        // `magma-plan.json` checkpoint.
+        // → Postgres (`get_plan`) — a normal cache read. A torn/corrupt
+        // row is still a hard error (`read_db_plan`'s `?` surfaces the
+        // BLAKE3 mismatch). A genuinely-MISSING row is a CACHE-MISS, not
+        // a dead-end: regenerate the plan in-process and re-read it, the
+        // same recompute-not-fail shape as the compile-cache-miss path.
+        // Before this, a deleted/absent plan artifact os-error-2-wedged
+        // the reconcile ("produced no analyzable output" → "No changes
+        // detected" → STUCK until a pod restart).
         let plan: magma_types::Plan = match self.read_db_plan().await? {
-            Some(plan) => plan,
-            None => {
+            DbPlanRead::Present(plan) => plan,
+            DbPlanRead::Missing => {
+                // Cache-miss on the DB path: the plan row is gone but the
+                // rendered config is still durable, so recompute the plan
+                // (`plan()` re-persists the row via `put_plan`) and read
+                // it back. Never terminal.
+                tracing::warn!(
+                    schema = %self.cfg.schema_name,
+                    template = %self.cfg.template_name,
+                    "apply: no persisted plan row (cache-miss) — regenerating the plan in-process before apply"
+                );
+                self.plan(work_dir, plan_file, &[]).await?;
+                match self.read_db_plan().await? {
+                    DbPlanRead::Present(plan) => plan,
+                    // A regenerate that still can't produce a plan row is a
+                    // genuine failure (the store isn't accepting writes) —
+                    // surface it loudly rather than silently no-op'ing.
+                    DbPlanRead::Missing => {
+                        return Err(Error::MagmaExecution(format!(
+                            "apply: plan row still absent after in-process regeneration for {}/{}; \
+                             the artifact store did not persist the regenerated plan",
+                            self.cfg.schema_name, self.cfg.template_name
+                        )));
+                    }
+                    DbPlanRead::NotDbBacked => unreachable!(
+                        "artifact_store presence does not change within a single apply()"
+                    ),
+                }
+            }
+            DbPlanRead::NotDbBacked => {
                 // Disk fallback (no artifact store — the unit-test /
                 // interim disk mode). Reads the `magma-plan.json`
                 // checkpoint from the workspace dir.
@@ -1231,19 +1391,33 @@ where
     /// the executor-agnostic [`PlannedChange`] border. No tofu-format
     /// re-serialization, no `tokio::fs::read`.
     ///
-    /// A DB-backed executor with no persisted plan row is a LOUD typed
-    /// `Err` (propagated from `read_db_plan`), never a silent empty.
+    /// A genuinely-MISSING plan row (cache-miss) returns `Ok(None)`, NOT
+    /// a hard `Err`. `planned_changes()` is the pre-apply IMPORT-discovery
+    /// prepass; it has no `work_dir`, so it can't regenerate the plan
+    /// itself — but the `apply()` that follows in the same reconcile WILL
+    /// regenerate the missing plan (see `apply()`), so the correct
+    /// behavior here is to degrade to the legacy `show_plan` / prior-drifts
+    /// discovery path (the `Ok(None)` arm the controller already handles)
+    /// rather than wedge the whole cycle. Previously a missing row was a
+    /// LOUD `Err` that the controller turned into a stuck no-op.
+    ///
+    /// A TORN/CORRUPT row is still a hard `Err` (propagated from
+    /// `read_db_plan`'s BLAKE3-verifying `?`) — a data-integrity failure
+    /// must surface, never be regenerated over.
     ///
     /// On the disk-fallback path (no `artifact_store` — unit tests /
-    /// interim disk mode) this returns `Ok(None)`, so the prepass routes
-    /// to the legacy `show_plan` path unchanged. Tier: the DB path is
-    /// disk-free by-construction (no `&Path` reaches this method); the
-    /// disk-fallback `None` arm is only-mitigated interim, retired when
-    /// the artifact store is always wired.
+    /// interim disk mode) this also returns `Ok(None)`, so the prepass
+    /// routes to the legacy `show_plan` path unchanged. Tier: the DB path
+    /// is disk-free by-construction (no `&Path` reaches this method); the
+    /// disk-fallback `None` arm is only-mitigated interim, retired when the
+    /// artifact store is always wired.
     async fn planned_changes(&self) -> Result<Option<Vec<PlannedChange>>> {
         match self.read_db_plan().await? {
-            Some(plan) => Ok(Some(planned_changes_from_magma_plan(&plan))),
-            None => Ok(None),
+            DbPlanRead::Present(plan) => Ok(Some(planned_changes_from_magma_plan(&plan))),
+            // Cache-miss OR not-DB-backed → route to the legacy discovery
+            // path. The following apply() regenerates the plan on the DB
+            // path; degrading discovery here is non-fatal.
+            DbPlanRead::Missing | DbPlanRead::NotDbBacked => Ok(None),
         }
     }
 }
@@ -1401,6 +1575,120 @@ mod tests {
         let exec = MagmaExecutor::new(fixture_config());
         let out = exec.planned_changes().await.unwrap();
         assert!(out.is_none(), "disk-fallback magma must return Ok(None)");
+    }
+
+    // ── plan_reuse_is_current — the apply-phase plan-reuse gate ──────────
+    //
+    // The sibling of the controller's `rendered_config_is_current` gate.
+    // These pin the decision `read_db_plan` makes when a plan row IS
+    // present: reuse it (→ `DbPlanRead::Present`) ONLY when its recorded
+    // `source_revision` still matches the render's current revision;
+    // otherwise treat it as stale (→ `DbPlanRead::Missing` → the apply /
+    // planned_changes path regenerates the plan from the fresh render+state
+    // rather than applying a stale noOp plan). This is the last staleness
+    // layer: without it, a git-HEAD advance (render re-derived to
+    // enabled=true) left the apply reusing a plan computed from the OLD
+    // render (enabled=false vs state enabled=false → noOp), so an org.yaml
+    // change silently never converged.
+
+    #[test]
+    fn plan_stale_when_git_head_advanced_forces_recompute() {
+        // THE HEADLINE REGRESSION. A cached plan computed at the prior HEAD
+        // is stale once the render re-derives at the new HEAD (the render
+        // fix stamps the render's source_revision to the new HEAD). A stale
+        // plan must NOT be reused — it recomputes against the fresh render.
+        let old_head = "1111111111111111111111111111111111111111";
+        let new_head = "2222222222222222222222222222222222222222";
+        assert!(
+            !plan_reuse_is_current(Some(old_head), Some(new_head)),
+            "a plan computed at an OLD HEAD must be stale once the render \
+             advances to a NEW HEAD — reuse it and a source change never converges"
+        );
+    }
+
+    #[test]
+    fn plan_current_when_revisions_match_is_reused() {
+        // Steady state: the plan was computed from the render currently in
+        // the store (same revision) → reuse it (the normal apply path).
+        let head = "abc1234abc1234abc1234abc1234abc1234abc12";
+        assert!(
+            plan_reuse_is_current(Some(head), Some(head)),
+            "a plan whose revision matches the current render must be reused"
+        );
+    }
+
+    #[test]
+    fn plan_stale_when_inline_content_revision_changed() {
+        // Non-git (inline / configMap) source: the render's revision is a
+        // `cm:` content hash. A changed source content ⇒ new render revision
+        // ⇒ the plan computed at the old content hash is stale.
+        let old_rev = "cm:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let new_rev = "cm:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        assert!(
+            !plan_reuse_is_current(Some(old_rev), Some(new_rev)),
+            "a plan computed at an old inline-content revision must be stale after an edit"
+        );
+    }
+
+    #[test]
+    fn plan_legacy_null_revision_forces_recompute() {
+        // A legacy plan row written before plan revisions were recorded
+        // carries NULL — it can't be proven current, so recompute once
+        // (converge-by-one-recompute, matching the render gate's legacy arm).
+        let head = "9999999999999999999999999999999999999999";
+        assert!(
+            !plan_reuse_is_current(None, Some(head)),
+            "a legacy/NULL-revision plan must not be reused — recompute once"
+        );
+        // And a plan present with no derivable render revision (no render row
+        // / legacy render): also can't be proven current → recompute.
+        assert!(
+            !plan_reuse_is_current(Some(head), None),
+            "a plan with no derivable current render revision must not be reused"
+        );
+        // Both unknown → recompute.
+        assert!(!plan_reuse_is_current(None, None));
+    }
+
+    #[tokio::test]
+    async fn read_db_plan_reports_not_db_backed_without_artifact_store() {
+        // The disk-fallback fixture has `artifact_store: None`. `read_db_plan`
+        // must classify that as `NotDbBacked` (routes to the disk checkpoint
+        // in apply / the legacy show_plan in planned_changes) — NOT as a
+        // Missing cache-miss (which would regenerate) and NOT as an Err.
+        let exec = MagmaExecutor::new(fixture_config());
+        let read = exec.read_db_plan().await.unwrap();
+        assert!(
+            matches!(read, DbPlanRead::NotDbBacked),
+            "no artifact store → DbPlanRead::NotDbBacked (disk-fallback path)"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_regenerates_missing_disk_checkpoint_is_a_hard_io_error_but_present_plan_applies() {
+        // Regression guard for the Reaction-B refactor: the DB-backed
+        // never-stuck regeneration path needs a live Postgres ArtifactStore
+        // (integration-only), but the disk-fallback contract must be
+        // unchanged by the three-state `DbPlanRead` refactor. A plan()
+        // followed by apply() (DbPlanRead::NotDbBacked → disk checkpoint)
+        // must still round-trip through the in-memory backend.
+        let exec = MagmaExecutor::new(fixture_config());
+        let tmp = tempfile::tempdir().unwrap();
+        render_workspace(
+            tmp.path(),
+            &json!({
+                "provider": { "aws": { "region": "us-east-1" } },
+                "resource": { "aws_iam_role": { "node": { "name": "regen" } } },
+            }),
+        )
+        .await;
+        exec.plan(tmp.path(), None, &[]).await.unwrap();
+        let apply = exec.apply(tmp.path(), None, true).await.unwrap();
+        assert!(
+            apply.success,
+            "disk-fallback apply-after-plan must still succeed post-refactor: {}",
+            apply.stderr
+        );
     }
 
     #[test]
