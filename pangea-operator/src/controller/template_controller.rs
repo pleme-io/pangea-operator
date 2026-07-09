@@ -324,12 +324,44 @@ async fn reconcile_template(
                     ?last_escalated_at,
                     probe_interval_secs = AUTO_SUSPEND_PROBE_INTERVAL_SECS,
                     "Auto-suspend circuit breaker HALF-OPEN: probe interval elapsed since park; \
-                     re-attempting the parked template to check whether its cause has cleared. \
-                     A clean reconcile self-clears autoSuspended; a failing one re-parks."
+                     clearing autoSuspended and re-attempting the parked template. A clean \
+                     reconcile leaves it cleared (self-healed); a failing one re-arms the \
+                     breaker via the failure path's ReactivePolicy escalation."
                 );
+                // HALF-OPEN = give the template exactly one attempt with the
+                // latch OFF. We MUST clear autoSuspended here rather than
+                // relying on a Healthy reconcile to clear it: the ReactivePolicy
+                // stage (apply_reactive_policy → next_auto_suspended) runs ONLY
+                // from update_phase_with_error (the failure status path) via
+                // post_reconcile_pipeline — a SUCCESSFUL/Ready reconcile never
+                // invokes it, so a recovered template would otherwise stay
+                // latched forever. Clear proactively; if the re-attempt fails,
+                // update_phase_with_error → apply_reactive_policy re-escalates
+                // and re-sets autoSuspended + lastEscalatedAt (breaker re-opens
+                // for another interval). If it succeeds, the latch stays off and
+                // the template has self-resumed with no human action.
+                let clear_patch = serde_json::json!({
+                    "status": { "autoSuspended": false }
+                });
+                crate::controller::status_patch::patch_status(
+                    &*template,
+                    &state.client,
+                    clear_patch,
+                )
+                .await
+                .map_err(crate::error::Error::Kube)?;
+                record_event(
+                    &template,
+                    &state,
+                    EventType::Normal,
+                    "AutoSuspendProbe",
+                    "Circuit-breaker HALF-OPEN probe: cleared autoSuspended and re-attempting; \
+                     the failure path re-arms the breaker if the cause has not cleared",
+                )
+                .await;
                 // Fall through to the normal reconcile path (gen == obs, so
-                // the generation handler below is a no-op and control
-                // reaches compile/plan/apply/verify → apply_reactive_policy).
+                // the generation handler below is a no-op and control reaches
+                // compile/plan/apply/verify).
             } else {
                 // Breaker still OPEN — stay parked, requeue, re-check the
                 // probe clock next cycle.
