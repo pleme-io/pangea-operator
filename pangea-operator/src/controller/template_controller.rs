@@ -36,6 +36,7 @@ use super::template::freshness::{
     evaluate_source_freshness, git_rev_parse_head, observe_head, Freshness,
 };
 use super::template::provider_creds::resolve_provider_config;
+use super::template::secret_files::write_secret_files;
 use super::template::status::{
     update_apply_status, update_compiled_revision, update_drift_check_timestamp,
     ObservationOutcome, update_freshness_status, update_pending_plan_hash, update_phase,
@@ -1685,6 +1686,14 @@ async fn handle_initializing(
     if let Some(provider_creds) = template.spec.provider_credentials.as_ref().filter(|_| !magma_active) {
         let provider_config = resolve_provider_config(provider_creds, template, state).await?;
         BackendConfigGenerator::write_provider_config(provider_config, &workspace.path).await?;
+    }
+
+    // Resolve `spec.secretFiles` into pod-local workspace files — same
+    // gating as the provider-config write above (magma reads providers
+    // from the resolved config, never from workspace files; a template
+    // with no secretFiles entries pays one empty-loop no-op).
+    if !magma_active {
+        write_secret_files(template, state, &workspace).await?;
     }
 
     // Run tofu init

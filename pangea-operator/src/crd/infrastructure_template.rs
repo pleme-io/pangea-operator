@@ -261,6 +261,61 @@ pub struct InfrastructureTemplateSpec {
     /// `status.outputs` JSON directly.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub output_bindings: Vec<OutputBinding>,
+
+    /// Secrets resolved into ephemeral, pod-local files under the
+    /// template's tofu workspace — written once per Initializing-phase
+    /// reconcile, immediately before `tofu init`, by
+    /// `controller::template::secret_files::write_secret_files`. A
+    /// rendered template references each by
+    /// `${file("${path.module}/<name>")}` HCL interpolation.
+    ///
+    /// Generalizes the shape `handle_compiling`'s git-auth resolution
+    /// already proves for git credentials (resolve a Secret → write to
+    /// a file in the workspace → reference from rendered HCL) to ANY
+    /// named secret a workspace's Ruby needs as a file on disk — not
+    /// just git auth. First consumer: a raw (non-cloud-managed)
+    /// `kubernetes { token = ... }` provider block, which has no Ruby
+    /// `provider :xyz do` surface to inline an `ENV.fetch` into and
+    /// isn't provider-block-shaped credential data (region, api_token,
+    /// …) either.
+    ///
+    /// Deliberately OUTSIDE the `ProviderCredentials`/`ProviderKind`
+    /// exhaustiveness chain (see that type's own doc comment) — this
+    /// is not a provider credential the operator renders into
+    /// `providers.tf.json`, it's an arbitrary named file the rendered
+    /// HCL reads via `file(...)`. Never written to git; lives only in
+    /// the pod-local emptyDir workspace (★★ MAGMA-NATIVE's one
+    /// sanctioned filesystem reach — no new persistence surface, no
+    /// new secret-at-rest concern beyond what `_git_user`/`_git_pass`
+    /// already establish).
+    ///
+    /// Skipped entirely on the magma path (`load_config_routed` reads
+    /// providers from the resolved config, never from workspace files)
+    /// — same gating as `write_provider_config`. Empty (default) = no
+    /// secret files written; existing templates pay nothing for this.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secret_files: Vec<SecretFileRef>,
+}
+
+/// One named secret resolved into a workspace file. See
+/// `InfrastructureTemplateSpec::secret_files`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SecretFileRef {
+    /// Filename written under the workspace directory, referenced from
+    /// rendered HCL as `${file("${path.module}/<name>")}`. Must be a
+    /// bare filename — no path separators, no `..`, no leading `.`
+    /// (validated at write time by
+    /// `secret_files::write_secret_files`, not at the schema layer, to
+    /// keep the CRD a plain string field rather than a regex-pattern
+    /// one).
+    pub name: String,
+
+    /// Secret to read the value from.
+    pub secret_ref: SecretRef,
+
+    /// Key within the Secret's `.data` map.
+    pub key: String,
 }
 
 /// One binding of a tofu output to a K8s Secret key. Authored by

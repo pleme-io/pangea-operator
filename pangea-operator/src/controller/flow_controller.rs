@@ -246,6 +246,11 @@ async fn reconcile_flow(
                             import_hints: Default::default(),
                             conflict_policy: None,
                             output_bindings: Default::default(),
+                            // Flow-spawned templates never carry ad hoc
+                            // secret-file references — that's an
+                            // operator-authored-template-only concern (same
+                            // rationale as provider_credentials: None above).
+                            secret_files: Default::default(),
                         },
                     );
 

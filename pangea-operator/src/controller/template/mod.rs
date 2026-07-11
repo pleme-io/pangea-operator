@@ -16,4 +16,5 @@ pub mod freshness;
 pub mod output_bindings;
 pub mod provider_creds;
 pub mod reactive_policy;
+pub mod secret_files;
 pub mod status;
