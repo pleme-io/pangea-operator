@@ -199,7 +199,95 @@ pub async fn update_phase_with_error(
     Ok(())
 }
 
+/// Build a `{"status": {...}}` merge-patch body containing ONLY the
+/// named fields, sourced from `status`'s own `Serialize` impl (so
+/// each field's per-field `skip_serializing_if` behavior — e.g.
+/// `Option::is_none` omitting a key rather than nulling it — is
+/// preserved exactly; this changes WHICH keys reach the wire, never
+/// HOW an individual owned key is encoded).
+///
+/// This is the guard against the "full-object clone → patch" clobber
+/// class `update_phase`'s doc comment (above) explains in full: a
+/// helper built from `template.status.clone()` — the immutable,
+/// start-of-reconcile snapshot — can only ever emit the fields named
+/// here, no matter what ELSE is populated on that snapshot (e.g. a
+/// sibling field-scoped helper's fresher write to a field this
+/// function doesn't own). A name typo'd out of `field_names` is a
+/// silently-dropped PATCH key (safe: no write happens for that
+/// field this round) rather than a silently-SENT stale value (unsafe:
+/// clobbers whatever a sibling helper just wrote to the API server
+/// moments earlier in the same reconcile pass — see
+/// `update_plan_status`/`update_settling_status` for the concrete
+/// incident this closes). Tier: only-mitigated (a runtime filter, not
+/// a type that makes an unscoped patch unconstructible) — but every
+/// status-writer in this file that owns more than 1-2 ad hoc fields
+/// should route through it.
+fn scoped_status_patch(
+    status: &crate::crd::InfrastructureTemplateStatus,
+    field_names: &[&str],
+) -> serde_json::Value {
+    let full = serde_json::to_value(status).unwrap_or_else(|e| {
+        tracing::error!(error = %e, "InfrastructureTemplateStatus failed to serialize; \
+                         emitting an empty (no-op) status patch rather than risk a partial/garbled write");
+        serde_json::json!({})
+    });
+    let mut scoped = serde_json::Map::new();
+    if let Some(obj) = full.as_object() {
+        for name in field_names {
+            if let Some(v) = obj.get(*name) {
+                scoped.insert((*name).to_string(), v.clone());
+            }
+        }
+    }
+    serde_json::json!({ "status": scoped })
+}
+
+/// The 5 status fields a plan update owns.
+const PLAN_STATUS_FIELDS: &[&str] = &[
+    "resources",
+    "planSummary",
+    "lastPlannedAt",
+    "driftDetails",
+    "policyEvaluation",
+];
+
+/// Pure: build the field-scoped plan-status patch body — extracted so
+/// it's unit-testable without a kube client (same pattern as
+/// `build_apply_status`/`build_freshness_patch`, below/above).
+fn build_plan_status_patch(
+    prev_status: &crate::crd::InfrastructureTemplateStatus,
+    resources: Option<ResourceSummary>,
+    plan_summary: Option<&str>,
+    drift_details: Vec<crate::crd::DriftDetail>,
+    policy_evaluation: Option<PolicyEvaluation>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> serde_json::Value {
+    let mut status = prev_status.clone();
+    status.resources = resources;
+    status.plan_summary = plan_summary.map(|s| s.to_string());
+    status.last_planned_at = Some(now);
+    status.drift_details = drift_details;
+    status.policy_evaluation = policy_evaluation;
+
+    scoped_status_patch(&status, PLAN_STATUS_FIELDS)
+}
+
 /// Update status after a successful plan.
+///
+/// Field-scoped status patch (see `scoped_status_patch` +
+/// `update_phase`'s doc comment for the full clobber-class
+/// explanation) — write ONLY the 5 fields a plan OWNS. The previous
+/// `json!({ "status": status })` shape re-sent the ENTIRE in-memory
+/// status — sourced from `template.status.clone()`, the immutable
+/// start-of-reconcile snapshot — which silently clobbered
+/// `observedHeadRevision`/`lastFreshnessCheckAt` back to their stale
+/// pre-reconcile values: `source_freshness_gate` (called earlier in
+/// the SAME reconcile pass, in `handle_planning`) had already written
+/// those fields fresh to the API server via `update_freshness_status`,
+/// but that write never reaches this function's local `template`, so
+/// re-sending the whole struct reverted it on (almost) every Planning
+/// reconcile — the same clobber class `update_phase` was already
+/// fixed for, just never migrated here.
 pub async fn update_plan_status(
     template: &InfrastructureTemplate,
     resources: Option<ResourceSummary>,
@@ -208,16 +296,15 @@ pub async fn update_plan_status(
     policy_evaluation: Option<PolicyEvaluation>,
     state: &ControllerState,
 ) -> Result<()> {
-
-
-    let mut status = template.status.clone().unwrap_or_default();
-    status.resources = resources;
-    status.plan_summary = plan_summary.map(|s| s.to_string());
-    status.last_planned_at = Some(Utc::now());
-    status.drift_details = drift_details;
-    status.policy_evaluation = policy_evaluation;
-
-    let patch = serde_json::json!({ "status": status });
+    let prev_status = template.status.clone().unwrap_or_default();
+    let patch = build_plan_status_patch(
+        &prev_status,
+        resources,
+        plan_summary,
+        drift_details,
+        policy_evaluation,
+        Utc::now(),
+    );
 
     crate::controller::status_patch::patch_status(template, &state.client, patch)
     .await?;
@@ -447,28 +534,27 @@ mod freshness_patch_tests {
     }
 }
 
-/// Persist state-settling tracking fields to status.
-///
-/// Updates `consecutive_drift_cycles`, `stuck_resources`, and (when
-/// drift was detected) `drift_details`. Also flips the `Settled`
-/// condition to reflect the current outcome — this is what an
-/// external observer (Flux healthCheck, Prometheus alert, kubectl
-/// describe) reads to know whether the system has actually converged.
-///
-/// `freshness` is the Ready-phase gate's verdict for this drift run
-/// (`None` for sources with no revision to be stale against). The
-/// Settled message names the compiled revision + observed HEAD so
-/// "no changes" is always uttered against a NAMED commit — and an
-/// `Unknown` observation says "HEAD: unverified" instead of implying
-/// a verification that never happened (tier-honest: freshness is a
-/// C2 observation renewed per check).
-pub async fn update_settling_status(
-    template: &InfrastructureTemplate,
+/// The 5 status fields a settling update owns.
+const SETTLING_STATUS_FIELDS: &[&str] = &[
+    "consecutiveDriftCycles",
+    "stuckResources",
+    "driftDetails",
+    "conditions",
+    "lastDriftCheckAt",
+];
+
+/// Pure: build the field-scoped settling-status patch body, or `None`
+/// if nothing changed (mirrors the `settling_status_needs_patch`
+/// diff-gate). Extracted so it's unit-testable without a kube client
+/// (same pattern as `build_apply_status`/`build_freshness_patch`/
+/// `build_plan_status_patch`).
+fn build_settling_status_patch(
+    prev_status: &crate::crd::InfrastructureTemplateStatus,
     outcome: &crate::controller::settling::SettlingOutcome,
     drift_details: &[crate::crd::DriftDetail],
     freshness: Option<&super::freshness::Freshness>,
-    state: &ControllerState,
-) -> Result<()> {
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<serde_json::Value> {
     use crate::controller::settling::SettlingOutcome;
 
     let cycles = outcome.cycle_count();
@@ -478,10 +564,7 @@ pub async fn update_settling_status(
         _ => Vec::new(),
     };
 
-    let compiled_rev = template
-        .status
-        .as_ref()
-        .and_then(|s| s.compiled_revision.as_deref());
+    let compiled_rev = prev_status.compiled_revision.as_deref();
     let (settled_status, settled_reason, settled_msg) = match outcome {
         SettlingOutcome::Settled => (
             "True",
@@ -511,7 +594,6 @@ pub async fn update_settling_status(
         ),
     };
 
-    let prev_status = template.status.clone().unwrap_or_default();
     let mut status = prev_status.clone();
     status.consecutive_drift_cycles = cycles;
     status.stuck_resources = stuck_addresses.clone();
@@ -538,7 +620,7 @@ pub async fn update_settling_status(
         {
             p.last_transition_time
         }
-        _ => Utc::now(),
+        _ => now,
     };
     status.conditions.retain(|c| c.r#type != "Settled");
     status.conditions.push(crate::crd::Condition {
@@ -555,16 +637,62 @@ pub async fn update_settling_status(
     // which we update unconditionally below since callers expect
     // it to track the most recent drift run. Bumping it only when
     // we actually PATCH avoids restamping on no-op rounds.
-    if !settling_status_needs_patch(&prev_status, &status) {
+    if !settling_status_needs_patch(prev_status, &status) {
+        return None;
+    }
+
+    status.last_drift_check_at = Some(now);
+
+    Some(scoped_status_patch(&status, SETTLING_STATUS_FIELDS))
+}
+
+/// Persist state-settling tracking fields to status.
+///
+/// Updates `consecutive_drift_cycles`, `stuck_resources`, and (when
+/// drift was detected) `drift_details`. Also flips the `Settled`
+/// condition to reflect the current outcome — this is what an
+/// external observer (Flux healthCheck, Prometheus alert, kubectl
+/// describe) reads to know whether the system has actually converged.
+///
+/// `freshness` is the Ready-phase gate's verdict for this drift run
+/// (`None` for sources with no revision to be stale against). The
+/// Settled message names the compiled revision + observed HEAD so
+/// "no changes" is always uttered against a NAMED commit — and an
+/// `Unknown` observation says "HEAD: unverified" instead of implying
+/// a verification that never happened (tier-honest: freshness is a
+/// C2 observation renewed per check).
+///
+/// Field-scoped status patch (see `scoped_status_patch` +
+/// `update_phase`'s doc comment for the full clobber-class
+/// explanation) — write ONLY the 5 fields a settling update OWNS. The
+/// previous `json!({ "status": status })` shape re-sent the ENTIRE
+/// in-memory status — sourced from `template.status.clone()`, the
+/// immutable start-of-reconcile snapshot — which silently clobbered
+/// `observedHeadRevision`/`lastFreshnessCheckAt` back to their stale
+/// pre-reconcile values whenever `settling_status_needs_patch` decided
+/// a PATCH was due: `source_freshness_gate` (called earlier in the
+/// SAME reconcile pass, in `handle_ready`) had already written those
+/// fields fresh to the API server via `update_freshness_status`, but
+/// that write never reaches this function's local `template`, so
+/// re-sending the whole struct reverted it — the same clobber class
+/// `update_phase` was already fixed for, just never migrated here.
+pub async fn update_settling_status(
+    template: &InfrastructureTemplate,
+    outcome: &crate::controller::settling::SettlingOutcome,
+    drift_details: &[crate::crd::DriftDetail],
+    freshness: Option<&super::freshness::Freshness>,
+    state: &ControllerState,
+) -> Result<()> {
+    let prev_status = template.status.clone().unwrap_or_default();
+    let Some(patch) =
+        build_settling_status_patch(&prev_status, outcome, drift_details, freshness, Utc::now())
+    else {
         tracing::debug!(
             "Settling status unchanged; skipping patch (avoids self-trigger watch loop)"
         );
         return Ok(());
-    }
+    };
 
-    status.last_drift_check_at = Some(Utc::now());
-
-    let patch = serde_json::json!({ "status": status });
     crate::controller::status_patch::patch_status(template, &state.client, patch)
     .await?;
 
@@ -911,6 +1039,99 @@ mod tests {
         };
         let out = build_apply_status(prior, None, None);
         assert_eq!(out.last_applied_revision.as_deref(), Some("prior"));
+    }
+
+    // ── build_plan_status_patch / build_settling_status_patch — the
+    // freshness-field clobber regression (2026-07-12). Fails against
+    // the pre-fix shape (`json!({ "status": template.status.clone() })`
+    // sent the WHOLE struct, including whatever `observedHeadRevision`/
+    // `lastFreshnessCheckAt` happened to be sitting on the immutable
+    // start-of-reconcile snapshot); passes once the patch body is
+    // field-scoped to only the fields the writer owns. ──────────────
+    use super::{build_plan_status_patch, build_settling_status_patch};
+
+    /// A status carrying freshness fields as they'd look mid-reconcile:
+    /// `source_freshness_gate` observed a NEW head moments ago and
+    /// PATCHed it straight to the API server, but this in-memory
+    /// snapshot — built at the TOP of the reconcile, before that PATCH
+    /// — still carries the STALE pre-gate values. A correct writer
+    /// downstream in the same reconcile must never re-emit either key.
+    fn status_with_stale_freshness_snapshot() -> InfrastructureTemplateStatus {
+        InfrastructureTemplateStatus {
+            observed_head_revision: Some("stale-pre-gate-sha".into()),
+            last_freshness_check_at: Some(
+                chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+            ),
+            compiled_revision: Some("compiled-sha".into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn plan_status_patch_never_touches_freshness_fields() {
+        let prev = status_with_stale_freshness_snapshot();
+        let patch = build_plan_status_patch(&prev, None, Some("2 to add"), Vec::new(), None, t(0));
+        let status_obj = patch["status"]
+            .as_object()
+            .expect("patch must carry a status object");
+        assert!(
+            !status_obj.contains_key("observedHeadRevision"),
+            "a plan-status patch must never emit observedHeadRevision — \
+             it does not own that field and would clobber \
+             source_freshness_gate's fresher write from earlier in the \
+             same reconcile; got: {status_obj:?}"
+        );
+        assert!(
+            !status_obj.contains_key("lastFreshnessCheckAt"),
+            "a plan-status patch must never emit lastFreshnessCheckAt; \
+             got: {status_obj:?}"
+        );
+        // The fields it DOES own must still be present.
+        assert_eq!(status_obj.get("planSummary").and_then(|v| v.as_str()), Some("2 to add"));
+        assert!(status_obj.contains_key("lastPlannedAt"));
+        assert!(status_obj.contains_key("driftDetails"));
+    }
+
+    #[test]
+    fn settling_status_patch_never_touches_freshness_fields() {
+        use crate::controller::settling::SettlingOutcome;
+
+        let prev = status_with_stale_freshness_snapshot();
+        let patch = build_settling_status_patch(
+            &prev,
+            &SettlingOutcome::Progressing { cycles: 1 },
+            &[crate::crd::DriftDetail {
+                address: "aws_eks_cluster.main".into(),
+                action: "update".into(),
+                risk: "low".into(),
+                attributes: Default::default(),
+                policy_decision: None,
+                matched_policy: None,
+            }],
+            None,
+            t(0),
+        )
+        .expect("a Settled-condition flip with new drift must always patch");
+        let status_obj = patch["status"]
+            .as_object()
+            .expect("patch must carry a status object");
+        assert!(
+            !status_obj.contains_key("observedHeadRevision"),
+            "a settling-status patch must never emit observedHeadRevision — \
+             it does not own that field and would clobber \
+             source_freshness_gate's fresher write from earlier in the \
+             same reconcile; got: {status_obj:?}"
+        );
+        assert!(
+            !status_obj.contains_key("lastFreshnessCheckAt"),
+            "a settling-status patch must never emit lastFreshnessCheckAt; \
+             got: {status_obj:?}"
+        );
+        // The fields it DOES own must still be present.
+        assert!(status_obj.contains_key("consecutiveDriftCycles"));
+        assert!(status_obj.contains_key("driftDetails"));
+        assert!(status_obj.contains_key("conditions"));
+        assert!(status_obj.contains_key("lastDriftCheckAt"));
     }
 
     // ── settled_message — "no changes" against a NAMED commit ────
