@@ -2539,9 +2539,9 @@ async fn route_through_approval_gate(
     plan_text: Option<String>,
     reason: ApprovalGateReason,
 ) -> Result<ReconcileAction> {
-    let plan_content = plan_result.raw_stdout.as_str();
+    let plan_content = canonical_drift_fingerprint(&policy_outcome.annotated_drifts);
     let state_bytes = workspace.read_state_bytes().await;
-    let plan_hash = plan_approval_hash(plan_content, state_bytes.as_deref());
+    let plan_hash = plan_approval_hash(&plan_content, state_bytes.as_deref());
 
     let is_approved = template
         .status
@@ -4571,6 +4571,46 @@ fn plan_approval_hash(plan_text: &str, state_bytes: Option<&[u8]>) -> String {
     format!("{:016x}", hasher.finish())
 }
 
+/// Canonical, order-independent fingerprint of a plan's per-resource
+/// changes — the input `route_through_approval_gate` feeds to
+/// `plan_approval_hash`.
+///
+/// Deliberately built from the STRUCTURED `DriftDetail` list rather
+/// than `tofu plan`'s raw human-readable stdout: OpenTofu's plan-text
+/// renderer walks the resource graph with parallelism (10 workers by
+/// default), so the ORDER independent resources appear in varies
+/// run-to-run even when the semantic diff (which resources, what
+/// action) is identical — and a refresh-diff ("Objects have changed
+/// outside of OpenTofu") block can carry naturally-varying computed
+/// values. Hashing that raw text meant a human's approval could never
+/// stay valid past the next periodic replan: `status.pendingPlanHash`
+/// rolled on every reconcile even when nothing real had changed,
+/// making `requireApproval` structurally unapprovable — a human is
+/// always chasing a hash that has already moved by the time they act
+/// on it. Confirmed live on `camelot-eks` 2026-07-12: four consecutive
+/// replans of the identical `+21 create` diff produced four different
+/// hashes purely from stdout-ordering/refresh noise.
+///
+/// Sorting by `address` (and each entry's own `attributes`) removes
+/// the graph-walk-order non-determinism; using `DriftDetail::attributes`
+/// (changed attribute NAMES only, never values — see
+/// `changed_attributes` in `executor::plan`) removes refresh-value
+/// noise while staying exactly as resource-specific as before: two
+/// plans that differ in WHICH resources change, WHAT action, or WHICH
+/// attributes changed still hash differently.
+fn canonical_drift_fingerprint(drifts: &[crate::executor::DriftDetail]) -> String {
+    let mut entries: Vec<String> = drifts
+        .iter()
+        .map(|d| {
+            let mut attrs = d.attributes.clone();
+            attrs.sort();
+            format!("{}|{}|{}", d.address, d.action, attrs.join(","))
+        })
+        .collect();
+    entries.sort();
+    entries.join("\n")
+}
+
 #[cfg(test)]
 mod plan_approval_hash_tests {
     use super::plan_approval_hash;
@@ -4664,6 +4704,81 @@ mod plan_approval_hash_tests {
             "a plan replanned against wiped state must require fresh approval, \
              never silently inherit the prior state's approval"
         );
+    }
+}
+
+#[cfg(test)]
+mod canonical_drift_fingerprint_tests {
+    use super::canonical_drift_fingerprint;
+    use crate::executor::DriftDetail;
+
+    fn drift(address: &str, action: &str, attrs: &[&str]) -> DriftDetail {
+        DriftDetail {
+            address: address.to_string(),
+            action: action.to_string(),
+            risk: "low".to_string(),
+            attributes: attrs.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    // ── Live incident regression (2026-07-12): four consecutive
+    // replans of the identical `+21 create` diff on `camelot-eks`
+    // produced four different `pendingPlanHash` values purely from
+    // `tofu plan`'s raw-stdout graph-walk ordering — making a human's
+    // approval structurally unable to catch up. The fingerprint below
+    // is what `route_through_approval_gate` now hashes instead. ──────
+
+    #[test]
+    fn same_drifts_in_different_order_produce_the_same_fingerprint() {
+        let a = vec![
+            drift("aws_eks_addon.coredns", "create", &[]),
+            drift("aws_eks_node_group.system_ng", "create", &[]),
+            drift("aws_iam_openid_connect_provider.oidc", "create", &[]),
+        ];
+        let b = vec![
+            drift("aws_iam_openid_connect_provider.oidc", "create", &[]),
+            drift("aws_eks_addon.coredns", "create", &[]),
+            drift("aws_eks_node_group.system_ng", "create", &[]),
+        ];
+
+        assert_eq!(
+            canonical_drift_fingerprint(&a),
+            canonical_drift_fingerprint(&b),
+            "graph-walk ordering must not affect the approval fingerprint"
+        );
+    }
+
+    #[test]
+    fn same_entry_with_attributes_in_different_order_produces_the_same_fingerprint() {
+        let a = vec![drift("aws_eks_cluster.camelot-eks", "update", &["endpoint", "identity", "created_at"])];
+        let b = vec![drift("aws_eks_cluster.camelot-eks", "update", &["created_at", "identity", "endpoint"])];
+
+        assert_eq!(canonical_drift_fingerprint(&a), canonical_drift_fingerprint(&b));
+    }
+
+    #[test]
+    fn a_different_action_on_the_same_address_changes_the_fingerprint() {
+        let a = vec![drift("aws_eks_cluster.camelot-eks", "create", &[])];
+        let b = vec![drift("aws_eks_cluster.camelot-eks", "replace", &[])];
+
+        assert_ne!(canonical_drift_fingerprint(&a), canonical_drift_fingerprint(&b));
+    }
+
+    #[test]
+    fn a_different_set_of_addresses_changes_the_fingerprint() {
+        let a = vec![drift("aws_eks_node_group.system_ng", "create", &[])];
+        let b = vec![
+            drift("aws_eks_node_group.system_ng", "create", &[]),
+            drift("aws_iam_openid_connect_provider.oidc", "create", &[]),
+        ];
+
+        assert_ne!(canonical_drift_fingerprint(&a), canonical_drift_fingerprint(&b));
+    }
+
+    #[test]
+    fn empty_drift_list_is_stable() {
+        assert_eq!(canonical_drift_fingerprint(&[]), canonical_drift_fingerprint(&[]));
+        assert_eq!(canonical_drift_fingerprint(&[]), "");
     }
 }
 
