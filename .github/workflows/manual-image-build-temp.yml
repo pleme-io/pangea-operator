@@ -32,10 +32,13 @@ jobs:
     with:
       imageAttr: dockerImage-operator-embedded-amd64
       imageName: pleme-io/pangea-operator
-      # Continues the real sequence (latest published was r99,
-      # 2026-07-12, commit c7797fe) — this build carries the
-      # canonical_drift_fingerprint plan-hash-determinism fix.
-      tag: embedded-amd64-r100-fc2b5972e1dda7d85da2e3a58d2b7aa40cd5a803
+      # Continues the real sequence (latest published was r100,
+      # 2026-07-12, commit fc2b597) — this build carries the
+      # post-import unapproved-destructive-escalation safety gate
+      # (handle_applying now refuses to apply a destructive action the
+      # approved plan didn't carry — the fix for the r100-triggered
+      # unapproved camelot-eks cluster replace).
+      tag: embedded-amd64-r101-95af7468d93446cc1f1e68cf5092915666be8eeb
       additionalTags: latest-embedded-amd64
       runner: ubuntu-24.04
       buildCores: "1"
