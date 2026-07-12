@@ -150,45 +150,84 @@ SAME workspace wipe happens on every spec-generation bump, with a pod
 that never restarted at all (`pangea-operator-5f689c58d4-gmhpd`,
 `restartCount: 0` throughout this entire incident).
 
-## Open follow-ups (none shipped yet — this is diagnosis + a per-CR
-## workaround, not an operator code fix)
+## Open follow-ups
 
-- **Fold a state-derived component into the plan hash.** The hash
-  should change whenever the STATE the plan was computed against
-  changes — e.g. hash `(plan_text, state_serial_or_content_hash)`
-  together, or store the state's content hash alongside
-  `pendingPlanHash` and require both to match on approval. This closes
-  bug 2 directly: a wiped-and-regenerated state can never silently
-  reuse a stale approval again, even if the plan text happens to be
-  textually identical.
-- **Stop treating disk-based `tofu` state as disposable on every spec
-  edit.** Either (a) make `workspace.clean()` preserve
-  `terraform.tfstate` by default and only wipe it on an explicit,
-  narrower trigger (a real destroy, or an opt-in "reset state" flag —
-  never a bare generation bump), or (b) accelerate migration of
-  disk-executor CRs to the DB-backed `magma` path (state in Postgres,
-  immune to workspace wipes entirely) per the already-named
-  MAGMA-NATIVE EXECUTION destination.
-- **Narrow the generation-mismatch trigger.** `template_controller.rs`
-  already has a MORE PRECISE gate for the render-reuse question
-  (`generation_invalidates_render`, comment at :432-447) that
+**Update (2026-07-12, third occurrence + fix): bugs 1 and 2 are now
+SHIPPED**, following the third occurrence of this exact class (a fresh
+`spec.importHints` recovery + cleared `approvedPlanHash` still hit the
+identical hash-collision hole a second time — the hash has no state
+fingerprint, only plan-text shape, so two structurally-identical
+plans against DIFFERENT state hashed the same). Confirmed against
+current source before implementing — line numbers below are current
+as of the shipping commit, not the original citations above (this
+file's own header cites `template_controller.rs:2258-2259`; by the
+time of the fix the `RequireApproval` branch had shifted to open at
+line 2239, hash computation at line 2263 — same code, later line
+numbers).
+
+- **[SHIPPED] Fold a state-derived component into the plan hash** —
+  `Workspace::read_state_bytes()` (new) reads the on-disk
+  `terraform.tfstate`; `template_controller::plan_approval_hash`
+  (new) folds a tagged fingerprint of those bytes together with the
+  plan text via one `Hasher`, so `None` (no state) / `Some(&[])`
+  (empty-but-present) / any two genuinely different state snapshots
+  all produce distinct hashes even when the plan TEXT is shaped
+  identically ("create everything").
+  - **Deeper fix landed alongside it, not originally named above:**
+    the `RequireApproval` branch previously compared the OLD,
+    STORED `status.pendingPlanHash` (frozen from whichever cycle last
+    took the not-approved branch) against `approvedPlanHash` —
+    without ever re-deriving from the plan just computed THIS cycle
+    (`plan_result`, already available a few lines up). Once a human
+    approved once, every SUBSEQUENT `Planning`-phase pass short-
+    circuited on that frozen comparison, so folding state into the
+    hash formula alone would not have closed the hole: the frozen
+    field never got recomputed to observe the new state in the first
+    place. The fix recomputes `plan_approval_hash` from the CURRENT
+    cycle's plan + state on every pass and compares that fresh value
+    directly against `approvedPlanHash` — the stale-field bug and the
+    missing-state-fingerprint bug are the same fix.
+  - Tests: `controller::template_controller::plan_approval_hash_tests`
+    (6 cases, incl. a direct simulation of this incident's approve →
+    wipe → replan sequence).
+- **[SHIPPED] Stop treating disk-based `tofu` state as disposable on
+  every spec edit** — option (a): `Workspace::clean()` now preserves
+  `terraform.tfstate` and `terraform.tfstate.backup` unconditionally
+  (a new `STATE_FILE_NAME`/`STATE_BACKUP_FILE_NAME` allowlist beside
+  the existing `.terraform`/`.terraform.lock.hcl` one). Audited every
+  existing caller of `clean()` (the generation-bump trigger at what
+  is now :467, the `StalePlan`/`EmptyWorkspace` apply-anomaly self-
+  heal, the `Failed`-phase retry, `PackerBuild` deletion cleanup) —
+  none of them are a legitimate "destroy and recreate from scratch";
+  that path is `WorkspaceManager::delete_workspace`, called from the
+  `Destroying` handler AFTER a real `tofu destroy` already ran, and it
+  removes the whole workspace directory — a distinct code path,
+  unaffected by this change, so no opt-in "reset state" flag was
+  needed. Option (b) — accelerating disk-executor→`magma` migration —
+  remains the longer-term MAGMA-NATIVE destination and is unaffected
+  by/independent of this fix.
+  - Tests: `executor::workspace::tests` (8 cases, incl. a same-content
+    round-trip assertion and a 5-iteration idempotency loop simulating
+    repeated generation bumps).
+- **[STILL OPEN] Narrow the generation-mismatch trigger.**
+  `template_controller.rs` already has a MORE PRECISE gate for the
+  render-reuse question (`generation_invalidates_render`) that
   distinguishes "does this spec edit change the rendered Terraform
   content" from "did generation merely advance." The workspace-clean
-  trigger at :460 uses the cruder `current_gen != observed_gen` check;
-  it should use the same precision the render-reuse gate already has,
-  so a genuinely no-op spec edit (or one that changes only
-  operator-side bookkeeping fields, if any exist) doesn't wipe state
-  for no reason.
-- **Consider surfacing "state is empty but this CR previously had a
+  trigger still uses the cruder `current_gen != observed_gen` check.
+  Now that `clean()` no longer touches state, the cost of over-firing
+  this trigger is much lower (a wasted recompile/replan cycle, not
+  data loss) — deliberately deferred out of this pass as secondary per
+  the fix's own scoping, not forgotten.
+- **[STILL OPEN] Surface "state is empty but this CR previously had a
   successful partial apply" as a loud, typed warning** (event +
   condition), not just an info-level log line — this incident was
   caught by a human happening to inspect the pod filesystem directly,
-  not by any operator-surfaced signal.
+  not by any operator-surfaced signal. Still true after the fix above:
+  a legitimate destroy still empties state, so this would need to be a
+  distinct "was applied, now isn't, and no destroy ran" signal, not a
+  simple "state is empty" check.
 
-None of the above are implemented in this pass — this incident was
-resolved per-CR via `spec.importHints` (a real, already-shipped,
-sanctioned mechanism) rather than an operator code change, because the
-priority was recovering `camelot-eks` quickly without risking a THIRD
-duplicate VPC. The class of bug (stale approval surviving a state wipe)
-remains live for every other disk-executor `InfrastructureTemplate` in
-the fleet until the hardening above ships.
+`pending-postmortem-followup: narrow-generation-trigger,
+loud-empty-state-warning` — both still open, tracked here rather than
+silently dropped.

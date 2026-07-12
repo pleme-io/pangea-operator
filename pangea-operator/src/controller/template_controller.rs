@@ -2237,26 +2237,44 @@ async fn handle_planning(
             Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
         }
         PolicyDecision::RequireApproval => {
-            // Standard pendingPlanHash / approvedPlanHash gate.
+            // Recompute the approval hash from THIS cycle's plan, every
+            // time — never trust a stale stored `pendingPlanHash` for
+            // the approval decision. Before this fix, once a human
+            // approved hash X, every SUBSEQUENT Planning pass compared
+            // the OLD stored `pendingPlanHash` (frozen from the
+            // approval cycle) against `approvedPlanHash` WITHOUT ever
+            // re-deriving from the plan just computed above
+            // (`plan_result`) — so a plan recomputed against
+            // wiped-then-regenerated state (see `Workspace::clean`)
+            // silently inherited the old approval even though the
+            // underlying state had completely changed by the time it
+            // ran. `plan_approval_hash` also folds in a fingerprint of
+            // the on-disk state, so two plans that are textually
+            // identical in SHAPE (e.g. both "create everything from an
+            // empty state") but computed against DIFFERENT actual
+            // state can never collide. Closes both halves of
+            // docs/postmortems/2026-07-12-camelot-eks-state-wipe-duplicate-vpc.md
+            // bug 2. Note: this is a hash-format change — any CR with
+            // an in-flight (not-yet-applied) approval at upgrade time
+            // will require re-approval, which is the intended fail-safe
+            // behavior, not a regression.
+            let plan_content = plan_result.raw_stdout.as_str();
+            let state_bytes = workspace.read_state_bytes().await;
+            let plan_hash = plan_approval_hash(plan_content, state_bytes.as_deref());
+
             let is_approved = template
                 .status
                 .as_ref()
-                .and_then(|s| match (&s.pending_plan_hash, &s.approved_plan_hash) {
-                    (Some(pending), Some(approved)) if !pending.is_empty() => {
-                        Some(pending == approved)
-                    }
-                    _ => None,
-                })
+                .and_then(|s| s.approved_plan_hash.as_deref())
+                .map(|approved| approved == plan_hash)
                 .unwrap_or(false);
 
             if is_approved {
-                info!("Plan approved by user, proceeding to apply");
+                info!(plan_hash, "Plan approved by user, proceeding to apply");
                 update_phase(template, Phase::Applying, state).await?;
                 record_event(template, state, EventType::Normal, "PlanApproved", "Plan approved by user").await;
                 Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
             } else {
-                let plan_content = plan_result.raw_stdout.as_str();
-                let plan_hash = format!("{:016x}", content_hash(plan_content));
                 info!(
                     plan_hash,
                     require_approval_count = policy_outcome.evaluation.require_approval_count,
@@ -4172,6 +4190,134 @@ fn content_hash(input: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     input.hash(&mut hasher);
     hasher.finish()
+}
+
+/// Compute the plan-approval hash stored in `status.pendingPlanHash`
+/// and compared against `status.approvedPlanHash`.
+///
+/// Folds in a fingerprint of the on-disk state ALONGSIDE the plan text
+/// (`content_hash`'s existing job) so two plans that are textually
+/// identical in shape — e.g. both "create everything" from an empty
+/// state — but computed against DIFFERENT actual state can never
+/// produce the same hash. `state_bytes` is tagged (present vs absent)
+/// before hashing so `Some(&[])` (an empty-but-present state file)
+/// can never collide with `None` (no state file at all).
+///
+/// This closes bug 2 of
+/// docs/postmortems/2026-07-12-camelot-eks-state-wipe-duplicate-vpc.md:
+/// previously the hash was `content_hash(plan_text)` alone, so a plan
+/// recomputed after `Workspace::clean()` wiped state (bug 1) hashed
+/// identically to the plan a human had approved against the PRIOR,
+/// genuinely-different state — silently reusing a stale approval for
+/// an apply the human never actually reviewed.
+fn plan_approval_hash(plan_text: &str, state_bytes: Option<&[u8]>) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    content_hash(plan_text).hash(&mut hasher);
+    match state_bytes {
+        Some(bytes) => {
+            1u8.hash(&mut hasher);
+            bytes.hash(&mut hasher);
+        }
+        None => 0u8.hash(&mut hasher),
+    }
+    format!("{:016x}", hasher.finish())
+}
+
+#[cfg(test)]
+mod plan_approval_hash_tests {
+    use super::plan_approval_hash;
+
+    // ── Bug 2 regression: state must be folded into the hash ───────
+
+    #[test]
+    fn same_plan_text_different_state_produces_different_hash() {
+        // The exact incident shape: two plans that are textually
+        // identical ("create everything") but computed against
+        // DIFFERENT underlying state (the first apply's real partial
+        // state vs the wiped-then-empty state) must never collide.
+        let plan_text = "Plan: 50 to add, 0 to change, 0 to destroy.";
+        let hash_against_partial_state =
+            plan_approval_hash(plan_text, Some(b"state-with-vpc-and-2-iam-roles"));
+        let hash_against_wiped_state = plan_approval_hash(plan_text, None);
+
+        assert_ne!(
+            hash_against_partial_state, hash_against_wiped_state,
+            "identical plan text against different state must hash differently"
+        );
+    }
+
+    #[test]
+    fn same_plan_text_same_state_produces_the_same_hash() {
+        // Determinism: re-running the exact same plan against
+        // unchanged state must reproduce the exact same hash, or a
+        // legitimately-unapproved-but-unchanged plan would spuriously
+        // demand re-approval every cycle.
+        let plan_text = "Plan: 3 to add, 1 to change, 0 to destroy.";
+        let state = Some(b"stable-state-bytes".as_slice());
+
+        assert_eq!(
+            plan_approval_hash(plan_text, state),
+            plan_approval_hash(plan_text, state)
+        );
+    }
+
+    #[test]
+    fn different_plan_text_same_state_produces_different_hash() {
+        let state = Some(b"same-state".as_slice());
+        let a = plan_approval_hash("Plan: 1 to add.", state);
+        let b = plan_approval_hash("Plan: 2 to add.", state);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn no_state_file_is_distinct_from_an_empty_state_file() {
+        // A present-but-empty state file (Some(&[])) must not collide
+        // with "no state file at all" (None) — the tag byte in
+        // plan_approval_hash is what guarantees this, not an accident
+        // of the underlying hasher.
+        let plan_text = "Plan: 1 to add.";
+        let hash_none = plan_approval_hash(plan_text, None);
+        let hash_empty = plan_approval_hash(plan_text, Some(&[]));
+        assert_ne!(hash_none, hash_empty);
+    }
+
+    #[test]
+    fn hash_is_stable_hex_format() {
+        let hash = plan_approval_hash("Plan: 1 to add.", None);
+        assert_eq!(hash.len(), 16, "hash must be a fixed-width 16-char hex string");
+        assert!(
+            hash.chars().all(|c| c.is_ascii_hexdigit()),
+            "hash must be lowercase hex: {hash}"
+        );
+    }
+
+    #[test]
+    fn wiped_then_regenerated_state_never_silently_reuses_a_stale_approval() {
+        // End-to-end simulation of the incident's approval-gate logic
+        // (mirrors the `is_approved` check in handle_planning): a human
+        // approves the hash for the FIRST plan (real, partially-applied
+        // state). Workspace::clean() then wipes state (bug 1, separately
+        // regression-tested in executor::workspace::tests). The next
+        // planning cycle recomputes a plan hash against the NOW-EMPTY
+        // state — even though the plan TEXT is identical in shape — and
+        // that hash must NOT equal the human's stored approval.
+        let plan_text = "Plan: 50 to add, 0 to change, 0 to destroy.";
+
+        let first_plan_hash =
+            plan_approval_hash(plan_text, Some(b"vpc-094734439e62440a8-partial-state"));
+        let approved_plan_hash = first_plan_hash.clone(); // human approves via kubectl patch
+
+        // Workspace::clean() wiped state; state_path() now reads back
+        // None on the next reconcile.
+        let second_plan_hash = plan_approval_hash(plan_text, None);
+
+        assert_ne!(
+            second_plan_hash, approved_plan_hash,
+            "a plan replanned against wiped state must require fresh approval, \
+             never silently inherit the prior state's approval"
+        );
+    }
 }
 
 // Reconcile cycle receipts were lifted to
