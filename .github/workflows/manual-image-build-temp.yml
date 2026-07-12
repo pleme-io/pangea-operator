@@ -33,10 +33,18 @@ jobs:
     with:
       imageAttr: dockerImage-operator-embedded-amd64
       imageName: pleme-io/pangea-operator
-      # Continues the real sequence (latest published was r97,
-      # 2026-07-09T03:55:26Z, commit f99242c) — this build carries the
-      # 71bbfb7 state-wipe + stale-plan-hash fix.
-      tag: embedded-amd64-r98-71bbfb73b9f01c513b265655b7f5a43fc18eedb9
+      # Continues the real sequence (latest published was r98,
+      # 2026-07-12T13:26:59Z, commit 71bbfb7, itself built via this same
+      # fallback workflow) — this build carries the full 2026-07-12
+      # algorithmic-prowess-seal chain landed on top of it: 120af62,
+      # 7bb8b1c, e7cdd20, 60d65a9, ea56a24 (AutoApply state-continuity —
+      # the one that matters most for requireApproval-gated CRs like
+      # camelot-eks too, since the fix folds a state fingerprint into
+      # the plan-approval hash regardless of decision mode), d0376a0,
+      # 8366dbf, bda4fe6, 5397f3f, fe9aecc, 145c215, and c7797fe (the
+      # PANGEA_RECONCILE_WORKERS test-race structural fix, landed this
+      # session so cargo-test is green before this build).
+      tag: embedded-amd64-r99-c7797fe57efe5ddb986db02cfbbfcfd7b8903ffc
       additionalTags: latest-embedded-amd64
       runner: ubuntu-24.04
       buildCores: "1"
