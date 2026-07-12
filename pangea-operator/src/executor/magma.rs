@@ -1635,6 +1635,48 @@ mod tests {
         assert!(result.stdout.contains("removed 0 resources"));
     }
 
+    /// Regression test for the fleet-wide bug (found in
+    /// `handle_destroying`, `controller/template_controller.rs`): the
+    /// phase handler used to gate its only call to `runner.destroy()`
+    /// on `workspace.file_exists(".terraform")` — a tofu-only artifact
+    /// that `MagmaExecutor::init` (a documented no-op, see above) never
+    /// creates. On magma — the fleet-default executor since
+    /// 2026-06-02 — that guard was permanently false, so destroy was
+    /// silently never invoked on CR deletion and real cloud
+    /// infrastructure leaked, untracked, forever.
+    ///
+    /// This reproduces the exact shape at the `WorkspaceRunner` layer
+    /// `handle_destroying` now calls unconditionally (the guard was
+    /// removed from the phase handler entirely): a workspace directory
+    /// with NO `.terraform` and NO prior apply, driven through
+    /// `MagmaWorkspaceRunner::destroy` — the real call site, not the
+    /// raw `IacExecutor` — proving the fix holds at the layer the
+    /// controller actually calls.
+    #[tokio::test]
+    async fn workspace_runner_destroy_succeeds_on_never_applied_magma_workspace() {
+        use crate::executor::workspace::WorkspaceManager;
+        use crate::executor::workspace_runner::{MagmaWorkspaceRunner, WorkspaceRunner};
+
+        let exec: Arc<dyn IacExecutor> = Arc::new(MagmaExecutor::new(fixture_config()));
+        let runner = MagmaWorkspaceRunner::new(exec, None);
+
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = WorkspaceManager::new(tmp.path().to_path_buf());
+        let workspace = manager.get_or_create("test-ns", "never-applied").await.unwrap();
+        assert!(
+            !workspace.file_exists(".terraform"),
+            "magma must never create .terraform — that's the whole bug"
+        );
+
+        let result = runner.destroy(&workspace, true).await.unwrap();
+        assert!(
+            result.success,
+            "destroy against a never-applied magma workspace must succeed as a real no-op, \
+             never be silently skipped"
+        );
+        assert!(result.raw_stdout.contains("removed 0 resources"));
+    }
+
     #[tokio::test]
     async fn destroy_after_apply_removes_resources() {
         let exec = MagmaExecutor::new(fixture_config());

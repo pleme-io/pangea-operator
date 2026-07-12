@@ -4313,28 +4313,44 @@ async fn handle_destroying(
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
 
-    // Only run destroy if workspace has been initialized
-    if workspace.file_exists(".terraform") {
-        let r = runner.destroy(&workspace, true).await?;
+    // Always run destroy — unconditionally, for every executor. There is
+    // deliberately NO "has this workspace been initialized/applied"
+    // pre-check here anymore. That check used to be
+    // `workspace.file_exists(".terraform")`, a tofu-only artifact
+    // (`.terraform` is the directory `tofu init` creates). It was a
+    // silent no-op for every magma-executed template — `MagmaExecutor::
+    // init` is a documented no-op that never creates `.terraform` — so
+    // on the executor that has been the fleet default since 2026-06-02,
+    // `runner.destroy()` was never invoked on CR deletion and real cloud
+    // infrastructure was orphaned, untracked, forever.
+    //
+    // `WorkspaceRunner::destroy` is a hard trait contract (see its doc)
+    // that every implementation MUST be safe to call against a
+    // never-applied workspace: magma's `destroy` diffs an empty state to
+    // zero deletes (a real no-op); tofu's `destroy` runs `tofu init`
+    // first if needed, so it degrades to tofu's own "No objects need to
+    // be destroyed" no-op instead of erroring. Backend-specific "was
+    // this ever applied" logic lives in the backend's own runner impl,
+    // never here.
+    let r = runner.destroy(&workspace, true).await?;
 
-        if !r.success {
-            // Combine stdout + stderr — tofu writes most diagnostics to
-            // stdout (same logic that lives in handle_applying's
-            // post-apply failure path).
-            let err_msg = format!(
-                "destroy failed (runner={}): {}",
-                runner.name(),
-                if r.raw_stdout.is_empty() { String::new() } else { r.raw_stdout.clone() }
-            );
-            warn!(%err_msg);
-            update_phase_with_error(template, Phase::Failed, &err_msg, state).await?;
-            record_event(template, state, EventType::Warning, "DestroyFailed", &err_msg).await;
-            return Ok(ReconcileAction::Requeue(ERROR_REQUEUE_INTERVAL));
-        }
-
-        info!(runner = runner.name(), "destroy completed successfully");
-        record_event(template, state, EventType::Normal, "Destroyed", "Infrastructure destroyed successfully").await;
+    if !r.success {
+        // Combine stdout + stderr — tofu writes most diagnostics to
+        // stdout (same logic that lives in handle_applying's
+        // post-apply failure path).
+        let err_msg = format!(
+            "destroy failed (runner={}): {}",
+            runner.name(),
+            if r.raw_stdout.is_empty() { String::new() } else { r.raw_stdout.clone() }
+        );
+        warn!(%err_msg);
+        update_phase_with_error(template, Phase::Failed, &err_msg, state).await?;
+        record_event(template, state, EventType::Warning, "DestroyFailed", &err_msg).await;
+        return Ok(ReconcileAction::Requeue(ERROR_REQUEUE_INTERVAL));
     }
+
+    info!(runner = runner.name(), "destroy completed successfully");
+    record_event(template, state, EventType::Normal, "Destroyed", "Infrastructure destroyed successfully").await;
 
     // Clean up workspace
     let ns = template.namespace().unwrap_or_default();

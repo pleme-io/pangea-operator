@@ -178,6 +178,33 @@ pub trait WorkspaceRunner: Send + Sync + 'static {
     async fn apply(&self, workspace: &Workspace, auto_approve: bool) -> Result<ApplyResult>;
 
     /// Destroy all resources in the workspace's state.
+    ///
+    /// ## Contract: MUST be safe to call unconditionally
+    ///
+    /// Callers (`handle_destroying`) call this on every workspace whose
+    /// CR is being deleted, with **no backend-specific pre-check** for
+    /// "was this workspace ever actually applied." That check used to
+    /// live in the phase handler as `workspace.file_exists(".terraform")`
+    /// — a tofu-only signal (`.terraform` is the directory `tofu init`
+    /// creates). `MagmaExecutor::init` is a documented no-op and never
+    /// creates that directory, so the guard was permanently false for
+    /// every magma-executed template (magma has been the fleet default
+    /// since 2026-06-02) — `destroy` was silently never invoked and real
+    /// cloud infrastructure leaked on every CR deletion. See
+    /// `docs/postmortems/` for the sibling state-corruption incident this
+    /// class of bug belongs to.
+    ///
+    /// The fix moves the "never applied" case INSIDE each implementation,
+    /// where it belongs (it's backend-specific), and turns it into a
+    /// genuine no-op rather than a caller-side skip:
+    ///   - `MagmaWorkspaceRunner`: `MagmaExecutor::destroy` reads state
+    ///     from the backend and diffs an empty state to zero resource
+    ///     deletes — already a real no-op, proven by
+    ///     `destroy_against_empty_state_succeeds`.
+    ///   - `TofuWorkspaceRunner`: runs `tofu init` first (idempotent) if
+    ///     `.terraform` is missing, so `tofu destroy` always runs against
+    ///     an initialized workspace — with no prior apply that's tofu's
+    ///     own "No objects need to be destroyed" no-op, not an error.
     async fn destroy(&self, workspace: &Workspace, auto_approve: bool) -> Result<ApplyResult>;
 
     /// Run the executor's validation pass. Tofu wraps `tofu validate`;
@@ -271,6 +298,20 @@ impl WorkspaceRunner for TofuWorkspaceRunner {
     }
 
     async fn destroy(&self, workspace: &Workspace, auto_approve: bool) -> Result<ApplyResult> {
+        // tofu refuses to run any state-touching command against an
+        // uninitialized working directory ("Error: Backend
+        // initialization required"). A workspace whose CR never made
+        // it past Compiling (or was created and deleted before its
+        // first Planning cycle) legitimately has no `.terraform` dir.
+        // `tofu init` is idempotent — run it first so `destroy` always
+        // sees an initialized workspace and degrades to tofu's own
+        // "No objects need to be destroyed" no-op instead of erroring
+        // (or, pre-fix, instead of the caller skipping destroy
+        // entirely and orphaning real infrastructure — see the trait
+        // doc on `WorkspaceRunner::destroy`).
+        if !workspace.file_exists(".terraform") {
+            self.inner.init(&workspace.path, &[]).await?;
+        }
         let r = self.inner.destroy(&workspace.path, auto_approve).await?;
         Ok(ApplyResult {
             artifact:   None,
@@ -407,6 +448,15 @@ impl WorkspaceRunner for MagmaWorkspaceRunner {
     }
 
     async fn destroy(&self, workspace: &Workspace, auto_approve: bool) -> Result<ApplyResult> {
+        // No pre-check needed: `MagmaExecutor::destroy` reads state from
+        // the backend and diffs it to zero deletes when empty — already
+        // a real no-op for a workspace that was never applied (proven by
+        // `magma.rs`'s `destroy_against_empty_state_succeeds`). See the
+        // trait doc on `WorkspaceRunner::destroy` for why callers must
+        // NOT gate this call on a tofu-specific artifact like
+        // `.terraform` — that guard is permanently false for magma
+        // (`init` is a documented no-op) and was silently skipping every
+        // magma destroy fleet-wide.
         let r = self.inner.destroy(&workspace.path, auto_approve).await?;
         Ok(ApplyResult {
             artifact:   None,
@@ -462,6 +512,8 @@ fn extract_failed_addresses_from_tofu(r: &TofuResult) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::executor::recording::RecordingExecutor;
+    use crate::executor::workspace::WorkspaceManager;
 
     #[test]
     fn workspace_runner_trait_is_object_safe() {
@@ -469,6 +521,59 @@ mod tests {
         // verify object safety at the type level. If a future method
         // breaks it (Self return, generics), this fails to compile.
         fn _accepts(_r: Arc<dyn WorkspaceRunner>) {}
+    }
+
+    /// Regression test for the fleet-wide bug where `handle_destroying`
+    /// gated its only call to `runner.destroy()` on
+    /// `workspace.file_exists(".terraform")` — a tofu-only artifact.
+    /// The guard was moved OUT of the phase handler and INTO
+    /// `TofuWorkspaceRunner::destroy` itself, which now runs `init`
+    /// first when `.terraform` is missing so `destroy` always sees an
+    /// initialized workspace. This proves that repair: a workspace
+    /// that was never `tofu init`-ed still gets a real `destroy` call
+    /// (init, then destroy — never neither).
+    #[tokio::test]
+    async fn tofu_destroy_initializes_first_when_never_initialized() {
+        let recorder = Arc::new(RecordingExecutor::new());
+        let runner = TofuWorkspaceRunner::new(Arc::clone(&recorder) as Arc<dyn IacExecutor>);
+
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = WorkspaceManager::new(tmp.path().to_path_buf());
+        let workspace = manager.get_or_create("ns", "never-initialized").await.unwrap();
+        assert!(!workspace.file_exists(".terraform"), "fixture must start uninitialized");
+
+        let result = runner.destroy(&workspace, true).await.unwrap();
+        assert!(result.success, "destroy against a never-initialized tofu workspace must succeed");
+
+        let calls: Vec<&'static str> =
+            recorder.recorded_calls().iter().map(|c| c.command).collect();
+        assert_eq!(
+            calls,
+            vec!["init", "destroy"],
+            "destroy() must init an uninitialized workspace before destroying, \
+             never silently skip the destroy call: got {calls:?}"
+        );
+    }
+
+    /// Sibling of the above: when `.terraform` already exists (the
+    /// normal post-apply case), `destroy()` must NOT re-init — only
+    /// `destroy` is called.
+    #[tokio::test]
+    async fn tofu_destroy_skips_init_when_already_initialized() {
+        let recorder = Arc::new(RecordingExecutor::new());
+        let runner = TofuWorkspaceRunner::new(Arc::clone(&recorder) as Arc<dyn IacExecutor>);
+
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = WorkspaceManager::new(tmp.path().to_path_buf());
+        let workspace = manager.get_or_create("ns", "already-initialized").await.unwrap();
+        tokio::fs::create_dir(workspace.path.join(".terraform")).await.unwrap();
+
+        let result = runner.destroy(&workspace, true).await.unwrap();
+        assert!(result.success);
+
+        let calls: Vec<&'static str> =
+            recorder.recorded_calls().iter().map(|c| c.command).collect();
+        assert_eq!(calls, vec!["destroy"], "an already-initialized workspace must not re-init: got {calls:?}");
     }
 
     #[test]
