@@ -1355,9 +1355,10 @@ pub enum Outcome {
 }
 
 /// Lifecycle phase of an InfrastructureTemplate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, EnumString, Default)]
 pub enum Phase {
     /// Initial state, waiting to be processed.
+    #[default]
     Pending,
     /// M2 — checking that every ArchitectureGem this template
     /// references has phase `Loaded` (every expected class loaded +
@@ -1395,12 +1396,6 @@ pub enum Phase {
     CompileBlocked,
     /// Running `tofu destroy`.
     Destroying,
-}
-
-impl Default for Phase {
-    fn default() -> Self {
-        Phase::Pending
-    }
 }
 
 impl Phase {
@@ -2011,5 +2006,15 @@ mod tests {
         // for templates that haven't reconciled yet).
         assert!(!json.contains("lastCycle"));
         assert!(json.contains("cycleCount"));
+    }
+
+    // M0 coverage floor (theory/PANGEA-OPERATOR.md §XVII row 6): pin the
+    // Default variant before swapping the hand-written `impl Default` for
+    // std `#[derive(Default)]` + `#[default]`. `Phase::ALL` is untouched —
+    // that's the separate size-mismatch row (missing `CompileBlocked`),
+    // out of scope for M0.
+    #[test]
+    fn phase_default_is_pending() {
+        assert_eq!(Phase::default(), Phase::Pending);
     }
 }

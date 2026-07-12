@@ -205,9 +205,10 @@ pub struct InfrastructureFlowStatus {
 }
 
 /// Phase of an InfrastructureFlow.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, EnumString, Default)]
 pub enum FlowPhase {
     /// Waiting to start.
+    #[default]
     Pending,
     /// Templates are being deployed.
     Progressing,
@@ -217,12 +218,6 @@ pub enum FlowPhase {
     Failed,
     /// Flow is being destroyed.
     Destroying,
-}
-
-impl Default for FlowPhase {
-    fn default() -> Self {
-        FlowPhase::Pending
-    }
 }
 
 /// Status of a single step within a flow.
@@ -274,5 +269,18 @@ impl InfrastructureFlow {
     pub fn template_name_for_step(&self, step_name: &str) -> String {
         let flow_name = self.metadata.name.as_deref().unwrap_or("unknown");
         format!("{}-{}", flow_name, step_name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // M0 coverage floor (theory/PANGEA-OPERATOR.md §XVII row 6): pin the
+    // Default variant before swapping the hand-written `impl Default` for
+    // std `#[derive(Default)]` + `#[default]`.
+    #[test]
+    fn flow_phase_default_is_pending() {
+        assert_eq!(FlowPhase::default(), FlowPhase::Pending);
     }
 }

@@ -167,18 +167,13 @@ pub enum KeyTransform {
 // ---------------------------------------------------------------------------
 
 /// Lifecycle phase of a SynthesizerFormat.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, Default)]
 pub enum SynthesizerFormatPhase {
     /// Validated and ready for use.
+    #[default]
     Ready,
     /// Validation failed (e.g., duplicate section names, invalid config).
     Invalid,
-}
-
-impl Default for SynthesizerFormatPhase {
-    fn default() -> Self {
-        SynthesizerFormatPhase::Ready
-    }
 }
 
 /// Status of a SynthesizerFormat.
@@ -259,5 +254,18 @@ impl SynthesizerFormatSpec {
             "extend_modules": self.extend_modules,
             "preamble": self.preamble,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // M0 coverage floor (theory/PANGEA-OPERATOR.md §XVII row 6): pin the
+    // Default variant before swapping the hand-written `impl Default` for
+    // std `#[derive(Default)]` + `#[default]`.
+    #[test]
+    fn synthesizer_format_phase_default_is_ready() {
+        assert_eq!(SynthesizerFormatPhase::default(), SynthesizerFormatPhase::Ready);
     }
 }

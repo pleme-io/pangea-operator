@@ -101,9 +101,10 @@ pub struct VarFileSource {
 }
 
 /// Lifecycle phase of a PackerBuild.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, Default)]
 pub enum PackerBuildPhase {
     /// Initial state, waiting to be processed.
+    #[default]
     Pending,
     /// Compiling Ruby DSL to Packer JSON via sidecar.
     Compiling,
@@ -117,12 +118,6 @@ pub enum PackerBuildPhase {
     Ready,
     /// Build failed.
     Failed,
-}
-
-impl Default for PackerBuildPhase {
-    fn default() -> Self {
-        PackerBuildPhase::Pending
-    }
 }
 
 /// Status of a PackerBuild.
@@ -172,4 +167,17 @@ pub struct PackerBuildStatus {
     /// Timestamp of build completion.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<DateTime<Utc>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // M0 coverage floor (theory/PANGEA-OPERATOR.md §XVII row 6): pin the
+    // Default variant before swapping the hand-written `impl Default` for
+    // std `#[derive(Default)]` + `#[default]`.
+    #[test]
+    fn packer_build_phase_default_is_pending() {
+        assert_eq!(PackerBuildPhase::default(), PackerBuildPhase::Pending);
+    }
 }

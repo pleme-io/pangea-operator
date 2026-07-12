@@ -362,9 +362,10 @@ pub enum RollbackTrigger {
 // ---------------------------------------------------------------------------
 
 /// Lifecycle phase of an ImagePipeline.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, Default)]
 pub enum ImagePipelinePhase {
     /// Initial state.
+    #[default]
     Pending,
     /// Building AMI (child PackerBuild in progress).
     Building,
@@ -384,12 +385,6 @@ pub enum ImagePipelinePhase {
     Failed,
     /// Rolling back to the previous AMI.
     RollingBack,
-}
-
-impl Default for ImagePipelinePhase {
-    fn default() -> Self {
-        ImagePipelinePhase::Pending
-    }
 }
 
 /// Status of an ImagePipeline.
@@ -594,5 +589,13 @@ mod tests {
     #[test]
     fn default_mode_is_manual_and_parses() {
         assert_eq!(ApprovalMode::default().kind(), Ok(ApprovalModeKind::Manual));
+    }
+
+    // M0 coverage floor (theory/PANGEA-OPERATOR.md §XVII row 6): pin the
+    // Default variant before swapping the hand-written `impl Default` for
+    // std `#[derive(Default)]` + `#[default]`.
+    #[test]
+    fn image_pipeline_phase_default_is_pending() {
+        assert_eq!(ImagePipelinePhase::default(), ImagePipelinePhase::Pending);
     }
 }

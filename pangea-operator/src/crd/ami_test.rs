@@ -144,9 +144,10 @@ impl Default for FailurePolicy {
 }
 
 /// Lifecycle phase of an AmiTest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, Default)]
 pub enum AmiTestPhase {
     /// Initial state, waiting to be processed.
+    #[default]
     Pending,
     /// Resolving AMI ID from PackerBuild reference.
     Resolving,
@@ -160,16 +161,11 @@ pub enum AmiTestPhase {
     Cleaning,
 }
 
-impl Default for AmiTestPhase {
-    fn default() -> Self {
-        AmiTestPhase::Pending
-    }
-}
-
 /// Phase of a single test suite.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, Default)]
 pub enum SuitePhase {
     /// Waiting for dependencies.
+    #[default]
     Pending,
     /// Suite is executing.
     Running,
@@ -179,12 +175,6 @@ pub enum SuitePhase {
     Failed,
     /// Suite was skipped (dependency failed).
     Skipped,
-}
-
-impl Default for SuitePhase {
-    fn default() -> Self {
-        SuitePhase::Pending
-    }
 }
 
 /// Status of an AmiTest.
@@ -257,4 +247,22 @@ pub struct SuiteResult {
     /// Timestamp when the suite completed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<DateTime<Utc>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // M0 coverage floor (theory/PANGEA-OPERATOR.md §XVII row 6): pin the
+    // Default variant before swapping the hand-written `impl Default` for
+    // std `#[derive(Default)]` + `#[default]`.
+    #[test]
+    fn ami_test_phase_default_is_pending() {
+        assert_eq!(AmiTestPhase::default(), AmiTestPhase::Pending);
+    }
+
+    #[test]
+    fn suite_phase_default_is_pending() {
+        assert_eq!(SuitePhase::default(), SuitePhase::Pending);
+    }
 }

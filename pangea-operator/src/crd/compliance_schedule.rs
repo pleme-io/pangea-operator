@@ -302,9 +302,10 @@ pub struct AttestationConfig {
 // ---------------------------------------------------------------------------
 
 /// Lifecycle phase of a ComplianceSchedule.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, Default)]
 pub enum ComplianceSchedulePhase {
     /// Waiting for first scheduled run.
+    #[default]
     Idle,
     /// Compliance suites are executing.
     Running,
@@ -314,12 +315,6 @@ pub enum ComplianceSchedulePhase {
     NonCompliant,
     /// Error during execution.
     Error,
-}
-
-impl Default for ComplianceSchedulePhase {
-    fn default() -> Self {
-        ComplianceSchedulePhase::Idle
-    }
 }
 
 /// Status of a ComplianceSchedule.
@@ -419,4 +414,17 @@ pub struct ComplianceSuiteResult {
     /// Timestamp of completion.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<DateTime<Utc>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // M0 coverage floor (theory/PANGEA-OPERATOR.md §XVII row 6): pin the
+    // Default variant before swapping the hand-written `impl Default` for
+    // std `#[derive(Default)]` + `#[default]`.
+    #[test]
+    fn compliance_schedule_phase_default_is_idle() {
+        assert_eq!(ComplianceSchedulePhase::default(), ComplianceSchedulePhase::Idle);
+    }
 }
