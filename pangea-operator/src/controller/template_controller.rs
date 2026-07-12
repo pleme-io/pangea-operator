@@ -1937,6 +1937,88 @@ async fn compiled_config_available(
     Ok(true)
 }
 
+/// Outcome of [`acquire_mutation_lock`] — what a mutating phase handler
+/// (`handle_applying`, `handle_destroying`) should do next.
+enum LockDispatch {
+    /// Safe to proceed with the mutation. `Some(guard)` when a lock
+    /// manager is wired and the advisory lock was acquired — the caller
+    /// MUST hold the guard for the duration of the mutation (bind it to
+    /// a local; `LockGuard::drop` releases it on every return path).
+    /// `None` when no lock manager is configured (`ControllerState::
+    /// state_lock` is `None` — a DB-less deployment); nothing to hold.
+    Proceed(Option<crate::backend::LockGuard>),
+    /// Another operator pod already holds this template's lock. The
+    /// caller MUST NOT dispatch to the executor — requeue instead.
+    Contended,
+}
+
+/// Acquire the Postgres advisory lock guarding `(schema_name,
+/// template_name)`'s state before a mutating dispatch, or determine that
+/// none is needed / available.
+///
+/// `schema_name` / `template_name` MUST be the same pair every other
+/// Postgres-backed surface in this file keys state on
+/// (`pangea_{spec.pangeaNamespace}` / the CR's own name — see
+/// `compiled_config_available`'s identical derivation above), so the
+/// lock genuinely guards the SAME state row the caller is about to
+/// mutate — not a looser (or tighter) K8s-object identity that could
+/// under- or over-lock relative to the real collision surface.
+async fn acquire_mutation_lock(
+    state: &ControllerState,
+    schema_name: &str,
+    template_name: &str,
+) -> Result<LockDispatch> {
+    let Some(lock_mgr) = state.state_lock.as_ref() else {
+        return Ok(LockDispatch::Proceed(None));
+    };
+    match lock_mgr
+        .try_acquire(schema_name, template_name, &crate::leader::pod_identity())
+        .await
+    {
+        Ok(guard) => Ok(LockDispatch::Proceed(Some(guard))),
+        Err(e) if is_lock_contention(&e) => Ok(LockDispatch::Contended),
+        Err(e) => Err(e),
+    }
+}
+
+/// True when a `StateLock::try_acquire` error means "someone else holds
+/// this template's lock right now" (expected, transient contention —
+/// requeue) as opposed to a genuine failure (a connection problem, a
+/// schema problem — propagate). Pure and testable without a database,
+/// unlike `try_acquire` itself (needs a live Postgres advisory lock):
+/// this is the one classification every mutating phase handler shares,
+/// proven once here instead of drifting between hand-written `matches!`
+/// arms at each call site. Getting this wrong in either direction is a
+/// real regression class: misclassifying a genuine DB outage AS
+/// contention would requeue silently forever instead of surfacing the
+/// failure; misclassifying real contention as a hard failure would
+/// abandon the safe "someone else has it, retry shortly" path.
+fn is_lock_contention(err: &Error) -> bool {
+    matches!(err, Error::LockFailed(_))
+}
+
+#[cfg(test)]
+mod lock_contention_tests {
+    use super::is_lock_contention;
+    use crate::error::Error;
+
+    #[test]
+    fn lock_failed_is_contention() {
+        assert!(is_lock_contention(&Error::LockFailed(
+            "State lock for pangea_x/y is held by another process".into()
+        )));
+    }
+
+    #[test]
+    fn other_error_kinds_are_never_contention() {
+        // Every one of these MUST propagate as a real failure — none of
+        // them mean "someone else holds the lock, retry shortly".
+        assert!(!is_lock_contention(&Error::Timeout(30)));
+        assert!(!is_lock_contention(&Error::Config("bad config".into())));
+        assert!(!is_lock_contention(&Error::InvalidSource("bad source".into())));
+    }
+}
+
 /// Handle Planning phase - run `tofu plan` and analyze changes.
 /// Public wrapper for `handle_planning` so trait impls in
 /// `controller::template_phase` can dispatch to it. The body lives
@@ -2563,6 +2645,33 @@ async fn handle_applying(
         update_phase(template, Phase::Compiling, state).await?;
         return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
     }
+
+    // Concurrency guard: from here to the end of this function, every
+    // path issues (or may issue) real provider create/update RPCs
+    // (import pre-pass, apply, conflict resolution, post-apply re-plan).
+    // The operator's only other concurrency guard — the Lease-based
+    // `LeaderElector` — is advisory and explicitly tolerates an
+    // overlapping pod pair during a `RollingUpdate`, so without a second,
+    // independent guard here two pods could both reach this dispatch for
+    // the SAME template and race real mutating RPCs against the same
+    // cloud resources (see the doc on `ControllerState::state_lock`).
+    // `_state_lock_guard` holds the advisory lock for the rest of this
+    // function via RAII — released on every return path (success,
+    // error, or early return) by `LockGuard::drop`.
+    let schema_name = format!("pangea_{}", template.spec.pangea_namespace);
+    let template_name = template.name_any();
+    let _state_lock_guard =
+        match acquire_mutation_lock(state, &schema_name, &template_name).await? {
+            LockDispatch::Proceed(guard) => guard,
+            LockDispatch::Contended => {
+                warn!(
+                    template = %template_name,
+                    "Applying: another operator pod holds this template's state lock \
+                     — requeueing instead of racing a concurrent apply"
+                );
+                return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
+            }
+        };
 
     // Snapshot the drift_details that handle_planning persisted on
     // status before the apply ran — this is the per-resource change
@@ -4312,6 +4421,28 @@ async fn handle_destroying(
     let runner = state.executor_runner_for_with_creds(template).await?;
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
+
+    // Concurrency guard: `runner.destroy()` below issues real provider
+    // DestroyResource RPCs. Same rationale as `handle_applying` — the
+    // Lease-based `LeaderElector` alone tolerates an overlapping pod pair
+    // during a `RollingUpdate`, so without a second, independent guard
+    // here two pods could both reach this dispatch for the SAME template
+    // (see the doc on `ControllerState::state_lock`). Held for the rest
+    // of this function via RAII.
+    let schema_name = format!("pangea_{}", template.spec.pangea_namespace);
+    let template_name = template.name_any();
+    let _state_lock_guard =
+        match acquire_mutation_lock(state, &schema_name, &template_name).await? {
+            LockDispatch::Proceed(guard) => guard,
+            LockDispatch::Contended => {
+                warn!(
+                    template = %template_name,
+                    "Destroying: another operator pod holds this template's state lock \
+                     — requeueing instead of racing a concurrent destroy"
+                );
+                return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
+            }
+        };
 
     // Always run destroy — unconditionally, for every executor. There is
     // deliberately NO "has this workspace been initialized/applied"

@@ -315,4 +315,51 @@ mod tests {
         let id2 = compute_lock_id("pangea_prod", "uction_web");
         assert_ne!(id1, id2);
     }
+
+    /// Regression test for the finding this module's wiring closes: a
+    /// caller (`template_controller::acquire_mutation_lock`) MUST be
+    /// able to tell "someone else holds this lock" (`Error::LockFailed`
+    /// — expected contention, safe to requeue) apart from "the lock
+    /// manager itself is broken" (any other `Error` — must propagate,
+    /// never be silently swallowed as ordinary contention). This proves
+    /// `try_acquire`'s REAL failure shape on a genuine connectivity
+    /// problem, not a hand-constructed stand-in for one.
+    ///
+    /// No live Postgres needed: `connect_lazy` builds the pool without
+    /// touching the network (lazy — the first query dials), and
+    /// `127.0.0.1:1` refuses instantly (no DNS lookup, no timeout wait),
+    /// so this is deterministic and fast.
+    #[tokio::test]
+    async fn try_acquire_surfaces_connection_failure_as_database_error_not_lock_failed() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://user:pass@127.0.0.1:1/pangea_test")
+            .expect("connect_lazy must not touch the network");
+        let lock = StateLock::new(Arc::new(pool));
+
+        // Not `.expect_err(...)` / `.unwrap_err(...)`: both require the
+        // `Ok` side (`LockGuard`) to be `Debug`, which it deliberately
+        // isn't (it wraps an `Arc<PgPool>`). Match explicitly instead.
+        let err = match lock
+            .try_acquire("pangea_test", "unreachable-template", "test-holder")
+            .await
+        {
+            Ok(_) => panic!(
+                "a refused connection must surface as an Err, not a successful lock acquisition"
+            ),
+            Err(e) => e,
+        };
+
+        assert!(
+            matches!(err, Error::Database(_)),
+            "a connection failure must surface as Error::Database — a caller \
+             that only treats Error::LockFailed as retryable contention would \
+             otherwise misclassify a real Postgres outage as ordinary lock \
+             contention and requeue silently forever instead of surfacing \
+             it: got {err:?}"
+        );
+        assert!(
+            !matches!(err, Error::LockFailed(_)),
+            "must never be misclassified as LockFailed: got {err:?}"
+        );
+    }
 }

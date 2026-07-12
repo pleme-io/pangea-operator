@@ -276,6 +276,18 @@ async fn main() -> Result<()> {
                             warn!(error = %e, "failed to ensure pangea_meta.artifacts table");
                         }
                     }
+                    // Same best-effort pattern for the advisory-lock
+                    // tracking table: `pg_try_advisory_lock` itself needs
+                    // no table (it's a built-in Postgres session
+                    // primitive), so a failure here only loses the
+                    // `pangea_meta.state_locks` observability rows, never
+                    // the actual mutual-exclusion guarantee `handle_applying`
+                    // / `handle_destroying` depend on.
+                    if let Some(lock_mgr) = state.state_lock.as_ref() {
+                        if let Err(e) = lock_mgr.ensure_lock_table().await {
+                            warn!(error = %e, "failed to ensure pangea_meta.state_locks table");
+                        }
+                    }
                     state
                 }
                 Err(e) => {

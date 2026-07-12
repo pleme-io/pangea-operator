@@ -68,6 +68,24 @@ pub struct LeaderConfig {
     pub retry_interval: Duration,
 }
 
+/// Resolve this pod's identity from the environment. `POD_NAME` (downward
+/// API) is the canonical per-pod identity; `HOSTNAME` is the pod name too
+/// under Kubernetes; the pid fallback only matters off cluster, where
+/// there is a single instance anyway.
+///
+/// Shared beyond leader election: `backend::StateLock::try_acquire`'s
+/// `holder` argument uses the SAME identity, so a stuck advisory lock and
+/// a stuck lease both name the exact same pod in their respective
+/// tracking tables — one identity source, not two independently-derived
+/// strings that could drift.
+pub fn pod_identity() -> String {
+    std::env::var("POD_NAME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| std::env::var("HOSTNAME").ok().filter(|s| !s.is_empty()))
+        .unwrap_or_else(|| format!("pangea-operator-{}", std::process::id()))
+}
+
 impl LeaderConfig {
     /// Build from the environment. `POD_NAMESPACE` / `POD_NAME` come from the
     /// downward API (wired in the chart); both fall back sensibly so the
@@ -78,22 +96,13 @@ impl LeaderConfig {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "pangea-system".to_string());
 
-        // POD_NAME (downward API) is the canonical per-pod identity; HOSTNAME is
-        // the pod name too under Kubernetes; the pid fallback only matters off
-        // cluster, where there is a single instance anyway.
-        let identity = std::env::var("POD_NAME")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .or_else(|| std::env::var("HOSTNAME").ok().filter(|s| !s.is_empty()))
-            .unwrap_or_else(|| format!("pangea-operator-{}", std::process::id()));
-
         Self {
             lease_name: std::env::var("LEADER_LEASE_NAME")
                 .ok()
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "pangea-operator-leader".to_string()),
             namespace,
-            identity,
+            identity: pod_identity(),
             lease_duration: Duration::from_secs(env_secs("LEADER_LEASE_DURATION_SECS", 15)),
             renew_interval: Duration::from_secs(env_secs("LEADER_RENEW_SECS", 5)),
             retry_interval: Duration::from_secs(env_secs("LEADER_RETRY_SECS", 3)),

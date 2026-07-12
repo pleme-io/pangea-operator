@@ -126,6 +126,30 @@ pub struct ControllerState {
     /// the `state_backend` derives from.
     pub artifact_store: Option<Arc<crate::backend::ArtifactStore>>,
 
+    /// Postgres advisory-lock manager guarding per-template mutating
+    /// dispatch (`handle_applying` / `handle_destroying`). `Some` once a
+    /// PG pool is wired in (`with_db_pool`); `None` otherwise (a rare
+    /// DB-less deployment — nothing to serialize against in that mode,
+    /// since `state_backend`/`artifact_store` are also `None` then and
+    /// only `TofuExecutor`'s workspace-declared backend is in play).
+    ///
+    /// Exists to close a real gap: the operator's only concurrency guard
+    /// against two pods reconciling the SAME template at once was the
+    /// Lease-based `LeaderElector` — advisory, unfenced, and explicitly
+    /// designed to tolerate an overlapping pod pair during a
+    /// `RollingUpdate` (see `leader.rs`'s module doc). A missed lease
+    /// renewal during a long apply could let two pods both reach
+    /// `handle_applying`/`handle_destroying` for the same CR and issue
+    /// real, unguarded create/update/destroy provider RPCs concurrently
+    /// — the same class of harm as the state-wipe/duplicate-VPC
+    /// postmortem, via a different mechanism (leader-election
+    /// split-brain rather than state corruption). `StateLock` itself
+    /// (`backend/lock.rs`) was fully built + tested but had zero callers
+    /// before this field; shared across pods via the same Postgres pool
+    /// `state_backend` uses, so the lock is real cross-pod mutual
+    /// exclusion, not per-process.
+    pub state_lock: Option<Arc<crate::backend::StateLock>>,
+
     /// Packer executor for running AMI build commands.
     pub packer_executor: Arc<PackerExecutor>,
 
@@ -256,6 +280,7 @@ impl ControllerState {
             default_backend,
             state_backend: None,
             artifact_store: None,
+            state_lock: None,
             packer_executor,
             workspace_manager: workspace_manager.clone(),
             compiler_backend,
@@ -639,6 +664,14 @@ impl ControllerState {
         self.artifact_store = Some(Arc::new(crate::backend::ArtifactStore::new(Arc::clone(
             &shared,
         ))));
+        // Advisory-lock manager on the SAME pool: `handle_applying` /
+        // `handle_destroying` acquire a per-template Postgres advisory
+        // lock before dispatching a real create/update/destroy provider
+        // RPC, so two pods (a Lease-election miss/split-brain, or an
+        // overlapping `RollingUpdate` pair) can never both mutate the
+        // same template's cloud resources at once. See the field doc on
+        // `ControllerState::state_lock`.
+        self.state_lock = Some(Arc::new(crate::backend::StateLock::new(Arc::clone(&shared))));
         // `db_pool` wraps the pool itself; reuse the same Arc'd pool.
         self.db_pool = Some(Arc::new(RwLock::new((*shared).clone())));
         self
