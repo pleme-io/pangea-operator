@@ -2221,20 +2221,66 @@ async fn handle_planning(
             Ok(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL))
         }
         PolicyDecision::AutoApply => {
-            info!(
-                auto = policy_outcome.evaluation.auto_apply_count,
-                "Policy permits auto-apply for all changes"
-            );
-            update_phase(template, Phase::Applying, state).await?;
-            record_event(
-                template,
-                state,
-                EventType::Normal,
-                "PlanApproved",
-                "Changes detected and auto-applied per policy",
-            )
-            .await;
-            Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
+            // State-continuity gate. `plan_approval_hash` (below, in the
+            // RequireApproval arm) folds a state fingerprint into the
+            // approval hash so a STALE APPROVAL can never silently
+            // re-validate a plan computed against different state — but
+            // that protection only fires when a human is in the loop.
+            // AutoApply has no approval step at all, so a template with
+            // a prior successful apply whose local Terraform/OpenTofu
+            // state has since gone missing (an emptyDir wipe on a pod
+            // restart — no spec edit required) would otherwise plan
+            // "everything create" against the empty state and apply it
+            // completely unattended: the exact class of bug behind
+            // docs/postmortems/2026-07-12-camelot-eks-state-wipe-duplicate-vpc.md.
+            // Detect that combination and, when it fires, downgrade this
+            // one cycle to the SAME state-fingerprinted approval gate
+            // RequireApproval already uses, instead of applying blind.
+            let previously_applied = template
+                .status
+                .as_ref()
+                .and_then(|s| s.last_applied_at)
+                .is_some();
+            let state_present_now = workspace.read_state_bytes().await.is_some();
+            let durable = is_durable_state_backend(template, state);
+
+            match evaluate_auto_apply_gate(durable, previously_applied, state_present_now) {
+                AutoApplyGate::BlockedByStateContinuityBreach => {
+                    warn!(
+                        template = %template.name_any(),
+                        "AutoApply BLOCKED by a state-continuity breach: a prior \
+                         successful apply is recorded but local Terraform/OpenTofu \
+                         state is now absent. Routing through the approval gate \
+                         instead of applying blind."
+                    );
+                    route_through_approval_gate(
+                        template,
+                        state,
+                        &workspace,
+                        &plan_result,
+                        &policy_outcome,
+                        plan_text.clone(),
+                        ApprovalGateReason::AutoApplyStateContinuityBreach,
+                    )
+                    .await
+                }
+                AutoApplyGate::Proceed => {
+                    info!(
+                        auto = policy_outcome.evaluation.auto_apply_count,
+                        "Policy permits auto-apply for all changes"
+                    );
+                    update_phase(template, Phase::Applying, state).await?;
+                    record_event(
+                        template,
+                        state,
+                        EventType::Normal,
+                        "PlanApproved",
+                        "Changes detected and auto-applied per policy",
+                    )
+                    .await;
+                    Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
+                }
+            }
         }
         PolicyDecision::RequireApproval => {
             // Recompute the approval hash from THIS cycle's plan, every
@@ -2258,59 +2304,206 @@ async fn handle_planning(
             // an in-flight (not-yet-applied) approval at upgrade time
             // will require re-approval, which is the intended fail-safe
             // behavior, not a regression.
-            let plan_content = plan_result.raw_stdout.as_str();
-            let state_bytes = workspace.read_state_bytes().await;
-            let plan_hash = plan_approval_hash(plan_content, state_bytes.as_deref());
+            route_through_approval_gate(
+                template,
+                state,
+                &workspace,
+                &plan_result,
+                &policy_outcome,
+                plan_text.clone(),
+                ApprovalGateReason::PolicyDecision {
+                    require_approval_count: policy_outcome.evaluation.require_approval_count,
+                },
+            )
+            .await
+        }
+    }
+}
 
-            let is_approved = template
-                .status
-                .as_ref()
-                .and_then(|s| s.approved_plan_hash.as_deref())
-                .map(|approved| approved == plan_hash)
-                .unwrap_or(false);
+/// Whether a template's IaC state is durably persisted somewhere that
+/// survives a pod restart — today, exactly the magma DB-backed
+/// executor (state lives in Postgres). Mirrors the identical
+/// predicate `compiled_config_available` already uses for the
+/// analogous rendered-config-reuse question, so both call sites agree
+/// on what "durable" means. Everything else (the disk-based `tofu`
+/// executor, including the magma disk-fallback path) keeps its state
+/// on the pod-local `emptyDir`, which does NOT survive a restart.
+///
+/// Known, named scope limitation (not silently rounded up): a `tofu`
+/// executor configured with a remote `pg` state backend
+/// (`PangeaNamespace.spec.backend.pg`) is ALSO durable but is not
+/// recognized here — such a template would over-trigger
+/// `state_continuity_breach`'s gate after an ordinary, harmless pod
+/// restart (one avoidable extra approval step). That is a fail-SAFE
+/// degradation, never a fail-DANGEROUS one — the asymmetry this
+/// predicate must never get wrong is silently applying, not
+/// occasionally over-asking — and is tracked as a follow-up rather
+/// than silently dropped, mirroring the sibling postmortem fix's own
+/// `pending-postmortem-followup` convention.
+fn is_durable_state_backend(template: &InfrastructureTemplate, state: &ControllerState) -> bool {
+    state.executor_for(template).name() == "magma" && state.artifact_store.is_some()
+}
 
-            if is_approved {
-                info!(plan_hash, "Plan approved by user, proceeding to apply");
-                update_phase(template, Phase::Applying, state).await?;
-                record_event(template, state, EventType::Normal, "PlanApproved", "Plan approved by user").await;
-                Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
-            } else {
-                info!(
-                    plan_hash,
-                    require_approval_count = policy_outcome.evaluation.require_approval_count,
-                    "Policy requires approval, waiting"
-                );
-                update_pending_plan_hash(template, &plan_hash, state).await?;
-                // Emit a Drifted-uncorrected receipt so the user sees
-                // exactly which resources are awaiting approval. The
-                // content-equality guard inside record_reconcile_cycle
-                // suppresses re-patches while the plan keeps matching.
-                record_reconcile_cycle(
-                    template,
-                    state,
-                    Some(&workspace.path),
-                plan_result.artifact.clone(), // slice 2c: runner-provided artifact threads through cycle receipt
-                    &policy_outcome.annotated_drifts,
-                    plan_text.clone(),
-                    CycleResult::PolicyGated(PolicyDecision::RequireApproval),
-                )
-                .await?;
-                record_event(
-                    template,
-                    state,
-                    EventType::Normal,
-                    "PlanPending",
-                    &format!(
-                        "Changes detected ({} require approval). Approve with: kubectl patch infra {} -n {} --type merge --subresource status -p '{{\"status\":{{\"approvedPlanHash\":\"{}\"}}}}'",
-                        policy_outcome.evaluation.require_approval_count,
-                        template.name_any(),
-                        template.namespace().unwrap_or_default(),
-                        plan_hash
-                    ),
-                ).await;
-                Ok(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL))
+/// Detect an AutoApply-dangerous **state-continuity breach**: this
+/// template has completed at least one successful apply
+/// (`previously_applied`) — so the operator's own history says real
+/// infrastructure should already exist — but the on-disk state this
+/// cycle's plan just ran against is completely absent
+/// (`!state_present_now`), on a backend that is not durably persisted
+/// remotely (`!is_durable_state_backend`). That combination is the
+/// exact signature left by an emptyDir wipe on the disk-based `tofu`
+/// executor.
+///
+/// `is_durable_state_backend == true` makes this always `false` — that
+/// backend's state cannot vanish on a pod restart, so gating on it
+/// would be a false positive, not a safety net.
+/// `previously_applied == false` (a brand-new template's first-ever
+/// apply) is also never a breach — there is nothing to have lost yet.
+fn state_continuity_breach(
+    is_durable_state_backend: bool,
+    previously_applied: bool,
+    state_present_now: bool,
+) -> bool {
+    !is_durable_state_backend && previously_applied && !state_present_now
+}
+
+/// Outcome of evaluating whether an `AutoApply` decision may proceed
+/// straight to `Applying` this cycle. The one call site
+/// (`handle_planning`'s `PolicyDecision::AutoApply` arm) matches this
+/// exhaustively, so a future edit that forgets to branch on a
+/// detected breach is a compile error (`E0004: non-exhaustive
+/// patterns`) rather than a silently-dropped check — the one
+/// structural guarantee available here, since the underlying signal
+/// (on-disk state presence + apply history) is necessarily a runtime
+/// observation, not a static property.
+///
+/// **Tier (named honestly, not rounded up): only-mitigated.** This is
+/// a runtime check gating a transition, not a type that makes the
+/// illegal state unconstructible — full unrepresentability isn't
+/// achievable here because the danger signal is external, mutable
+/// reality (a filesystem read + a status timestamp), not something
+/// the type system can see at compile time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AutoApplyGate {
+    /// No continuity breach detected — safe to apply per policy.
+    Proceed,
+    /// `state_continuity_breach` fired — must not apply blind.
+    BlockedByStateContinuityBreach,
+}
+
+fn evaluate_auto_apply_gate(
+    is_durable_state_backend: bool,
+    previously_applied: bool,
+    state_present_now: bool,
+) -> AutoApplyGate {
+    if state_continuity_breach(is_durable_state_backend, previously_applied, state_present_now) {
+        AutoApplyGate::BlockedByStateContinuityBreach
+    } else {
+        AutoApplyGate::Proceed
+    }
+}
+
+/// Why a cycle is routed through the require-approval gate — drives
+/// only the human-facing message text; the gate mechanics
+/// (`route_through_approval_gate`) are identical either way.
+enum ApprovalGateReason {
+    /// The policy engine's own per-resource rules resolved to
+    /// `requireApproval` for at least one change.
+    PolicyDecision { require_approval_count: u32 },
+    /// `PolicyDecision::AutoApply` detected a state-continuity breach
+    /// (see `state_continuity_breach`) and downgraded this one cycle
+    /// to require-approval rather than applying blind.
+    AutoApplyStateContinuityBreach,
+}
+
+impl ApprovalGateReason {
+    fn waiting_message(&self) -> String {
+        match self {
+            Self::PolicyDecision {
+                require_approval_count,
+            } => format!("Changes detected ({require_approval_count} require approval)."),
+            Self::AutoApplyStateContinuityBreach => {
+                "AutoApply BLOCKED: this template has a prior successful apply, but \
+                 local Terraform/OpenTofu state is now missing (state-continuity \
+                 breach — see \
+                 docs/postmortems/2026-07-12-camelot-eks-state-wipe-duplicate-vpc.md). \
+                 Refusing to auto-apply a plan that would recreate every resource \
+                 from scratch; verify real cloud state before approving."
+                    .to_string()
             }
         }
+    }
+}
+
+/// Route a Planning-phase cycle through the state-fingerprinted
+/// approval gate: recompute `plan_approval_hash` from THIS cycle's
+/// plan + on-disk state, compare against `status.approvedPlanHash`,
+/// and either proceed to `Applying` (already approved — the hash
+/// match itself proves the approval was granted against THIS exact
+/// plan+state, not a stale one) or park at `Planning` with
+/// `status.pendingPlanHash` set so a human can bless it.
+///
+/// Shared by two callers — `PolicyDecision::RequireApproval` (the
+/// policy engine's own decision) and `PolicyDecision::AutoApply` when
+/// `state_continuity_breach` fires — so the state-fingerprinting
+/// protection lives in exactly one place instead of two independent
+/// (and driftable) copies.
+async fn route_through_approval_gate(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+    workspace: &crate::executor::Workspace,
+    plan_result: &crate::executor::workspace_runner::PlanResult,
+    policy_outcome: &crate::executor::PolicyOutcome,
+    plan_text: Option<String>,
+    reason: ApprovalGateReason,
+) -> Result<ReconcileAction> {
+    let plan_content = plan_result.raw_stdout.as_str();
+    let state_bytes = workspace.read_state_bytes().await;
+    let plan_hash = plan_approval_hash(plan_content, state_bytes.as_deref());
+
+    let is_approved = template
+        .status
+        .as_ref()
+        .and_then(|s| s.approved_plan_hash.as_deref())
+        .map(|approved| approved == plan_hash)
+        .unwrap_or(false);
+
+    if is_approved {
+        info!(plan_hash, "Plan approved by user, proceeding to apply");
+        update_phase(template, Phase::Applying, state).await?;
+        record_event(template, state, EventType::Normal, "PlanApproved", "Plan approved by user").await;
+        Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
+    } else {
+        info!(plan_hash, "Policy requires approval, waiting");
+        update_pending_plan_hash(template, &plan_hash, state).await?;
+        // Emit a Drifted-uncorrected receipt so the user sees exactly
+        // which resources are awaiting approval. The content-equality
+        // guard inside record_reconcile_cycle suppresses re-patches
+        // while the plan keeps matching.
+        record_reconcile_cycle(
+            template,
+            state,
+            Some(&workspace.path),
+            plan_result.artifact.clone(), // slice 2c: runner-provided artifact threads through cycle receipt
+            &policy_outcome.annotated_drifts,
+            plan_text,
+            CycleResult::PolicyGated(PolicyDecision::RequireApproval),
+        )
+        .await?;
+        record_event(
+            template,
+            state,
+            EventType::Normal,
+            "PlanPending",
+            &format!(
+                "{} Approve with: kubectl patch infra {} -n {} --type merge --subresource status -p '{{\"status\":{{\"approvedPlanHash\":\"{}\"}}}}'",
+                reason.waiting_message(),
+                template.name_any(),
+                template.namespace().unwrap_or_default(),
+                plan_hash
+            ),
+        ).await;
+        Ok(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL))
     }
 }
 
@@ -4316,6 +4509,85 @@ mod plan_approval_hash_tests {
             second_plan_hash, approved_plan_hash,
             "a plan replanned against wiped state must require fresh approval, \
              never silently inherit the prior state's approval"
+        );
+    }
+}
+
+#[cfg(test)]
+mod state_continuity_breach_tests {
+    use super::{evaluate_auto_apply_gate, state_continuity_breach, AutoApplyGate};
+
+    // ── Finding 1 regression: PolicyDecision::AutoApply had ZERO
+    // state-continuity check before this fix — an ordinary pod restart
+    // on the disk-based `tofu` executor (workspace on a pod-local
+    // emptyDir) silently wiped `terraform.tfstate`, and AutoApply would
+    // plan+apply "everything create" against the empty state completely
+    // unattended, reproducing the exact
+    // docs/postmortems/2026-07-12-camelot-eks-state-wipe-duplicate-vpc.md
+    // duplicate-VPC incident with no spec edit required at all. ────────
+
+    #[test]
+    fn restart_wipe_on_a_previously_applied_disk_backed_template_is_a_breach() {
+        // The exact failure scenario: not durable (disk-based tofu),
+        // this template has applied successfully before, and local
+        // state is now gone. This MUST be flagged — it is precisely
+        // the state pod restarts leave behind on an emptyDir workspace.
+        assert!(state_continuity_breach(
+            /* is_durable_state_backend */ false,
+            /* previously_applied       */ true,
+            /* state_present_now        */ false,
+        ));
+    }
+
+    #[test]
+    fn first_ever_apply_on_a_disk_backed_template_is_never_a_breach() {
+        // A brand-new template's very first AutoApply cycle also has
+        // "no local state yet" — but there is nothing to have lost, so
+        // this must NOT be flagged (would otherwise block every
+        // legitimate first apply forever).
+        assert!(!state_continuity_breach(false, false, false));
+    }
+
+    #[test]
+    fn healthy_steady_state_disk_backed_template_is_never_a_breach() {
+        // State is present and intact — the common case on every
+        // ordinary reconcile of an already-applied disk-backed
+        // template.
+        assert!(!state_continuity_breach(false, true, true));
+    }
+
+    #[test]
+    fn magma_db_backed_template_is_never_a_breach_even_though_local_state_is_always_absent() {
+        // Magma's state lives in Postgres and NEVER populates local
+        // disk, restart or not — `state_present_now` is always `false`
+        // for it by design. Without the durable-backend exclusion this
+        // would misfire on EVERY magma AutoApply cycle after the first
+        // successful apply, which would be a severe regression (magma
+        // is the fleet's default, safe executor — ★★ MAGMA-NATIVE).
+        assert!(!state_continuity_breach(
+            /* is_durable_state_backend */ true,
+            /* previously_applied       */ true,
+            /* state_present_now        */ false,
+        ));
+    }
+
+    #[test]
+    fn evaluate_auto_apply_gate_blocks_exactly_on_a_breach() {
+        assert_eq!(
+            evaluate_auto_apply_gate(false, true, false),
+            AutoApplyGate::BlockedByStateContinuityBreach
+        );
+        assert_eq!(
+            evaluate_auto_apply_gate(false, true, true),
+            AutoApplyGate::Proceed
+        );
+        assert_eq!(
+            evaluate_auto_apply_gate(false, false, false),
+            AutoApplyGate::Proceed
+        );
+        assert_eq!(
+            evaluate_auto_apply_gate(true, true, false),
+            AutoApplyGate::Proceed
         );
     }
 }
