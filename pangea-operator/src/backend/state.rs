@@ -3,6 +3,7 @@
 //! Provides read/write access to OpenTofu state stored in PostgreSQL,
 //! following the pg backend table format.
 
+use super::schema::is_valid_identifier;
 use crate::error::{Error, Result};
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
@@ -43,6 +44,53 @@ impl StateStore {
         Self { pool }
     }
 
+    /// Assemble + validate the double-quoted `"{schema}"."{template}_states"`
+    /// table identifier for a `(schema, template)` pair.
+    ///
+    /// `schema_name` / `template_name` are k8s object names — they use
+    /// `[a-z0-9.-]`, and hyphens/dots are NOT valid *unquoted* SQL
+    /// identifier characters, which is exactly why every call site here
+    /// used to build the table name via unquoted `format!()`
+    /// interpolation (`{schema_name}.{template_name}_states` dropped
+    /// straight into the query string) — any k8s name is SQL-identifier
+    /// syntax the moment it's not quoted, and a name containing `;` or an
+    /// embedded quote could break out of the identifier position
+    /// entirely. The sibling `StateBackend` impls
+    /// (`ArtifactStore::live_state_schema`, `TofuPgStateBackend::states_table`)
+    /// already close this class by quoting; this mirrors that pattern for
+    /// `StateStore`'s own `schema."table"` shape (its table is a
+    /// `{template}_states` table INSIDE the schema, distinct from
+    /// `TofuPgStateBackend`'s folded `"{schema}_{template}_states".states`
+    /// layout).
+    ///
+    /// Same injection guard as `live_state_schema`: validate the
+    /// sanitized projection (`-`/`.` → `_`) through [`is_valid_identifier`]
+    /// — a name that still fails after that substitution carries a
+    /// character no k8s name can (an embedded quote, semicolon,
+    /// whitespace, control char), and is REJECTED outright (`Err`), never
+    /// silently sanitized. The subsequent `.replace('"', "\"\"")` is
+    /// belt-and-suspenders defense-in-depth: since `"` already fails
+    /// `is_valid_identifier`, no accepted input can reach it carrying an
+    /// unescaped quote, but it keeps the assembled identifier well-formed
+    /// even if that guard's contract ever loosens.
+    fn qualified_state_table(schema_name: &str, template_name: &str) -> Result<String> {
+        let sanitize = |s: &str| s.replace(['-', '.'], "_");
+        if !is_valid_identifier(&sanitize(schema_name)) {
+            return Err(Error::Config(format!(
+                "invalid schema identifier for state table: {schema_name}"
+            )));
+        }
+        let table = format!("{template_name}_states");
+        if !is_valid_identifier(&sanitize(&table)) {
+            return Err(Error::Config(format!(
+                "invalid template identifier for state table: {template_name}"
+            )));
+        }
+        let schema_q = schema_name.replace('"', "\"\"");
+        let table_q = table.replace('"', "\"\"");
+        Ok(format!("\"{schema_q}\".\"{table_q}\""))
+    }
+
     /// Get the current state for a template.
     pub async fn get_state(
         &self,
@@ -50,7 +98,7 @@ impl StateStore {
         template_name: &str,
         state_name: &str,
     ) -> Result<Option<StateEntry>> {
-        let table_name = format!("{}.{}_states", schema_name, template_name);
+        let table_name = Self::qualified_state_table(schema_name, template_name)?;
 
         let query = format!(
             r#"
@@ -105,7 +153,7 @@ impl StateStore {
         state_name: &str,
         data: &[u8],
     ) -> Result<i64> {
-        let table_name = format!("{}.{}_states", schema_name, template_name);
+        let table_name = Self::qualified_state_table(schema_name, template_name)?;
 
         debug!(
             table_name,
@@ -151,7 +199,7 @@ impl StateStore {
         template_name: &str,
         state_name: &str,
     ) -> Result<bool> {
-        let table_name = format!("{}.{}_states", schema_name, template_name);
+        let table_name = Self::qualified_state_table(schema_name, template_name)?;
 
         let query = format!("DELETE FROM {} WHERE name = $1", table_name);
 
@@ -170,7 +218,7 @@ impl StateStore {
         schema_name: &str,
         template_name: &str,
     ) -> Result<Vec<StateEntry>> {
-        let table_name = format!("{}.{}_states", schema_name, template_name);
+        let table_name = Self::qualified_state_table(schema_name, template_name)?;
 
         let query = format!(
             r#"
@@ -221,5 +269,58 @@ impl StateStore {
             Some(state) => Ok(Some(state.outputs)),
             None => Ok(None),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn qualified_state_table_quotes_k8s_hyphenated_names() {
+        // The bug this guards: the old `format!("{}.{}_states", ...)`
+        // dropped these hyphenated k8s names straight into the query as
+        // UNQUOTED SQL identifiers. A bare hyphen inside an unquoted
+        // Postgres identifier is a parse error (it's the subtraction
+        // operator), so this exact realistic input never even reached the
+        // database cleanly before — it's not just an injection risk, it's
+        // a straightforwardly broken query for any real template name.
+        let t =
+            StateStore::qualified_state_table("pangea_cloudflare-pleme", "cloudflare-pleme").unwrap();
+        assert_eq!(t, "\"pangea_cloudflare-pleme\".\"cloudflare-pleme_states\"");
+    }
+
+    #[test]
+    fn qualified_state_table_allows_dotted_k8s_names() {
+        let t = StateStore::qualified_state_table("pangea_a.b", "c.d").unwrap();
+        assert_eq!(t, "\"pangea_a.b\".\"c.d_states\"");
+    }
+
+    #[test]
+    fn qualified_state_table_rejects_embedded_quotes() {
+        // `"` isn't a lowercase/digit/underscore, so `is_valid_identifier`
+        // refuses it before the (defense-in-depth) doubling step is ever
+        // reached — a stricter outcome than merely escaping it through.
+        assert!(StateStore::qualified_state_table("pangea_x\"y", "t").is_err());
+    }
+
+    /// The load-bearing security property: no schema/template name a k8s
+    /// object can carry lets a caller break out of the identifier
+    /// position and inject arbitrary SQL. Every one of these strings
+    /// would have flowed straight into a `format!("... FROM {} ...")`
+    /// query string unquoted and unchecked before this fix.
+    #[test]
+    fn qualified_state_table_rejects_injection_attempts() {
+        assert!(StateStore::qualified_state_table("a\"b", "t").is_err());
+        assert!(StateStore::qualified_state_table("a; DROP TABLE x", "t").is_err());
+        assert!(StateStore::qualified_state_table("a b", "t").is_err());
+        assert!(StateStore::qualified_state_table("a", "t' OR '1'='1").is_err());
+        assert!(StateStore::qualified_state_table("a", "t; DROP SCHEMA public CASCADE").is_err());
+    }
+
+    #[test]
+    fn qualified_state_table_accepts_plain_lowercase_names() {
+        let t = StateStore::qualified_state_table("pangea_prod", "my_template").unwrap();
+        assert_eq!(t, "\"pangea_prod\".\"my_template_states\"");
     }
 }

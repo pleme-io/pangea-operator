@@ -50,6 +50,10 @@ pub mod executor_migration;
 pub mod leader;
 pub mod observability;
 pub mod ruby;
+// UTF-8-safe truncation, shared by every call site that caps
+// externally-sourced text (apply-error output, inline DSL previews) for a
+// status field / k8s Event / GraphQL response. See src/text_util.rs.
+pub mod text_util;
 
 #[cfg(feature = "graphql")]
 pub mod api;

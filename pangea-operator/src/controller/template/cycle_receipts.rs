@@ -248,15 +248,17 @@ pub fn cycle_is_clean(result: &CycleResult) -> bool {
 /// Trim a string to 256 characters with an ellipsis suffix when
 /// truncated. Used to keep status fields under the etcd value-size
 /// budget when stuffing terraform error output into a status patch.
+///
+/// `err` here is untrusted, externally-sourced text (tofu/magma
+/// apply-error stdout+stderr) that is NOT guaranteed ASCII — a raw
+/// `&s[..256]` byte slice panics whenever byte 256 lands mid-character,
+/// which silently halts reconciliation for every `InfrastructureTemplate`
+/// (this fn runs inside `TemplateController`'s unsupervised
+/// `tokio::spawn` reconcile task — no `catch_unwind`, no restart-on-panic
+/// per `src/main.rs`). Delegates to [`crate::text_util::truncate_utf8_safe`]
+/// (char-boundary-safe by construction) instead of byte-index slicing.
 pub fn truncate_for_status(s: &str) -> String {
-    const MAX: usize = 256;
-    if s.len() <= MAX {
-        s.to_string()
-    } else {
-        let mut t = s[..MAX].to_string();
-        t.push('…');
-        t
-    }
+    crate::text_util::truncate_utf8_safe(s, 256, "…")
 }
 
 /// Patch `status.lastCycle` + bump `status.cycleCount`. Also echoes

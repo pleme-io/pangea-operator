@@ -2942,11 +2942,18 @@ async fn handle_applying(
             driver.mode().as_str(),
             err_msg
         );
-        let event_msg = if event_body.len() > 1000 {
-            format!("{}…[truncated, full err in template status]", &event_body[..1000])
-        } else {
-            event_body
-        };
+        // `event_body` embeds `err_msg` — untrusted apply-error output from
+        // tofu/magma that is not guaranteed ASCII. A raw `&event_body[..1000]`
+        // byte slice panics whenever byte 1000 lands mid-character; this runs
+        // inside the same unsupervised `tokio::spawn` reconcile task as
+        // `truncate_for_status` above, so a single non-ASCII apply error
+        // would silently halt reconciliation fleet-wide. Char-boundary-safe
+        // by construction — see `crate::text_util::truncate_utf8_safe`.
+        let event_msg = crate::text_util::truncate_utf8_safe(
+            &event_body,
+            1000,
+            "…[truncated, full err in template status]",
+        );
         record_event(template, state, EventType::Warning, event_reason, &event_msg).await;
     }
 

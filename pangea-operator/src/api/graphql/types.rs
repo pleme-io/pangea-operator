@@ -114,11 +114,14 @@ pub struct TemplateSource {
 impl From<&crd::TemplateSource> for TemplateSource {
     fn from(source: &crd::TemplateSource) -> Self {
         if let Some(inline) = &source.inline {
-            let preview = if inline.len() > 100 {
-                format!("{}...", &inline[..100])
-            } else {
-                inline.clone()
-            };
+            // `inline` is user-authored Pangea DSL source — not guaranteed
+            // ASCII (accented names, curly quotes, emoji in a comment are
+            // all valid). A raw `&inline[..100]` byte slice panics whenever
+            // byte 100 lands mid-character, crashing this GraphQL resolver
+            // for any template whose inline source has a multi-byte char
+            // near that offset. Char-boundary-safe by construction — see
+            // `crate::text_util::truncate_utf8_safe`.
+            let preview = crate::text_util::truncate_utf8_safe(inline, 100, "...");
             Self {
                 source_type: "inline".to_string(),
                 reference: preview,
@@ -139,6 +142,96 @@ impl From<&crd::TemplateSource> for TemplateSource {
                 reference: "".to_string(),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn inline_source(inline: &str) -> crd::TemplateSource {
+        crd::TemplateSource {
+            inline: Some(inline.to_string()),
+            config_map_ref: None,
+            git_repository: None,
+        }
+    }
+
+    #[test]
+    fn inline_preview_passes_short_ascii_through() {
+        let src = inline_source("resource \"foo\" {}");
+        let out = TemplateSource::from(&src);
+        assert_eq!(out.source_type, "inline");
+        assert_eq!(out.reference, "resource \"foo\" {}");
+    }
+
+    #[test]
+    fn inline_preview_truncates_long_ascii_with_ellipsis() {
+        let src = inline_source(&"a".repeat(300));
+        let out = TemplateSource::from(&src);
+        assert_eq!(out.source_type, "inline");
+        assert!(out.reference.starts_with(&"a".repeat(100)));
+        assert!(out.reference.ends_with("..."));
+    }
+
+    /// The bug this test guards: a naive `&inline[..100]` byte slice
+    /// panics whenever byte 100 lands mid-character. Inline Pangea DSL
+    /// source is user-authored and not guaranteed ASCII (accented names,
+    /// curly quotes, emoji in a comment). This must not panic, for input
+    /// deliberately shaped so a multi-byte char straddles byte offset 100.
+    #[test]
+    fn inline_preview_does_not_panic_on_multi_byte_utf8_near_the_boundary() {
+        // 95 ASCII bytes, then a run of 2-byte chars ('é') that straddle
+        // the byte-100 cutoff no matter how the ASCII prefix aligns.
+        let mut inline = "a".repeat(95);
+        inline.push_str(&"é".repeat(20));
+        let src = inline_source(&inline);
+
+        let out = TemplateSource::from(&src); // must not panic
+        assert_eq!(out.source_type, "inline");
+        assert!(out.reference.ends_with("..."));
+        // The whole preview must remain valid UTF-8 (guaranteed by `String`,
+        // but assert the char count landed at the intended cap).
+        let without_suffix = out.reference.strip_suffix("...").unwrap();
+        assert_eq!(without_suffix.chars().count(), 100);
+    }
+
+    #[test]
+    fn inline_preview_does_not_panic_on_emoji_near_the_boundary() {
+        let mut inline = "a".repeat(99);
+        inline.push_str(&"😀".repeat(10)); // 4-byte chars straddling byte 100
+        let src = inline_source(&inline);
+
+        let out = TemplateSource::from(&src); // must not panic
+        assert!(out.reference.ends_with("..."));
+    }
+
+    #[test]
+    fn config_map_source_reference_is_name_slash_key() {
+        let src = crd::TemplateSource {
+            inline: None,
+            config_map_ref: Some(crd::ConfigMapRef {
+                name: "my-cm".to_string(),
+                key: "template.rb".to_string(),
+                namespace: None,
+            }),
+            git_repository: None,
+        };
+        let out = TemplateSource::from(&src);
+        assert_eq!(out.source_type, "configMap");
+        assert_eq!(out.reference, "my-cm/template.rb");
+    }
+
+    #[test]
+    fn empty_source_is_unknown() {
+        let src = crd::TemplateSource {
+            inline: None,
+            config_map_ref: None,
+            git_repository: None,
+        };
+        let out = TemplateSource::from(&src);
+        assert_eq!(out.source_type, "unknown");
+        assert_eq!(out.reference, "");
     }
 }
 
