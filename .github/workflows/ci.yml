@@ -20,3 +20,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: cargo test --workspace
         run: cargo test --workspace --no-fail-fast
+      # Coverage baseline (theory/PANGEA-OPERATOR.md §XVII row 6): informational
+      # only — this is the reference floor for future work, not a merge gate.
+      # `continue-on-error` because coverage-upload's own run.tlisp exits 1 on
+      # a tarpaulin/upload failure; that must never fail this job. Runs on the
+      # same plain ubuntu-latest + dtolnay/rust-toolchain env as the test step
+      # above (proven green here already) — no nix devShell wrapping, since CI
+      # doesn't use `.#ruby-eval` today and doesn't need to (the runner's
+      # ambient Ruby already satisfies the default `embedded_ruby` feature's
+      # magnus/libruby link, same as the step above). cargo-tarpaulin runs
+      # `--workspace`, giving one aggregate cobertura.xml; Codecov's own file
+      # browser then breaks coverage down per-crate path
+      # (pangea-types/pangea-operator/pangea-cli/pangea-ruby-eval/
+      # pangea-operator-mcp) — the action has no separate per-crate input.
+      - name: coverage baseline (informational only)
+        continue-on-error: true
+        uses: pleme-io/actions/coverage-upload@main
