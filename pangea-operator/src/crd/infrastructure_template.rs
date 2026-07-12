@@ -1560,12 +1560,22 @@ pub struct PolicyMatch {
     pub address_patterns: Vec<String>,
 
     /// Restrict to specific actions. Empty = any action.
-    /// Valid values: `create`, `update`, `delete`, `replace`.
+    /// Valid values: `create`, `update`, `delete`, `replace`
+    /// (see [`DriftAction`]). Matched case-sensitively against
+    /// `DriftDetail.action` — `executor::policy::actions_match` warns
+    /// and treats the whole clause as no-match if either side falls
+    /// outside this vocabulary, rather than silently comparing two
+    /// strings that were never going to be equal.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<String>,
 
     /// Restrict to specific risk levels. Empty = any risk.
-    /// Valid values: `none`, `low`, `medium`, `high`.
+    /// Valid values: `none`, `low`, `medium`, `high`
+    /// (see [`RiskLevel`]). Matched case-sensitively against
+    /// `DriftDetail.risk` — `executor::policy::risk_levels_match` warns
+    /// and treats the whole clause as no-match if either side falls
+    /// outside this vocabulary, rather than silently comparing two
+    /// strings that were never going to be equal.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub risk_levels: Vec<String>,
 
@@ -1575,6 +1585,64 @@ pub struct PolicyMatch {
     /// changes".
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attributes: Vec<String>,
+}
+
+/// Closed vocabulary for `DriftDetail.action` / `PolicyMatch.actions`.
+///
+/// Deliberately NOT the wire type of either field (both stay plain
+/// `String` — see their doc comments) so that a CRD instance with an
+/// out-of-vocabulary value still decodes instead of failing the whole
+/// watch stream; `parse_wire` is the one place every producer (the
+/// tofu-plan `risk_level()` classifier, the magma-path
+/// `plan_action_to_terraform_str()` mapper) and the policy matcher
+/// agree on what "in vocabulary" means, so a divergence between them
+/// is a loud `executor::policy` warning instead of a silently-dead
+/// policy rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DriftAction {
+    Create,
+    Update,
+    Delete,
+    Replace,
+}
+
+impl DriftAction {
+    /// Parse the lowercase wire string this vocabulary uses. Returns
+    /// `None` for anything else — including `"noop"` (never surfaced
+    /// in a `DriftDetail`) and any case/spelling mismatch.
+    pub fn parse_wire(s: &str) -> Option<Self> {
+        match s {
+            "create" => Some(Self::Create),
+            "update" => Some(Self::Update),
+            "delete" => Some(Self::Delete),
+            "replace" => Some(Self::Replace),
+            _ => None,
+        }
+    }
+}
+
+/// Closed vocabulary for `DriftDetail.risk` / `PolicyMatch.riskLevels`.
+/// See [`DriftAction`] for why this mirrors, rather than replaces,
+/// the `String` wire type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RiskLevel {
+    None,
+    Low,
+    Medium,
+    High,
+}
+
+impl RiskLevel {
+    /// Parse the lowercase wire string this vocabulary uses.
+    pub fn parse_wire(s: &str) -> Option<Self> {
+        match s {
+            "none" => Some(Self::None),
+            "low" => Some(Self::Low),
+            "medium" => Some(Self::Medium),
+            "high" => Some(Self::High),
+            _ => None,
+        }
+    }
 }
 
 /// Decision a `PolicyRule` (or the default fallback) carries.

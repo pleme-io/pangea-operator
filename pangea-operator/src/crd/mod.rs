@@ -35,13 +35,13 @@ pub use architecture_gem::{
 pub use infrastructure_template::{
     ActionDistribution, AwsCredentials, BundleRef, CloudflareCredentials, ComplianceStatus,
     Condition, ConfigMapRef, ConflictKind, ConflictResolution, ConflictResolutionPolicy,
-    ConflictRule, CycleSummary, DriftDetail, GitHubCredentials, GitRepositoryRef, ImportPolicy,
-    InfrastructureTemplate, InfrastructureTemplateSpec, InfrastructureTemplateStatus, Outcome,
-    OutputBinding, OutputSecretRef, Phase, PolicyDecision, PolicyEvaluation, PolicyMatch,
-    PolicyRule, ProfileResult, ProviderCredentials, ProviderKind, ReconcileCycle,
-    ResourceOutcome, ResourceSummary, RetryPolicy, SecretFileRef, SecretRef,
-    SettlingExhaustionAction, SettlingPolicy, SeverityRollup, TemplateObjectRef, TemplateSource,
-    VariableRef,
+    ConflictRule, CycleSummary, DriftAction, DriftDetail, GitHubCredentials, GitRepositoryRef,
+    ImportPolicy, InfrastructureTemplate, InfrastructureTemplateSpec,
+    InfrastructureTemplateStatus, Outcome, OutputBinding, OutputSecretRef, Phase, PolicyDecision,
+    PolicyEvaluation, PolicyMatch, PolicyRule, ProfileResult, ProviderCredentials, ProviderKind,
+    ReconcileCycle, ResourceOutcome, ResourceSummary, RetryPolicy, RiskLevel, SecretFileRef,
+    SecretRef, SettlingExhaustionAction, SettlingPolicy, SeverityRollup, TemplateObjectRef,
+    TemplateSource, VariableRef,
 };
 
 // Re-export InfrastructureFlow types
@@ -126,11 +126,11 @@ pub use pangea_fleet_status::{
 
 // Re-export ImagePipeline types
 pub use image_pipeline::{
-    ApprovalMode, ChangeVerification, HealthCheck, HealthCheckResult, HealthCheckType,
-    ImagePipeline, ImagePipelinePhase, ImagePipelineSpec, ImagePipelineStatus, PipelineBuildSpec,
-    PipelineBuildStatus, PipelineDeploySpec, PipelineDeployStatus, PipelineTestSpec,
-    PipelineTestStatus, PipelineVerificationStatus, PlanAssertion, PlanAssertionRule,
-    RollbackConfig, RollbackTrigger,
+    ApprovalMode, ApprovalModeKind, ChangeVerification, HealthCheck, HealthCheckResult,
+    HealthCheckType, ImagePipeline, ImagePipelinePhase, ImagePipelineSpec, ImagePipelineStatus,
+    PipelineBuildSpec, PipelineBuildStatus, PipelineDeploySpec, PipelineDeployStatus,
+    PipelineTestSpec, PipelineTestStatus, PipelineVerificationStatus, PlanAssertion,
+    PlanAssertionRule, RollbackConfig, RollbackTrigger,
 };
 
 use kube::CustomResourceExt;

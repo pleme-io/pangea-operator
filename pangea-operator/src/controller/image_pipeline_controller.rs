@@ -6,7 +6,7 @@
 //! the plan → approve → apply → verify cycle.
 
 use crate::crd::{
-    AmiSource, AmiTest, AmiTestPhase, AmiTestSpec,
+    AmiSource, AmiTest, AmiTestPhase, AmiTestSpec, ApprovalModeKind,
     ImagePipeline, ImagePipelinePhase,
     InfrastructureTemplate, PackerBuild, PackerBuildPhase, PackerBuildSpec, Phase,
     PipelineBuildStatus, PipelineDeployStatus, PipelineTestStatus,
@@ -474,12 +474,31 @@ async fn handle_planning(
             ds.plan_hash = status.pending_plan_hash.clone();
             update_deploy_status(pipeline, &ds, state).await?;
 
-            // Move to approval
-            if deploy.approval.is_auto() {
-                update_phase(pipeline, ImagePipelinePhase::Applying, None, state).await?;
-            } else {
-                update_phase(pipeline, ImagePipelinePhase::AwaitingApproval, None, state)
-                    .await?;
+            // Move to approval. Exhaustive on `ApprovalModeKind` — a
+            // typo (parsed as `Err`) or the declared-but-unwired
+            // `Webhook` variant must never fall through to the same
+            // branch as `Manual`, which is what silently happened
+            // before (`is_auto() == false` collapsed every non-"auto"
+            // value, including "webhook" and any misspelling, into
+            // "wait for a human", with no error surfaced — the
+            // pipeline just hung in AwaitingApproval forever).
+            match deploy.approval.kind() {
+                Ok(ApprovalModeKind::Auto) => {
+                    update_phase(pipeline, ImagePipelinePhase::Applying, None, state).await?;
+                }
+                Ok(ApprovalModeKind::Manual) => {
+                    update_phase(pipeline, ImagePipelinePhase::AwaitingApproval, None, state)
+                        .await?;
+                }
+                Ok(ApprovalModeKind::Webhook) => {
+                    return Err(Error::ImagePipeline(format!(
+                        "approval.mode \"webhook\" is declared but not implemented yet (no code path dispatches webhookUrl={:?}); set approval.mode to \"auto\" or \"manual\"",
+                        deploy.approval.webhook_url
+                    )));
+                }
+                Err(msg) => {
+                    return Err(Error::ImagePipeline(msg));
+                }
             }
 
             return Ok(Action::requeue(SHORT_REQUEUE_INTERVAL));

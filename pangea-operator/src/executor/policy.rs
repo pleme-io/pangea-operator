@@ -20,7 +20,7 @@
 //! `autoApprove` is no longer consulted by the policy path; it remains
 //! in the spec for legacy schemas but does not gate the new engine.
 
-use crate::crd::{DriftDetail, PolicyDecision, PolicyEvaluation, PolicyRule};
+use crate::crd::{DriftAction, DriftDetail, PolicyDecision, PolicyEvaluation, PolicyRule, RiskLevel};
 use regex::Regex;
 use tracing::warn;
 
@@ -172,6 +172,27 @@ impl<'a> CompiledRule<'a> {
                 }
             })
             .collect();
+
+        // actions / riskLevels declare a closed vocabulary (see
+        // `DriftAction`/`RiskLevel`) but are plain `Vec<String>` on the
+        // wire — same reasoning as addressPatterns above: a typo'd
+        // entry must be surfaced at rule-compile time, not silently
+        // carried into a comparison that can never succeed.
+        for a in unrecognized_wire_values(&rule.match_.actions, DriftAction::parse_wire) {
+            warn!(
+                rule = %rule.name,
+                action = %a,
+                "policy rule has an unrecognized action (valid: create, update, delete, replace); it can never match"
+            );
+        }
+        for r in unrecognized_wire_values(&rule.match_.risk_levels, RiskLevel::parse_wire) {
+            warn!(
+                rule = %rule.name,
+                risk = %r,
+                "policy rule has an unrecognized riskLevel (valid: none, low, medium, high); it can never match"
+            );
+        }
+
         Self { rule, address_regexes }
     }
 
@@ -205,12 +226,12 @@ impl<'a> CompiledRule<'a> {
         }
 
         // actions: exact-match list, OR. Empty = wildcard.
-        if !m.actions.is_empty() && !m.actions.iter().any(|a| a == &d.action) {
+        if !actions_match(&m.actions, &d.action, &self.rule.name) {
             return false;
         }
 
         // riskLevels: exact-match list, OR. Empty = wildcard.
-        if !m.risk_levels.is_empty() && !m.risk_levels.iter().any(|r| r == &d.risk) {
+        if !risk_levels_match(&m.risk_levels, &d.risk, &self.rule.name) {
             return false;
         }
 
@@ -232,6 +253,72 @@ impl<'a> CompiledRule<'a> {
 
         true
     }
+}
+
+/// Entries of `values` that don't parse under `parse_wire` — i.e. fall
+/// outside a `DriftAction`/`RiskLevel`-style closed vocabulary. Pure
+/// and side-effect-free on purpose: `CompiledRule::new` uses it to
+/// decide what to `warn!` about, and tests exercise it directly
+/// without needing to capture log output.
+fn unrecognized_wire_values<T>(
+    values: &[String],
+    parse_wire: impl Fn(&str) -> Option<T>,
+) -> Vec<String> {
+    values
+        .iter()
+        .filter(|v| parse_wire(v).is_none())
+        .cloned()
+        .collect()
+}
+
+/// `PolicyMatch.actions` membership test. Empty = wildcard (always
+/// matches). Case-sensitive, but no longer a bare string `==`: both
+/// `d_action` (the drift's actual action) and each declared entry are
+/// parsed against the same closed `DriftAction` vocabulary, so a
+/// mismatch — a typo in the rule, OR an executor backend emitting a
+/// value outside the vocabulary the field documents (e.g. magma's
+/// `plan_action_to_terraform_str` `Other(s)` passthrough) — is
+/// surfaced via `warn!` instead of silently comparing two strings
+/// that could never be equal.
+fn actions_match(m_actions: &[String], d_action: &str, rule_name: &str) -> bool {
+    if m_actions.is_empty() {
+        return true;
+    }
+    let Some(action) = DriftAction::parse_wire(d_action) else {
+        warn!(
+            rule = %rule_name,
+            action = %d_action,
+            "drift action is outside the create/update/delete/replace vocabulary policy rules can match on; this rule cannot fire for it"
+        );
+        return false;
+    };
+    m_actions
+        .iter()
+        .any(|a| DriftAction::parse_wire(a) == Some(action))
+}
+
+/// `PolicyMatch.riskLevels` membership test. See [`actions_match`] —
+/// same shape, same reasoning. The concrete bug this closes: the
+/// magma execution path's `severity_to_risk()` emits
+/// `"safe"/"modify"/"destroy"`, never the `none/low/medium/high`
+/// vocabulary `riskLevels` documents, so a `riskLevels: ["high"]`
+/// gate on a magma-executed template silently never fired — now it
+/// warns instead.
+fn risk_levels_match(m_risk_levels: &[String], d_risk: &str, rule_name: &str) -> bool {
+    if m_risk_levels.is_empty() {
+        return true;
+    }
+    let Some(risk) = RiskLevel::parse_wire(d_risk) else {
+        warn!(
+            rule = %rule_name,
+            risk = %d_risk,
+            "drift risk is outside the none/low/medium/high vocabulary policy rules can match on; this rule cannot fire for it"
+        );
+        return false;
+    };
+    m_risk_levels
+        .iter()
+        .any(|r| RiskLevel::parse_wire(r) == Some(risk))
 }
 
 /// Minimal glob: `*` matches zero-or-more chars, everything else is
@@ -515,6 +602,120 @@ mod tests {
         let out = evaluate(&rules, None, &drifts);
         assert_eq!(out.evaluation.require_approval_count, 1);
         assert_eq!(out.evaluation.auto_apply_count, 1);
+    }
+
+    // ── regression: typed-vocab boundary on `actions`/`riskLevels` ──
+    // (case-sensitive `==` against a documented closed vocabulary,
+    // zero warning on mismatch — see PolicyMatch.actions/.riskLevels).
+
+    #[test]
+    fn unrecognized_wire_values_flags_only_the_bad_entries() {
+        assert_eq!(
+            unrecognized_wire_values(
+                &["create".to_string(), "Delete".to_string(), "update".to_string()],
+                DriftAction::parse_wire,
+            ),
+            vec!["Delete".to_string()],
+        );
+        assert!(unrecognized_wire_values(&[], DriftAction::parse_wire).is_empty());
+        assert!(unrecognized_wire_values(
+            &["low".to_string(), "high".to_string()],
+            RiskLevel::parse_wire,
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn actions_match_empty_is_wildcard() {
+        assert!(actions_match(&[], "delete", "r"));
+    }
+
+    #[test]
+    fn actions_match_exact_case_matches() {
+        assert!(actions_match(&["delete".to_string()], "delete", "r"));
+    }
+
+    #[test]
+    fn actions_match_case_mismatch_never_matches() {
+        // FAILURE SCENARIO this regresses: a PolicyRule authored with
+        // `actions: ["Delete"]` (a plausible capitalization typo)
+        // guarding real drift whose action is always lowercase
+        // "delete" (the only value any executor emits — see
+        // plan.rs::risk_level / cycle_artifact.rs::plan_action_to_terraform_str).
+        // Before this fix, `"Delete" == "delete"` was silently `false`
+        // with no diagnostic anywhere — the rule looked configured but
+        // could never fire. Confirm the mismatch still correctly
+        // fails to match (semantics are unchanged; only the silence
+        // was the bug) via the same typed path a rule-compile-time
+        // warning now also runs through.
+        assert!(!actions_match(&["Delete".to_string()], "delete", "r"));
+    }
+
+    #[test]
+    fn actions_match_flags_a_drift_action_outside_the_vocabulary() {
+        // Concrete cross-executor mismatch found while root-causing
+        // this bug: `plan_action_to_terraform_str()` on the magma path
+        // passes `PlanAction::Other(s)` straight through, which is
+        // never guaranteed to be one of create/update/delete/replace.
+        // A `refuse` rule gating `actions: ["delete"]` must not
+        // silently no-op against that — it must fail the vocabulary
+        // parse and refuse to match, the same way an invalid
+        // addressPatterns regex refuses to match.
+        assert!(!actions_match(&["delete".to_string()], "move", "r"));
+    }
+
+    #[test]
+    fn risk_levels_match_empty_is_wildcard() {
+        assert!(risk_levels_match(&[], "high", "r"));
+    }
+
+    #[test]
+    fn risk_levels_match_exact_case_matches() {
+        assert!(risk_levels_match(&["high".to_string()], "high", "r"));
+    }
+
+    #[test]
+    fn risk_levels_match_case_mismatch_never_matches() {
+        assert!(!risk_levels_match(&["High".to_string()], "high", "r"));
+    }
+
+    #[test]
+    fn risk_levels_match_flags_a_drift_risk_outside_the_vocabulary() {
+        // Concrete cross-executor mismatch found while root-causing
+        // this bug: `executor::cycle_artifact::severity_to_risk()`
+        // (the magma execution path) emits `"safe"/"modify"/"destroy"`
+        // — never the `none/low/medium/high` vocabulary
+        // `PolicyMatch.riskLevels` documents. A `riskLevels: ["high"]`
+        // safety gate on a magma-executed InfrastructureTemplate must
+        // not silently let every change through uninspected; it must
+        // fail to match (and, in `CompiledRule::new`/`matches`, warn).
+        assert!(!risk_levels_match(&["high".to_string()], "destroy", "r"));
+    }
+
+    #[test]
+    fn end_to_end_case_mismatched_refuse_rule_falls_through_to_default() {
+        // The full `evaluate()` path: a `refuse` rule meant to gate
+        // deletes is authored with a capitalized action by mistake.
+        // Assert the aggregate falls through to the (safe, explicit)
+        // default instead of the rule accidentally firing — proving
+        // the typed vocabulary check didn't change matching semantics,
+        // only its observability.
+        let rules = vec![rule(
+            "refuse-deletes",
+            PolicyDecision::Refuse,
+            vec![],
+            vec![],
+            vec!["Delete"],
+            vec![],
+            vec![],
+        )];
+        let drifts = vec![drift("cloudflare_zone.prod", "delete", "high", vec![])];
+        let out = evaluate(&rules, Some(PolicyDecision::RequireApproval), &drifts);
+        assert_eq!(out.aggregate, PolicyDecision::RequireApproval);
+        assert_eq!(
+            out.annotated_drifts[0].matched_policy.as_deref(),
+            Some("<default>")
+        );
     }
 
     #[test]

@@ -132,6 +132,16 @@ pub struct PipelineDeploySpec {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ApprovalMode {
+    // NOTE: the `///` line below is exactly the original text —
+    // deliberately NOT expanded — because schemars bakes every `///`
+    // doc comment into the generated CRD's `description:`, and
+    // `imagepipelines.pangea.pleme.io` is NOT in
+    // `scripts/crd-drift-baseline.txt` (unlike `infrastructuretemplates`),
+    // so a changed description here is live, un-baselined CRD-schema
+    // drift that fails `.github/workflows/crd-drift.yml` outright. See
+    // `ApprovalMode::kind` and `ApprovalModeKind` (below) for the full
+    // rationale instead — those aren't part of any CRD schema, so their
+    // doc comments are free to be as long as they need to be.
     /// Mode: "auto", "manual", or "webhook".
     #[serde(default = "default_approval_mode")]
     pub mode: String,
@@ -154,13 +164,43 @@ impl Default for ApprovalMode {
     }
 }
 
-impl ApprovalMode {
-    pub fn is_auto(&self) -> bool {
-        self.mode == "auto"
-    }
+/// Closed vocabulary for [`ApprovalMode::mode`]. Not the wire type
+/// (see that field's doc) — [`ApprovalMode::kind`] is the one place a
+/// caller converts the wire string into a value the compiler can
+/// exhaustively match on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalModeKind {
+    /// Apply immediately once a plan exists — no human/webhook gate.
+    Auto,
+    /// Wait for `status.deploy.approvedBy` to be set by a human.
+    Manual,
+    /// Declared in the vocabulary (`mode: "webhook"` is a documented,
+    /// schema-valid value) but not wired to any dispatch yet — no
+    /// code path reads `webhook_url`. Kept as its own variant (never
+    /// folded into Manual, and never treated as an unrecognized
+    /// value) so the controller can fail loudly with a message that
+    /// says exactly that, instead of quietly behaving like Manual and
+    /// hanging in AwaitingApproval forever with no operator signal.
+    Webhook,
+}
 
-    pub fn is_manual(&self) -> bool {
-        self.mode == "manual"
+impl ApprovalMode {
+    /// Parse `self.mode` into its typed vocabulary member.
+    ///
+    /// `Err(_)` carries an operator-facing message naming the actual
+    /// unrecognized value. The controller surfaces this as the
+    /// ImagePipeline's Failed-phase condition (see
+    /// `image_pipeline_controller::handle_planning`) instead of the
+    /// old behavior of silently sitting in AwaitingApproval forever.
+    pub fn kind(&self) -> Result<ApprovalModeKind, String> {
+        match self.mode.as_str() {
+            "auto" => Ok(ApprovalModeKind::Auto),
+            "manual" => Ok(ApprovalModeKind::Manual),
+            "webhook" => Ok(ApprovalModeKind::Webhook),
+            other => Err(format!(
+                "unrecognized approval.mode {other:?}; valid values are \"auto\", \"manual\", \"webhook\""
+            )),
+        }
     }
 }
 
@@ -500,4 +540,59 @@ pub struct HealthCheckResult {
     /// Error message if failed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mode(mode: &str) -> ApprovalMode {
+        ApprovalMode {
+            mode: mode.to_string(),
+            webhook_url: None,
+        }
+    }
+
+    #[test]
+    fn kind_recognizes_auto() {
+        assert_eq!(mode("auto").kind(), Ok(ApprovalModeKind::Auto));
+    }
+
+    #[test]
+    fn kind_recognizes_manual() {
+        assert_eq!(mode("manual").kind(), Ok(ApprovalModeKind::Manual));
+    }
+
+    #[test]
+    fn kind_recognizes_webhook_as_its_own_variant_not_manual() {
+        // FAILURE SCENARIO this regresses: before this fix the
+        // controller only ever asked `is_auto()`, so "webhook" — a
+        // real, documented, schema-valid value — fell into the same
+        // `else` branch as "manual" with no distinction and no error.
+        assert_eq!(mode("webhook").kind(), Ok(ApprovalModeKind::Webhook));
+        assert_ne!(mode("webhook").kind(), mode("manual").kind());
+    }
+
+    #[test]
+    fn kind_rejects_a_typo_instead_of_silently_becoming_manual() {
+        // FAILURE SCENARIO this regresses: `mode: "Auto"` (a plausible
+        // capitalization typo) or any other unrecognized string. Before
+        // this fix, `ApprovalMode::is_auto()` returning `false` was the
+        // ONLY signal the controller read, so a typo — exactly like
+        // "webhook" above — silently behaved like "manual" and the
+        // pipeline hung in AwaitingApproval forever with zero error.
+        let err = mode("Auto").kind().unwrap_err();
+        assert!(err.contains("Auto"), "error should name the bad value: {err}");
+        assert!(err.contains("auto") && err.contains("manual") && err.contains("webhook"));
+    }
+
+    #[test]
+    fn kind_is_never_ok_for_an_empty_string() {
+        assert!(mode("").kind().is_err());
+    }
+
+    #[test]
+    fn default_mode_is_manual_and_parses() {
+        assert_eq!(ApprovalMode::default().kind(), Ok(ApprovalModeKind::Manual));
+    }
 }
