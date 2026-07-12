@@ -2710,6 +2710,64 @@ async fn handle_applying(
         None
     };
 
+    // SAFETY GATE (2026-07-12): when imports ran, `plan_file` above is
+    // `None` — the apply call below runs a live refresh-and-apply with NO
+    // saved plan, so tofu decides its own action set at apply time,
+    // never re-shown to the human who approved `prior_drifts`. Confirmed
+    // live on camelot-eks: an import-triggered refresh discovered
+    // `aws_eks_cluster` needed `replace` (a computed-attribute artifact
+    // of the freshly-imported resource — the same purely-computed-field
+    // shape the 2026-07-12 SIXTH-INCIDENT `replace_because_tainted` bug
+    // had, but this time on a genuinely fresh import, not a stale taint
+    // marker), and `apply` executed it — destroying and recreating a
+    // production EKS cluster with zero human review of THAT specific
+    // action, even though the plan a human actually approved
+    // (`prior_drifts`) contained zero destroys. This is not a race —
+    // it fires deterministically whenever importHints exist and state
+    // is empty (i.e. every fresh-pod apply on this CR). Close the gap
+    // structurally: re-plan (read-only, mutates nothing) after imports
+    // settle, and refuse to apply if the fresh plan contains any
+    // destructive action (delete/replace) the ORIGINALLY APPROVED plan
+    // didn't already carry for that address. This enforces the exact
+    // same invariant `route_through_approval_gate` enforces before
+    // Applying is ever entered — closing the copy of that gap which
+    // reopens mid-Applying whenever imports occur. Tofu-executor path
+    // only (matches this CR's live executor; the magma path doesn't yet
+    // run imports through this same prepass).
+    if plan_file.is_none() && !imported_addresses.is_empty() {
+        let recheck = runner.plan(&workspace).await?;
+        if recheck.success {
+            let fresh_drifts = drift_details_from_tofu_show_json(&recheck.raw_show_json);
+            if let Some(escalation) =
+                find_unapproved_destructive_escalation(&prior_drifts, &fresh_drifts)
+            {
+                let msg = format!(
+                    "Applying refused: post-import refresh discovered a new {} \
+                     action on {} that was not in the approved plan. Parking at \
+                     Failed (the FSM's only legal edge out of Applying besides \
+                     Ready) so the existing self-heal path recomputes a fresh \
+                     plan for human review — never applying an action nobody \
+                     approved.",
+                    escalation.action, escalation.address
+                );
+                warn!(template = %template_name, %msg);
+                record_event(
+                    template,
+                    state,
+                    EventType::Warning,
+                    "UnapprovedEscalation",
+                    &msg,
+                )
+                .await;
+                update_phase_with_error(template, Phase::Failed, &msg, state).await?;
+                return Ok(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL));
+            }
+        }
+        // A failed recheck plan falls through to the existing apply call
+        // below, which surfaces the same failure through its own
+        // established error path — unchanged behavior on a plan failure.
+    }
+
     let mut result = executor
         .apply(&workspace.path, plan_file, true)
         .await?;
@@ -4611,6 +4669,62 @@ fn canonical_drift_fingerprint(drifts: &[DriftDetail]) -> String {
     entries.join("\n")
 }
 
+/// Extract `DriftDetail`s from a raw `tofu show -json` payload — the
+/// tofu-executor-only slice of `handle_planning`'s two-path drift
+/// extraction, reused by `handle_applying`'s post-import safety
+/// recheck (below). Empty input or a parse failure returns an empty
+/// list rather than propagating an error: the caller treats "no
+/// drift details available" as "cannot prove safety", which the
+/// caller's own fallback (fail closed, requeue to Planning) already
+/// handles correctly.
+fn drift_details_from_tofu_show_json(raw_show_json: &str) -> Vec<DriftDetail> {
+    if raw_show_json.is_empty() {
+        return Vec::new();
+    }
+    match Plan::from_json(raw_show_json) {
+        Ok(plan) => plan
+            .drift_details(50)
+            .into_iter()
+            .map(|d| DriftDetail {
+                address: d.address,
+                action: d.action,
+                risk: d.risk,
+                attributes: d.attributes,
+                policy_decision: None,
+                matched_policy: None,
+            })
+            .collect(),
+        Err(e) => {
+            warn!(error = %e, "post-import recheck: failed to parse plan JSON");
+            Vec::new()
+        }
+    }
+}
+
+/// Find the first entry in `fresh` whose action is destructive
+/// (`delete`/`replace`) and whose address either doesn't appear in
+/// `approved` at all, or appears there with a less severe action —
+/// i.e. a destructive action the human who reviewed `approved` never
+/// actually saw. Used by `handle_applying`'s post-import safety gate
+/// to refuse applying a plan the human never approved (see that call
+/// site's doc comment for the live incident this closes).
+fn find_unapproved_destructive_escalation<'a>(
+    approved: &[DriftDetail],
+    fresh: &'a [DriftDetail],
+) -> Option<&'a DriftDetail> {
+    fresh.iter().find(|f| {
+        let is_destructive = matches!(f.action.as_str(), "delete" | "replace");
+        if !is_destructive {
+            return false;
+        }
+        let approved_action_for_addr = approved
+            .iter()
+            .find(|a| a.address == f.address)
+            .map(|a| a.action.as_str());
+        !matches!(approved_action_for_addr, Some("delete") | Some("replace"))
+    })
+}
+
 #[cfg(test)]
 mod plan_approval_hash_tests {
     use super::plan_approval_hash;
@@ -4781,6 +4895,101 @@ mod canonical_drift_fingerprint_tests {
     fn empty_drift_list_is_stable() {
         assert_eq!(canonical_drift_fingerprint(&[]), canonical_drift_fingerprint(&[]));
         assert_eq!(canonical_drift_fingerprint(&[]), "");
+    }
+}
+
+#[cfg(test)]
+mod unapproved_destructive_escalation_tests {
+    use super::find_unapproved_destructive_escalation;
+    use crate::crd::DriftDetail;
+
+    fn drift(address: &str, action: &str) -> DriftDetail {
+        DriftDetail {
+            address: address.to_string(),
+            action: action.to_string(),
+            risk: "low".to_string(),
+            attributes: vec![],
+            policy_decision: None,
+            matched_policy: None,
+        }
+    }
+
+    // ── Live incident regression (2026-07-12): a human approved a plan
+    // with ZERO destroys ("+21 create") on camelot-eks. During Applying,
+    // `run_import_prepass` imported resources and dropped the cached
+    // plan file, so `tofu apply` ran a live refresh-and-apply that
+    // discovered `aws_eks_cluster` needed `replace` — never shown to
+    // the human — and executed it, destroying and recreating a
+    // production EKS cluster. This guard is what `handle_applying` now
+    // runs against the post-import recheck plan before ever applying it. ──
+
+    #[test]
+    fn a_replace_never_present_in_the_approved_plan_is_flagged() {
+        let approved = vec![
+            drift("aws_eks_node_group.system_ng", "create"),
+            drift("aws_iam_openid_connect_provider.oidc", "create"),
+        ];
+        let fresh = vec![
+            drift("aws_eks_cluster.camelot-eks", "replace"),
+            drift("aws_eks_node_group.system_ng", "create"),
+        ];
+
+        let escalation = find_unapproved_destructive_escalation(&approved, &fresh);
+        assert_eq!(
+            escalation.map(|d| d.address.as_str()),
+            Some("aws_eks_cluster.camelot-eks")
+        );
+    }
+
+    #[test]
+    fn a_delete_on_an_address_the_approved_plan_never_mentioned_is_flagged() {
+        let approved = vec![drift("aws_eks_node_group.system_ng", "create")];
+        let fresh = vec![
+            drift("aws_eks_node_group.system_ng", "create"),
+            drift("aws_vpc_endpoint.orphan", "delete"),
+        ];
+
+        assert!(find_unapproved_destructive_escalation(&approved, &fresh).is_some());
+    }
+
+    #[test]
+    fn a_replace_the_human_already_approved_for_that_address_is_not_flagged() {
+        // The approved plan itself already showed this exact replace —
+        // the human reviewed and approved it, so the recheck must not
+        // re-block an apply that matches what was granted.
+        let approved = vec![drift("aws_eks_cluster.camelot-eks", "replace")];
+        let fresh = vec![drift("aws_eks_cluster.camelot-eks", "replace")];
+
+        assert!(find_unapproved_destructive_escalation(&approved, &fresh).is_none());
+    }
+
+    #[test]
+    fn non_destructive_actions_are_never_flagged_regardless_of_approval() {
+        let approved: Vec<DriftDetail> = vec![];
+        let fresh = vec![
+            drift("aws_eks_addon.coredns", "create"),
+            drift("aws_eks_addon.kube_proxy", "update"),
+            drift("aws_eks_addon.vpc_cni", "noop"),
+        ];
+
+        assert!(find_unapproved_destructive_escalation(&approved, &fresh).is_none());
+    }
+
+    #[test]
+    fn a_create_downgraded_to_noop_after_import_is_not_flagged() {
+        // The common, safe case this gate must never block: an import
+        // turns a planned `create` into a no-op `matched`/`noop` — that's
+        // exactly what the import prepass is FOR, not an escalation.
+        let approved = vec![drift("aws_vpc.camelot-eks-vpc", "create")];
+        let fresh = vec![drift("aws_vpc.camelot-eks-vpc", "noop")];
+
+        assert!(find_unapproved_destructive_escalation(&approved, &fresh).is_none());
+    }
+
+    #[test]
+    fn empty_fresh_plan_is_never_flagged() {
+        let approved = vec![drift("aws_eks_cluster.camelot-eks", "create")];
+        assert!(find_unapproved_destructive_escalation(&approved, &[]).is_none());
     }
 }
 
