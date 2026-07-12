@@ -4598,7 +4598,7 @@ fn plan_approval_hash(plan_text: &str, state_bytes: Option<&[u8]>) -> String {
 /// noise while staying exactly as resource-specific as before: two
 /// plans that differ in WHICH resources change, WHAT action, or WHICH
 /// attributes changed still hash differently.
-fn canonical_drift_fingerprint(drifts: &[crate::executor::DriftDetail]) -> String {
+fn canonical_drift_fingerprint(drifts: &[DriftDetail]) -> String {
     let mut entries: Vec<String> = drifts
         .iter()
         .map(|d| {
@@ -4710,7 +4710,7 @@ mod plan_approval_hash_tests {
 #[cfg(test)]
 mod canonical_drift_fingerprint_tests {
     use super::canonical_drift_fingerprint;
-    use crate::executor::DriftDetail;
+    use crate::crd::DriftDetail;
 
     fn drift(address: &str, action: &str, attrs: &[&str]) -> DriftDetail {
         DriftDetail {
@@ -4718,6 +4718,8 @@ mod canonical_drift_fingerprint_tests {
             action: action.to_string(),
             risk: "low".to_string(),
             attributes: attrs.iter().map(|s| s.to_string()).collect(),
+            policy_decision: None,
+            matched_policy: None,
         }
     }
 
