@@ -565,7 +565,27 @@ async fn handle_applying(
         }
         Phase::Planning => {
             // If there's a pending plan and we're in auto-approve mode or the
-            // plan is already approved, approve it to proceed with apply
+            // plan is already approved, approve it to proceed with apply.
+            //
+            // SAFETY: never blindly approve whatever the template's CURRENT
+            // pending_plan_hash happens to be. The target InfrastructureTemplate
+            // re-plans on its own schedule (drift-detection cycles, a
+            // concurrent spec edit, ...) independently of this pipeline's
+            // lifecycle, and `update_pending_plan_hash` always nulls
+            // `approvedPlanHash` when it does (template/status.rs). If this
+            // pipeline sat in `AwaitingApproval` (or is mid-`Applying`) while
+            // that happened, the hash a human reviewed via `plan_summary` /
+            // this pipeline validated via `plan_assertions` back in
+            // `handle_planning` (captured as `status.deploy.plan_hash`) can
+            // silently diverge from the hash now pending on the template.
+            // Gate every auto-approval through `plan_hash_matches_reviewed`
+            // so an approval PATCH can only fire for the exact plan this
+            // pipeline actually captured — never a stranger plan that
+            // happens to be pending. This is the same bug family as the
+            // 2026-07-12 camelot-eks duplicate-VPC incident
+            // (docs/postmortems/2026-07-12-camelot-eks-state-wipe-duplicate-vpc.md),
+            // one hop over: a hash comparison gating a state-mutating action
+            // without the context needed to prove staleness.
             if let Some(ref status) = template.status {
                 if let Some(ref pending_hash) = status.pending_plan_hash {
                     let already_approved = status
@@ -575,23 +595,53 @@ async fn handle_applying(
                         .unwrap_or(false);
 
                     if !already_approved {
-                        // Auto-approve the plan on the template
-                        let approve_patch = serde_json::json!({
-                            "status": {
-                                "approvedPlanHash": pending_hash,
-                            }
-                        });
+                        let reviewed_hash = pipeline
+                            .status
+                            .as_ref()
+                            .and_then(|s| s.deploy.as_ref())
+                            .and_then(|d| d.plan_hash.as_deref());
 
-                        it_api
-                            .patch_status(
-                                template_name,
-                                &PatchParams::apply("pangea-operator"),
-                                &Patch::Merge(&approve_patch),
-                            )
-                            .await
-                            .map_err(Error::Kube)?;
+                        if plan_hash_matches_reviewed(pending_hash, reviewed_hash) {
+                            // Auto-approve the plan on the template — it is
+                            // provably the same plan this pipeline captured
+                            // and validated in `handle_planning`.
+                            let approve_patch = serde_json::json!({
+                                "status": {
+                                    "approvedPlanHash": pending_hash,
+                                }
+                            });
 
-                        info!("Auto-approved template plan");
+                            it_api
+                                .patch_status(
+                                    template_name,
+                                    &PatchParams::apply("pangea-operator"),
+                                    &Patch::Merge(&approve_patch),
+                                )
+                                .await
+                                .map_err(Error::Kube)?;
+
+                            info!("Auto-approved template plan");
+                        } else {
+                            // The template re-planned out from under this
+                            // pipeline. The pending hash no longer matches
+                            // the plan this pipeline reviewed — do NOT
+                            // approve it. Bounce back to Planning so the
+                            // NEW plan gets its own capture, its own
+                            // `plan_assertions` run, and (in manual mode) a
+                            // fresh human approval. Self-healing, never a
+                            // stuck state, and never a silent unreviewed
+                            // apply.
+                            warn!(
+                                pending_hash = %pending_hash,
+                                reviewed_hash = ?reviewed_hash,
+                                "Template re-planned while pipeline was mid-flight; \
+                                 pending plan hash no longer matches the reviewed plan. \
+                                 Re-entering Planning to re-validate before any approval."
+                            );
+                            update_phase(pipeline, ImagePipelinePhase::Planning, None, state)
+                                .await?;
+                            return Ok(Action::requeue(SHORT_REQUEUE_INTERVAL));
+                        }
                     }
                 }
             }
@@ -720,6 +770,29 @@ fn should_rollback(
                 })
         })
         .unwrap_or(false)
+}
+
+/// Whether the template's currently pending plan hash is the SAME plan
+/// this `ImagePipeline` captured (and, for manual approval, a human
+/// actually reviewed via `status.deploy.plan_summary`) back in
+/// `handle_planning`. `reviewed_hash = None` (no plan captured yet — or
+/// the pipeline never went through `handle_planning` at all) never
+/// matches; there is nothing to auto-approve against.
+///
+/// This is the ONE gate standing between "auto-approve whatever plan
+/// happens to be pending on the target template" (the bug: the target
+/// template can independently re-plan while this pipeline sits in
+/// `AwaitingApproval`/`Applying`, silently invalidating the reviewed
+/// hash) and "auto-approve exactly the plan this pipeline validated" —
+/// every approval decision in `handle_applying` must route through it.
+///
+/// Tier: only-mitigated (a runtime equality check gating the approval
+/// PATCH), not truly-unrepresentable — the mismatch is live cluster
+/// state fetched over the wire, not something the type system can rule
+/// out at compile time. It is structured as the sole decision point so
+/// no future call site can accidentally skip it.
+fn plan_hash_matches_reviewed(pending_hash: &str, reviewed_hash: Option<&str>) -> bool {
+    reviewed_hash == Some(pending_hash)
 }
 
 fn validate_plan_assertion(
@@ -1035,7 +1108,9 @@ mod tests {
 
     // ── D4 deep tests — pure helper coverage ──
 
-    use super::{has_finalizer, validate_plan_assertion, FINALIZER_NAME};
+    use super::{
+        has_finalizer, plan_hash_matches_reviewed, validate_plan_assertion, FINALIZER_NAME,
+    };
     use crate::crd::{PlanAssertion, PlanAssertionRule, ResourceSummary};
 
     fn assertion_with_max_destroyed(max: u32) -> PlanAssertion {
@@ -1100,6 +1175,40 @@ mod tests {
         let err = validate_plan_assertion(&a, &r).unwrap_err().to_string();
         assert!(err.contains("6"));
         assert!(err.contains("max 5"));
+    }
+
+    // ── regression: image_pipeline_controller.rs:566 stale-plan auto-approval
+    //    (the plan a human reviewed must be the SAME plan that gets applied) ──
+
+    #[test]
+    fn plan_hash_matches_reviewed_approves_the_exact_reviewed_plan() {
+        // The happy path: the template's currently pending plan is exactly
+        // the one this pipeline captured in handle_planning.
+        assert!(plan_hash_matches_reviewed("H1", Some("H1")));
+    }
+
+    #[test]
+    fn plan_hash_matches_reviewed_refuses_a_stranger_plan() {
+        // FAILURE SCENARIO this regresses: an ImagePipeline captures plan
+        // H1 in handle_planning (shown to a human via plan_summary,
+        // validated via plan_assertions) and sits in AwaitingApproval. The
+        // target InfrastructureTemplate independently re-plans (a drift
+        // cycle, a concurrent spec edit) to a brand-new plan H2 — nulling
+        // approvedPlanHash per update_pending_plan_hash. The human then
+        // approves the ImagePipeline (believing they approved H1). On the
+        // OLD code, handle_applying's Phase::Planning arm auto-approved
+        // whatever was CURRENTLY pending (H2) without ever comparing it to
+        // the reviewed hash — silently applying an unreviewed plan. The
+        // gate must refuse this.
+        assert!(!plan_hash_matches_reviewed("H2", Some("H1")));
+    }
+
+    #[test]
+    fn plan_hash_matches_reviewed_refuses_when_nothing_was_ever_reviewed() {
+        // No plan_hash captured yet (pipeline never completed
+        // handle_planning for this cycle) — never auto-approve against a
+        // void.
+        assert!(!plan_hash_matches_reviewed("H1", None));
     }
 
     #[test]
