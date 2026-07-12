@@ -130,7 +130,23 @@ impl WorkspaceManager {
         })
     }
 
-    /// Delete a workspace.
+    /// Delete a workspace — the WHOLE directory, state included.
+    ///
+    /// This is the CR-lifecycle full-wipe primitive: called from the
+    /// `Destroying` phase handler AFTER a real `tofu destroy` has
+    /// already run against that state (`template_controller.rs`'s
+    /// `handle_destroying`). It is NOT a cache-invalidation primitive
+    /// — do not call this to drop a stale `_repo` clone or any other
+    /// "make the next reconcile start fresh" need. Use
+    /// [`Self::invalidate_repo_cache`] for that; it is scoped to the
+    /// `_repo` subdirectory only and can never touch
+    /// `terraform.tfstate` / `.backup`. Reusing this method for cache
+    /// invalidation is exactly the bug documented in
+    /// `docs/postmortems/2026-07-12-camelot-eks-state-wipe-duplicate-vpc.md`'s
+    /// second code path: a still-Ready template whose compile starts
+    /// failing (e.g. a bad commit on `gitRepository`) would have its
+    /// live-applied state silently deleted by the escalation ladder's
+    /// `RefreshSource` handler, five minutes into the failure.
     pub async fn delete_workspace(&self, namespace: &str, name: &str) -> Result<()> {
         let workspace_path = self.base_dir.join(namespace).join(name);
 
@@ -143,6 +159,38 @@ impl WorkspaceManager {
                 namespace = %namespace,
                 name = %name,
                 "Workspace deleted"
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Invalidate the cached `_repo` git clone for a workspace,
+    /// leaving every other file — `terraform.tfstate`,
+    /// `terraform.tfstate.backup`, `.terraform`, rendered config —
+    /// untouched.
+    ///
+    /// This is the ONLY primitive `WorkspaceCacheInvalidator`'s real
+    /// (`WorkspaceManager`) implementation may call. Unlike
+    /// [`Self::delete_workspace`], the deletion target here is not a
+    /// parameter — it is always `base_dir/{namespace}/{name}/_repo` —
+    /// so there is no path through this function that can reach
+    /// `terraform.tfstate` or any sibling file, regardless of what a
+    /// future caller passes in. Idempotent: a missing `_repo` is a
+    /// no-op, matching `WorkspaceCacheInvalidator::invalidate`'s
+    /// contract.
+    pub async fn invalidate_repo_cache(&self, namespace: &str, name: &str) -> Result<()> {
+        let repo_dir = self.base_dir.join(namespace).join(name).join("_repo");
+
+        if repo_dir.exists() {
+            fs::remove_dir_all(&repo_dir)
+                .await
+                .map_err(|e| Error::Io(e))?;
+
+            info!(
+                namespace = %namespace,
+                name = %name,
+                "Workspace _repo cache invalidated (state preserved)"
             );
         }
 
@@ -442,6 +490,65 @@ mod tests {
             fs::read_to_string(ws.state_path()).await.unwrap(),
             "real-state-bytes"
         );
+    }
+
+    // ── Bug 2 regression: invalidate_repo_cache must never delete state ──
+    //
+    // See `docs/postmortems/2026-07-12-camelot-eks-state-wipe-duplicate-vpc.md`.
+    // `WorkspaceCacheInvalidator for WorkspaceManager` used to call
+    // `delete_workspace`, which removes the WHOLE workspace directory.
+    // `invalidate_repo_cache` is the fix: its deletion target is not a
+    // parameter, it is always `.../_repo`, so state can never be in its
+    // reach. These tests exercise `WorkspaceManager` directly (not just
+    // `Workspace`) since the bug lived in the manager-level method the
+    // real invalidator calls — the end-to-end version through the trait
+    // object lives in `controller::escalation_handlers::tests`.
+
+    #[tokio::test]
+    async fn invalidate_repo_cache_removes_repo_but_preserves_state() {
+        let base = tempfile::tempdir().expect("create temp base dir");
+        let wm = WorkspaceManager::new(base.path().to_path_buf());
+        let ws = wm
+            .get_or_create("ns", "tmpl")
+            .await
+            .expect("create workspace");
+
+        fs::write(ws.state_path(), r#"{"version":4,"serial":9}"#)
+            .await
+            .expect("seed state file");
+        fs::write(ws.state_backup_path(), r#"{"version":4,"serial":8}"#)
+            .await
+            .expect("seed backup file");
+        let repo_dir = ws.path.join("_repo");
+        fs::create_dir_all(&repo_dir).await.expect("seed _repo dir");
+        fs::write(repo_dir.join("cloned.tf"), "source").await.expect("seed repo file");
+
+        wm.invalidate_repo_cache("ns", "tmpl")
+            .await
+            .expect("invalidate_repo_cache must succeed");
+
+        assert!(!repo_dir.exists(), "_repo must be removed");
+        assert!(
+            ws.state_path().exists(),
+            "terraform.tfstate must survive — this method must be structurally \
+             incapable of reaching it"
+        );
+        assert_eq!(
+            fs::read_to_string(ws.state_path()).await.unwrap(),
+            r#"{"version":4,"serial":9}"#
+        );
+        assert!(ws.state_backup_path().exists(), "terraform.tfstate.backup must survive");
+    }
+
+    #[tokio::test]
+    async fn invalidate_repo_cache_with_no_repo_dir_yet_is_not_an_error() {
+        let base = tempfile::tempdir().expect("create temp base dir");
+        let wm = WorkspaceManager::new(base.path().to_path_buf());
+        wm.get_or_create("ns", "tmpl").await.expect("create workspace");
+
+        let result = wm.invalidate_repo_cache("ns", "tmpl").await;
+
+        assert!(result.is_ok(), "invalidating a never-cloned workspace must be a no-op, not an error");
     }
 
     // ── read_state_bytes ────────────────────────────────────────────

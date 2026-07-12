@@ -175,14 +175,23 @@ pub trait WorkspaceCacheInvalidator: Send + Sync {
 }
 
 /// Blanket impl — production wires the real `WorkspaceManager`.
-/// `delete_workspace` is idempotent (it checks existence first),
-/// matching the trait's contract.
+///
+/// MUST call `invalidate_repo_cache`, never `delete_workspace`.
+/// `delete_workspace` removes the WHOLE workspace directory —
+/// `terraform.tfstate` and `.backup` included — and is reserved for
+/// the CR-deletion lifecycle (see its doc comment). This handler
+/// fires from the escalation ladder's `RefreshSource` rung any time a
+/// previously-Ready template's compile starts failing (e.g. a bad
+/// commit on `gitRepository`), which is exactly the moment real,
+/// live-applied Terraform state is sitting in this workspace and must
+/// survive. `invalidate_repo_cache` is idempotent and structurally
+/// scoped to the `_repo` subdirectory only — see its doc comment.
 #[async_trait]
 impl WorkspaceCacheInvalidator for crate::executor::WorkspaceManager {
     async fn invalidate(&self, namespace: &str, name: &str) -> anyhow::Result<()> {
-        self.delete_workspace(namespace, name)
+        self.invalidate_repo_cache(namespace, name)
             .await
-            .map_err(|e| anyhow::anyhow!("WorkspaceManager::delete_workspace: {e}"))
+            .map_err(|e| anyhow::anyhow!("WorkspaceManager::invalidate_repo_cache: {e}"))
     }
 }
 
@@ -512,5 +521,83 @@ mod tests {
                 "registry's handler for {action:?} reports its own action mismatched"
             );
         }
+    }
+
+    // ── Regression: real WorkspaceCacheInvalidator must never touch state ──
+    //
+    // The prior `WorkspaceCacheInvalidator for WorkspaceManager` blanket
+    // impl called `delete_workspace`, which `fs::remove_dir_all()`s the
+    // WHOLE workspace directory. That handler is live-wired in
+    // production (`ControllerState::new` →
+    // `EscalationHandlerRegistry::pangea_default(workspace_manager)`)
+    // and fires from `handle_compile_failure` any time a previously-
+    // Ready template's compile starts failing for ~5 minutes — exactly
+    // when real, live-applied Terraform state is sitting in that
+    // workspace. This test builds the REAL `WorkspaceManager` (not a
+    // stub) against a temp dir, seeds it with `terraform.tfstate` +
+    // `.backup` + a populated `_repo` clone the way a genuinely-applied
+    // template would have, invokes the invalidator exactly as
+    // `RefreshSourceHandler` does, and asserts state survives. On the
+    // pre-fix code this test fails: `terraform.tfstate` is gone after
+    // `invalidate()`.
+    #[tokio::test]
+    async fn real_workspace_manager_invalidator_preserves_state_and_only_clears_repo_cache() {
+        use crate::executor::WorkspaceManager;
+
+        let base = tempfile::tempdir().expect("create temp base dir");
+        let wm = WorkspaceManager::new(base.path().to_path_buf());
+        let ws = wm
+            .get_or_create("test-ns", "test-template")
+            .await
+            .expect("create workspace");
+
+        // Seed exactly what a live, previously-applied template's
+        // workspace looks like: real state + its tofu backup + a
+        // populated `_repo` clone (the thing the handler is actually
+        // meant to invalidate).
+        tokio::fs::write(ws.state_path(), br#"{"version":4,"serial":7}"#)
+            .await
+            .expect("seed terraform.tfstate");
+        tokio::fs::write(ws.state_backup_path(), br#"{"version":4,"serial":6}"#)
+            .await
+            .expect("seed terraform.tfstate.backup");
+        let repo_dir = ws.path.join("_repo");
+        tokio::fs::create_dir_all(&repo_dir)
+            .await
+            .expect("seed _repo dir");
+        tokio::fs::write(repo_dir.join("main.tf.json.tmpl"), b"stale-source")
+            .await
+            .expect("seed _repo contents");
+
+        // Exercise the SAME trait object production wires — the
+        // blanket impl, not a direct call to a specific method — so a
+        // future re-wiring of `invalidate()` to some other unsafe
+        // primitive is caught by this test too.
+        let invalidator: Arc<dyn WorkspaceCacheInvalidator> = Arc::new(wm);
+        invalidator
+            .invalidate("test-ns", "test-template")
+            .await
+            .expect("invalidate must succeed");
+
+        assert!(
+            ws.state_path().exists(),
+            "terraform.tfstate must survive RefreshSource cache invalidation \
+             (this is the 2026-07-12 camelot-eks duplicate-VPC bug's second \
+             code path — a live template's state must never be wiped just \
+             because its source stopped compiling)"
+        );
+        assert_eq!(
+            tokio::fs::read(ws.state_path()).await.unwrap(),
+            br#"{"version":4,"serial":7}"#,
+            "state CONTENT must be untouched, not just the filename surviving"
+        );
+        assert!(
+            ws.state_backup_path().exists(),
+            "terraform.tfstate.backup must also survive"
+        );
+        assert!(
+            !repo_dir.exists(),
+            "the cached _repo clone IS what invalidate() is meant to drop"
+        );
     }
 }
