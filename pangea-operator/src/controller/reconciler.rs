@@ -27,16 +27,35 @@ pub const ERROR_REQUEUE_INTERVAL: Duration = Duration::from_secs(60);
 /// more than ~10 active templates per controller.
 pub const DEFAULT_RECONCILE_WORKERS: usize = 4;
 
-/// Read `PANGEA_RECONCILE_WORKERS` from the environment, falling back
-/// to `DEFAULT_RECONCILE_WORKERS`. Clamps the value to the inclusive
-/// range [1, 32] — 0 would deadlock the stream and >32 is unlikely
-/// to be desired (would need significant infra-side rework first).
+/// Clamp a raw worker-count value to the safe inclusive range [1, 32],
+/// falling back to [`DEFAULT_RECONCILE_WORKERS`] when `raw` is `None`
+/// (env var unset or failed to parse).
+///
+/// 0 would deadlock `for_each_concurrent` (it would never make
+/// progress); >32 is unlikely to be desired (would need significant
+/// infra-side rework first — PG pool sizing, tofu workspace dir
+/// contention).
+///
+/// Pure — no I/O, no process-global state — so callers (including
+/// tests) pass a plain `Option<usize>` instead of round-tripping
+/// through `std::env`. This is the load-bearing half of the split:
+/// [`reconcile_workers_from_env`] performs the one environment read
+/// and hands the raw value here.
+pub fn clamp_reconcile_workers(raw: Option<usize>) -> usize {
+    raw.unwrap_or(DEFAULT_RECONCILE_WORKERS).clamp(1, 32)
+}
+
+/// Read `PANGEA_RECONCILE_WORKERS` from the environment and clamp it
+/// via [`clamp_reconcile_workers`]. This is the only place in the
+/// crate that reads this env var; call it once at startup (see
+/// `TemplateController::run`) and thread the resulting `usize`
+/// through as a plain value from there on — never re-read the
+/// environment mid-run.
 pub fn reconcile_workers_from_env() -> usize {
-    let v = std::env::var("PANGEA_RECONCILE_WORKERS")
+    let raw = std::env::var("PANGEA_RECONCILE_WORKERS")
         .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(DEFAULT_RECONCILE_WORKERS);
-    v.clamp(1, 32)
+        .and_then(|s| s.parse::<usize>().ok());
+    clamp_reconcile_workers(raw)
 }
 
 /// Action to take after reconciliation.
@@ -518,44 +537,55 @@ mod tests {
     // (apply ~2s, requeue 30s) ran on the only worker, starving
     // pleme-io-opensource for hours. Switching to
     // for_each_concurrent with PANGEA_RECONCILE_WORKERS controls the
-    // parallelism. These tests exercise the env-var parsing layer.
+    // parallelism.
+    //
+    // These tests call the pure `clamp_reconcile_workers` directly
+    // with literal `Option<usize>` inputs — no `std::env::set_var` /
+    // `remove_var`. Root cause of a 2026-07 CI flake
+    // (`workers_clamped_to_min_one` observed `left: 4, right: 1`
+    // under `cargo test --workspace`'s default parallel execution):
+    // `std::env` is process-global, so N tests in this module setting
+    // and clearing the same `PANGEA_RECONCILE_WORKERS` key raced each
+    // other's reads — no amount of ordering within a single test body
+    // fixes a race between *different* test threads. The fix is
+    // structural, not a lock: the function under test no longer
+    // touches the environment at all, so there is nothing left to
+    // race, for these tests or any future ones.
 
     #[test]
-    fn workers_default_when_env_unset() {
-        std::env::remove_var("PANGEA_RECONCILE_WORKERS");
-        assert_eq!(reconcile_workers_from_env(), DEFAULT_RECONCILE_WORKERS);
+    fn workers_default_when_raw_none() {
+        assert_eq!(clamp_reconcile_workers(None), DEFAULT_RECONCILE_WORKERS);
     }
 
     #[test]
     fn workers_clamped_to_min_one() {
         // 0 would deadlock for_each_concurrent (it would never make
         // progress) — clamp to at least 1 to keep the operator alive.
-        std::env::set_var("PANGEA_RECONCILE_WORKERS", "0");
-        assert_eq!(reconcile_workers_from_env(), 1);
-        std::env::remove_var("PANGEA_RECONCILE_WORKERS");
+        assert_eq!(clamp_reconcile_workers(Some(0)), 1);
     }
 
     #[test]
     fn workers_clamped_to_max_thirty_two() {
         // 32 is the upper guard. Larger values would need infra-side
         // rework (PG pool sizing, tofu workspace dir contention).
-        std::env::set_var("PANGEA_RECONCILE_WORKERS", "1000");
-        assert_eq!(reconcile_workers_from_env(), 32);
-        std::env::remove_var("PANGEA_RECONCILE_WORKERS");
+        assert_eq!(clamp_reconcile_workers(Some(1000)), 32);
     }
 
     #[test]
     fn workers_honors_valid_value() {
-        std::env::set_var("PANGEA_RECONCILE_WORKERS", "8");
-        assert_eq!(reconcile_workers_from_env(), 8);
-        std::env::remove_var("PANGEA_RECONCILE_WORKERS");
+        assert_eq!(clamp_reconcile_workers(Some(8)), 8);
     }
 
     #[test]
     fn workers_falls_back_on_garbage() {
-        std::env::set_var("PANGEA_RECONCILE_WORKERS", "not-a-number");
-        assert_eq!(reconcile_workers_from_env(), DEFAULT_RECONCILE_WORKERS);
-        std::env::remove_var("PANGEA_RECONCILE_WORKERS");
+        // "not-a-number" never reaches `clamp_reconcile_workers` in
+        // production — `reconcile_workers_from_env`'s `.parse().ok()`
+        // turns a bad string into `None` before calling here. Exercise
+        // that boundary directly instead of round-tripping it through
+        // an env var.
+        let raw: Option<usize> = "not-a-number".parse().ok();
+        assert_eq!(raw, None);
+        assert_eq!(clamp_reconcile_workers(raw), DEFAULT_RECONCILE_WORKERS);
     }
 
     #[test]
@@ -564,5 +594,38 @@ mod tests {
         // doesn't dominate, low enough not to slam tofu/PG. Pin the
         // value so a future change is intentional.
         assert_eq!(DEFAULT_RECONCILE_WORKERS, 4);
+    }
+
+    // ── The one test that still touches the environment ───────────
+    //
+    // Everything above proves the clamping algebra without touching
+    // `std::env`. This test is the sole remaining check that
+    // `reconcile_workers_from_env` — the thin wrapper that actually
+    // reads `PANGEA_RECONCILE_WORKERS` at startup — wires the real
+    // entry point through to `clamp_reconcile_workers` correctly. It
+    // is the only test in this module (or file) that mutates process
+    // env, and is guarded by a local mutex so it can never race a
+    // sibling — matching the manual-mutex-guard pattern already used
+    // for this same reason in `config.rs` (no `serial_test` dependency
+    // needed for a single test).
+    static ENV_VAR_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn reconcile_workers_from_env_reads_and_clamps_the_real_env_var() {
+        let _guard = ENV_VAR_TEST_GUARD
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+        std::env::remove_var("PANGEA_RECONCILE_WORKERS");
+        assert_eq!(reconcile_workers_from_env(), DEFAULT_RECONCILE_WORKERS);
+
+        std::env::set_var("PANGEA_RECONCILE_WORKERS", "8");
+        assert_eq!(reconcile_workers_from_env(), 8);
+
+        std::env::set_var("PANGEA_RECONCILE_WORKERS", "1000");
+        assert_eq!(reconcile_workers_from_env(), 32);
+
+        std::env::remove_var("PANGEA_RECONCILE_WORKERS");
+        assert_eq!(reconcile_workers_from_env(), DEFAULT_RECONCILE_WORKERS);
     }
 }
