@@ -677,6 +677,115 @@ fn to_universal_plan(plan: &magma_types::Plan) -> magma_converge::Plan {
     magma_converge::Plan::new("terraform", changes)
 }
 
+/// Drive `lifecycle` through `Applying -> Verifying -> final_phase`,
+/// first resetting through the one path `magma_fsm`'s static transition
+/// table guarantees is legal from EVERY phase: `X -> Idle -> Planning`
+/// (the unconditional `(_, Idle) => true` catch-all + the unconditional
+/// `(Idle, Planning)` / `(Planning, Applying)` arms — see the vendored
+/// `magma-fsm::is_transition_allowed` table). The reset is skipped when
+/// `current` is already `Planning`/`Approving`, the two phases that can
+/// enter `Applying` directly.
+///
+/// BUG THIS CLOSES: `MagmaExecutor::apply()` can legitimately run more
+/// than once per reconcile tick — the stale-plan self-heal retry
+/// (`template_controller`) and the conflict-resolution import+re-apply
+/// loop (`controller::conflict::resolve_conflicts_post_apply`) both call
+/// `apply()` again within the same tick. Each call re-loads the PRIOR
+/// call's persisted bundle and its `lifecycle.current`, which can
+/// legally be `Stable`, `Failed`, `Verifying`, `Retrying`, or (after a
+/// crash-restart) `Applying`/`Refused` — none of which
+/// `magma_fsm::is_transition_allowed` permits transitioning directly
+/// into `Applying` from. Before this fix, the three transition attempts
+/// were silently discarded via `let _ =`, so e.g. a `Failed`-phase
+/// bundle made every subsequent transition illegal + silently dropped,
+/// freezing `lifecycle.current` at `"failed"` forever even when a later
+/// retry in the SAME reconcile tick actually converged. That stale
+/// value flows straight into `status.lastCycle.lifecyclePhase` — the
+/// operator's primary "declare and observe" surface.
+///
+/// Tier: only-mitigated. The reset makes every `.transition()` call
+/// below provably succeed against the CURRENT `magma_fsm` transition
+/// graph (verified by reading `magma-fsm/src/lib.rs`), but `magma_fsm`
+/// is an external crate this repo doesn't own, so the guarantee is a
+/// runtime invariant, not a compile-time one. Any future divergence
+/// between this invariant and magma-fsm's real graph now surfaces as a
+/// loud `tracing::error!` instead of a silently-stale status field.
+fn advance_lifecycle_through_apply(
+    lifecycle: &mut magma_fsm::LifecycleState,
+    plan_phase_id: magma_converge::PlanId,
+    final_phase: magma_fsm::Phase,
+    final_reason: &str,
+) {
+    if !matches!(
+        lifecycle.current,
+        magma_fsm::Phase::Planning | magma_fsm::Phase::Approving
+    ) {
+        if lifecycle.current != magma_fsm::Phase::Idle {
+            if let Err(e) = lifecycle.transition(
+                magma_fsm::Phase::Idle,
+                None,
+                "magma_executor::apply (reset before re-entrant apply)",
+            ) {
+                tracing::error!(
+                    error = %e,
+                    from = ?lifecycle.current,
+                    "magma_executor::apply: lifecycle reset to Idle failed — magma_fsm's \
+                     transition graph no longer matches this code's invariant; \
+                     lifecycle_phase in status will be stale"
+                );
+            }
+        }
+        if let Err(e) = lifecycle.transition(
+            magma_fsm::Phase::Planning,
+            None,
+            "magma_executor::apply (synthesized planning)",
+        ) {
+            tracing::error!(
+                error = %e,
+                from = ?lifecycle.current,
+                "magma_executor::apply: lifecycle transition to Planning failed — \
+                 magma_fsm's transition graph no longer matches this code's invariant; \
+                 lifecycle_phase in status will be stale"
+            );
+        }
+    }
+    if let Err(e) = lifecycle.transition(
+        magma_fsm::Phase::Applying,
+        Some(plan_phase_id.clone()),
+        "magma_executor::apply",
+    ) {
+        tracing::error!(
+            error = %e,
+            from = ?lifecycle.current,
+            to = "Applying",
+            "magma_executor::apply: lifecycle transition failed after reset — \
+             lifecycle_phase in status will be stale"
+        );
+    }
+    if let Err(e) = lifecycle.transition(
+        magma_fsm::Phase::Verifying,
+        Some(plan_phase_id.clone()),
+        "post-apply verification",
+    ) {
+        tracing::error!(
+            error = %e,
+            from = ?lifecycle.current,
+            to = "Verifying",
+            "magma_executor::apply: lifecycle transition failed after reset — \
+             lifecycle_phase in status will be stale"
+        );
+    }
+    if let Err(e) = lifecycle.transition(final_phase, Some(plan_phase_id), final_reason) {
+        tracing::error!(
+            error = %e,
+            from = ?lifecycle.current,
+            to = ?final_phase,
+            "magma_executor::apply: lifecycle transition to final phase failed after reset — \
+             lifecycle_phase in status will be stale"
+        );
+    }
+}
+
 /// Project a `magma_types::Plan` into the executor-agnostic
 /// [`PlannedChange`] border for import discovery. Renders each address
 /// as `{type}.{name}` — byte-identical to `to_universal_plan` (above)
@@ -1093,30 +1202,19 @@ where
                 .and_then(|b| serde_json::from_slice::<magma_bundle::Bundle>(b).ok()),
             None => None,
         };
+        // `prev_bundle`'s lifecycle can be ANY phase here — including
+        // one left behind by an earlier `apply()` call in this SAME
+        // reconcile tick (self-heal retry / conflict-resolution
+        // re-apply). `advance_lifecycle_through_apply` resets through
+        // the universally-legal `Idle -> Planning` path before
+        // attempting `Applying` whenever `current` isn't already a
+        // phase that can enter `Applying` directly — see its doc
+        // comment for the full failure mode this closes.
         let mut lifecycle = match prev_bundle {
             Some(prev) => prev.lifecycle,
-            None => {
-                // No prior plan-stage bundle — treat as Idle start.
-                let mut s = magma_fsm::LifecycleState::new();
-                let _ = s.transition(
-                    magma_fsm::Phase::Planning,
-                    None,
-                    "magma_executor::apply (synthesized planning)",
-                );
-                s
-            }
+            None => magma_fsm::LifecycleState::new(),
         };
         let plan_phase_id = magma_converge::PlanId(hex::encode(outcome.plan_id.0));
-        let _ = lifecycle.transition(
-            magma_fsm::Phase::Applying,
-            Some(plan_phase_id.clone()),
-            "magma_executor::apply",
-        );
-        let _ = lifecycle.transition(
-            magma_fsm::Phase::Verifying,
-            Some(plan_phase_id.clone()),
-            "post-apply verification",
-        );
         let final_phase = if outcome.failed.is_empty() {
             magma_fsm::Phase::Stable
         } else {
@@ -1127,9 +1225,10 @@ where
         } else {
             "apply produced failed changes"
         };
-        let _ = lifecycle.transition(
+        advance_lifecycle_through_apply(
+            &mut lifecycle,
+            plan_phase_id.clone(),
             final_phase,
-            Some(plan_phase_id.clone()),
             final_reason,
         );
 
@@ -2213,6 +2312,125 @@ BUNDLED WITH
         assert_eq!(bundle.lifecycle.current, magma_fsm::Phase::Stable);
         assert!(bundle.outcome.is_some(), "post-apply bundle should carry an Outcome");
         assert!(bundle.fully_succeeded(), "post-apply bundle.fully_succeeded()");
+    }
+
+    // ── Regression: `advance_lifecycle_through_apply` recovers from
+    //    every re-entrant starting phase ─────────────────────────────
+    //
+    // `MagmaExecutor::apply()` can be called more than once in a
+    // single reconcile tick (the stale-plan self-heal retry in
+    // `template_controller`, and the conflict-resolution import+
+    // re-apply loop in `controller::conflict`). Each call re-loads
+    // the PRIOR call's persisted `lifecycle.current`, which can be
+    // ANY phase -- not just the `Planning`/`Approving` states that
+    // `magma_fsm::is_transition_allowed` permits transitioning
+    // directly into `Applying` from. Before the fix, the three
+    // `.transition()` calls in `apply()` silently discarded their
+    // `Err` via `let _ =`, so a re-entrant call starting from e.g.
+    // `Failed` could never reach `Applying`/`Verifying`/`Stable`
+    // again -- `lifecycle.current` froze at `"failed"` forever, even
+    // when the retry actually converged, and that stale value flows
+    // straight into `status.lastCycle.lifecyclePhase`.
+
+    #[test]
+    fn advance_lifecycle_through_apply_recovers_from_prior_failed_phase() {
+        let mut lifecycle = magma_fsm::LifecycleState::new();
+        // Drive it to Failed via the only legal path, simulating a
+        // first apply() call in this reconcile tick that failed.
+        lifecycle
+            .transition(magma_fsm::Phase::Planning, None, "first apply: plan")
+            .unwrap();
+        lifecycle
+            .transition(magma_fsm::Phase::Applying, None, "first apply: applying")
+            .unwrap();
+        lifecycle
+            .transition(magma_fsm::Phase::Failed, None, "first apply: transient failure")
+            .unwrap();
+        assert_eq!(lifecycle.current, magma_fsm::Phase::Failed);
+
+        // Second apply() call in the SAME reconcile tick (e.g. the
+        // stale-plan self-heal retry) -- this time it converges.
+        advance_lifecycle_through_apply(
+            &mut lifecycle,
+            magma_converge::PlanId("retry-plan".into()),
+            magma_fsm::Phase::Stable,
+            "apply succeeded; state converged",
+        );
+
+        // Before the fix: `let _ =` silently dropped every transition
+        // attempted from `Failed`, so `lifecycle.current` stayed
+        // `Failed` here -- this assertion would have failed. After
+        // the fix: the guaranteed `Failed -> Idle -> Planning ->
+        // Applying -> Verifying -> Stable` reset path lands on the
+        // TRUE outcome of this second, successful apply.
+        assert_eq!(
+            lifecycle.current,
+            magma_fsm::Phase::Stable,
+            "a converged retry must not stay stuck at a stale prior Failed phase"
+        );
+    }
+
+    #[test]
+    fn advance_lifecycle_through_apply_recovers_from_every_re_entrant_phase() {
+        // Every phase `magma_fsm::Phase` defines is a phase a
+        // re-loaded `prev_bundle.lifecycle.current` could legally be
+        // (Idle only via `LifecycleState::new()`, which the `None`
+        // branch already covers). Prove the helper reaches the
+        // requested final phase from every one of them, not just the
+        // originally-reported `Failed` case.
+        for start in [
+            magma_fsm::Phase::Idle,
+            magma_fsm::Phase::Planning,
+            magma_fsm::Phase::Approving,
+            magma_fsm::Phase::Applying,
+            magma_fsm::Phase::Verifying,
+            magma_fsm::Phase::Stable,
+            magma_fsm::Phase::Failed,
+            magma_fsm::Phase::Retrying,
+            magma_fsm::Phase::Refused,
+        ] {
+            let mut lifecycle = magma_fsm::LifecycleState {
+                current: start,
+                entered_at: chrono::Utc::now(),
+                history: vec![],
+            };
+            advance_lifecycle_through_apply(
+                &mut lifecycle,
+                magma_converge::PlanId(format!("plan-from-{start:?}")),
+                magma_fsm::Phase::Stable,
+                "apply succeeded; state converged",
+            );
+            assert_eq!(
+                lifecycle.current,
+                magma_fsm::Phase::Stable,
+                "re-entrant apply starting from {start:?} must reach Stable, not get stuck"
+            );
+        }
+    }
+
+    #[test]
+    fn advance_lifecycle_through_apply_skips_reset_when_already_reachable() {
+        // When `current` is already `Planning` (the normal single-shot
+        // path, e.g. right after `plan()`), no reset hop through Idle
+        // is needed -- preserves the existing 3-transition-per-apply
+        // history shape asserted by
+        // `apply_walks_lifecycle_to_stable_and_re_emits_bundle`.
+        let mut lifecycle = magma_fsm::LifecycleState::new();
+        lifecycle
+            .transition(magma_fsm::Phase::Planning, None, "plan()")
+            .unwrap();
+        assert_eq!(lifecycle.len(), 1);
+
+        advance_lifecycle_through_apply(
+            &mut lifecycle,
+            magma_converge::PlanId("p".into()),
+            magma_fsm::Phase::Stable,
+            "apply succeeded; state converged",
+        );
+
+        assert_eq!(lifecycle.current, magma_fsm::Phase::Stable);
+        // Applying, Verifying, Stable -- no extra Idle/Planning reset hop.
+        assert_eq!(lifecycle.len(), 4);
     }
 
     #[tokio::test]
