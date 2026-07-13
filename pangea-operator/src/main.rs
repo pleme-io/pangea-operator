@@ -112,6 +112,14 @@ async fn main() -> Result<()> {
     // Initialize tracing
     init_tracing()?;
 
+    // One-shot schema-migration mode (theory/MAGMA-POSTGRES-LIFECYCLE.md
+    // §1, M1). Checked right after tracing so failures log normally
+    // rather than needing clean-stdout redirection like the two
+    // generator flags above.
+    if env::args().any(|arg| arg == "--migrate") {
+        return run_migrate().await;
+    }
+
     info!(
         version = env!("CARGO_PKG_VERSION"),
         "Starting Pangea Operator"
@@ -599,6 +607,65 @@ async fn main() -> Result<()> {
     fleet_status_controller.abort();
 
     info!("Pangea Operator stopped");
+    Ok(())
+}
+
+/// One-shot schema-migration mode (`--migrate`). Connects the PG pool
+/// using the same `PGHOST`/`PGUSER`/`PGDATABASE`/`PGPASSWORD` coordinates
+/// the normal startup path reads, runs the same idempotent
+/// [`pangea_operator::backend::ArtifactStore::ensure_table`] /
+/// [`pangea_operator::backend::StateLock::ensure_lock_table`] calls, then
+/// exits.
+///
+/// theory/MAGMA-POSTGRES-LIFECYCLE.md §1 (M1) — meant to be invoked as a
+/// shinka `DatabaseMigration`'s migrator command, so the schema-ready
+/// signal becomes an explicit, observable step a `shinka-wait` init
+/// container can poll, rather than the best-effort ensure buried inside
+/// the main process's happy path (which logs a warning and continues on
+/// failure — the right posture for a long-running process that must
+/// keep converging, wrong for a discrete migration step whose entire
+/// job is to surface a schema problem loudly before the main container
+/// ever starts). Every failure path here returns `Err` (non-zero exit),
+/// the inverse of the main path's converge-don't-crash posture.
+async fn run_migrate() -> Result<()> {
+    info!(version = env!("CARGO_PKG_VERSION"), "Running pangea-operator --migrate");
+
+    let pg_password = env::var("PGPASSWORD").ok().filter(|p| !p.is_empty()).ok_or_else(|| {
+        pangea_operator::error::Error::Config("--migrate requires PGPASSWORD to be set".into())
+    })?;
+
+    let resolved = pangea_operator::config::OperatorConfig::resolve();
+    let op_cfg = resolved.into_value();
+
+    let connect_options = sqlx::postgres::PgConnectOptions::new()
+        .host(&op_cfg.database.host)
+        .port(op_cfg.database.port)
+        .username(&op_cfg.database.user)
+        .password(&pg_password)
+        .database(&op_cfg.database.database);
+
+    info!(
+        pg_host = %op_cfg.database.host,
+        pg_port = op_cfg.database.port,
+        pg_user = %op_cfg.database.user,
+        pg_database = %op_cfg.database.database,
+        "Connecting for --migrate"
+    );
+
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(connect_options)
+        .await?;
+    let pool = Arc::new(pool);
+
+    pangea_operator::backend::ArtifactStore::new(pool.clone())
+        .ensure_table()
+        .await?;
+    pangea_operator::backend::StateLock::new(pool)
+        .ensure_lock_table()
+        .await?;
+
+    info!("--migrate: schema ensured successfully");
     Ok(())
 }
 
