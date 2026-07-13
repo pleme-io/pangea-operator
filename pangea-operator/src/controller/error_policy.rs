@@ -32,7 +32,7 @@
 //! sub-error enums in `architecture_gem` and `workspace_catalog`) plug
 //! in via the same surface.
 
-use crate::controller::reconciler::ERROR_REQUEUE_INTERVAL;
+use crate::controller::reconciler::{next_requeue, RequeueCooldowns, RequeueOutcome};
 use crate::crd::ControllerKind;
 use crate::observability::Metrics;
 use kube::runtime::controller::Action;
@@ -43,20 +43,31 @@ use tracing::warn;
 /// Default backoff for non-retryable errors in the tiered variant.
 /// Five minutes — long enough to avoid hot-looping on a permanent
 /// failure, short enough that a fix gets picked up within one
-/// human-in-the-loop cycle.
+/// human-in-the-loop cycle. Numerically identical to
+/// [`crate::controller::reconciler::DEFAULT_REQUEUE_INTERVAL`] (both
+/// 300s) — kept as its own named constant since the two express
+/// different intents (permanent-error backoff vs steady-state poll)
+/// that happen to share a value today.
 pub const NON_RETRYABLE_BACKOFF: Duration = Duration::from_secs(300);
 
 /// Compute a tiered backoff: short interval if retryable, long
 /// interval otherwise. Mirrors the duplicated shape that lived in
 /// `image_pipeline`, `packer_build`, `ami_test`, and `template`
 /// before R1.
+///
+/// Routed through [`next_requeue`] (theory/MAGMA-POSTGRES-LIFECYCLE.md
+/// §3, M0(b) — the pangea-operator port of breathe's
+/// `next_requeue`/`ClassCooldowns` outcome-classification shape) rather
+/// than the two branches this function used to compute directly. A
+/// provable no-op refactor: `RequeueCooldowns::default().steady`
+/// (`DEFAULT_REQUEUE_INTERVAL`, 300s) is numerically identical to the
+/// `NON_RETRYABLE_BACKOFF` value this branch used to return, so this
+/// function's own public output for every input is unchanged — see the
+/// `reconciler.rs` test
+/// `next_requeue_via_from_retryable_reproduces_tiered_backoff_byte_for_byte`.
 #[inline]
 pub fn tiered_backoff(retryable: bool) -> Duration {
-    if retryable {
-        ERROR_REQUEUE_INTERVAL
-    } else {
-        NON_RETRYABLE_BACKOFF
-    }
+    next_requeue(RequeueOutcome::from_retryable(retryable), &RequeueCooldowns::default())
 }
 
 /// Run the standard error-policy effects: emit the per-controller
@@ -91,6 +102,7 @@ pub fn run_error_policy<E: Display + ?Sized>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::controller::reconciler::ERROR_REQUEUE_INTERVAL;
 
     #[test]
     fn tiered_backoff_picks_retryable_for_true() {

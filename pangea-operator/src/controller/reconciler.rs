@@ -13,6 +13,95 @@ pub const SHORT_REQUEUE_INTERVAL: Duration = Duration::from_secs(30);
 /// Error requeue interval with backoff.
 pub const ERROR_REQUEUE_INTERVAL: Duration = Duration::from_secs(60);
 
+/// Requeue-cadence outcome classification — the pangea-operator port of
+/// breathe's `next_requeue`/`ClassCooldowns` shape
+/// (`breathe_runtime::next_requeue`, `breathe_provider::ClassCooldowns`;
+/// theory/MAGMA-POSTGRES-LIFECYCLE.md §3, M0(b)). A reconcile's outcome is
+/// classified into one of three well-ordered cadence tiers instead of each
+/// call site hard-coding its own literal `Duration`. `tiered_backoff`'s
+/// existing retryable/non-retryable split (`error_policy.rs`) is the
+/// degenerate two-class case of this — [`RequeueOutcome::from_retryable`]
+/// keeps that call site's exact behavior unchanged while giving every
+/// future requeue decision the same typed vocabulary.
+///
+/// Scope note: only `tiered_backoff` is wired through this today. The
+/// scattered per-phase-transition literals in `template_controller.rs`
+/// (`DEFAULT_REQUEUE_INTERVAL`/`SHORT_REQUEUE_INTERVAL` at ~7 call sites)
+/// are a real, larger follow-up — each is a phase-transition decision, not
+/// a single outcome value threaded through one function, so migrating them
+/// safely needs its own reviewed pass. Named here rather than silently
+/// left out: `pending-magma-postgres-lifecycle: M0(b)-full-sweep`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequeueOutcome {
+    /// Just made progress (a phase transition, a just-applied change) —
+    /// check back almost immediately. Maps to [`SHORT_REQUEUE_INTERVAL`].
+    Progressing,
+    /// A retryable/transient error — recheck soon but don't hammer. Maps
+    /// to [`ERROR_REQUEUE_INTERVAL`].
+    TransientError,
+    /// Steady state (nothing to do) or a non-retryable error that needs a
+    /// human or a slower loop to resolve — the normal, infrequent
+    /// cadence. Maps to [`DEFAULT_REQUEUE_INTERVAL`].
+    Steady,
+}
+
+impl RequeueOutcome {
+    /// The exact classification `tiered_backoff` already performed,
+    /// preserved so wiring it through [`next_requeue`] is a provable
+    /// no-op refactor, not a behavior change.
+    #[must_use]
+    pub fn from_retryable(retryable: bool) -> Self {
+        if retryable {
+            Self::TransientError
+        } else {
+            Self::Steady
+        }
+    }
+}
+
+/// Well-ordered cadence windows for each [`RequeueOutcome`] — mirrors
+/// breathe's `ClassCooldowns`. `Default` reproduces today's three named
+/// constants exactly (`SHORT_REQUEUE_INTERVAL` / `ERROR_REQUEUE_INTERVAL` /
+/// `DEFAULT_REQUEUE_INTERVAL`), so introducing this type changes no
+/// observed cadence until a future pass deliberately retunes a tier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RequeueCooldowns {
+    pub progressing: Duration,
+    pub transient_error: Duration,
+    pub steady: Duration,
+}
+
+impl Default for RequeueCooldowns {
+    fn default() -> Self {
+        Self {
+            progressing: SHORT_REQUEUE_INTERVAL,
+            transient_error: ERROR_REQUEUE_INTERVAL,
+            steady: DEFAULT_REQUEUE_INTERVAL,
+        }
+    }
+}
+
+impl RequeueCooldowns {
+    /// Structural invariant mirroring `ClassCooldowns::well_ordered` —
+    /// progressing (fastest) <= transient_error <= steady (slowest).
+    #[must_use]
+    pub fn well_ordered(&self) -> bool {
+        self.progressing <= self.transient_error && self.transient_error <= self.steady
+    }
+}
+
+/// The requeue interval for the given outcome — pure, no I/O, mirrors
+/// `breathe_runtime::next_requeue`'s exact signature shape
+/// (classify -> `Duration`).
+#[must_use]
+pub fn next_requeue(outcome: RequeueOutcome, cooldowns: &RequeueCooldowns) -> Duration {
+    match outcome {
+        RequeueOutcome::Progressing => cooldowns.progressing,
+        RequeueOutcome::TransientError => cooldowns.transient_error,
+        RequeueOutcome::Steady => cooldowns.steady,
+    }
+}
+
 /// Default reconcile concurrency for a single controller (kube-rs's
 /// `Controller::run` returns a stream; this is the parallelism we
 /// feed it via `for_each_concurrent`). Pre-2026-05 the operator used
@@ -275,6 +364,52 @@ pub fn conditions_for_suspended() -> Vec<crate::crd::Condition> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn requeue_cooldowns_default_is_well_ordered() {
+        assert!(RequeueCooldowns::default().well_ordered());
+    }
+
+    #[test]
+    fn requeue_cooldowns_default_matches_named_constants_exactly() {
+        // Introducing the typed classification must not change any
+        // observed cadence -- these three values are the whole fleet's
+        // current behavior.
+        let c = RequeueCooldowns::default();
+        assert_eq!(c.progressing, SHORT_REQUEUE_INTERVAL);
+        assert_eq!(c.transient_error, ERROR_REQUEUE_INTERVAL);
+        assert_eq!(c.steady, DEFAULT_REQUEUE_INTERVAL);
+    }
+
+    #[test]
+    fn next_requeue_maps_each_outcome_to_its_cooldown() {
+        let c = RequeueCooldowns::default();
+        assert_eq!(next_requeue(RequeueOutcome::Progressing, &c), SHORT_REQUEUE_INTERVAL);
+        assert_eq!(next_requeue(RequeueOutcome::TransientError, &c), ERROR_REQUEUE_INTERVAL);
+        assert_eq!(next_requeue(RequeueOutcome::Steady, &c), DEFAULT_REQUEUE_INTERVAL);
+    }
+
+    #[test]
+    fn requeue_outcome_from_retryable_matches_tiered_backoff_classification() {
+        assert_eq!(RequeueOutcome::from_retryable(true), RequeueOutcome::TransientError);
+        assert_eq!(RequeueOutcome::from_retryable(false), RequeueOutcome::Steady);
+    }
+
+    #[test]
+    fn next_requeue_via_from_retryable_reproduces_tiered_backoff_byte_for_byte() {
+        // The provable no-op-refactor property: routing tiered_backoff's
+        // exact retryable/non-retryable split through next_requeue must
+        // produce identical durations to today's direct constants.
+        let c = RequeueCooldowns::default();
+        assert_eq!(
+            next_requeue(RequeueOutcome::from_retryable(true), &c),
+            ERROR_REQUEUE_INTERVAL
+        );
+        assert_eq!(
+            next_requeue(RequeueOutcome::from_retryable(false), &c),
+            DEFAULT_REQUEUE_INTERVAL
+        );
+    }
 
     #[test]
     fn test_parse_duration() {
