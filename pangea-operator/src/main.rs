@@ -11,7 +11,7 @@ use pangea_operator::{
     error::Result,
     executor::ExecutorConfig,
     leader::{Leadership, LeaderConfig, LeaderElector},
-    observability::{init_tracing, run_health_server, Metrics},
+    observability::{init_tracing, run_health_server, Metrics, ShuttingDown},
 };
 
 #[cfg(feature = "graphql")]
@@ -310,16 +310,29 @@ async fn main() -> Result<()> {
         }
     };
 
+    // Shared shutdown-in-progress flag (theory/MAGMA-POSTGRES-LIFECYCLE.md
+    // §4, M2, Gap D) — flipped true the moment a drain signal is
+    // received, before any controller is aborted, so /readyz on every
+    // health server this process runs reflects "draining" immediately
+    // rather than waiting on a DB probe (or a DB-less deploy's
+    // unconditional 200) to notice.
+    let shutting_down: ShuttingDown = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
     // Spawn health server (8080) — /healthz + /readyz; also serves
     // /metrics for back-compat with scrape configs that hit the
     // health port. /readyz probes the magma state-backend pool (when
-    // wired) with a bounded SELECT 1, so the pod is pulled from the
-    // Service endpoints while Postgres is unreachable.
+    // wired) with a bounded schema-presence check, so the pod is
+    // pulled from the Service endpoints while Postgres — or its
+    // schema — is unavailable.
     let health_metrics = metrics.clone();
     let health_ready_pool = state.db_pool.clone();
     let health_addr = config.health_addr;
+    let health_shutting_down = shutting_down.clone();
     tokio::spawn(async move {
-        if let Err(e) = run_health_server(health_addr, health_metrics, health_ready_pool).await {
+        if let Err(e) =
+            run_health_server(health_addr, health_metrics, health_ready_pool, health_shutting_down)
+                .await
+        {
             error!(error = %e, "Health server error");
         }
     });
@@ -327,12 +340,16 @@ async fn main() -> Result<()> {
     // Spawn dedicated metrics server (9090) so the container/service
     // declared "metrics" port actually has something behind it. Same
     // handler shape as health_addr; ServiceMonitor scrapes hit this.
-    // No readiness probe here — a scrape endpoint's readiness is
-    // liveness, and adding a DB probe to it adds no signal.
+    // No DB readiness probe here — a scrape endpoint's readiness is
+    // liveness, and adding a DB probe to it adds no signal — but it
+    // still shares the shutdown flag for consistency.
     let metrics_only = metrics.clone();
     let metrics_addr = config.metrics_addr;
+    let metrics_shutting_down = shutting_down.clone();
     tokio::spawn(async move {
-        if let Err(e) = run_health_server(metrics_addr, metrics_only, None).await {
+        if let Err(e) =
+            run_health_server(metrics_addr, metrics_only, None, metrics_shutting_down).await
+        {
             error!(error = %e, "Metrics server error");
         }
     });
@@ -589,6 +606,24 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Gap D (theory/MAGMA-POSTGRES-LIFECYCLE.md §4, M2): flip /readyz to
+    // failing on every health server FIRST, before touching a single
+    // controller — the Service should pull this pod's endpoint before
+    // any in-flight or new work routes to it, not after.
+    shutting_down.store(true, std::sync::atomic::Ordering::Relaxed);
+    info!("Readiness flipped to failing; draining before controller shutdown");
+
+    // Give in-flight magma applies a bounded window to reach their next
+    // checkpoint boundary (state + bundle committed atomically to
+    // Postgres — see MAGMA-OPERATOR-BACKEND.md's own atomicity
+    // invariant) before their task is cancelled. Postgres itself rolls
+    // back an uncommitted transaction on connection loss either way (no
+    // half-applied state can persist), but a hard `.abort()` mid-cycle
+    // still discards otherwise-complete work that a short grace window
+    // lets finish and commit instead of being wastefully retried after
+    // restart.
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
     // Abort controllers (they run forever)
     template_controller.abort();
     namespace_controller.abort();
@@ -605,6 +640,16 @@ async fn main() -> Result<()> {
     workspace_catalog_controller.abort();
     operator_policy_controller.abort();
     fleet_status_controller.abort();
+
+    // Explicit pool.close() — confirmed absent before this change; the
+    // pool previously just died with the process. Closing signals every
+    // idle connection to terminate and refuses new acquisitions, so the
+    // CNPG primary sees a clean disconnect rather than a dropped-socket
+    // ambiguity on the next connection-count/idle-timeout check.
+    if let Some(pool) = state.db_pool.as_ref() {
+        pool.read().await.close().await;
+        info!("magma Postgres pool closed");
+    }
 
     info!("Pangea Operator stopped");
     Ok(())
