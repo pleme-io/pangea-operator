@@ -2949,6 +2949,40 @@ async fn handle_applying(
         // established error path — unchanged behavior on a plan failure.
     }
 
+    // ── destroyProtection apply gate (task #120) ─────────────────────
+    // `spec.destroyProtection` promises "never destroy this
+    // infrastructure", but before this gate it was consulted ONLY on the
+    // explicit destroy path (`handle_destroying` / CR deletion). A normal
+    // apply — AutoApply, or an approved cached plan — whose action set
+    // contained a `replace` (delete-then-recreate) or `delete` executed
+    // with `destroyProtection` never read. That is the class of gap
+    // behind the repeated camelot-eks in-apply cluster replacements.
+    // `prior_drifts` (snapshotted above) is the analyzed action set this
+    // apply consumes — the same set `handle_planning` persisted. Refuse
+    // UNCONDITIONALLY (approved or not) when protection is on and any
+    // action is destructive, parking at `Failed` (the FSM's only legal
+    // edge out of Applying besides Ready) exactly like the r101
+    // escalation gate. The human must set `destroyProtection=false` first
+    // to proceed — identical to the destroy-path requirement. This is a
+    // sibling to, not a duplicate of, the r101 post-import gate: that one
+    // fires only on the import path for an *unapproved* escalation; this
+    // one is unconditional on every apply path.
+    if let DestroyProtectionGate::BlockedByProtectedDestruction { address, action } =
+        evaluate_destroy_protection_gate(template.spec.destroy_protection, &prior_drifts)
+    {
+        let msg = format!(
+            "Applying refused: destroyProtection is enabled and the plan contains a \
+             destructive {action} action on {address}. A replace is a delete-then-\
+             recreate, so it is blocked under destroy protection (approved or not). \
+             Set spec.destroyProtection=false first if this destruction is intended, \
+             then re-approve. Parking at Failed."
+        );
+        warn!(template = %template_name, %msg);
+        record_event(template, state, EventType::Warning, "DestroyBlocked", &msg).await;
+        update_phase_with_error(template, Phase::Failed, &msg, state).await?;
+        return Ok(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL));
+    }
+
     let mut result = executor
         .apply(&workspace.path, plan_file, true)
         .await?;
@@ -4882,6 +4916,19 @@ fn drift_details_from_tofu_show_json(raw_show_json: &str) -> Vec<DriftDetail> {
     }
 }
 
+/// The single source of truth for what counts as a **destructive** IaC
+/// action: a `delete` (tear the resource down) or a `replace`
+/// (delete-then-recreate — which destroys the existing resource every
+/// bit as surely as a bare delete, just followed by a create). Shared
+/// by both destructive-action gates in this module —
+/// `find_unapproved_destructive_escalation` (the r101 post-import gate)
+/// and `evaluate_destroy_protection_gate` (the destroyProtection apply
+/// gate) — so the classification can never drift between them: adding a
+/// new destructive verb here tightens BOTH gates in one edit.
+fn is_destructive_action(action: &str) -> bool {
+    matches!(action, "delete" | "replace")
+}
+
 /// Find the first entry in `fresh` whose action is destructive
 /// (`delete`/`replace`) and whose address either doesn't appear in
 /// `approved` at all, or appears there with a less severe action —
@@ -4894,16 +4941,80 @@ fn find_unapproved_destructive_escalation<'a>(
     fresh: &'a [DriftDetail],
 ) -> Option<&'a DriftDetail> {
     fresh.iter().find(|f| {
-        let is_destructive = matches!(f.action.as_str(), "delete" | "replace");
-        if !is_destructive {
+        if !is_destructive_action(f.action.as_str()) {
             return false;
         }
-        let approved_action_for_addr = approved
+        // Not an escalation iff the human already approved a destructive
+        // action for this exact address.
+        let approved_destructive_for_addr = approved
             .iter()
             .find(|a| a.address == f.address)
-            .map(|a| a.action.as_str());
-        !matches!(approved_action_for_addr, Some("delete") | Some("replace"))
+            .is_some_and(|a| is_destructive_action(a.action.as_str()));
+        !approved_destructive_for_addr
     })
+}
+
+/// Outcome of the **destroyProtection apply gate** — evaluated in
+/// `handle_applying` immediately before any real provider mutation.
+///
+/// `spec.destroyProtection` has always promised "refuse to destroy this
+/// infrastructure", but before this gate it was consulted ONLY on the
+/// explicit destroy path (CR deletion / `handle_destroying`). A REPLACE
+/// is a delete-then-recreate — every bit as destructive as a bare
+/// delete — yet a plan containing a `replace` (or `delete`) sailed
+/// straight through a normal apply (AutoApply, or an approved cached
+/// plan) with `destroyProtection` never read. That is the exact class
+/// of gap behind the repeated camelot-eks in-apply cluster replacements
+/// (task #120). It is a SIBLING of the r101 import-escalation gap but
+/// distinct: r101 fires only on the import-hint refresh path and only
+/// on an *unapproved* escalation, whereas this gate fires on EVERY apply
+/// path and is UNCONDITIONAL — with protection on, no destructive action
+/// may apply, approved or not; the human must first set
+/// `destroyProtection=false`, exactly as the destroy path already
+/// requires.
+///
+/// **Tier (named honestly, not rounded up): only-mitigated.** A runtime
+/// gate on a live plan's analyzed action set, not a type that makes a
+/// protection-violating apply unconstructible — the danger signal is a
+/// runtime observation, so full unrepresentability isn't reachable here.
+/// The one asymmetry it must never get wrong is silently DESTROYING a
+/// protected resource; a spurious block is fail-SAFE (it only ever asks
+/// the human to disable protection), never fail-DANGEROUS.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DestroyProtectionGate {
+    /// Protection is off, or the plan carries no destructive action —
+    /// safe to apply.
+    Proceed,
+    /// `destroyProtection` is on AND the plan carries a destructive
+    /// action — refuse to apply. Carries the FIRST offending
+    /// address+action (plan order) for the operator-facing message, so
+    /// the reported resource is stable across reconciles.
+    BlockedByProtectedDestruction { address: String, action: String },
+}
+
+/// Pure decision for the destroyProtection apply gate: with
+/// `destroy_protection` on, refuse to apply any plan whose analyzed
+/// action set contains a destructive action (`delete`/`replace` — see
+/// `is_destructive_action`); with protection off, always proceed.
+/// Reuses r101's exact destructive-action predicate so the two gates
+/// can never disagree on what "destructive" means.
+fn evaluate_destroy_protection_gate(
+    destroy_protection: bool,
+    actions: &[DriftDetail],
+) -> DestroyProtectionGate {
+    if !destroy_protection {
+        return DestroyProtectionGate::Proceed;
+    }
+    match actions
+        .iter()
+        .find(|d| is_destructive_action(d.action.as_str()))
+    {
+        Some(d) => DestroyProtectionGate::BlockedByProtectedDestruction {
+            address: d.address.clone(),
+            action: d.action.clone(),
+        },
+        None => DestroyProtectionGate::Proceed,
+    }
 }
 
 #[cfg(test)]
@@ -5171,6 +5282,129 @@ mod unapproved_destructive_escalation_tests {
     fn empty_fresh_plan_is_never_flagged() {
         let approved = vec![drift("aws_eks_cluster.camelot-eks", "create")];
         assert!(find_unapproved_destructive_escalation(&approved, &[]).is_none());
+    }
+}
+
+#[cfg(test)]
+mod destroy_protection_gate_tests {
+    use super::{evaluate_destroy_protection_gate, is_destructive_action, DestroyProtectionGate};
+    use crate::crd::DriftDetail;
+
+    fn drift(address: &str, action: &str) -> DriftDetail {
+        DriftDetail {
+            address: address.to_string(),
+            action: action.to_string(),
+            risk: "low".to_string(),
+            attributes: vec![],
+            policy_decision: None,
+            matched_policy: None,
+        }
+    }
+
+    // ── Live incident regression (task #120, sibling of #123): a plan
+    // whose action set contained a `replace` on `aws_eks_cluster` executed
+    // during a NORMAL apply (not the import path r101 closed) — destroying
+    // and recreating a production EKS cluster — because `destroyProtection`
+    // was consulted ONLY on the explicit destroy path, never against a
+    // normal apply's action set. This gate is what `handle_applying` now
+    // runs before EVERY apply, unconditionally, when protection is on. ──
+
+    #[test]
+    fn a_replace_under_destroy_protection_is_blocked() {
+        let actions = vec![
+            drift("aws_eks_node_group.system_ng", "create"),
+            drift("aws_eks_cluster.camelot-eks", "replace"),
+        ];
+        assert_eq!(
+            evaluate_destroy_protection_gate(true, &actions),
+            DestroyProtectionGate::BlockedByProtectedDestruction {
+                address: "aws_eks_cluster.camelot-eks".to_string(),
+                action: "replace".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn a_delete_under_destroy_protection_is_blocked() {
+        let actions = vec![drift("aws_vpc_endpoint.orphan", "delete")];
+        assert_eq!(
+            evaluate_destroy_protection_gate(true, &actions),
+            DestroyProtectionGate::BlockedByProtectedDestruction {
+                address: "aws_vpc_endpoint.orphan".to_string(),
+                action: "delete".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn a_replace_with_destroy_protection_off_proceeds() {
+        // The gate is strictly opt-in: with protection off, a replace is a
+        // normal (policy/approval-governed) operation and this gate must
+        // never touch it — otherwise it would block every legitimate
+        // replace fleet-wide. This is the load-bearing false-positive
+        // guard: destroyProtection defaults off, so the overwhelming
+        // majority of applies must sail straight through untouched.
+        let actions = vec![drift("aws_eks_cluster.camelot-eks", "replace")];
+        assert_eq!(
+            evaluate_destroy_protection_gate(false, &actions),
+            DestroyProtectionGate::Proceed
+        );
+    }
+
+    #[test]
+    fn non_destructive_actions_under_destroy_protection_proceed() {
+        // The common, safe case: destroyProtection on, plan only adds /
+        // updates / no-ops. Must NEVER be blocked, or protection would
+        // trap every ordinary create-and-update apply.
+        let actions = vec![
+            drift("aws_eks_addon.coredns", "create"),
+            drift("aws_eks_addon.kube_proxy", "update"),
+            drift("aws_eks_addon.vpc_cni", "noop"),
+        ];
+        assert_eq!(
+            evaluate_destroy_protection_gate(true, &actions),
+            DestroyProtectionGate::Proceed
+        );
+    }
+
+    #[test]
+    fn an_empty_plan_under_destroy_protection_proceeds() {
+        assert_eq!(
+            evaluate_destroy_protection_gate(true, &[]),
+            DestroyProtectionGate::Proceed
+        );
+    }
+
+    #[test]
+    fn the_first_destructive_action_in_plan_order_is_the_one_reported() {
+        // Determinism: when several destructive actions exist, the gate
+        // reports the FIRST in plan order so the operator-facing message
+        // is stable across reconciles rather than flapping.
+        let actions = vec![
+            drift("aws_vpc.first", "delete"),
+            drift("aws_eks_cluster.second", "replace"),
+        ];
+        assert_eq!(
+            evaluate_destroy_protection_gate(true, &actions),
+            DestroyProtectionGate::BlockedByProtectedDestruction {
+                address: "aws_vpc.first".to_string(),
+                action: "delete".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn is_destructive_action_matches_exactly_delete_and_replace() {
+        // The shared predicate both destructive-action gates depend on —
+        // pin its contract so a change to what counts as "destructive" is
+        // a conscious edit, caught here, not an accident that silently
+        // widens or narrows both gates.
+        assert!(is_destructive_action("delete"));
+        assert!(is_destructive_action("replace"));
+        assert!(!is_destructive_action("create"));
+        assert!(!is_destructive_action("update"));
+        assert!(!is_destructive_action("noop"));
+        assert!(!is_destructive_action("read"));
     }
 }
 
