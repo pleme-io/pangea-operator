@@ -5,7 +5,7 @@ use crate::crd::{
     DriftDetail, InfrastructureTemplate, PangeaNamespace, Phase, PolicyDecision, ResourceSummary,
 };
 use crate::error::{Error, Result};
-use crate::executor::{evaluate_policy, policy_is_configured, Plan};
+use crate::executor::{evaluate_policy, policy_is_configured, Plan, PlanAction, PlannedChange};
 
 use chrono::Utc;
 use futures::StreamExt;
@@ -2983,6 +2983,30 @@ async fn handle_applying(
         return Ok(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL));
     }
 
+    // ── destroyProtection FRESH-recheck (task #120 follow-up, #131) ──
+    // The gate above only ever sees `prior_drifts` — sound exactly when
+    // `plan_file = Some(...)` (the cached plan IS what's about to be
+    // applied). Whenever `plan_file` is `None` — the ordinary case on
+    // the magma execution path (magma reads its plan from Postgres, not
+    // a cached `.tfplan`, so `plan_path` is never populated) —
+    // `executor.apply` below can realize an action set `prior_drifts`
+    // never saw. Recompute it and gate on it too; see
+    // `recheck_destroy_protection_before_bare_apply`'s doc for the full
+    // rationale. ADDITIVE beside the check above, never a replacement.
+    if plan_file.is_none() {
+        if let Some(action) = recheck_destroy_protection_before_bare_apply(
+            template,
+            state,
+            &executor,
+            &workspace.path,
+            &plan_path,
+        )
+        .await?
+        {
+            return Ok(action);
+        }
+    }
+
     let mut result = executor
         .apply(&workspace.path, plan_file, true)
         .await?;
@@ -3012,6 +3036,23 @@ async fn handle_applying(
         )
         .await;
         let _ = tokio::fs::remove_file(&plan_path).await;
+
+        // destroyProtection FRESH-recheck (task #120 follow-up, #131):
+        // this retry always applies with plan_file=None (the stale
+        // cached plan was just discarded), the same gap as the main
+        // apply path above — recheck before retrying.
+        if let Some(action) = recheck_destroy_protection_before_bare_apply(
+            template,
+            state,
+            &executor,
+            &workspace.path,
+            &plan_path,
+        )
+        .await?
+        {
+            return Ok(action);
+        }
+
         result = executor
             .apply(&workspace.path, None, true)
             .await?;
@@ -3038,8 +3079,18 @@ async fn handle_applying(
             &workspace.main_tf_path(),
             result.clone(),
         )
-        .await
+        .await?
         {
+            if outcome.destroy_protection_blocked {
+                // The destroyProtection safety net (task #120 follow-up,
+                // #131) fired mid-conflict-resolution: the event was
+                // already recorded and the template already parked at
+                // Phase::Failed inside resolve_conflicts_post_apply.
+                // Return immediately — falling through to the generic
+                // apply-failure classification below would misreport a
+                // deliberate safety block as an ordinary provider error.
+                return Ok(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL));
+            }
             let imported_n = outcome.imported.len();
             imported_addresses.extend(outcome.imported);
             result = outcome.result;
@@ -4892,7 +4943,7 @@ fn canonical_drift_fingerprint(drifts: &[DriftDetail]) -> String {
 /// drift details available" as "cannot prove safety", which the
 /// caller's own fallback (fail closed, requeue to Planning) already
 /// handles correctly.
-fn drift_details_from_tofu_show_json(raw_show_json: &str) -> Vec<DriftDetail> {
+pub(crate) fn drift_details_from_tofu_show_json(raw_show_json: &str) -> Vec<DriftDetail> {
     if raw_show_json.is_empty() {
         return Vec::new();
     }
@@ -4925,7 +4976,7 @@ fn drift_details_from_tofu_show_json(raw_show_json: &str) -> Vec<DriftDetail> {
 /// and `evaluate_destroy_protection_gate` (the destroyProtection apply
 /// gate) — so the classification can never drift between them: adding a
 /// new destructive verb here tightens BOTH gates in one edit.
-fn is_destructive_action(action: &str) -> bool {
+pub(crate) fn is_destructive_action(action: &str) -> bool {
     matches!(action, "delete" | "replace")
 }
 
@@ -4981,7 +5032,7 @@ fn find_unapproved_destructive_escalation<'a>(
 /// protected resource; a spurious block is fail-SAFE (it only ever asks
 /// the human to disable protection), never fail-DANGEROUS.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum DestroyProtectionGate {
+pub(crate) enum DestroyProtectionGate {
     /// Protection is off, or the plan carries no destructive action —
     /// safe to apply.
     Proceed,
@@ -4998,7 +5049,7 @@ enum DestroyProtectionGate {
 /// `is_destructive_action`); with protection off, always proceed.
 /// Reuses r101's exact destructive-action predicate so the two gates
 /// can never disagree on what "destructive" means.
-fn evaluate_destroy_protection_gate(
+pub(crate) fn evaluate_destroy_protection_gate(
     destroy_protection: bool,
     actions: &[DriftDetail],
 ) -> DestroyProtectionGate {
@@ -5015,6 +5066,183 @@ fn evaluate_destroy_protection_gate(
         },
         None => DestroyProtectionGate::Proceed,
     }
+}
+
+/// Project a typed, executor-agnostic `PlannedChange` list — the shape
+/// `IacExecutor::planned_changes()` returns (magma's disk-free,
+/// non-mutating readback of the SAME persisted plan row `apply()` is
+/// about to consume) — into `DriftDetail`s, so the destroyProtection
+/// gates can reuse `evaluate_destroy_protection_gate` completely
+/// unchanged regardless of which typed border produced the action set.
+/// `risk`/`attributes`/`policy_decision`/`matched_policy` carry no
+/// signal here (only `.action`/`.address` are ever read downstream of
+/// this mapping) — left empty/`None` rather than fabricated.
+pub(crate) fn drift_details_from_planned_changes(changes: &[PlannedChange]) -> Vec<DriftDetail> {
+    changes
+        .iter()
+        .map(|c| DriftDetail {
+            address: c.address.clone(),
+            action: match c.action {
+                PlanAction::NoOp => "noop",
+                PlanAction::Create => "create",
+                PlanAction::Read => "read",
+                PlanAction::Update => "update",
+                PlanAction::Replace => "replace",
+                PlanAction::Delete => "delete",
+            }
+            .to_string(),
+            risk: String::new(),
+            attributes: Vec::new(),
+            policy_decision: None,
+            matched_policy: None,
+        })
+        .collect()
+}
+
+/// Compute the FRESH action set an imminent `executor.apply(.., None,
+/// ..)` call will actually execute — the observation half of the
+/// destroyProtection safety net closing the rest of task #120 (see
+/// `recheck_destroy_protection_before_bare_apply`, below, for why
+/// `prior_drifts` alone isn't sound whenever `plan_file` is `None`).
+/// Three tiers, cheapest and safest first:
+///
+///   1. `executor.planned_changes()` — magma's disk-free, non-mutating
+///      readback of the SAME persisted-plan row `apply()` is about to
+///      consume: zero extra provider RPCs, zero extra Postgres writes,
+///      zero lifecycle-FSM side effects. Returns `Ok(None)` for tofu
+///      (the trait default — no override) and disk-fallback magma;
+///      `Err` for a DB-backed magma executor whose persisted row is
+///      torn or missing. Neither is fatal here — both fall through.
+///   2. Force a fresh `executor.plan(.., Some(plan_path), ..)`, then try
+///      the typed readback AGAIN. This is what actually REPAIRS tier 1's
+///      `Err` case: a fresh `plan()` re-persists a valid row via
+///      `put_plan` (the identical cache-miss-regenerate recovery
+///      `apply()` itself runs), so the re-read now succeeds. For tofu
+///      this second `planned_changes()` call is a guaranteed, free
+///      no-op (the trait default always returns `Ok(None)`) — it costs
+///      nothing beyond the plan call tier 3 needs anyway.
+///   3. Falls back to `executor.show_plan(..)` parsed via
+///      `drift_details_from_tofu_show_json` — the exact combo
+///      `TofuWorkspaceRunner::plan` / this file's own r101 recheck /
+///      `conflict::gather_attrs` already pay. This is what actually
+///      observes TOFU's fresh action set. **Named limitation, not
+///      hidden:** this tier is tofu-format-only — reached by a real
+///      tofu executor (correct), or by magma's test-only disk-fallback
+///      mode (`artifact_store: None`, never the production DB-backed
+///      configuration), where it silently mis-parses magma's own JSON
+///      shape and returns empty (see `plan_change.rs`'s own module doc
+///      on exactly this tofu-format-dependence trap — the reason
+///      `PlannedChange` exists). Bounded to test-only infrastructure;
+///      no real cloud resource is at risk through this arm.
+///
+/// Returns an empty `Vec` when NO tier could produce an action set (a
+/// tier-2 plan itself failing, or the tier-3 named limitation above) —
+/// the caller must treat that identically to "no destructive action"
+/// and fail OPEN (fall through to the real apply, which surfaces any
+/// real failure through its own established error path) rather than
+/// block on absent data. This is the same asymmetry the destroyProtection
+/// gate has always held: a spurious block is fail-SAFE, but "the
+/// recheck itself couldn't run" must never become a way to wedge every
+/// apply.
+pub(crate) async fn fresh_action_set_before_bare_apply(
+    executor: &Arc<dyn crate::executor::IacExecutor>,
+    work_dir: &std::path::Path,
+    plan_path: &std::path::Path,
+) -> Vec<DriftDetail> {
+    // Tier 1.
+    if let Ok(Some(changes)) = executor.planned_changes().await {
+        return drift_details_from_planned_changes(&changes);
+    }
+
+    // Tier 2: force a fresh plan, then retry the typed readback — this
+    // is what repairs tier 1's `Err` arm (a torn/missing magma plan
+    // row); a genuine plan failure fails open here, matching the r101
+    // gate's own documented fallthrough.
+    let plan_result = match executor.plan(work_dir, Some(plan_path), &[]).await {
+        Ok(r) => r,
+        Err(e) => {
+            warn!(
+                error = %e,
+                "destroyProtection recheck: fresh plan errored — proceeding without \
+                 a recheck (fails open, matching the r101 gate's own fallthrough)"
+            );
+            return Vec::new();
+        }
+    };
+    if !plan_result.success {
+        return Vec::new();
+    }
+    if let Ok(Some(changes)) = executor.planned_changes().await {
+        return drift_details_from_planned_changes(&changes);
+    }
+
+    // Tier 3 (tofu-format fallback — see the doc above for the named
+    // magma-disk-fallback limitation).
+    match executor.show_plan(work_dir, plan_path).await {
+        Ok(r) if r.success && !r.stdout.is_empty() => drift_details_from_tofu_show_json(&r.stdout),
+        _ => Vec::new(),
+    }
+}
+
+/// The destroyProtection safety net for a bare apply — one that will run
+/// with `plan_file = None`, meaning the imminent `executor.apply` does
+/// NOT consume a pre-approved cached plan the earlier `prior_drifts`
+/// gate (in `handle_applying`, above) already checked.
+///
+/// `prior_drifts` is trustworthy only when the cached plan at
+/// `plan_path` is what's actually about to be applied
+/// (`plan_file = Some(...)`) — the same planning pass produced both. It
+/// is NOT trustworthy whenever `plan_file` is `None`: the self-heal
+/// retry after a stale-plan error; the post-import re-apply
+/// (`conflict::resolve_conflicts_post_apply`); and the ordinary
+/// magma-executor apply, where `plan_file` is effectively always `None`
+/// (magma reads its plan from Postgres, not a cached `.tfplan`).
+/// Whenever that's true, the action set `executor.apply` actually
+/// realizes can diverge from `prior_drifts` (a computed-attribute-
+/// triggered `replace` surfacing only once state has actually settled —
+/// the exact mechanism that destructively replaced the real
+/// `camelot-eks` EKS cluster; see the SAFETY GATE comment in
+/// `handle_applying`, above).
+///
+/// This closes that gap: recompute the FRESH action set
+/// (`fresh_action_set_before_bare_apply`) and gate on it via the exact
+/// same `evaluate_destroy_protection_gate` predicate — reused, never
+/// forked. ADDITIVE beside the `prior_drifts` check, never a
+/// replacement: both run; either can block.
+///
+/// Returns `Some(action)` when the gate blocked — the caller must return
+/// it immediately; the `DestroyBlocked` event and the `Phase::Failed`
+/// transition have already happened here. Returns `None` to proceed
+/// with the apply.
+async fn recheck_destroy_protection_before_bare_apply(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+    executor: &Arc<dyn crate::executor::IacExecutor>,
+    work_dir: &std::path::Path,
+    plan_path: &std::path::Path,
+) -> Result<Option<ReconcileAction>> {
+    if !template.spec.destroy_protection {
+        return Ok(None);
+    }
+    let fresh = fresh_action_set_before_bare_apply(executor, work_dir, plan_path).await;
+    if let DestroyProtectionGate::BlockedByProtectedDestruction { address, action } =
+        evaluate_destroy_protection_gate(true, &fresh)
+    {
+        let template_name = template.name_any();
+        let msg = format!(
+            "Applying refused: destroyProtection is enabled and a freshly recomputed \
+             plan — about to be applied with no pre-approved cached plan \
+             (plan_file=None) — contains a destructive {action} action on {address}. \
+             A replace is a delete-then-recreate, so it is blocked under destroy \
+             protection (approved or not). Set spec.destroyProtection=false first if \
+             this destruction is intended, then re-approve. Parking at Failed."
+        );
+        warn!(template = %template_name, %msg);
+        record_event(template, state, EventType::Warning, "DestroyBlocked", &msg).await;
+        update_phase_with_error(template, Phase::Failed, &msg, state).await?;
+        return Ok(Some(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL)));
+    }
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -5287,8 +5515,12 @@ mod unapproved_destructive_escalation_tests {
 
 #[cfg(test)]
 mod destroy_protection_gate_tests {
-    use super::{evaluate_destroy_protection_gate, is_destructive_action, DestroyProtectionGate};
+    use super::{
+        drift_details_from_planned_changes, drift_details_from_tofu_show_json,
+        evaluate_destroy_protection_gate, is_destructive_action, DestroyProtectionGate,
+    };
     use crate::crd::DriftDetail;
+    use crate::executor::{PlanAction, PlannedChange, ResourceKindClass};
 
     fn drift(address: &str, action: &str) -> DriftDetail {
         DriftDetail {
@@ -5298,6 +5530,15 @@ mod destroy_protection_gate_tests {
             attributes: vec![],
             policy_decision: None,
             matched_policy: None,
+        }
+    }
+
+    fn planned(address: &str, action: PlanAction) -> PlannedChange {
+        PlannedChange {
+            address: address.to_string(),
+            action,
+            after: None,
+            kind: ResourceKindClass::Managed,
         }
     }
 
@@ -5405,6 +5646,112 @@ mod destroy_protection_gate_tests {
         assert!(!is_destructive_action("update"));
         assert!(!is_destructive_action("noop"));
         assert!(!is_destructive_action("read"));
+    }
+
+    // ── Task #120 follow-up (#131): the three additional apply sites
+    // (conflict.rs's post-import re-apply, the self-heal retry, and the
+    // ordinary bare-magma apply) each recompute a FRESH action set via
+    // `fresh_action_set_before_bare_apply` instead of trusting the
+    // stale `prior_drifts` snapshot the original fix checked. Its two
+    // tiers — magma's typed `PlannedChange` readback, and the tofu
+    // `drift_details_from_tofu_show_json` fallback — must feed the
+    // EXACT SAME `evaluate_destroy_protection_gate` predicate proven
+    // above, never a forked check. ──
+
+    #[test]
+    fn a_replace_planned_change_maps_to_a_destructive_drift_detail() {
+        let changes = vec![planned("aws_eks_cluster.camelot-eks", PlanAction::Replace)];
+        let drifts = drift_details_from_planned_changes(&changes);
+        assert_eq!(drifts.len(), 1);
+        assert_eq!(drifts[0].address, "aws_eks_cluster.camelot-eks");
+        assert_eq!(drifts[0].action, "replace");
+        assert!(is_destructive_action(&drifts[0].action));
+    }
+
+    #[test]
+    fn a_delete_planned_change_maps_to_a_destructive_drift_detail() {
+        let changes = vec![planned("aws_vpc_endpoint.orphan", PlanAction::Delete)];
+        let drifts = drift_details_from_planned_changes(&changes);
+        assert_eq!(drifts[0].action, "delete");
+        assert!(is_destructive_action(&drifts[0].action));
+    }
+
+    #[test]
+    fn non_destructive_planned_changes_map_to_non_destructive_drift_details() {
+        let changes = vec![
+            planned("aws_eks_addon.coredns", PlanAction::Create),
+            planned("aws_eks_addon.kube_proxy", PlanAction::Update),
+            planned("aws_eks_addon.vpc_cni", PlanAction::NoOp),
+            planned("data.aws_ami.al2", PlanAction::Read),
+        ];
+        let drifts = drift_details_from_planned_changes(&changes);
+        assert!(drifts.iter().all(|d| !is_destructive_action(&d.action)));
+    }
+
+    #[test]
+    fn a_fresh_planned_change_replace_blocks_via_the_shared_gate() {
+        // The pipeline `fresh_action_set_before_bare_apply`'s tier 1
+        // (magma's `planned_changes()`) feeds
+        // `recheck_destroy_protection_before_bare_apply`: a fresh
+        // PlannedChange set — the SAME persisted plan row apply() will
+        // consume — containing a replace must block under protection,
+        // exactly like a `prior_drifts`-sourced replace already does.
+        let changes = vec![
+            planned("aws_eks_node_group.system_ng", PlanAction::Create),
+            planned("aws_eks_cluster.camelot-eks", PlanAction::Replace),
+        ];
+        let fresh = drift_details_from_planned_changes(&changes);
+        assert_eq!(
+            evaluate_destroy_protection_gate(true, &fresh),
+            DestroyProtectionGate::BlockedByProtectedDestruction {
+                address: "aws_eks_cluster.camelot-eks".to_string(),
+                action: "replace".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn a_fresh_planned_change_set_with_no_destructive_action_proceeds() {
+        let changes = vec![planned("aws_eks_addon.coredns", PlanAction::Create)];
+        let fresh = drift_details_from_planned_changes(&changes);
+        assert_eq!(
+            evaluate_destroy_protection_gate(true, &fresh),
+            DestroyProtectionGate::Proceed
+        );
+    }
+
+    #[test]
+    fn tier_2_raw_tofu_plan_json_with_a_replace_blocks_via_the_shared_gate() {
+        // The tofu-fallback tier of `fresh_action_set_before_bare_apply`:
+        // a raw `tofu show -json` payload (the channel the conflict.rs /
+        // self-heal / magma-cache-miss recheck falls back to) parsed by
+        // `drift_details_from_tofu_show_json` must feed the identical
+        // gate — this is the exact channel the camelot-eks incident's
+        // import-driven re-apply used.
+        let json = serde_json::json!({
+            "format_version": "1.2",
+            "terraform_version": "1.6.0",
+            "resource_changes": [
+                {
+                    "address": "aws_eks_cluster.camelot-eks",
+                    "type": "aws_eks_cluster",
+                    "name": "camelot-eks",
+                    "provider_name": "registry.terraform.io/hashicorp/aws",
+                    "change": { "actions": ["delete", "create"] }
+                }
+            ],
+            "output_changes": {},
+            "configuration": {}
+        })
+        .to_string();
+        let fresh = drift_details_from_tofu_show_json(&json);
+        assert_eq!(
+            evaluate_destroy_protection_gate(true, &fresh),
+            DestroyProtectionGate::BlockedByProtectedDestruction {
+                address: "aws_eks_cluster.camelot-eks".to_string(),
+                action: "replace".to_string(),
+            }
+        );
     }
 }
 

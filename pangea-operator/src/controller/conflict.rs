@@ -37,13 +37,21 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
+use kube::runtime::events::EventType;
+use kube::ResourceExt;
 use tracing::{info, warn};
 
 use crate::controller::import::{parse_planned_attrs, resolve_natural_id, substitute_with_planned};
+use crate::controller::template::events::record_event;
+use crate::controller::template::status::update_phase_with_error;
+use crate::controller::template_controller::{
+    evaluate_destroy_protection_gate, fresh_action_set_before_bare_apply, DestroyProtectionGate,
+};
 use crate::controller::ControllerState;
 use crate::crd::{
-    ConflictKind, ConflictResolution, ConflictResolutionPolicy, InfrastructureTemplate,
+    ConflictKind, ConflictResolution, ConflictResolutionPolicy, InfrastructureTemplate, Phase,
 };
+use crate::error::Result;
 use crate::executor::TofuResult;
 
 /// Outcome of the post-apply conflict-resolution pass.
@@ -57,6 +65,17 @@ pub struct ConflictResolutionOutcome {
     pub imported: Vec<String>,
     /// How many import+re-apply rounds ran.
     pub rounds: u32,
+    /// Set when the destroyProtection safety net (task #120 follow-up,
+    /// #131) blocked the post-import re-apply mid-loop: the FRESH action
+    /// set that re-apply was about to execute contained a destructive
+    /// action while `spec.destroyProtection` was on. When `true`, this
+    /// function has ALREADY recorded the `DestroyBlocked` event and
+    /// transitioned the template to `Phase::Failed` — the caller must
+    /// return `Ok(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL))`
+    /// immediately, never falling through to the generic apply-failure
+    /// classification path (which would misreport a deliberate safety
+    /// block as an ordinary provider error).
+    pub destroy_protection_blocked: bool,
 }
 
 /// The effective conflict-resolution policy for a template: its
@@ -295,9 +314,12 @@ async fn gather_attrs(
 }
 
 /// Run the post-apply conflict-resolution loop after a failed `tofu
-/// apply`. Returns `None` when conflict resolution is disabled for this
-/// template (caller proceeds with the original failure unchanged), or
-/// `Some(outcome)` after running the import + re-apply loop.
+/// apply`. Returns `Ok(None)` when conflict resolution is disabled for
+/// this template (caller proceeds with the original failure unchanged),
+/// or `Ok(Some(outcome))` after running the import + re-apply loop.
+/// `Err` propagates only from the destroyProtection safety net's own
+/// `update_phase_with_error` call (a genuine K8s status-patch failure) —
+/// never from the conflict-resolution logic itself.
 ///
 /// `failed_result` is the apply result that just failed; the caller
 /// passes the three workspace paths so this module needs no `Workspace`
@@ -309,10 +331,10 @@ pub async fn resolve_conflicts_post_apply(
     plan_path: &Path,
     main_tf_path: &Path,
     failed_result: TofuResult,
-) -> Option<ConflictResolutionOutcome> {
+) -> Result<Option<ConflictResolutionOutcome>> {
     let policy = effective_policy(template);
     if !is_enabled(template, &policy) {
-        return None;
+        return Ok(None);
     }
 
     // Per-CR executor selection — a CR with `spec.executor: magma` runs
@@ -334,6 +356,7 @@ pub async fn resolve_conflicts_post_apply(
     let mut imported_all: Vec<String> = Vec::new();
     let mut tried: HashSet<String> = HashSet::new();
     let mut rounds_run = 0u32;
+    let mut destroy_protection_blocked = false;
 
     for round in 0..max_rounds {
         let combined = combined_output(&result);
@@ -422,6 +445,40 @@ pub async fn resolve_conflicts_post_apply(
             break;
         }
 
+        // ── destroyProtection safety net (task #120 follow-up, #131) ──
+        // This is the EXACT mechanism (import-driven computed-attribute
+        // replace) that destructively replaced the real `camelot-eks`
+        // EKS cluster 2+ times: the imports above just mutated state, so
+        // the re-apply below computes a brand-new plan with NO
+        // pre-approved cached plan behind it. Recompute the FRESH action
+        // set that re-apply is about to execute
+        // (`fresh_action_set_before_bare_apply` — magma's disk-free
+        // `planned_changes()` readback, falling back to a genuine
+        // `plan`+`show_plan` for tofu) and refuse to proceed if
+        // destroyProtection is on and it contains a delete/replace.
+        // Reuses `evaluate_destroy_protection_gate` unchanged — never a
+        // forked predicate.
+        if template.spec.destroy_protection {
+            let fresh = fresh_action_set_before_bare_apply(&executor, work_dir, plan_path).await;
+            if let DestroyProtectionGate::BlockedByProtectedDestruction { address, action } =
+                evaluate_destroy_protection_gate(true, &fresh)
+            {
+                let msg = format!(
+                    "Applying refused: destroyProtection is enabled and the post-import \
+                     re-apply's freshly recomputed plan contains a destructive {action} \
+                     action on {address}. A replace is a delete-then-recreate, so it is \
+                     blocked under destroy protection (approved or not). Set \
+                     spec.destroyProtection=false first if this destruction is intended, \
+                     then re-approve. Parking at Failed."
+                );
+                warn!(template = %template.name_any(), %msg);
+                record_event(template, state, EventType::Warning, "DestroyBlocked", &msg).await;
+                update_phase_with_error(template, Phase::Failed, &msg, state).await?;
+                destroy_protection_blocked = true;
+                break;
+            }
+        }
+
         // Re-apply with a fresh plan (plan_file=None) — the imports
         // mutated state, so any cached plan is stale.
         match executor.apply(work_dir, None, true).await {
@@ -442,11 +499,12 @@ pub async fn resolve_conflicts_post_apply(
         }
     }
 
-    Some(ConflictResolutionOutcome {
+    Ok(Some(ConflictResolutionOutcome {
         result,
         imported: imported_all,
         rounds: rounds_run,
-    })
+        destroy_protection_blocked,
+    }))
 }
 
 #[cfg(test)]
