@@ -82,6 +82,26 @@ jobs:
       # (push failed: permission_denied: write_package). Map it explicitly.
       GHCR_TOKEN: ${{ secrets.BOT_PAT }}
 
+  # Zero-tolerance CVE gate on the JUST-published embedded image -- found
+  # live 2026-07-14: this pipeline had never once scanned its own
+  # published artifact. Direct image-scan call (not compliance-attest.yml)
+  # since that reusable's scan job is hard-chained behind sbom→sign→slsa
+  # for a binary artifact-path this container image doesn't have; adding
+  # that chain here is a separate, bigger change than this fix needs.
+  # Advisory only for now (continue-on-error) -- pangea-operator is
+  # already published + deployed by the time this runs, so a finding here
+  # is a signal to triage, not something that can un-publish the image.
+  cve-scan:
+    name: zero-tolerance CVE scan (advisory)
+    needs: image
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: pleme-io/actions/image-scan@main
+        with:
+          image-ref: ghcr.io/pleme-io/pangea-operator:embedded-amd64-r${{ github.run_number }}-${{ github.sha }}
+          fail-on-severity: UNKNOWN
+
   # Binaries + chart publish on a version tag (or manual dispatch) — not on
   # every merge.
   binaries:
