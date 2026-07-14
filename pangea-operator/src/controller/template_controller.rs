@@ -15,6 +15,8 @@ use kube::{
     runtime::{
         controller::Action,
         events::EventType,
+        reflector::{ObjectRef, Store},
+        watcher,
     },
     ResourceExt,
 };
@@ -75,7 +77,42 @@ impl TemplateController {
         // events at the source so reconciles only fire on actual spec
         // mutations + the explicit Action::requeue tick. See
         // controller::generation_filter for the full rationale.
-        crate::controller::generation_filter::filtered_controller::<InfrastructureTemplate>(client)
+        let controller =
+            crate::controller::generation_filter::filtered_controller::<InfrastructureTemplate>(
+                client.clone(),
+            );
+
+        // Reactive ConfigMap watch (fleet task #131). A ConfigMap edit
+        // does NOT bump the owning InfrastructureTemplate's
+        // `metadata.generation` — the generation-filtered stream above
+        // never fires for it — so a `configMapRef`-sourced template
+        // (camelot-eks, camelot-flux-bootstrap) that has already
+        // settled into Ready previously had no push signal at all for
+        // a source-content edit: the only thing that could notice was
+        // the next `refreshInterval` tick's `compiled_config_available`
+        // content-revision check (see `non_git_source_revision` /
+        // `rendered_config_is_current` below), i.e. a POLL, not a
+        // PUSH — the CR could sit stale for up to `refreshInterval`,
+        // and the only forcing lever operators found was a manual
+        // `spec.suspend: true` → `false` cycle. `.watches()` closes the
+        // gap: the moment the referenced ConfigMap changes, the owning
+        // template(s) are pushed onto the reconcile queue immediately,
+        // same as a spec edit. The mapper reads the SAME reflector
+        // store the primary watch above already maintains
+        // (`Controller::store()` — no second cache, no extra list
+        // call) and delegates the actual match test to the pure
+        // `config_map_ref_matches` (unit-tested below), so the linking
+        // rule between a ConfigMap and the template(s) that reference
+        // it is provable independent of any kube-rs machinery.
+        let template_store = controller.store();
+        let configmap_api: Api<ConfigMap> = Api::all(client);
+        let controller = controller.watches(
+            configmap_api,
+            watcher::Config::default(),
+            move |cm: ConfigMap| templates_referencing_configmap(&cm, &template_store),
+        );
+
+        controller
             .run(
                 move |template, ctx| {
                     let state = Arc::clone(&ctx);
@@ -102,6 +139,150 @@ impl TemplateController {
             .await;
 
         Ok(())
+    }
+}
+
+/// `.watches()` mapper for the reactive ConfigMap watch above: given a
+/// touched ConfigMap, which cached InfrastructureTemplate(s) reference
+/// it via `spec.source.configMapRef`?
+///
+/// Reads the reflector `Store` the primary InfrastructureTemplate watch
+/// already maintains (passed in from `TemplateController::run` via
+/// `Controller::store()`) rather than issuing a live list — the store
+/// is kept current by the same watch stream that feeds reconciles, so
+/// it is never staler than "the last InfrastructureTemplate event this
+/// controller has already processed". All the actual matching logic
+/// lives in the pure `config_map_ref_matches` (unit-tested below); this
+/// function is just the kube-rs-shaped plumbing around it, matching
+/// this file's existing split between pure decision functions
+/// (`rendered_config_is_current`, `generation_invalidates_render`, …)
+/// and the I/O-touching callers that use them.
+fn templates_referencing_configmap(
+    cm: &ConfigMap,
+    store: &Store<InfrastructureTemplate>,
+) -> Vec<ObjectRef<InfrastructureTemplate>> {
+    let touched_name = cm.name_any();
+    let touched_namespace = cm.namespace().unwrap_or_default();
+    store
+        .state()
+        .iter()
+        .filter(|tpl| {
+            tpl.spec
+                .source
+                .config_map_ref
+                .as_ref()
+                .is_some_and(|cm_ref| {
+                    let template_namespace = tpl.namespace().unwrap_or_default();
+                    config_map_ref_matches(
+                        &cm_ref.name,
+                        cm_ref.namespace.as_deref(),
+                        &template_namespace,
+                        &touched_namespace,
+                        &touched_name,
+                    )
+                })
+        })
+        .map(|tpl| ObjectRef::from_obj(tpl.as_ref()))
+        .collect()
+}
+
+/// Pure predicate: does a template's `spec.source.configMapRef` resolve
+/// to the given ConfigMap `(touched_namespace, touched_name)`?
+///
+/// Mirrors the EXACT namespace-defaulting rule `handle_compiling` and
+/// `non_git_source_revision` already use when resolving this same
+/// field to actually read the ConfigMap: an unset `configMapRef.namespace`
+/// means "the same namespace as the InfrastructureTemplate", never a
+/// bare/cluster scope. Kept independent of any kube-rs type so the
+/// linking rule is provable as a pure function over plain strings, not
+/// an assertion about live cluster/watch behavior.
+fn config_map_ref_matches(
+    ref_name: &str,
+    ref_namespace: Option<&str>,
+    template_namespace: &str,
+    touched_namespace: &str,
+    touched_name: &str,
+) -> bool {
+    ref_name == touched_name && ref_namespace.unwrap_or(template_namespace) == touched_namespace
+}
+
+#[cfg(test)]
+mod configmap_watch_mapper_tests {
+    use super::config_map_ref_matches;
+
+    #[test]
+    fn same_name_and_explicit_namespace_matches() {
+        assert!(config_map_ref_matches(
+            "camelot-flux-bootstrap-tfjson",
+            Some("camelot"),
+            "camelot",
+            "camelot",
+            "camelot-flux-bootstrap-tfjson",
+        ));
+    }
+
+    #[test]
+    fn unset_ref_namespace_defaults_to_the_templates_own_namespace() {
+        // The load-bearing case: `configMapRef.namespace` is unset (the
+        // common case — camelot-eks / camelot-flux-bootstrap both omit
+        // it), so the ConfigMap must be assumed to live in the SAME
+        // namespace as the InfrastructureTemplate, matching
+        // `handle_compiling`'s `cm_ref.namespace.clone().or_else(||
+        // template.namespace())` resolution exactly.
+        assert!(config_map_ref_matches(
+            "camelot-flux-bootstrap-tfjson",
+            None,
+            "camelot",
+            "camelot",
+            "camelot-flux-bootstrap-tfjson",
+        ));
+    }
+
+    #[test]
+    fn different_name_never_matches() {
+        assert!(!config_map_ref_matches(
+            "camelot-flux-bootstrap-tfjson",
+            None,
+            "camelot",
+            "camelot",
+            "some-other-configmap",
+        ));
+    }
+
+    #[test]
+    fn unset_ref_namespace_does_not_match_a_different_touched_namespace() {
+        // Same ConfigMap NAME in a DIFFERENT namespace than the
+        // template's own must not match when configMapRef.namespace is
+        // unset — the default is the template's namespace, not "any
+        // namespace with a same-named ConfigMap".
+        assert!(!config_map_ref_matches(
+            "camelot-flux-bootstrap-tfjson",
+            None,
+            "camelot",
+            "some-other-namespace",
+            "camelot-flux-bootstrap-tfjson",
+        ));
+    }
+
+    #[test]
+    fn explicit_ref_namespace_overrides_the_templates_own_namespace() {
+        // configMapRef.namespace IS set — it wins over the template's
+        // own namespace, and a touched ConfigMap in the template's
+        // namespace (but not the referenced one) must NOT match.
+        assert!(config_map_ref_matches(
+            "shared-tfjson",
+            Some("shared-configs"),
+            "camelot",
+            "shared-configs",
+            "shared-tfjson",
+        ));
+        assert!(!config_map_ref_matches(
+            "shared-tfjson",
+            Some("shared-configs"),
+            "camelot",
+            "camelot",
+            "shared-tfjson",
+        ));
     }
 }
 
