@@ -406,6 +406,11 @@
               hashicorp_kubernetes
               hashicorp_random      # rio-drive: random_id tunnel_secret
               porkbun               # cloudflare-pleme: porkbun_nameservers delegation
+              cyrilgdn_rabbitmq     # camelot-rabbitmq-topology: vhost/permissions/queue
+                                    # mgmt via RabbitMQ's HTTP API -- theory/HELM-NATIVE-
+                                    # INFRASTRUCTURE.md §III.1/§III.2, the first community
+                                    # (non-first-party-gem) provider in the mirror,
+                                    # confirming magma's provider-RPC core has no allowlist.
             ];
           };
         in builders.mkCrate2nixDockerImage {
