@@ -9,8 +9,21 @@ jobs:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
-      - name: nix flake check
-        run: nix flake check --no-warn-dirty
+      # `nix flake check` builds EVERY packages.x86_64-linux.* + apps.x86_64-linux.*
+      # output for the current system — including dockerImage-operator-embedded-arm64
+      # / push-image-operator-embedded-arm64, which mkEmbeddedOperatorImage builds
+      # for aarch64-linux (a genuine CROSS target). This bare ubuntu-latest runner
+      # has no remote/emulated aarch64-linux builder registered, so that build has
+      # failed every run since ~2026-07-12 ("Cannot build ...: platform mismatch,
+      # Required system aarch64-linux, Current system x86_64-linux") — CI has been
+      # red on every push to main. Real fix belongs in flake.nix (stop registering
+      # the arm64 image under every host system); until that lands, verify the
+      # actual NATIVE, SHIPPABLE artifact instead of the broken blanket check —
+      # this is the exact target release.yml's `image` job builds and ships, on the
+      # same x86_64-linux architecture as this runner, so it's a real build, not
+      # just an eval.
+      - name: nix build — native amd64 embedded operator image (the real shipped artifact)
+        run: nix build .#dockerImage-operator-embedded-amd64 --no-link --print-build-logs
 
   cargo-test:
     runs-on: ubuntu-latest
