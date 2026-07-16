@@ -26,26 +26,40 @@ jobs:
         run: nix build .#dockerImage-operator-embedded-amd64 --no-link --print-build-logs
 
   cargo-test:
+    # Runs inside `.#ruby-eval` via the shared substrate reusable workflow
+    # (pleme-io/substrate/.github/workflows/nix-devshell-cargo-test.yml)
+    # instead of a bare dtolnay/rust-toolchain job. Previously this passed
+    # only because ubuntu-latest's ambient system Ruby happened to satisfy
+    # magnus/rb-sys's link requirement — real, but accidental, with no pin
+    # and no local darwin-workstation equivalent. Now it's the same pinned
+    # nix devShell every local dev + CRD-regen invocation already uses
+    # (pangea-operator/CLAUDE.md §Generating CRDs), so CI and local dev
+    # agree on the exact Ruby/libclang environment, not by luck.
+    uses: pleme-io/substrate/.github/workflows/nix-devshell-cargo-test.yml@main
+    with:
+      devshell: ruby-eval
+      test-args: "--workspace --no-fail-fast"
+    secrets: inherit
+
+  coverage:
+    needs: cargo-test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: cargo test --workspace
-        run: cargo test --workspace --no-fail-fast
       # Coverage baseline (theory/PANGEA-OPERATOR.md §XVII row 6): informational
       # only — this is the reference floor for future work, not a merge gate.
       # `continue-on-error` because coverage-upload's own run.tlisp exits 1 on
-      # a tarpaulin/upload failure; that must never fail this job. Runs on the
-      # same plain ubuntu-latest + dtolnay/rust-toolchain env as the test step
-      # above (proven green here already) — no nix devShell wrapping, since CI
-      # doesn't use `.#ruby-eval` today and doesn't need to (the runner's
-      # ambient Ruby already satisfies the default `embedded_ruby` feature's
-      # magnus/libruby link, same as the step above). cargo-tarpaulin runs
-      # `--workspace`, giving one aggregate cobertura.xml; Codecov's own file
-      # browser then breaks coverage down per-crate path
-      # (pangea-types/pangea-operator/pangea-cli/pangea-ruby-eval/
-      # pangea-operator-mcp) — the action has no separate per-crate input.
+      # a tarpaulin/upload failure; that must never fail this job. Kept on a
+      # plain ubuntu-latest + dtolnay/rust-toolchain env (cargo-tarpaulin
+      # itself doesn't need the devShell's Ruby pin for instrumentation) —
+      # the pin matters for the actual test correctness, not the coverage
+      # scrape. cargo-tarpaulin runs `--workspace`, giving one aggregate
+      # cobertura.xml; Codecov's own file browser then breaks coverage down
+      # per-crate path (pangea-types/pangea-operator/pangea-cli/
+      # pangea-ruby-eval/pangea-operator-mcp) — the action has no separate
+      # per-crate input.
       - name: coverage baseline (informational only)
         continue-on-error: true
         uses: pleme-io/actions/coverage-upload@main
