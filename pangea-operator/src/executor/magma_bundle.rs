@@ -300,6 +300,34 @@ fn bundle_ref_from(value: &serde_json::Value, raw: &[u8]) -> Option<BundleRef> {
 /// carries all three natively. Empty when `plan.changes` is missing
 /// or not an array.
 ///
+/// ## Permissiveness matches `action_distribution_from` (task #186)
+///
+/// This function used to `filter_map` + `?` on a flat, top-level
+/// string `"address"` field — any change entry that didn't have one
+/// was silently DROPPED from the result. Its sibling
+/// `action_distribution_from` (below) has no such requirement: it
+/// only reads `"action"` (defaulting to `""` → bucketed as `other`
+/// when absent) and counts every entry in `plan.changes` regardless
+/// of what `"address"` looks like. Net effect: an
+/// `InfrastructureTemplate` whose drifted resources aren't shaped
+/// with a flat top-level `"address"` string (a legacy/alternate
+/// bundle encoding, an object-shaped address, or any future magma
+/// reconciler kind that doesn't match today's `to_universal_plan`
+/// convention) showed empty `driftDetails` while `actionDistribution`
+/// kept counting the same resources correctly — the two status
+/// fields silently disagreeing about the same cycle.
+///
+/// Fixed by never dropping an entry: `resource_changes_from` now
+/// derives a best-effort address for every shape address can take —
+/// a flat string is used as-is (the common case, unchanged
+/// behavior); a present-but-non-string value (e.g. an object like
+/// `{"type_id": "...", "name": "..."}`) is rendered via its compact
+/// JSON text so identifying information survives; a wholly absent
+/// `"address"` key falls back to an explicit placeholder rather than
+/// vanishing. Every entry in `plan.changes` now yields exactly one
+/// `TypedResourceChange`, preserving `plan.changes.len()` exactly
+/// like `action_distribution_from` already does.
+///
 /// The severity vocabulary in the bundle is magma-drift's
 /// `ChangeSeverity` — `"cosmetic"`, `"functional"`, `"critical"` —
 /// projected to the operator's `Severity` (Cosmetic/Functional/
@@ -312,8 +340,8 @@ fn resource_changes_from(value: &serde_json::Value) -> Vec<TypedResourceChange> 
     };
     changes
         .iter()
-        .filter_map(|c| {
-            let address = c.get("address").and_then(|v| v.as_str())?.to_string();
+        .map(|c| {
+            let address = address_from_change(c);
             let raw_action = c.get("action").and_then(|v| v.as_str()).unwrap_or("");
             let action = PlanAction::parse(raw_action);
             let severity = c
@@ -321,9 +349,31 @@ fn resource_changes_from(value: &serde_json::Value) -> Vec<TypedResourceChange> 
                 .and_then(|v| v.as_str())
                 .map(map_severity_with_fallback)
                 .unwrap_or_else(|| crate::executor::cycle_artifact::action_to_severity(&action));
-            Some(TypedResourceChange { address, action, severity })
+            TypedResourceChange { address, action, severity }
         })
         .collect()
+}
+
+/// Best-effort address extraction for one `plan.changes[]` entry.
+/// Never fails — always returns a non-empty, informative string so a
+/// change entry is never silently dropped by its caller (see
+/// `resource_changes_from` doc above for why that matters).
+///
+/// * `"address"` present as a string → used as-is (the common,
+///   AWS-provider-shaped case: `"aws_vpc.main"`).
+/// * `"address"` present but a different JSON shape (object, array,
+///   number, bool, null) → rendered via `Value`'s compact `to_string`
+///   so identifying fields (e.g. a nested `type_id`/`name` object)
+///   aren't lost.
+/// * `"address"` key absent entirely → an explicit placeholder, never
+///   an empty string (empty strings are easy to lose in dashboards /
+///   collapse silently in dedup logic keyed on address).
+fn address_from_change(c: &serde_json::Value) -> String {
+    match c.get("address") {
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(other) => other.to_string(),
+        None => "<unknown-resource>".to_string(),
+    }
 }
 
 /// Project the bundle's severity string into the operator's
@@ -475,6 +525,112 @@ mod tests {
         assert!(action_distribution_from(&json!({})).is_none());
         assert!(action_distribution_from(&json!({"plan": {}})).is_none());
         assert!(action_distribution_from(&json!({"plan": {"changes": "not-an-array"}})).is_none());
+    }
+
+    // ── resource_changes_from permissive addressing (task #186) ────
+
+    #[test]
+    fn address_from_change_prefers_flat_string() {
+        let c = json!({"address": "aws_vpc.main", "action": "create"});
+        assert_eq!(address_from_change(&c), "aws_vpc.main");
+    }
+
+    #[test]
+    fn address_from_change_renders_non_string_address_instead_of_losing_it() {
+        // A non-AWS-provider-shaped resource whose address is an
+        // object (e.g. a legacy/alternate encoding carrying
+        // type_id + name as nested fields, as `ResourceAddress`
+        // does elsewhere in the magma type system) must not vanish
+        // -- it renders via its JSON text so identity survives.
+        let c = json!({
+            "address": {"type_id": "rabbitmq_queue", "name": "orders"},
+            "action": "update"
+        });
+        let addr = address_from_change(&c);
+        assert!(addr.contains("rabbitmq_queue"), "addr was {addr:?}");
+        assert!(addr.contains("orders"), "addr was {addr:?}");
+    }
+
+    #[test]
+    fn address_from_change_missing_key_yields_placeholder_not_panic() {
+        let c = json!({"action": "delete"});
+        assert_eq!(address_from_change(&c), "<unknown-resource>");
+    }
+
+    #[test]
+    fn resource_changes_from_never_drops_an_entry_missing_a_flat_address() {
+        // The task #186 regression: a Flux-bootstrap/RabbitMQ-topology
+        // -shaped drift entry (no flat top-level "address" string) used
+        // to be silently filtered out of `resource_changes_from` while
+        // `action_distribution_from` kept counting it -- driftDetails
+        // and actionDistribution disagreeing about the SAME cycle's
+        // SAME resources. Every entry in plan.changes must now survive.
+        let v = json!({
+            "kind": "terraform",
+            "bundle_id": "abc",
+            "plan": {
+                "changes": [
+                    {"address": "aws_vpc.main", "action": "create", "severity": "functional"},
+                    // Non-AWS-shaped: address is an object, not a flat string.
+                    {"address": {"type_id": "rabbitmq_queue", "name": "orders"}, "action": "update", "severity": "cosmetic"},
+                    // Non-AWS-shaped: no address field at all (Flux bootstrap CR shape).
+                    {"action": "delete", "severity": "critical"},
+                ]
+            }
+        });
+        let changes = resource_changes_from(&v);
+        assert_eq!(changes.len(), 3, "every plan.changes entry must survive, none silently dropped");
+        assert_eq!(changes[0].address, "aws_vpc.main");
+        assert!(changes[1].address.contains("rabbitmq_queue"));
+        assert_eq!(changes[2].address, "<unknown-resource>");
+        // actionDistribution derived from these changes must agree with
+        // driftDetails on totals -- the two fields are no longer free to
+        // silently diverge on the same underlying resources.
+        let dist = CycleArtifact::action_distribution_from(&changes);
+        assert_eq!(dist.create, 1);
+        assert_eq!(dist.update, 1);
+        assert_eq!(dist.delete, 1);
+    }
+
+    #[tokio::test]
+    async fn read_cycle_artifact_surfaces_non_aws_shaped_drift_in_drift_details() {
+        // End-to-end: a bundle with one AWS-shaped resource and one
+        // non-AWS-shaped resource (object address, RabbitMQ/Flux-CR
+        // style) must show BOTH in driftDetails, matching
+        // actionDistribution's count exactly. Before the fix,
+        // driftDetails silently lost the second resource.
+        let dir = tempfile::tempdir().unwrap();
+        let bundle = json!({
+            "kind": "terraform",
+            "bundle_id": "task186",
+            "plan": {
+                "changes": [
+                    {"address": "aws_vpc.main", "action": "create", "severity": "functional"},
+                    {"address": {"type_id": "rabbitmq_queue", "name": "orders"}, "action": "update", "severity": "cosmetic"},
+                ]
+            }
+        });
+        tokio::fs::write(
+            dir.path().join("magma-bundle.json"),
+            serde_json::to_vec(&bundle).unwrap(),
+        ).await.unwrap();
+
+        let art = read_cycle_artifact(dir.path()).await.unwrap();
+        assert_eq!(art.action_distribution.create, 1);
+        assert_eq!(art.action_distribution.update, 1);
+
+        let drifts = art.drift_details(50);
+        assert_eq!(
+            drifts.len(),
+            2,
+            "the non-AWS-shaped rabbitmq resource must appear in driftDetails \
+             alongside the AWS-shaped one, not silently vanish: {drifts:?}"
+        );
+        assert!(drifts.iter().any(|d| d.address == "aws_vpc.main"));
+        assert!(
+            drifts.iter().any(|d| d.address.contains("rabbitmq_queue")),
+            "driftDetails: {drifts:?}"
+        );
     }
 
     #[test]
