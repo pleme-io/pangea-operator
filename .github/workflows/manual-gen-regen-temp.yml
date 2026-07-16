@@ -1,0 +1,51 @@
+name: manual-gen-regen-temp
+
+# TEMPORARY, ONE-OFF workflow — NOT part of the standing CI pipeline.
+#
+# Why this exists: this PR (dependabot/cargo/cargo-minor-and-patch-*, #21,
+# task #192) bumped Cargo.lock (log/chrono/anyhow/cynic/hyper/rustls/regex/
+# uuid/arc-swap) but dependabot never regenerates the committed
+# Cargo.gen.lock delta, so flake-check fails with
+# `lockfile-delta: Cargo.gen.lock is STALE (D2 freshness tie failed)` --
+# the fix is `gen build . --commit` (pangea-operator/CLAUDE.md's gen-cargo
+# DELTA-ONLY convention; see also substrate's reusable-gen-spec.yml, which
+# this repo hasn't adopted as a standing gate yet). `gen build` needs to
+# resolve dependencies (including ~30 pleme-io git-sourced crates, e.g. the
+# magma-* family) across all 6 fleet target triples, which is fast on a
+# GitHub-hosted runner's network path but was taking 10+ minutes per
+# attempt over a local multiplexed SSH connection with no persistent
+# git-prefetch cache. Dispatched on ubuntu-latest instead, matching this
+# repo's own documented one-off-dispatch precedent (see the since-published
+# `manual-image-build-temp.yml`). Delete this file once Cargo.gen.lock has
+# been regenerated + pushed (success or failure) -- it is not meant to
+# become a second standing regen path (that's reusable-gen-spec.yml, not
+# yet adopted here).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  regen:
+    name: gen build . --commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+        with:
+          use-flakehub: false
+
+      - name: Regenerate Cargo.gen.lock from the current Cargo.lock
+        run: nix run github:pleme-io/gen -- build . --commit
+
+      - uses: pleme-io/actions/git-push-with-token@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ github.ref_name }}
+          push-tags: "false"
