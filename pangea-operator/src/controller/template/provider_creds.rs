@@ -2,12 +2,13 @@
 //! `InfrastructureTemplate`.
 //!
 //! Lifted from `template_controller.rs` during R6. The function reads
-//! `spec.providerCredentials.{aws,cloudflare}` and resolves each into
-//! a backend-config block via `BackendConfigGenerator`. Tolerant of
-//! several legacy + current key names (`api_token` /
-//! `CLOUDFLARE_API_TOKEN` / `CF_API_TOKEN`) so operator works with
-//! secrets that follow either the pangea-CLI or workspace-template
-//! ENV-fetch naming convention.
+//! `spec.providerCredentials.{aws,cloudflare,porkbun}` and resolves
+//! each into a backend-config block via `BackendConfigGenerator`.
+//! Tolerant of several legacy + current key names (`api_token` /
+//! `CLOUDFLARE_API_TOKEN` / `CF_API_TOKEN`, `api_key` /
+//! `PORKBUN_API_KEY`, …) so operator works with secrets that follow
+//! either the pangea-CLI or workspace-template ENV-fetch naming
+//! convention.
 //!
 //! Two consumers of the same resolved-from-Secret credential values:
 //!
@@ -130,6 +131,48 @@ pub async fn resolve_provider_config(
         None
     };
 
+    let pb_creds = if let Some(pb) = &provider_creds.porkbun {
+        let ns = pb
+            .secret_ref
+            .namespace
+            .as_deref()
+            .unwrap_or(&default_ns);
+        let secret_api: Api<Secret> = Api::namespaced(state.client.clone(), ns);
+        let secret = secret_api.get(&pb.secret_ref.name).await.map_err(|_| {
+            Error::SecretNotFound {
+                namespace: ns.to_string(),
+                name: pb.secret_ref.name.clone(),
+            }
+        })?;
+
+        let data = secret.data.as_ref().ok_or_else(|| {
+            Error::Config("Porkbun credentials secret has no data".into())
+        })?;
+
+        // Tolerant of the terraform-attribute naming (api_key /
+        // secret_api_key) and the env-var convention
+        // (PORKBUN_API_KEY / PORKBUN_SECRET_API_KEY) — same style as
+        // the cloudflare tolerant-key fallback above.
+        let api_key = data
+            .get("api_key")
+            .or_else(|| data.get("PORKBUN_API_KEY"))
+            .map(|v| String::from_utf8_lossy(&v.0).to_string())
+            .ok_or_else(|| Error::Config("api_key not found in Porkbun secret".into()))?;
+
+        let secret_api_key = data
+            .get("secret_api_key")
+            .or_else(|| data.get("PORKBUN_SECRET_API_KEY"))
+            .map(|v| String::from_utf8_lossy(&v.0).to_string())
+            .ok_or_else(|| Error::Config("secret_api_key not found in Porkbun secret".into()))?;
+
+        Some(crate::backend::PorkbunCredentialsConfig {
+            api_key,
+            secret_api_key,
+        })
+    } else {
+        None
+    };
+
     let aws_region = provider_creds
         .aws
         .as_ref()
@@ -139,6 +182,7 @@ pub async fn resolve_provider_config(
         aws_region,
         aws_creds.as_ref(),
         cf_creds.as_ref(),
+        pb_creds.as_ref(),
     ))
 }
 
@@ -169,6 +213,8 @@ fn first_present(
 ///   * aws        → `{"region"?, "access_key"?, "secret_key"?, "token"?}`
 ///                  (`token` is the AWS provider's session-token attr)
 ///   * github     → `{"token": …, "owner"?}`
+///   * porkbun    → `{"api_key": …, "secret_api_key": …}` (both required
+///                  by the `marcfrederick/porkbun` provider schema)
 ///
 /// Returns `None` when no usable credential attr is present (e.g. a
 /// cloudflare secret with no recognizable token key) — the caller then
@@ -220,12 +266,24 @@ fn provider_config_object(
             }
             Some(serde_json::Value::Object(obj))
         }
+        ProviderKind::Porkbun => {
+            let api_key = first_present(data, &["api_key", "PORKBUN_API_KEY"])?;
+            let secret_api_key =
+                first_present(data, &["secret_api_key", "PORKBUN_SECRET_API_KEY"])?;
+            let mut obj = serde_json::Map::new();
+            obj.insert("api_key".to_string(), serde_json::Value::String(api_key));
+            obj.insert(
+                "secret_api_key".to_string(),
+                serde_json::Value::String(secret_api_key),
+            );
+            Some(serde_json::Value::Object(obj))
+        }
     }
 }
 
 /// Resolve every populated `spec.providerCredentials` provider into its
 /// bare ConfigureProvider **config-object**, keyed by the terraform
-/// provider local name (`cloudflare` / `aws` / `github`).
+/// provider local name (`cloudflare` / `aws` / `github` / `porkbun`).
 ///
 /// This is the magma analogue of [`resolve_provider_config`] (which
 /// writes `providers.tf.json` for tofu). The returned map is folded
@@ -402,6 +460,55 @@ mod tests {
             .expect("github token present → config object");
         assert_eq!(obj["token"], "ghp_yyy");
         assert!(obj.get("owner").is_none());
+    }
+
+    #[test]
+    fn porkbun_resolves_api_key_and_secret_api_key() {
+        let d = data(&[("api_key", "pk1_abc"), ("secret_api_key", "sk1_xyz")]);
+        let obj = provider_config_object(ProviderKind::Porkbun, &d, None)
+            .expect("porkbun creds present → config object");
+        assert_eq!(obj["api_key"], "pk1_abc");
+        assert_eq!(obj["secret_api_key"], "sk1_xyz");
+        assert_eq!(obj.as_object().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn porkbun_tolerant_env_var_key_fallbacks() {
+        let d = data(&[
+            ("PORKBUN_API_KEY", "pk1_env"),
+            ("PORKBUN_SECRET_API_KEY", "sk1_env"),
+        ]);
+        let obj = provider_config_object(ProviderKind::Porkbun, &d, None)
+            .expect("porkbun creds present via env-var-shaped keys → config object");
+        assert_eq!(obj["api_key"], "pk1_env");
+        assert_eq!(obj["secret_api_key"], "sk1_env");
+    }
+
+    #[test]
+    fn porkbun_missing_secret_api_key_yields_none() {
+        // Both attrs are required by the provider schema — a partial
+        // secret must not produce a half-populated config object.
+        let d = data(&[("api_key", "pk1_abc")]);
+        assert!(provider_config_object(ProviderKind::Porkbun, &d, None).is_none());
+    }
+
+    #[test]
+    fn porkbun_empty_yields_none() {
+        let d = data(&[]);
+        assert!(provider_config_object(ProviderKind::Porkbun, &d, None).is_none());
+    }
+
+    /// The load-bearing assertion for this fix: a resolved Porkbun
+    /// credential never leaks the literal secret anywhere except this
+    /// typed, ephemeral config-object — closing the
+    /// `Pangea::Secrets.resolve`-at-synth-time leak the CRD schema gap
+    /// used to force `platform_dns.rb` into.
+    #[test]
+    fn porkbun_config_is_with_provider_config_shaped() {
+        let d = data(&[("api_key", "pk1_live"), ("secret_api_key", "sk1_live")]);
+        let obj = provider_config_object(ProviderKind::Porkbun, &d, None).unwrap();
+        let expected = serde_json::json!({ "api_key": "pk1_live", "secret_api_key": "sk1_live" });
+        assert_eq!(obj, expected);
     }
 
     /// The load-bearing assertion: a resolved Cloudflare credential

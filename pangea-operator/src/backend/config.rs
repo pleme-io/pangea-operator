@@ -97,6 +97,7 @@ impl BackendConfigGenerator {
         aws_region: Option<&str>,
         aws_credentials: Option<&AwsCredentialsConfig>,
         cloudflare_credentials: Option<&CloudflareCredentialsConfig>,
+        porkbun_credentials: Option<&PorkbunCredentialsConfig>,
     ) -> Option<serde_json::Value> {
         let mut providers = serde_json::Map::new();
 
@@ -120,6 +121,17 @@ impl BackendConfigGenerator {
             cf_config.insert("api_token".to_string(), serde_json::json!(creds.api_token));
 
             providers.insert("cloudflare".to_string(), serde_json::Value::Object(cf_config));
+        }
+
+        if let Some(creds) = porkbun_credentials {
+            let mut pb_config = serde_json::Map::new();
+            pb_config.insert("api_key".to_string(), serde_json::json!(creds.api_key));
+            pb_config.insert(
+                "secret_api_key".to_string(),
+                serde_json::json!(creds.secret_api_key),
+            );
+
+            providers.insert("porkbun".to_string(), serde_json::Value::Object(pb_config));
         }
 
         // GitHub is intentionally absent: see ProviderKind::operator_emits_provider_block.
@@ -177,6 +189,14 @@ pub struct AwsCredentialsConfig {
 #[derive(Debug, Clone)]
 pub struct CloudflareCredentialsConfig {
     pub api_token: String,
+}
+
+/// Porkbun credentials for provider configuration. Both attrs are
+/// required by the `marcfrederick/porkbun` terraform provider schema.
+#[derive(Debug, Clone)]
+pub struct PorkbunCredentialsConfig {
+    pub api_key: String,
+    pub secret_api_key: String,
 }
 
 /// Build PostgreSQL connection string.
@@ -244,6 +264,7 @@ mod tests {
                 session_token: None,
             }),
             None,
+            None,
         )
         .expect("aws config produces a non-empty provider block");
 
@@ -264,6 +285,7 @@ mod tests {
                 session_token: Some("TOKEN123".to_string()),
             }),
             None,
+            None,
         )
         .expect("aws config produces a non-empty provider block");
 
@@ -278,6 +300,7 @@ mod tests {
             Some(&CloudflareCredentialsConfig {
                 api_token: "cf-token-xyz".to_string(),
             }),
+            None,
         )
         .expect("cloudflare config produces a non-empty provider block");
 
@@ -297,11 +320,55 @@ mod tests {
             Some(&CloudflareCredentialsConfig {
                 api_token: "cf-token".to_string(),
             }),
+            None,
         )
         .expect("two configs produce a non-empty provider block");
 
         assert!(config["provider"]["aws"].is_object());
         assert!(config["provider"]["cloudflare"].is_object());
+    }
+
+    #[test]
+    fn test_generate_provider_config_porkbun_only() {
+        let config = BackendConfigGenerator::generate_provider_config(
+            None,
+            None,
+            None,
+            Some(&PorkbunCredentialsConfig {
+                api_key: "pk1_abc".to_string(),
+                secret_api_key: "sk1_xyz".to_string(),
+            }),
+        )
+        .expect("porkbun config produces a non-empty provider block");
+
+        assert_eq!(config["provider"]["porkbun"]["api_key"], "pk1_abc");
+        assert_eq!(config["provider"]["porkbun"]["secret_api_key"], "sk1_xyz");
+        assert!(config["provider"].get("aws").is_none());
+        assert!(config["provider"].get("cloudflare").is_none());
+    }
+
+    #[test]
+    fn test_generate_provider_config_all_three_providers() {
+        let config = BackendConfigGenerator::generate_provider_config(
+            Some("eu-west-1"),
+            Some(&AwsCredentialsConfig {
+                access_key: "AK".to_string(),
+                secret_key: "SK".to_string(),
+                session_token: None,
+            }),
+            Some(&CloudflareCredentialsConfig {
+                api_token: "cf-token".to_string(),
+            }),
+            Some(&PorkbunCredentialsConfig {
+                api_key: "pk1_abc".to_string(),
+                secret_api_key: "sk1_xyz".to_string(),
+            }),
+        )
+        .expect("three configs produce a non-empty provider block");
+
+        assert!(config["provider"]["aws"].is_object());
+        assert!(config["provider"]["cloudflare"].is_object());
+        assert!(config["provider"]["porkbun"].is_object());
     }
 
     /// Regression for the pleme-io-opensource wedge.
@@ -315,7 +382,7 @@ mod tests {
     /// file entirely.
     #[test]
     fn test_generate_provider_config_no_providers_returns_none() {
-        let config = BackendConfigGenerator::generate_provider_config(None, None, None);
+        let config = BackendConfigGenerator::generate_provider_config(None, None, None, None);
         assert!(
             config.is_none(),
             "no operator-side providers must produce None, not an empty block"
@@ -326,6 +393,7 @@ mod tests {
     fn test_generate_provider_config_region_without_creds() {
         let config = BackendConfigGenerator::generate_provider_config(
             Some("ap-southeast-1"),
+            None,
             None,
             None,
         )

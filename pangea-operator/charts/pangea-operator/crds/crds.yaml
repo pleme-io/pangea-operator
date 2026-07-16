@@ -356,6 +356,26 @@ spec:
                     required:
                     - secretRef
                     type: object
+                  porkbun:
+                    description: 'Porkbun credentials configuration. Used by templates that declare `porkbun_*` resources (e.g. `platform-dns`''s registrar delegation) via the `marcfrederick/porkbun` terraform provider. Same operator-side authority model as AWS/Cloudflare: the referenced Secret holds the two-part `api_key` + `secret_api_key` credential pair, resolved by the operator and rendered into its own ephemeral `providers.tf.json` — never baked into the workspace''s own compiled/git-committed output.'
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the Porkbun `api_key` + `secret_api_key` pair.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
                 type: object
               reactivePolicy:
                 description: 'Reactive policy — declarative responses to "things didn''t go to a good state". Innermost level of the cascade (gem → workspace → template). When unset at every cascade level, the operator applies sensible defaults: 5 consecutive failures → Alert, phase timeouts of 5m / 10m / 30m for Compiling / Planning / Applying → Alert, Verified=False for 10m → Alert. See the `ReactivePolicy` type in the shared `architecture_gem` module.'
@@ -1921,6 +1941,26 @@ spec:
                     required:
                     - secretRef
                     type: object
+                  porkbun:
+                    description: 'Porkbun credentials configuration. Used by templates that declare `porkbun_*` resources (e.g. `platform-dns`''s registrar delegation) via the `marcfrederick/porkbun` terraform provider. Same operator-side authority model as AWS/Cloudflare: the referenced Secret holds the two-part `api_key` + `secret_api_key` credential pair, resolved by the operator and rendered into its own ephemeral `providers.tf.json` — never baked into the workspace''s own compiled/git-committed output.'
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the Porkbun `api_key` + `secret_api_key` pair.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
                 type: object
               retainAmi:
                 default: false
@@ -2291,6 +2331,26 @@ spec:
                     required:
                     - secretRef
                     type: object
+                  porkbun:
+                    description: 'Porkbun credentials configuration. Used by templates that declare `porkbun_*` resources (e.g. `platform-dns`''s registrar delegation) via the `marcfrederick/porkbun` terraform provider. Same operator-side authority model as AWS/Cloudflare: the referenced Secret holds the two-part `api_key` + `secret_api_key` credential pair, resolved by the operator and rendered into its own ephemeral `providers.tf.json` — never baked into the workspace''s own compiled/git-committed output.'
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the Porkbun `api_key` + `secret_api_key` pair.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
                 type: object
               suites:
                 description: Test suites forming a DAG. Each suite can declare dependencies.
@@ -2560,6 +2620,26 @@ spec:
                         properties:
                           secretRef:
                             description: Secret containing the GitHub PAT.
+                            properties:
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                              namespace:
+                                description: Namespace of the Secret (defaults to same namespace as the resource).
+                                nullable: true
+                                type: string
+                            required:
+                            - name
+                            type: object
+                        required:
+                        - secretRef
+                        type: object
+                      porkbun:
+                        description: 'Porkbun credentials configuration. Used by templates that declare `porkbun_*` resources (e.g. `platform-dns`''s registrar delegation) via the `marcfrederick/porkbun` terraform provider. Same operator-side authority model as AWS/Cloudflare: the referenced Secret holds the two-part `api_key` + `secret_api_key` credential pair, resolved by the operator and rendered into its own ephemeral `providers.tf.json` — never baked into the workspace''s own compiled/git-committed output.'
+                        nullable: true
+                        properties:
+                          secretRef:
+                            description: Secret containing the Porkbun `api_key` + `secret_api_key` pair.
                             properties:
                               name:
                                 description: Name of the Secret.
@@ -2906,6 +2986,26 @@ spec:
                         properties:
                           secretRef:
                             description: Secret containing the GitHub PAT.
+                            properties:
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                              namespace:
+                                description: Namespace of the Secret (defaults to same namespace as the resource).
+                                nullable: true
+                                type: string
+                            required:
+                            - name
+                            type: object
+                        required:
+                        - secretRef
+                        type: object
+                      porkbun:
+                        description: 'Porkbun credentials configuration. Used by templates that declare `porkbun_*` resources (e.g. `platform-dns`''s registrar delegation) via the `marcfrederick/porkbun` terraform provider. Same operator-side authority model as AWS/Cloudflare: the referenced Secret holds the two-part `api_key` + `secret_api_key` credential pair, resolved by the operator and rendered into its own ephemeral `providers.tf.json` — never baked into the workspace''s own compiled/git-committed output.'
+                        nullable: true
+                        properties:
+                          secretRef:
+                            description: Secret containing the Porkbun `api_key` + `secret_api_key` pair.
                             properties:
                               name:
                                 description: Name of the Secret.
@@ -3488,6 +3588,26 @@ spec:
                     properties:
                       secretRef:
                         description: Secret containing the GitHub PAT.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
+                  porkbun:
+                    description: 'Porkbun credentials configuration. Used by templates that declare `porkbun_*` resources (e.g. `platform-dns`''s registrar delegation) via the `marcfrederick/porkbun` terraform provider. Same operator-side authority model as AWS/Cloudflare: the referenced Secret holds the two-part `api_key` + `secret_api_key` credential pair, resolved by the operator and rendered into its own ephemeral `providers.tf.json` — never baked into the workspace''s own compiled/git-committed output.'
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the Porkbun `api_key` + `secret_api_key` pair.
                         properties:
                           name:
                             description: Name of the Secret.

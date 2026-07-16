@@ -21,7 +21,10 @@ pub use state::StateStore;
 pub use tofu_pg_state_backend::TofuPgStateBackend;
 pub use state_backend::{InMemoryStateBackend, PostgresStateBackend, StateBackend};
 pub use lock::{StateLock, LockGuard};
-pub use config::{BackendConfigGenerator, AwsCredentialsConfig, CloudflareCredentialsConfig};
+pub use config::{
+    BackendConfigGenerator, AwsCredentialsConfig, CloudflareCredentialsConfig,
+    PorkbunCredentialsConfig,
+};
 
 use crate::crd::PangeaNamespace;
 use crate::error::Result;

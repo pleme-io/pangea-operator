@@ -522,6 +522,17 @@ pub struct ProviderCredentials {
     /// credentials block: a secretRef to a Secret containing a PAT.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub github: Option<GitHubCredentials>,
+
+    /// Porkbun credentials configuration. Used by templates that
+    /// declare `porkbun_*` resources (e.g. `platform-dns`'s registrar
+    /// delegation) via the `marcfrederick/porkbun` terraform provider.
+    /// Same operator-side authority model as AWS/Cloudflare: the
+    /// referenced Secret holds the two-part `api_key` +
+    /// `secret_api_key` credential pair, resolved by the operator and
+    /// rendered into its own ephemeral `providers.tf.json` — never
+    /// baked into the workspace's own compiled/git-committed output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub porkbun: Option<PorkbunCredentials>,
 }
 
 /// Typed identifier for each provider known to the operator.
@@ -541,6 +552,7 @@ pub enum ProviderKind {
     Aws,
     Cloudflare,
     GitHub,
+    Porkbun,
 }
 
 impl ProviderKind {
@@ -552,6 +564,7 @@ impl ProviderKind {
             ProviderKind::Aws => "aws",
             ProviderKind::Cloudflare => "cloudflare",
             ProviderKind::GitHub => "github",
+            ProviderKind::Porkbun => "porkbun",
         }
     }
 
@@ -589,6 +602,16 @@ impl ProviderKind {
             // inlines the token via ENV. Operator emits only the env-var
             // injection, no providers.tf.json block.
             ProviderKind::GitHub => false,
+            // Porkbun: same operator-side model as AWS/Cloudflare — the
+            // workspace's Ruby DSL surface (e.g. platform_dns.rb) declares
+            // only `terraform { required_providers { porkbun: … } }`, no
+            // credential-bearing `provider :porkbun do … end` block. The
+            // operator resolves `providerCredentials.porkbun.secretRef`
+            // and renders the real `provider "porkbun" { api_key = …,
+            // secret_api_key = … }` block into its own ephemeral,
+            // pod-local `providers.tf.json` — the load-bearing fix for the
+            // Pangea::Secrets.resolve-at-synth-time leak this type closes.
+            ProviderKind::Porkbun => true,
         }
     }
 }
@@ -613,6 +636,7 @@ impl ProviderCredentials {
             aws,
             cloudflare,
             github,
+            porkbun,
         } = self;
 
         let mut out = Vec::new();
@@ -624,6 +648,9 @@ impl ProviderCredentials {
         }
         if let Some(c) = github {
             out.push((ProviderKind::GitHub, &c.secret_ref));
+        }
+        if let Some(c) = porkbun {
+            out.push((ProviderKind::Porkbun, &c.secret_ref));
         }
         out
     }
@@ -661,6 +688,21 @@ pub struct CloudflareCredentials {
 #[serde(rename_all = "camelCase")]
 pub struct GitHubCredentials {
     /// Secret containing the GitHub PAT.
+    pub secret_ref: SecretRef,
+}
+
+/// Porkbun credentials configuration. The referenced Secret holds the
+/// two-part Porkbun API credential pair the `marcfrederick/porkbun`
+/// terraform provider's `provider "porkbun" { api_key = …,
+/// secret_api_key = … }` block requires. Operator-side authority model
+/// (see `ProviderKind::operator_emits_provider_block`) — the workspace's
+/// Ruby DSL never inlines the real value; the operator resolves this
+/// Secret at apply time and renders the real block into its own
+/// ephemeral, pod-local `providers.tf.json`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PorkbunCredentials {
+    /// Secret containing the Porkbun `api_key` + `secret_api_key` pair.
     pub secret_ref: SecretRef,
 }
 
@@ -1886,6 +1928,7 @@ mod tests {
         assert_eq!(ProviderKind::Aws.name(), "aws");
         assert_eq!(ProviderKind::Cloudflare.name(), "cloudflare");
         assert_eq!(ProviderKind::GitHub.name(), "github");
+        assert_eq!(ProviderKind::Porkbun.name(), "porkbun");
     }
 
     fn empty_secret_ref(name: &str) -> SecretRef {
@@ -1901,6 +1944,7 @@ mod tests {
             aws: None,
             cloudflare: None,
             github: None,
+            porkbun: None,
         };
         assert!(creds.iter_secret_refs().is_empty());
     }
@@ -1915,6 +1959,7 @@ mod tests {
             github: Some(GitHubCredentials {
                 secret_ref: empty_secret_ref("gh"),
             }),
+            porkbun: None,
         };
         let refs = creds.iter_secret_refs();
         assert_eq!(refs.len(), 2);
@@ -1922,6 +1967,7 @@ mod tests {
         assert!(kinds.contains(&ProviderKind::Cloudflare));
         assert!(kinds.contains(&ProviderKind::GitHub));
         assert!(!kinds.contains(&ProviderKind::Aws));
+        assert!(!kinds.contains(&ProviderKind::Porkbun));
     }
 
     #[test]
@@ -1938,14 +1984,17 @@ mod tests {
             github: Some(GitHubCredentials {
                 secret_ref: empty_secret_ref("gh"),
             }),
+            porkbun: Some(PorkbunCredentials {
+                secret_ref: empty_secret_ref("pb"),
+            }),
         };
         let refs = creds.iter_secret_refs();
-        assert_eq!(refs.len(), 3);
+        assert_eq!(refs.len(), 4);
 
         // The exhaustiveness contract: count must equal the number
         // of fields on ProviderCredentials. If a future commit adds
-        // a fourth provider field but forgets the iter_secret_refs
-        // case, this test still expects 3 — but the destructuring
+        // a fifth provider field but forgets the iter_secret_refs
+        // case, this test still expects 4 — but the destructuring
         // pattern in iter_secret_refs would have broken at compile
         // time first. This test is the runtime backstop.
         let aws_ref = refs
@@ -1953,6 +2002,12 @@ mod tests {
             .find(|(k, _)| *k == ProviderKind::Aws)
             .map(|(_, sref)| sref.name.as_str());
         assert_eq!(aws_ref, Some("aws"));
+
+        let porkbun_ref = refs
+            .iter()
+            .find(|(k, _)| *k == ProviderKind::Porkbun)
+            .map(|(_, sref)| sref.name.as_str());
+        assert_eq!(porkbun_ref, Some("pb"));
     }
 
     #[test]
