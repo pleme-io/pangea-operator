@@ -4602,38 +4602,138 @@ pub(crate) async fn handle_failed_internal(
     handle_failed(template, state).await
 }
 
+/// The interval `handle_failed` retries at once the exponential-backoff
+/// ramp is exhausted. Slow enough not to hammer a genuinely broken
+/// external system; still finite, so the CR keeps checking whether the
+/// original blocker cleared instead of stopping forever.
+const EXHAUSTED_RETRY_INTERVAL: Duration = Duration::from_secs(3600);
+
+/// What `handle_failed` should do this reconcile: retry now (still
+/// inside the exponential-backoff ramp) or retry at the slow,
+/// steady-state cadence once the ramp is exhausted. There is
+/// deliberately no "give up" variant.
+///
+/// BUG THIS CLOSES (task #191): the exhausted branch used to `return`
+/// early WITHOUT ever transitioning the template back to `Pending` or
+/// cleaning its workspace, so once a template exceeded
+/// `spec.retryPolicy.maxRetries` it stayed in `Failed` FOREVER — even
+/// after the original blocker (a transient cloud outage, an expired
+/// credential since rotated, a config typo since fixed) had long since
+/// cleared. `retries_exhausted()` stayed true forever too (nothing
+/// resets `status.failureCount` from inside that early-return branch),
+/// so every subsequent reconcile took the identical dead-end path. The
+/// only way out was an external `kubectl edit`/re-apply, a direct
+/// violation of ★★ CONTINUOUS CONVERGENCE (a controller must never
+/// require a human to un-stick it).
+///
+/// Fixed by making retry unconditional: `handle_failed` now runs the
+/// SAME clean + `update_phase(Pending)` + event sequence for both
+/// variants below, only the requeue interval + event reason differ.
+/// Transitioning to `Pending` re-enters the normal
+/// Pending→Verifying→…→Applying pipeline, which re-checks whatever
+/// condition originally failed — and `update_phase`'s existing
+/// "clear on non-Failed transition" behavior resets `failureCount` to
+/// 0, so a successful retry fully clears the exhaustion state and a
+/// failing one re-enters the exponential ramp from scratch rather than
+/// being permanently wedged at the ceiling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FailedRetryDecision {
+    /// Still inside the exponential-backoff ramp.
+    ExponentialBackoff(Duration),
+    /// The ramp is exhausted; retry anyway at `EXHAUSTED_RETRY_INTERVAL`
+    /// so the CR keeps self-healing instead of stopping forever.
+    SlowCadenceAfterExhaustion(Duration),
+}
+
+impl FailedRetryDecision {
+    fn requeue_after(self) -> Duration {
+        match self {
+            Self::ExponentialBackoff(d) | Self::SlowCadenceAfterExhaustion(d) => d,
+        }
+    }
+
+    fn event_reason(self) -> &'static str {
+        match self {
+            Self::ExponentialBackoff(_) => "Retry",
+            Self::SlowCadenceAfterExhaustion(_) => "RetryAfterExhaustion",
+        }
+    }
+
+    /// `Warning` for the exhausted case so operators actually notice
+    /// "this template blew through its retry budget and is now
+    /// self-healing at the slow cadence" in `kubectl describe` /
+    /// `kubectl get events`, instead of it looking like an ordinary
+    /// retry. Before this fix the exhausted case emitted no event at
+    /// all (the handler returned before `record_event` ever ran).
+    fn event_type(self) -> EventType {
+        match self {
+            Self::ExponentialBackoff(_) => EventType::Normal,
+            Self::SlowCadenceAfterExhaustion(_) => EventType::Warning,
+        }
+    }
+}
+
+/// Pure decision powering `handle_failed`. Extracted so the self-heal
+/// invariant — every path is SOME flavor of retry, never a permanent
+/// stop — is unit-testable without a live `kube::Client` (this crate's
+/// established convention: see `status_patch::patch_status`'s own test,
+/// which documents that mocking the K8s API is out of scope and pure
+/// decisions are tested directly instead).
+fn failed_retry_decision(
+    retries_exhausted: bool,
+    failure_count: u32,
+    backoff_seconds: u32,
+) -> FailedRetryDecision {
+    if retries_exhausted {
+        FailedRetryDecision::SlowCadenceAfterExhaustion(EXHAUSTED_RETRY_INTERVAL)
+    } else {
+        FailedRetryDecision::ExponentialBackoff(exponential_backoff(failure_count, backoff_seconds, 600))
+    }
+}
+
 #[tracing::instrument(skip_all, name = "handle_failed")]
 async fn handle_failed(
     template: &InfrastructureTemplate,
     state: &ControllerState,
 ) -> Result<ReconcileAction> {
     let failure_count = template.retry_count();
-    warn!(failure_count, "Template in Failed phase");
+    let retries_exhausted = template.retries_exhausted();
+    warn!(failure_count, retries_exhausted, "Template in Failed phase");
 
-    if template.retries_exhausted() {
-        warn!("Retries exhausted, not requeuing");
-        return Ok(ReconcileAction::Requeue(Duration::from_secs(3600)));
+    let backoff_seconds = template
+        .spec
+        .retry_policy
+        .as_ref()
+        .map(|p| p.backoff_seconds)
+        .unwrap_or(30);
+    let decision = failed_retry_decision(retries_exhausted, failure_count, backoff_seconds);
+
+    if retries_exhausted {
+        warn!(
+            failure_count,
+            "Retries exhausted; self-healing at the reduced cadence \
+             instead of stopping forever"
+        );
     }
 
-    let backoff = exponential_backoff(
-        failure_count,
-        template
-            .spec
-            .retry_policy
-            .as_ref()
-            .map(|p| p.backoff_seconds)
-            .unwrap_or(30),
-        600,
-    );
-
-    // Clean workspace and restart from Pending on retry
+    // Clean workspace and restart from Pending on retry. Unconditional:
+    // every `FailedRetryDecision` variant is some flavor of retry, so
+    // this always runs — that is what makes the self-heal invariant
+    // hold. The controller's own NEXT reconcile always re-attempts the
+    // cycle; no external trigger is ever required to leave `Failed`.
     info!("Cleaning workspace and retrying from Pending");
     let workspace = state.workspace_manager.get_workspace(template).await?;
     workspace.clean().await?;
     update_phase(template, Phase::Pending, state).await?;
-    record_event(template, state, EventType::Normal, "Retry", &format!("Retrying after failure (attempt {})", failure_count)).await;
+    record_event(
+        template,
+        state,
+        decision.event_type(),
+        decision.event_reason(),
+        &format!("Retrying after failure (attempt {})", failure_count),
+    ).await;
 
-    Ok(ReconcileAction::Requeue(backoff))
+    Ok(ReconcileAction::Requeue(decision.requeue_after()))
 }
 
 /// Handle CompileBlocked phase — HEAD observed, compile of it cannot
@@ -5757,7 +5857,42 @@ mod destroy_protection_gate_tests {
 
 #[cfg(test)]
 mod state_continuity_breach_tests {
-    use super::{evaluate_auto_apply_gate, state_continuity_breach, AutoApplyGate};
+    use super::{
+        evaluate_auto_apply_gate, failed_retry_decision, state_continuity_breach, AutoApplyGate,
+        Duration, EventType, FailedRetryDecision, InfrastructureTemplate, EXHAUSTED_RETRY_INTERVAL,
+    };
+    use crate::crd::{InfrastructureTemplateSpec, InfrastructureTemplateStatus, RetryPolicy, TemplateSource};
+
+    fn default_test_spec() -> InfrastructureTemplateSpec {
+        InfrastructureTemplateSpec {
+            source: TemplateSource {
+                inline:         Some(String::new()),
+                config_map_ref: None,
+                git_repository: None,
+            },
+            pangea_namespace:    "test".to_string(),
+            template_name:       None,
+            variables:           None,
+            variable_refs:       None,
+            auto_approve:        true,
+            refresh_interval:    "10m".to_string(),
+            suspend:             false,
+            executor:            None,
+            destroy_protection:  false,
+            retry_policy:        None,
+            provider_credentials: None,
+            compliance_profiles: vec![],
+            policies:            vec![],
+            default_decision:    None,
+            settling_policy:     None,
+            reactive_policy:     None,
+            import_policy:       None,
+            import_hints:        Default::default(),
+            conflict_policy:     None,
+            output_bindings:     Default::default(),
+            secret_files:        Default::default(),
+        }
+    }
 
     // ── Finding 1 regression: PolicyDecision::AutoApply had ZERO
     // state-continuity check before this fix — an ordinary pod restart
@@ -5830,6 +5965,122 @@ mod state_continuity_breach_tests {
         assert_eq!(
             evaluate_auto_apply_gate(true, true, false),
             AutoApplyGate::Proceed
+        );
+    }
+
+    // ── handle_failed self-heal (task #191) ─────────────────────────
+
+    #[test]
+    fn failed_retry_decision_retries_within_the_backoff_ramp() {
+        // Not exhausted: unchanged exponential-backoff behavior.
+        assert_eq!(
+            failed_retry_decision(false, 0, 30),
+            FailedRetryDecision::ExponentialBackoff(Duration::from_secs(30)),
+        );
+        assert_eq!(
+            failed_retry_decision(false, 2, 30),
+            FailedRetryDecision::ExponentialBackoff(Duration::from_secs(120)),
+        );
+    }
+
+    #[test]
+    fn failed_retry_decision_never_gives_up_once_exhausted() {
+        // The task #191 regression: retries_exhausted=true used to mean
+        // "no further action, stuck in Failed forever" (a decision that,
+        // if this were modeled honestly at the time, would have had no
+        // representable variant at all -- the old code just `return`ed
+        // out of the whole handler). It must now still be a retry, just
+        // at the slower, bounded cadence -- proving the CR always gets
+        // picked back up on the controller's own next reconcile tick.
+        let decision = failed_retry_decision(true, 3, 30);
+        assert_eq!(
+            decision,
+            FailedRetryDecision::SlowCadenceAfterExhaustion(EXHAUSTED_RETRY_INTERVAL)
+        );
+        // Whatever the variant, `requeue_after` is always Some concrete,
+        // finite duration -- there is no "never requeue again" path.
+        assert_eq!(decision.requeue_after(), Duration::from_secs(3600));
+        assert_eq!(decision.event_reason(), "RetryAfterExhaustion");
+        assert_eq!(
+            decision.event_type(),
+            EventType::Warning,
+            "exhaustion must be visible to operators, not silent -- before this fix \
+             the exhausted branch recorded NO event at all"
+        );
+    }
+
+    #[test]
+    fn failed_retry_decision_is_always_some_flavor_of_retry() {
+        // Property check across a spread of failure counts: no matter
+        // how many times the template has failed, or whether the ramp
+        // is exhausted, the decision always carries a positive requeue
+        // duration and a retry-shaped event reason. This is the
+        // self-heal invariant task #191 restores: the controller's own
+        // next reconcile always re-attempts the cycle from Pending,
+        // never requiring an external kubectl edit/re-apply to escape
+        // Failed.
+        for failure_count in [0u32, 1, 3, 5, 10, 100] {
+            for retries_exhausted in [false, true] {
+                let decision = failed_retry_decision(retries_exhausted, failure_count, 30);
+                assert!(
+                    decision.requeue_after() > Duration::ZERO,
+                    "failure_count={failure_count} exhausted={retries_exhausted}: \
+                     must always requeue, never stop forever"
+                );
+                assert!(
+                    matches!(decision.event_reason(), "Retry" | "RetryAfterExhaustion"),
+                    "every decision must be retry-shaped"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn retries_exhausted_reflects_the_real_crd_method_feeding_the_decision() {
+        // Ties `failed_retry_decision` to the CRD's own exhaustion
+        // semantics (`InfrastructureTemplate::retries_exhausted` /
+        // `retry_count`), rather than trusting bare booleans in
+        // isolation -- a template past `spec.retryPolicy.maxRetries`
+        // really does route to the slow-cadence self-heal path, and one
+        // still within the ramp really does route to the exponential
+        // path.
+        let mut template = InfrastructureTemplate::new(
+            "t",
+            InfrastructureTemplateSpec {
+                retry_policy: Some(RetryPolicy { max_retries: 3, backoff_seconds: 30 }),
+                ..default_test_spec()
+            },
+        );
+        template.status = Some(InfrastructureTemplateStatus {
+            failure_count: 3,
+            ..Default::default()
+        });
+        assert!(template.retries_exhausted(), "3 >= max_retries(3)");
+        let decision = failed_retry_decision(
+            template.retries_exhausted(),
+            template.retry_count(),
+            template.spec.retry_policy.as_ref().unwrap().backoff_seconds,
+        );
+        assert_eq!(
+            decision,
+            FailedRetryDecision::SlowCadenceAfterExhaustion(EXHAUSTED_RETRY_INTERVAL)
+        );
+
+        // One failure short of the ceiling: still retries on the
+        // exponential ramp, not the slow cadence.
+        template.status = Some(InfrastructureTemplateStatus {
+            failure_count: 2,
+            ..Default::default()
+        });
+        assert!(!template.retries_exhausted(), "2 < max_retries(3)");
+        let decision = failed_retry_decision(
+            template.retries_exhausted(),
+            template.retry_count(),
+            template.spec.retry_policy.as_ref().unwrap().backoff_seconds,
+        );
+        assert_eq!(
+            decision,
+            FailedRetryDecision::ExponentialBackoff(Duration::from_secs(120))
         );
     }
 }
