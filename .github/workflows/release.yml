@@ -4,19 +4,55 @@ name: release
 # MERGE TO MAIN, tagged `embedded-amd64-<sha>` (the HelmRelease + Flux
 # ImagePolicy convention). Binaries + chart still publish on a v* tag.
 #
-# The image job runs on the rio SELF-HOSTED runner (`arc-rio-default`) because
-# the embedded build (Rust + libruby + dockerTools) exceeds GH-hosted runner
-# capacity — this is the GitOps-native replacement for the old manual
-# build-on-rio + token dance. Flux image-automation
-# (k8s/clusters/rio/infrastructure/flux-image-automation/) scans the published
-# tags and auto-bumps the HelmRelease, so a merge deploys itself end-to-end.
+# ── Runner resilience (hardened 2026-07-16 after a real outage) ────────────
+# The default build target is `rio-build-01`, a SINGLE named homelab
+# self-hosted runner -- there is no ARC pool or runner group backing it
+# despite an earlier header comment claiming one (`arc-rio-default` /
+# `pleme-arc-rio`); that comment described an unbuilt destination, not
+# reality, and is corrected here. Ground truth caught live: this exact node
+# deregistered entirely (`gh api /orgs/pleme-io/actions/runners` returned
+# `total_count: 0` fleet-wide) and the release for commit bb00341 (the
+# cyrilgdn_rabbitmq provider bundle) queued for 17+ hours with no path
+# forward -- a single point of failure with no fallback and no visible
+# alarm. Two structural fixes:
 #
-# ⚠ ACTIVATION GATE: the `arc-rio-default` runner only exists once the
-# pleme-arc-rio GitHub App is registered + the ARC stack is unsuspended — see
-# k8s/clusters/rio/infrastructure/arc/RUNBOOK.md. Until then, image runs on
-# `main` queue waiting for the runner.
+# 1. `runner` is now a `workflow_dispatch` input (default `rio-build-01`),
+#    not hardcoded -- an operator can retarget a one-off run (e.g. to
+#    `ubuntu-latest`) without editing this file, the moment rio is
+#    unavailable. Push-triggered (auto-release) runs still default to
+#    `rio-build-01` since GH-hosted capacity for this build is unproven
+#    (see the memory-tuning note below) and shouldn't become the silent
+#    default for every merge.
+# 2. The `rio:8080` Attic substituter is rio's OWN LAN-local cache -- it is
+#    unreachable from anywhere but rio's own network (a GH-hosted runner
+#    cannot resolve `http://rio:8080`). Passing it unconditionally to a
+#    non-rio runner would waste the whole job on a doomed connection
+#    attempt with no benefit. It is now gated on `runner == 'rio-build-01'`
+#    so a fallback run degrades gracefully (slower cold build, still
+#    correct) instead of failing on an unreachable host.
 #
-# `secrets: inherit` is required — reusable workflows don't auto-inherit
+# Recovery path when rio-build-01 is the target and shows 0 registered
+# runners: re-register the runner service on rio (see
+# k8s/clusters/rio/infrastructure/arc/RUNBOOK.md) -- this workflow cannot
+# do that from here, only degrade around the outage.
+#
+# ── No inline conditionals in the config values (hardened same pass) ──────
+# A `${{ cond && 'a' || 'b' }}` ternary repeated per-field is fragile: the
+# condition drifts out of sync the moment one call site changes and not the
+# others (caught live -- an earlier draft of this exact fix had exactly that
+# bug). GHA's own struct-merge primitive (YAML `<<:` anchors) does NOT work
+# around this -- confirmed empirically via actionlint, which mirrors GH's
+# real parser: a merged-in job silently loses the anchored fields entirely
+# (YAML 1.2 dropped merge-key support from the core spec; GHA's parser
+# doesn't reinstate it). So instead of one job with conditional fields, this
+# is TWO fully static job variants (`image-rio` / `image-fallback`), each a
+# flat struct with no `&&`/`||` anywhere in its `with:` block -- the ONLY
+# conditional in the whole file is the single `if:` flag on each job
+# choosing which struct actually runs. `resolve-runner` still computes that
+# one flag from `inputs.runner` (unavoidable -- something has to decide),
+# but nothing downstream re-derives or repeats that decision.
+#
+# `secrets: inherit` is required -- reusable workflows don't auto-inherit
 # the caller's secrets (GHA quirk).
 
 on:
@@ -28,6 +64,19 @@ on:
       version:
         description: 'Version to publish (e.g. 0.1.0); informational — Chart.yaml is source of truth'
         required: false
+      runner:
+        description: 'Override the image-build runner label (e.g. ubuntu-latest during a rio outage).'
+        required: false
+        # The YAML-native single source of truth for the fallback runner --
+        # a manual dispatch that leaves this blank resolves to this value
+        # AT THE INPUT LEVEL (visible in the GH UI, not buried in an
+        # expression). A `push` trigger has no `inputs` block at all, so
+        # resolve-runner's `|| 'rio-build-01'` below still carries the same
+        # literal for that path -- GHA expression strings are opaque to
+        # YAML anchors/aliases (confirmed: an alias can't be spliced into
+        # the middle of a `${{ }}` string), so a second occurrence for the
+        # push-trigger case is the actual floor here, not a missed DRY-up.
+        default: rio-build-01
 
 permissions:
   contents: write
@@ -35,10 +84,45 @@ permissions:
   id-token: write
 
 jobs:
-  # The image ships on every merge — the auto-release path. Runs on the rio
-  # self-hosted ARC runner (embedded build is too heavy for GH-hosted).
-  image:
-    name: container image → ghcr.io
+  # The single source of truth for "which runner" and "does it get rio's
+  # LAN-local cache" -- computed once via pure GHA expressions (no shell),
+  # consumed via `needs.resolve-runner.outputs.*` by every job below. A
+  # `with:` block for a reusable-workflow call can read `needs` and
+  # `inputs` directly (confirmed via actionlint's context-availability
+  # error) but NOT a top-level `env:` -- this job exists because that path
+  # doesn't exist in GHA, not out of unnecessary indirection.
+  resolve-runner:
+    name: resolve build runner
+    runs-on: ubuntu-latest
+    outputs:
+      runner: ${{ inputs.runner || 'rio-build-01' }}
+      use-rio-cache: ${{ !inputs.runner || inputs.runner == 'rio-build-01' }}
+    steps:
+      - run: echo "runner=${{ inputs.runner || 'rio-build-01' }}"
+
+  # The image ships on every merge — the auto-release path. Two flat,
+  # static variants (never both); `resolve-runner`'s single boolean output
+  # picks which one runs, and neither variant's `with:` block contains a
+  # conditional field.
+  #
+  # rio-build-01 is a single homelab node (~13Gi free). The embedded build
+  # compiles native ruby gems (nio4r, puma, …) + Rust crates from source (no
+  # binary cache serves the pleme gem builds without the Attic substituter
+  # below). At maxJobs:2 nix ran several native compiles CONCURRENTLY and
+  # the aggregate peak RAM OOM-killed the build (signal 9) — twice, on r38.
+  # SERIALIZE the build: maxJobs:1 means one derivation at a time, so peak
+  # RAM is the single largest compile, well under node memory. cores:1 (was
+  # 2): even at maxJobs:1 the SINGLE rust_pangea-operator crate compile
+  # (codegen-units=1 + LTO + the embedded-ruby/magma binary) is one
+  # memory-heavy rustc that OOM-killed (signal 9) on r40 under load; cores:1
+  # makes that rustc single-threaded → lowest peak RAM regardless of node.
+  # Both settings are kept on the fallback variant too -- a non-rio runner's
+  # exact memory ceiling is unproven, and the constraint is the one heavy
+  # rustc, not the node.
+  image-rio:
+    name: container image → ghcr.io (rio)
+    needs: resolve-runner
+    if: needs.resolve-runner.outputs.use-rio-cache == 'true'
     uses: pleme-io/substrate/.github/workflows/image-push.yml@main
     with:
       imageAttr: dockerImage-operator-embedded-amd64
@@ -48,29 +132,14 @@ jobs:
       tag: embedded-amd64-r${{ github.run_number }}-${{ github.sha }}
       additionalTags: latest-embedded-amd64
       runner: rio-build-01
-      # rio-build-01 is a single homelab node (~13Gi free). The embedded build
-      # compiles native ruby gems (nio4r, puma, …) + Rust crates from source
-      # (no binary cache serves the pleme gem builds). At maxJobs:2 nix ran
-      # several native compiles CONCURRENTLY and the aggregate peak RAM OOM-killed
-      # the build (signal 9) — twice, on r38. SERIALIZE the build: maxJobs:1 means
-      # one derivation at a time, so peak RAM is the single largest compile, well
-      # under node memory. Slower but deterministically no-OOM (reliability >
-      # speed on a one-node homelab). Raise again only once a binary cache serves
-      # the gem + ruby builds so they substitute instead of recompiling.
-      #
-      # cores:1 (was 2): even at maxJobs:1 the SINGLE rust_pangea-operator crate
-      # compile (codegen-units=1 + LTO + the large embedded-ruby/magma binary) is
-      # one memory-heavy rustc that OOM-killed (signal 9) on r40 when the node was
-      # under load. cores:1 makes that rustc single-threaded → lowest peak RAM, so
-      # the one big crate fits regardless of concurrent node memory pressure.
       buildCores: "1"
       maxJobs: "1"
-      # Attic binary cache on rio (the runner's own node). tend prebuilds fleet
-      # closures into the `nexus` cache; pulling from it lets the heavy deps
-      # (ruby, native gems, magma, common crates) SUBSTITUTE instead of compiling
-      # cold — the actual cure for the recurring cold-cache OOMs (only the final
-      # operator crate + image layers then build locally). Read-only token,
-      # mounted as a netrc on the runner (SOPS secret arc-attic-netrc).
+      # Attic binary cache on rio's OWN LAN -- resolvable only from rio's own
+      # network, so this variant ONLY ever runs when the target IS rio (the
+      # `if:` above). tend prebuilds fleet closures into the `nexus` cache;
+      # pulling from it lets the heavy deps (ruby, native gems, magma,
+      # common crates) SUBSTITUTE instead of compiling cold. Read-only
+      # token, mounted as a netrc on the runner (SOPS secret arc-attic-netrc).
       extraSubstituters: "http://rio:8080/nexus"
       extraTrustedPublicKeys: "nexus:aZ0dDIXpfD1fIzN4z9waAWim7R8paT1qZhxQydlUZ90="
       netrcFile: "/etc/attic/netrc"
@@ -82,6 +151,25 @@ jobs:
       # (push failed: permission_denied: write_package). Map it explicitly.
       GHCR_TOKEN: ${{ secrets.BOT_PAT }}
 
+  # The degrade-around-the-outage variant: no rio-local cache (unreachable
+  # off rio's LAN), runner is whatever `inputs.runner` named. Cold build,
+  # same memory-safety settings, correct result -- just slower.
+  image-fallback:
+    name: container image → ghcr.io (fallback)
+    needs: resolve-runner
+    if: needs.resolve-runner.outputs.use-rio-cache != 'true'
+    uses: pleme-io/substrate/.github/workflows/image-push.yml@main
+    with:
+      imageAttr: dockerImage-operator-embedded-amd64
+      imageName: pleme-io/pangea-operator
+      tag: embedded-amd64-r${{ github.run_number }}-${{ github.sha }}
+      additionalTags: latest-embedded-amd64
+      runner: ${{ needs.resolve-runner.outputs.runner }}
+      buildCores: "1"
+      maxJobs: "1"
+    secrets:
+      GHCR_TOKEN: ${{ secrets.BOT_PAT }}
+
   # Zero-tolerance CVE gate on the JUST-published embedded image -- found
   # live 2026-07-14: this pipeline had never once scanned its own
   # published artifact. Direct image-scan call (not compliance-attest.yml)
@@ -91,9 +179,15 @@ jobs:
   # Advisory only for now (continue-on-error) -- pangea-operator is
   # already published + deployed by the time this runs, so a finding here
   # is a signal to triage, not something that can un-publish the image.
+  #
+  # `image-rio`/`image-fallback` are mutually exclusive (exactly one runs,
+  # the other reports `skipped`) -- this is a genuine join condition (GHA
+  # has no "depend on whichever of these ran" primitive), not a config-value
+  # ternary; it decides CONTROL FLOW once, not a field's content repeatedly.
   cve-scan:
     name: zero-tolerance CVE scan (advisory)
-    needs: image
+    needs: [image-rio, image-fallback]
+    if: always() && (needs.image-rio.result == 'success' || needs.image-fallback.result == 'success')
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
