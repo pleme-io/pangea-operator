@@ -1658,7 +1658,7 @@ mod tests {
         use crate::executor::workspace_runner::{MagmaWorkspaceRunner, WorkspaceRunner};
 
         let exec: Arc<dyn IacExecutor> = Arc::new(MagmaExecutor::new(fixture_config()));
-        let runner = MagmaWorkspaceRunner::new(exec, None);
+        let runner = MagmaWorkspaceRunner::new(exec, None, std::time::Duration::from_secs(600));
 
         let tmp = tempfile::tempdir().unwrap();
         let manager = WorkspaceManager::new(tmp.path().to_path_buf());

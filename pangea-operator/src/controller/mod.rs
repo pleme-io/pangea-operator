@@ -217,6 +217,25 @@ pub struct ControllerState {
     /// `shigoto-budget::BudgetTree`); ordering (`shigoto-rank`) plugs
     /// in once dispatch grows a central pending set (S2/S3).
     pub workspace_budgets: Arc<workspace_budget::WorkspaceBudgets>,
+
+    /// Executor call timeout (`PANGEA_TIMEOUT`, default 600s). Applied
+    /// to `TofuExecutor` at construction (the subprocess spawn already
+    /// enforces it) AND threaded into `MagmaWorkspaceRunner` so its
+    /// plan/apply/destroy calls are ALSO bounded — 2026-07-17, a real
+    /// live incident: a magma provider RPC hung with zero timeout
+    /// protection on the in-process path, silently blocking a
+    /// template's reconcile for 5+ minutes per attempt with no
+    /// `plan failed` / error surfaced at all — the only thing that ever
+    /// moved it was a SEPARATE reactive-policy PhaseTimeout watchdog
+    /// forcing a status reset, which doesn't cancel the original hung
+    /// task (a zombie-task leak) and gives no typed signal of what
+    /// actually happened. `Error::Timeout(u64)` already existed
+    /// (typed, `FailureKind::Transient`, `is_retryable()`) but was never
+    /// constructed anywhere for the magma path — this wires the
+    /// existing, already-designed variant to the one gap that needed
+    /// it, per ★★ UNREPRESENTABILITY: a hang is not a state a bounded
+    /// executor call can be in.
+    pub executor_timeout: Duration,
 }
 
 impl ControllerState {
@@ -294,6 +313,7 @@ impl ControllerState {
             ),
             anomaly_emitter: anomaly_emitter_arc,
             workspace_budgets,
+            executor_timeout: Duration::from_secs(executor_config.timeout_secs),
         })
     }
 
@@ -584,7 +604,7 @@ impl ControllerState {
         };
         let exec = self.executor_for_checked_with_creds(template).await?;
         Ok(match exec.name() {
-            "magma" => Arc::new(MagmaWorkspaceRunner::new(exec, self.artifact_store.clone()))
+            "magma" => Arc::new(MagmaWorkspaceRunner::new(exec, self.artifact_store.clone(), self.executor_timeout))
                 as Arc<dyn WorkspaceRunner>,
             _       => Arc::new(TofuWorkspaceRunner::new(exec)) as Arc<dyn WorkspaceRunner>,
         })
@@ -615,7 +635,7 @@ impl ControllerState {
             // the DB-backed zero-disk path and skips the `magma-bundle.json`
             // disk read (the bundle lives in Postgres). Mirrors how
             // `magma_executor_for` wires `MagmaExecutorConfig.artifact_store`.
-            "magma" => Arc::new(MagmaWorkspaceRunner::new(exec, self.artifact_store.clone()))
+            "magma" => Arc::new(MagmaWorkspaceRunner::new(exec, self.artifact_store.clone(), self.executor_timeout))
                 as Arc<dyn WorkspaceRunner>,
             _       => Arc::new(TofuWorkspaceRunner::new(exec)) as Arc<dyn WorkspaceRunner>,
         }

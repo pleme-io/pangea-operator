@@ -360,6 +360,17 @@ pub struct MagmaWorkspaceRunner {
     /// bundle as before. Parallels how `MagmaExecutorConfig.
     /// artifact_store` selects the executor's own DB-vs-disk routing.
     artifact_store: Option<Arc<crate::backend::ArtifactStore>>,
+    /// Bounds every `plan`/`apply`/`destroy` call — 2026-07-17, a real
+    /// live incident: the magma path had NO timeout protection at all
+    /// (unlike `TofuExecutor`, which wraps its subprocess spawn in
+    /// `PANGEA_TIMEOUT`), so a hung provider RPC blocked a template's
+    /// reconcile silently, forever, with only a separate reactive-
+    /// policy watchdog ever noticing (and even then, only by force-
+    /// resetting status — it can't cancel the original hung task).
+    /// Defaults to the SAME `PANGEA_TIMEOUT` value the tofu path
+    /// already enforces (`ControllerState.executor_timeout`) so both
+    /// backends share one operator-wide timeout knob.
+    timeout: std::time::Duration,
 }
 
 impl MagmaWorkspaceRunner {
@@ -373,11 +384,28 @@ impl MagmaWorkspaceRunner {
     /// test path (read the disk bundle). Construct it from the same
     /// `ControllerState.artifact_store` the `MagmaExecutorConfig` is
     /// wired from — see `executor_runner_for`.
+    ///
+    /// `timeout` bounds every plan/apply/destroy call — pass
+    /// `ControllerState.executor_timeout` in production; tests that
+    /// want to exercise the timeout path itself pass a short duration
+    /// directly.
     pub fn new(
         inner: Arc<dyn IacExecutor>,
         artifact_store: Option<Arc<crate::backend::ArtifactStore>>,
+        timeout: std::time::Duration,
     ) -> Self {
-        Self { inner, artifact_store }
+        Self { inner, artifact_store, timeout }
+    }
+
+    /// Run `fut` bounded by `self.timeout`; a hang becomes a typed,
+    /// immediate `Error::Timeout` instead of blocking the reconcile
+    /// forever. Every `IacExecutor` call this runner makes goes
+    /// through this — see the struct doc for the incident this closes.
+    async fn bounded<T>(&self, fut: impl std::future::Future<Output = Result<T>>) -> Result<T> {
+        match tokio::time::timeout(self.timeout, fut).await {
+            Ok(inner_result) => inner_result,
+            Err(_elapsed) => Err(crate::error::Error::Timeout(self.timeout.as_secs())),
+        }
     }
 }
 
@@ -397,7 +425,9 @@ impl WorkspaceRunner for MagmaWorkspaceRunner {
 
     async fn plan(&self, workspace: &Workspace) -> Result<PlanResult> {
         let plan_path = workspace.path.join("magma-plan.json");
-        let plan = self.inner.plan(&workspace.path, Some(&plan_path), &[]).await?;
+        let plan = self
+            .bounded(self.inner.plan(&workspace.path, Some(&plan_path), &[]))
+            .await?;
         let has_changes = plan.exit_code == 2;
         let plan_success = plan.exit_code == 0 || plan.exit_code == 2;
         // On the DB-backed path the bundle is in Postgres (the executor
@@ -427,7 +457,9 @@ impl WorkspaceRunner for MagmaWorkspaceRunner {
 
     async fn apply(&self, workspace: &Workspace, auto_approve: bool) -> Result<ApplyResult> {
         let plan_path = workspace.path.join("magma-plan.json");
-        let r = self.inner.apply(&workspace.path, Some(&plan_path), auto_approve).await?;
+        let r = self
+            .bounded(self.inner.apply(&workspace.path, Some(&plan_path), auto_approve))
+            .await?;
         // DB-backed path: the post-apply bundle is committed to Postgres
         // (atomically with state via `put_apply_result`); there is no
         // `magma-bundle.json` on disk to re-read (zero-disk). `None` here;
@@ -457,7 +489,7 @@ impl WorkspaceRunner for MagmaWorkspaceRunner {
         // `.terraform` — that guard is permanently false for magma
         // (`init` is a documented no-op) and was silently skipping every
         // magma destroy fleet-wide.
-        let r = self.inner.destroy(&workspace.path, auto_approve).await?;
+        let r = self.bounded(self.inner.destroy(&workspace.path, auto_approve)).await?;
         Ok(ApplyResult {
             artifact:   None,
             failed:     Vec::new(),
@@ -521,6 +553,77 @@ mod tests {
         // verify object safety at the type level. If a future method
         // breaks it (Self return, generics), this fails to compile.
         fn _accepts(_r: Arc<dyn WorkspaceRunner>) {}
+    }
+
+    /// Regression test for the 2026-07-17 incident: a hung magma
+    /// provider RPC blocked a template's reconcile silently, with no
+    /// timeout protection at all on this path (unlike tofu's subprocess
+    /// spawn, which `PANGEA_TIMEOUT` already bounded). Proves
+    /// `MagmaWorkspaceRunner::plan` returns `Error::Timeout` PROMPTLY
+    /// (well under the configured timeout, not after it) when the
+    /// underlying executor call hangs longer than the runner's
+    /// configured timeout — the hang itself is not observable from the
+    /// caller's side, only its bounded, typed failure is.
+    #[tokio::test]
+    async fn magma_plan_times_out_on_a_hung_executor() {
+        use std::time::{Duration, Instant};
+
+        let recorder = Arc::new(RecordingExecutor::new());
+        // Longer than the runner's own timeout below — simulates a
+        // provider RPC that never returns within any reasonable window.
+        recorder.set_delay(Duration::from_secs(30));
+
+        // Error::Timeout(u64) is seconds-granularity (matches
+        // PANGEA_TIMEOUT's own unit fleet-wide) -- sub-second values
+        // truncate via `as_secs()`, so this test uses whole seconds to
+        // assert a meaningful, non-zero value.
+        let runner = MagmaWorkspaceRunner::new(
+            Arc::clone(&recorder) as Arc<dyn IacExecutor>,
+            None,
+            Duration::from_secs(1),
+        );
+
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = WorkspaceManager::new(tmp.path().to_path_buf());
+        let workspace = manager.get_or_create("ns", "hung-plan").await.unwrap();
+
+        let started = Instant::now();
+        let result = runner.plan(&workspace).await;
+        let elapsed = started.elapsed();
+
+        assert!(
+            matches!(result, Err(crate::error::Error::Timeout(1))),
+            "expected Error::Timeout(1), got {result:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "plan() must return promptly on timeout, not wait out the executor's own \
+             30s delay -- took {elapsed:?}"
+        );
+    }
+
+    /// Sibling of the above at the boundary: a call that finishes
+    /// WITHIN the timeout must succeed normally -- the timeout wrapper
+    /// must never fire early on genuinely-fast work.
+    #[tokio::test]
+    async fn magma_plan_succeeds_when_within_timeout() {
+        use std::time::Duration;
+
+        let recorder = Arc::new(RecordingExecutor::new());
+        recorder.set_delay(Duration::from_millis(1));
+
+        let runner = MagmaWorkspaceRunner::new(
+            Arc::clone(&recorder) as Arc<dyn IacExecutor>,
+            None,
+            Duration::from_secs(5),
+        );
+
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = WorkspaceManager::new(tmp.path().to_path_buf());
+        let workspace = manager.get_or_create("ns", "fast-plan").await.unwrap();
+
+        let result = runner.plan(&workspace).await;
+        assert!(result.is_ok(), "expected success within timeout, got {result:?}");
     }
 
     /// Regression test for the fleet-wide bug where `handle_destroying`

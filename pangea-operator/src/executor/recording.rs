@@ -51,6 +51,12 @@ pub struct RecordingExecutor {
     /// the magma-native disk-free discovery path so a test can prove a
     /// create-that-exists is IMPORT-discovered, not create-failed.
     canned_plan: Mutex<Option<Vec<PlannedChange>>>,
+    /// Injectable per-call delay — lets a test simulate a hung executor
+    /// (a stuck provider RPC) without a real network dependency. `None`
+    /// (default) returns immediately, matching every existing test.
+    /// Added for `MagmaWorkspaceRunner::bounded`'s own timeout coverage
+    /// (2026-07-17) — see that type's doc for the incident this closes.
+    delay: Mutex<Option<Duration>>,
 }
 
 impl RecordingExecutor {
@@ -62,6 +68,20 @@ impl RecordingExecutor {
             calls: Mutex::new(Vec::new()),
             canned: Mutex::new(VecDeque::new()),
             canned_plan: Mutex::new(None),
+            delay: Mutex::new(None),
+        }
+    }
+
+    /// Make every subsequent call sleep `d` before responding —
+    /// simulates a hung/slow executor for timeout tests.
+    pub fn set_delay(&self, d: Duration) {
+        *self.delay.lock().unwrap() = Some(d);
+    }
+
+    async fn maybe_delay(&self) {
+        let d = *self.delay.lock().unwrap();
+        if let Some(d) = d {
+            tokio::time::sleep(d).await;
         }
     }
 
@@ -155,6 +175,7 @@ impl IacExecutor for RecordingExecutor {
         plan_file: Option<&Path>,
         extra_args: &[&str],
     ) -> Result<TofuResult> {
+        self.maybe_delay().await;
         let mut args: Vec<String> = extra_args.iter().map(|s| s.to_string()).collect();
         if let Some(pf) = plan_file {
             args.push(format!("-out={}", pf.display()));
