@@ -210,7 +210,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "anyhow-1.0.103": {
+      "anyhow-1.0.102": {
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": [
@@ -218,7 +218,7 @@
           "std"
         ]
       },
-      "arc-swap-1.9.2": {
+      "arc-swap-1.9.1": {
         "runtime_dependencies": [
           {
             "name": "rustversion",
@@ -475,7 +475,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "clock",
@@ -616,7 +616,7 @@
           },
           {
             "name": "regex",
-            "package_key": "regex-1.13.0",
+            "package_key": "regex-1.12.3",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -688,7 +688,7 @@
           },
           {
             "name": "uuid",
-            "package_key": "uuid-1.23.5",
+            "package_key": "uuid-1.23.1",
             "kind": "normal",
             "features": [
               "serde",
@@ -1685,7 +1685,7 @@
           },
           {
             "name": "hyper",
-            "package_key": "hyper-1.10.1",
+            "package_key": "hyper-1.10.0",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2325,7 +2325,7 @@
           },
           {
             "name": "regex",
-            "package_key": "regex-1.13.0",
+            "package_key": "regex-1.12.3",
             "kind": "normal",
             "features": [
               "std",
@@ -2555,7 +2555,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "chrono-0.4.45": {
+      "chrono-0.4.44": {
         "runtime_dependencies": [
           {
             "name": "iana_time_zone",
@@ -3012,11 +3012,11 @@
           "std"
         ]
       },
-      "cynic-3.14.0": {
+      "cynic-3.13.2": {
         "runtime_dependencies": [
           {
             "name": "cynic_proc_macros",
-            "package_key": "cynic-proc-macros-3.14.0",
+            "package_key": "cynic-proc-macros-3.13.2",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -3097,11 +3097,11 @@
           "serde_json"
         ]
       },
-      "cynic-codegen-3.14.0": {
+      "cynic-codegen-3.13.2": {
         "runtime_dependencies": [
           {
             "name": "cynic_parser",
-            "package_key": "cynic-parser-0.11.2",
+            "package_key": "cynic-parser-0.11.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -3198,7 +3198,7 @@
           "rustfmt"
         ]
       },
-      "cynic-parser-0.11.2": {
+      "cynic-parser-0.11.1": {
         "runtime_dependencies": [
           {
             "name": "indexmap",
@@ -3236,11 +3236,11 @@
           "default"
         ]
       },
-      "cynic-proc-macros-3.14.0": {
+      "cynic-proc-macros-3.13.2": {
         "runtime_dependencies": [
           {
             "name": "cynic_codegen",
-            "package_key": "cynic-codegen-3.14.0",
+            "package_key": "cynic-codegen-3.13.2",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -4999,7 +4999,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "serde"
@@ -5466,7 +5466,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.33",
+            "package_key": "log-0.4.30",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -5969,7 +5969,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "hyper-1.10.1": {
+      "hyper-1.10.0": {
         "runtime_dependencies": [
           {
             "name": "atomic_waker",
@@ -6171,7 +6171,7 @@
           },
           {
             "name": "hyper",
-            "package_key": "hyper-1.10.1",
+            "package_key": "hyper-1.10.0",
             "kind": "normal",
             "features": [
               "client"
@@ -6280,7 +6280,7 @@
           },
           {
             "name": "hyper",
-            "package_key": "hyper-1.10.1",
+            "package_key": "hyper-1.10.0",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -6303,7 +6303,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.33",
+            "package_key": "log-0.4.30",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -6313,7 +6313,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.42",
+            "package_key": "rustls-0.23.40",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -6390,7 +6390,7 @@
         "runtime_dependencies": [
           {
             "name": "hyper",
-            "package_key": "hyper-1.10.1",
+            "package_key": "hyper-1.10.0",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -6509,7 +6509,7 @@
           },
           {
             "name": "hyper",
-            "package_key": "hyper-1.10.1",
+            "package_key": "hyper-1.10.0",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -7329,7 +7329,7 @@
           },
           {
             "name": "regex",
-            "package_key": "regex-1.13.0",
+            "package_key": "regex-1.12.3",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -7415,7 +7415,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "alloc",
@@ -7555,7 +7555,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -7627,7 +7627,7 @@
           },
           {
             "name": "hyper",
-            "package_key": "hyper-1.10.1",
+            "package_key": "hyper-1.10.0",
             "kind": "normal",
             "features": [
               "client",
@@ -7721,7 +7721,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.42",
+            "package_key": "rustls-0.23.40",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -7894,7 +7894,7 @@
         "runtime_dependencies": [
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "now"
@@ -8437,7 +8437,7 @@
           "default"
         ]
       },
-      "log-0.4.33": {
+      "log-0.4.30": {
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": [
@@ -8519,7 +8519,7 @@
           },
           {
             "name": "regex_syntax",
-            "package_key": "regex-syntax-0.8.11",
+            "package_key": "regex-syntax-0.8.10",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -8597,7 +8597,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "serde"
@@ -8801,7 +8801,7 @@
           },
           {
             "name": "uuid",
-            "package_key": "uuid-1.23.5",
+            "package_key": "uuid-1.23.1",
             "kind": "normal",
             "features": [
               "serde",
@@ -8830,7 +8830,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "serde"
@@ -8982,7 +8982,7 @@
           },
           {
             "name": "uuid",
-            "package_key": "uuid-1.23.5",
+            "package_key": "uuid-1.23.1",
             "kind": "normal",
             "features": [
               "serde",
@@ -9011,7 +9011,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "serde"
@@ -9189,7 +9189,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "serde"
@@ -9417,7 +9417,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "serde"
@@ -9625,7 +9625,7 @@
         "runtime_dependencies": [
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "serde"
@@ -9805,7 +9805,7 @@
           },
           {
             "name": "uuid",
-            "package_key": "uuid-1.23.5",
+            "package_key": "uuid-1.23.1",
             "kind": "normal",
             "features": [
               "serde",
@@ -9964,7 +9964,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "serde"
@@ -10078,7 +10078,7 @@
           },
           {
             "name": "uuid",
-            "package_key": "uuid-1.23.5",
+            "package_key": "uuid-1.23.1",
             "kind": "normal",
             "features": [
               "serde",
@@ -10157,7 +10157,7 @@
           },
           {
             "name": "hyper",
-            "package_key": "hyper-1.10.1",
+            "package_key": "hyper-1.10.0",
             "kind": "normal",
             "features": [
               "client",
@@ -10222,7 +10222,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.42",
+            "package_key": "rustls-0.23.40",
             "kind": "normal",
             "features": [
               "ring"
@@ -10603,7 +10603,7 @@
         "runtime_dependencies": [
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "serde"
@@ -10697,7 +10697,7 @@
           },
           {
             "name": "uuid",
-            "package_key": "uuid-1.23.5",
+            "package_key": "uuid-1.23.1",
             "kind": "normal",
             "features": [
               "serde",
@@ -10736,7 +10736,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "serde"
@@ -10970,7 +10970,7 @@
         "runtime_dependencies": [
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "serde"
@@ -11046,7 +11046,7 @@
           },
           {
             "name": "uuid",
-            "package_key": "uuid-1.23.5",
+            "package_key": "uuid-1.23.1",
             "kind": "normal",
             "features": [
               "serde",
@@ -11249,7 +11249,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.33",
+            "package_key": "log-0.4.30",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -12211,7 +12211,7 @@
         "runtime_dependencies": [
           {
             "name": "anyhow",
-            "package_key": "anyhow-1.0.103",
+            "package_key": "anyhow-1.0.102",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -12221,7 +12221,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "serde"
@@ -12257,7 +12257,7 @@
           },
           {
             "name": "cynic",
-            "package_key": "cynic-3.14.0",
+            "package_key": "cynic-3.13.2",
             "kind": "normal",
             "features": [
               "http-reqwest"
@@ -12410,7 +12410,7 @@
         "build_dependencies": [
           {
             "name": "cynic_codegen",
-            "package_key": "cynic-codegen-3.14.0",
+            "package_key": "cynic-codegen-3.13.2",
             "kind": "build",
             "features": [],
             "uses_default_features": true,
@@ -12425,7 +12425,7 @@
         "runtime_dependencies": [
           {
             "name": "anyhow",
-            "package_key": "anyhow-1.0.103",
+            "package_key": "anyhow-1.0.102",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -12435,7 +12435,7 @@
           },
           {
             "name": "arc_swap",
-            "package_key": "arc-swap-1.9.2",
+            "package_key": "arc-swap-1.9.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -12502,7 +12502,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "serde",
@@ -12877,7 +12877,7 @@
           },
           {
             "name": "regex",
-            "package_key": "regex-1.13.0",
+            "package_key": "regex-1.12.3",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -12900,7 +12900,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.42",
+            "package_key": "rustls-0.23.40",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -13146,7 +13146,7 @@
           },
           {
             "name": "uuid",
-            "package_key": "uuid-1.23.5",
+            "package_key": "uuid-1.23.1",
             "kind": "normal",
             "features": [
               "serde",
@@ -13175,7 +13175,7 @@
         "runtime_dependencies": [
           {
             "name": "anyhow",
-            "package_key": "anyhow-1.0.103",
+            "package_key": "anyhow-1.0.102",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -13195,7 +13195,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "serde"
@@ -13409,7 +13409,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "serde"
@@ -13421,7 +13421,7 @@
           },
           {
             "name": "cynic",
-            "package_key": "cynic-3.14.0",
+            "package_key": "cynic-3.13.2",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14232,7 +14232,7 @@
           },
           {
             "name": "regex",
-            "package_key": "regex-1.13.0",
+            "package_key": "regex-1.12.3",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14569,7 +14569,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.33",
+            "package_key": "log-0.4.30",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14639,7 +14639,7 @@
           },
           {
             "name": "regex",
-            "package_key": "regex-1.13.0",
+            "package_key": "regex-1.12.3",
             "kind": "normal",
             "features": [
               "std",
@@ -14683,7 +14683,7 @@
         "runtime_dependencies": [
           {
             "name": "anyhow",
-            "package_key": "anyhow-1.0.103",
+            "package_key": "anyhow-1.0.102",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14945,7 +14945,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.42",
+            "package_key": "rustls-0.23.40",
             "kind": "normal",
             "features": [
               "std"
@@ -15097,7 +15097,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.42",
+            "package_key": "rustls-0.23.40",
             "kind": "normal",
             "features": [
               "std"
@@ -15476,7 +15476,7 @@
           },
           {
             "name": "regex",
-            "package_key": "regex-1.13.0",
+            "package_key": "regex-1.12.3",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -15637,7 +15637,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "regex-1.13.0": {
+      "regex-1.12.3": {
         "runtime_dependencies": [
           {
             "name": "aho_corasick",
@@ -15676,7 +15676,7 @@
           },
           {
             "name": "regex_syntax",
-            "package_key": "regex-syntax-0.8.11",
+            "package_key": "regex-syntax-0.8.10",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -15730,7 +15730,7 @@
           },
           {
             "name": "regex_syntax",
-            "package_key": "regex-syntax-0.8.11",
+            "package_key": "regex-syntax-0.8.10",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -15767,7 +15767,7 @@
           "unicode-word-boundary"
         ]
       },
-      "regex-syntax-0.8.11": {
+      "regex-syntax-0.8.10": {
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": [
@@ -15854,7 +15854,7 @@
           },
           {
             "name": "hyper",
-            "package_key": "hyper-1.10.1",
+            "package_key": "hyper-1.10.0",
             "kind": "normal",
             "features": [
               "client",
@@ -15896,7 +15896,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.33",
+            "package_key": "log-0.4.30",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -15926,7 +15926,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.42",
+            "package_key": "rustls-0.23.40",
             "kind": "normal",
             "features": [
               "std",
@@ -16158,7 +16158,7 @@
           },
           {
             "name": "hyper",
-            "package_key": "hyper-1.10.1",
+            "package_key": "hyper-1.10.0",
             "kind": "normal",
             "features": [
               "client",
@@ -16200,7 +16200,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.33",
+            "package_key": "log-0.4.30",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -16230,7 +16230,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.42",
+            "package_key": "rustls-0.23.40",
             "kind": "normal",
             "features": [
               "std",
@@ -16400,7 +16400,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "clock",
@@ -16415,7 +16415,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "serde"
@@ -16907,7 +16907,7 @@
           },
           {
             "name": "regex",
-            "package_key": "regex-1.13.0",
+            "package_key": "regex-1.12.3",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -16993,7 +16993,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "rustls-0.23.42": {
+      "rustls-0.23.40": {
         "runtime_dependencies": [
           {
             "name": "aws_lc_rs",
@@ -17007,7 +17007,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.33",
+            "package_key": "log-0.4.30",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -17269,7 +17269,7 @@
         "runtime_dependencies": [
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -17332,7 +17332,7 @@
         "runtime_dependencies": [
           {
             "name": "chrono04",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -18274,7 +18274,7 @@
         "runtime_dependencies": [
           {
             "name": "anyhow",
-            "package_key": "anyhow-1.0.103",
+            "package_key": "anyhow-1.0.102",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -18294,7 +18294,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "serde"
@@ -18417,7 +18417,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "serde"
@@ -18519,7 +18519,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "serde"
@@ -18611,7 +18611,7 @@
         "runtime_dependencies": [
           {
             "name": "arc_swap",
-            "package_key": "arc-swap-1.9.2",
+            "package_key": "arc-swap-1.9.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19000,7 +19000,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "clock"
@@ -19126,7 +19126,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.33",
+            "package_key": "log-0.4.30",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -19166,7 +19166,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.42",
+            "package_key": "rustls-0.23.40",
             "kind": "normal",
             "features": [
               "std",
@@ -19285,7 +19285,7 @@
           },
           {
             "name": "uuid",
-            "package_key": "uuid-1.23.5",
+            "package_key": "uuid-1.23.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19647,7 +19647,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "clock",
@@ -19800,7 +19800,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.33",
+            "package_key": "log-0.4.30",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19955,7 +19955,7 @@
           },
           {
             "name": "uuid",
-            "package_key": "uuid-1.23.5",
+            "package_key": "uuid-1.23.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -20032,7 +20032,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "clock",
@@ -20155,7 +20155,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.33",
+            "package_key": "log-0.4.30",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -20298,7 +20298,7 @@
           },
           {
             "name": "uuid",
-            "package_key": "uuid-1.23.5",
+            "package_key": "uuid-1.23.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -20340,7 +20340,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.45",
+            "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
               "clock",
@@ -20436,7 +20436,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.33",
+            "package_key": "log-0.4.30",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -20520,7 +20520,7 @@
           },
           {
             "name": "uuid",
-            "package_key": "uuid-1.23.5",
+            "package_key": "uuid-1.23.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -21498,7 +21498,7 @@
         "runtime_dependencies": [
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.42",
+            "package_key": "rustls-0.23.40",
             "kind": "normal",
             "features": [
               "std"
@@ -21642,7 +21642,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.33",
+            "package_key": "log-0.4.30",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -22097,7 +22097,7 @@
           },
           {
             "name": "hyper",
-            "package_key": "hyper-1.10.1",
+            "package_key": "hyper-1.10.0",
             "kind": "normal",
             "features": [
               "http1",
@@ -22785,7 +22785,7 @@
         "runtime_dependencies": [
           {
             "name": "log",
-            "package_key": "log-0.4.33",
+            "package_key": "log-0.4.30",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -22901,7 +22901,7 @@
         "runtime_dependencies": [
           {
             "name": "log",
-            "package_key": "log-0.4.33",
+            "package_key": "log-0.4.30",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -23350,7 +23350,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.33",
+            "package_key": "log-0.4.30",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -23554,7 +23554,7 @@
           "default"
         ]
       },
-      "uuid-1.23.5": {
+      "uuid-1.23.1": {
         "runtime_dependencies": [
           {
             "name": "getrandom",
@@ -23805,7 +23805,7 @@
           },
           {
             "name": "hyper",
-            "package_key": "hyper-1.10.1",
+            "package_key": "hyper-1.10.0",
             "kind": "normal",
             "features": [
               "full"
@@ -23832,7 +23832,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.33",
+            "package_key": "log-0.4.30",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -23852,7 +23852,7 @@
           },
           {
             "name": "regex",
-            "package_key": "regex-1.13.0",
+            "package_key": "regex-1.12.3",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -24525,7 +24525,7 @@
               },
               {
                 "name": "log",
-                "package_key": "log-0.4.33",
+                "package_key": "log-0.4.30",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -25003,7 +25003,7 @@
               },
               {
                 "name": "log",
-                "package_key": "log-0.4.33",
+                "package_key": "log-0.4.30",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -25013,7 +25013,7 @@
               },
               {
                 "name": "rustls",
-                "package_key": "rustls-0.23.42",
+                "package_key": "rustls-0.23.40",
                 "kind": "normal",
                 "features": [
                   "std"
@@ -25426,7 +25426,7 @@
               },
               {
                 "name": "log",
-                "package_key": "log-0.4.33",
+                "package_key": "log-0.4.30",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -26053,7 +26053,7 @@
             "runtime_dependencies": [
               {
                 "name": "log",
-                "package_key": "log-0.4.33",
+                "package_key": "log-0.4.30",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -26063,7 +26063,7 @@
               },
               {
                 "name": "rustls",
-                "package_key": "rustls-0.23.42",
+                "package_key": "rustls-0.23.40",
                 "kind": "normal",
                 "features": [
                   "std"
@@ -26340,7 +26340,7 @@
               },
               {
                 "name": "log",
-                "package_key": "log-0.4.33",
+                "package_key": "log-0.4.30",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -26967,7 +26967,7 @@
             "runtime_dependencies": [
               {
                 "name": "log",
-                "package_key": "log-0.4.33",
+                "package_key": "log-0.4.30",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -26977,7 +26977,7 @@
               },
               {
                 "name": "rustls",
-                "package_key": "rustls-0.23.42",
+                "package_key": "rustls-0.23.40",
                 "kind": "normal",
                 "features": [
                   "std"
@@ -27295,7 +27295,7 @@
               },
               {
                 "name": "log",
-                "package_key": "log-0.4.33",
+                "package_key": "log-0.4.30",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -27753,7 +27753,7 @@
               },
               {
                 "name": "log",
-                "package_key": "log-0.4.33",
+                "package_key": "log-0.4.30",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -27763,7 +27763,7 @@
               },
               {
                 "name": "rustls",
-                "package_key": "rustls-0.23.42",
+                "package_key": "rustls-0.23.40",
                 "kind": "normal",
                 "features": [
                   "std"
@@ -28150,7 +28150,7 @@
               },
               {
                 "name": "log",
-                "package_key": "log-0.4.33",
+                "package_key": "log-0.4.30",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -28757,7 +28757,7 @@
             "runtime_dependencies": [
               {
                 "name": "log",
-                "package_key": "log-0.4.33",
+                "package_key": "log-0.4.30",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -28767,7 +28767,7 @@
               },
               {
                 "name": "rustls",
-                "package_key": "rustls-0.23.42",
+                "package_key": "rustls-0.23.40",
                 "kind": "normal",
                 "features": [
                   "std"
@@ -29018,7 +29018,7 @@
               },
               {
                 "name": "log",
-                "package_key": "log-0.4.33",
+                "package_key": "log-0.4.30",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -29625,7 +29625,7 @@
             "runtime_dependencies": [
               {
                 "name": "log",
-                "package_key": "log-0.4.33",
+                "package_key": "log-0.4.30",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -29635,7 +29635,7 @@
               },
               {
                 "name": "rustls",
-                "package_key": "rustls-0.23.42",
+                "package_key": "rustls-0.23.40",
                 "kind": "normal",
                 "features": [
                   "std"
@@ -29726,11 +29726,11 @@
     "anstyle-query-1.1.5": {
       "edition": "2021"
     },
-    "anyhow-1.0.103": {
+    "anyhow-1.0.102": {
       "edition": "2021",
       "build_script": "build.rs"
     },
-    "arc-swap-1.9.2": {
+    "arc-swap-1.9.1": {
       "edition": "2018"
     },
     "arrayref-0.3.9": {
@@ -29881,7 +29881,7 @@
     "cfg_aliases-0.2.1": {
       "edition": "2018"
     },
-    "chrono-0.4.45": {
+    "chrono-0.4.44": {
       "edition": "2021"
     },
     "clang-sys-1.8.1": {
@@ -29966,16 +29966,16 @@
     "crypto-common-0.1.7": {
       "edition": "2018"
     },
-    "cynic-3.14.0": {
+    "cynic-3.13.2": {
       "edition": "2024"
     },
-    "cynic-codegen-3.14.0": {
+    "cynic-codegen-3.13.2": {
       "edition": "2024"
     },
-    "cynic-parser-0.11.2": {
+    "cynic-parser-0.11.1": {
       "edition": "2024"
     },
-    "cynic-proc-macros-3.14.0": {
+    "cynic-proc-macros-3.13.2": {
       "edition": "2024",
       "proc_macro": true
     },
@@ -30266,7 +30266,7 @@
     "httpdate-1.0.3": {
       "edition": "2021"
     },
-    "hyper-1.10.1": {
+    "hyper-1.10.0": {
       "edition": "2021"
     },
     "hyper-http-proxy-1.1.0": {
@@ -30427,7 +30427,7 @@
     "lock_api-0.4.14": {
       "edition": "2021"
     },
-    "log-0.4.33": {
+    "log-0.4.30": {
       "edition": "2021"
     },
     "logos-0.14.4": {
@@ -30927,13 +30927,13 @@
       "edition": "2021",
       "proc_macro": true
     },
-    "regex-1.13.0": {
+    "regex-1.12.3": {
       "edition": "2021"
     },
     "regex-automata-0.4.14": {
       "edition": "2021"
     },
-    "regex-syntax-0.8.11": {
+    "regex-syntax-0.8.10": {
       "edition": "2021"
     },
     "relative-path-1.9.3": {
@@ -30989,7 +30989,7 @@
       "edition": "2021",
       "build_script": "build.rs"
     },
-    "rustls-0.23.42": {
+    "rustls-0.23.40": {
       "edition": "2021",
       "build_script": "build.rs"
     },
@@ -31441,7 +31441,7 @@
     "utf8parse-0.2.2": {
       "edition": "2018"
     },
-    "uuid-1.23.5": {
+    "uuid-1.23.1": {
       "edition": "2021"
     },
     "vcpkg-0.2.15": {
