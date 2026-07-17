@@ -8,21 +8,90 @@
 //! Resolution order for a single change:
 //!   1. First rule whose `match` clauses ALL match → use that rule's decision
 //!   2. `spec.defaultDecision` if set → use it
-//!   3. Else → `AutoApply` (the documented aggressive default)
+//!   3. Else, if the change is a delete/replace on a
+//!      [`PROTECTED_RESOURCE_TYPE`](is_protected_resource_type) → floor
+//!      to `RequireApproval` (see "The protected-resource floor" below)
+//!   4. Else → `AutoApply` (the documented aggressive default)
 //!
 //! Aggregation across changes:
 //!   - any `Refuse`           → Refuse  (operator marks Failed)
 //!   - else any `RequireApproval` → RequireApproval (existing approval gate)
 //!   - else                   → AutoApply
 //!
-//! Empty `policies` + unset `defaultDecision` → every change resolves
-//! to `AutoApply` and the operator behaves like `autoApprove: true`.
-//! `autoApprove` is no longer consulted by the policy path; it remains
-//! in the spec for legacy schemas but does not gate the new engine.
+//! Empty `policies` + unset `defaultDecision` → every OTHER change
+//! resolves to `AutoApply` and the operator behaves like `autoApprove:
+//! true`. `autoApprove` is no longer consulted by the policy path; it
+//! remains in the spec for legacy schemas but does not gate the new
+//! engine.
+//!
+//! ## The protected-resource floor
+//!
+//! An unconfigured template (no matching rule, no `defaultDecision`)
+//! must never silently auto-apply a `delete`/`replace` against a
+//! resource type in [`PROTECTED_RESOURCE_TYPES`] — a lost Cloudflare
+//! zone, a torn-down VPC/EKS cluster, or a deleted managed database is
+//! not equivalent to a routine create/update, and step 3's floor
+//! raises the DEFAULT decision to `RequireApproval` so it can never
+//! happen by silence alone. An EXPLICIT `PolicyRule` (step 1) still
+//! wins over the floor — a reviewed, git-visible, intentional choice
+//! is never blocked, only the unconfigured fallback path is. This is a
+//! runtime safety net (UNREPRESENTABILITY's C2 tier: which resource
+//! type a plan touches is a runtime fact, not statically knowable),
+//! not a compile-time invariant — never round it up to more than that.
+//!
+//! Root-caused against a real incident: an unconfigured
+//! `cloudflare-pleme` `InfrastructureTemplate`
+//! (`autoApprove`/`importPolicy.autoOnConflict: true`, no
+//! `spec.policies`/`spec.defaultDecision`) silently lost its
+//! `quero.cloud` Cloudflare zone through exactly this fallback path —
+//! the same "computed-plan-diverges-from-what-was-approved" class of
+//! bug already named in `controller::conflict`'s destroyProtection
+//! safety net (task #120/#131), but unlike that net (opt-in via
+//! `spec.destroyProtection`), this floor is unconditional.
 
 use crate::crd::{DriftAction, DriftDetail, PolicyDecision, PolicyEvaluation, PolicyRule, RiskLevel};
 use regex::Regex;
 use tracing::warn;
+
+/// Resource types where a `delete` or `replace` (a replace is a
+/// delete-then-recreate) is catastrophic and/or effectively
+/// irreversible — see "The protected-resource floor" above. Errs
+/// toward including a type rather than omitting it: the cost of an
+/// unconfigured template needing one extra explicit rule to intentionally
+/// auto-apply a destroy is far lower than the cost of silently losing
+/// one of these.
+pub const PROTECTED_RESOURCE_TYPES: &[&str] = &[
+    "cloudflare_zone",
+    "aws_vpc",
+    "aws_eks_cluster",
+    "aws_route53_zone",
+    "aws_db_instance",
+    "aws_rds_cluster",
+    "aws_s3_bucket",
+    "google_dns_managed_zone",
+    "azurerm_dns_zone",
+];
+
+/// Is `resource_type` (the `<type>` half of a `<type>.<name>` address)
+/// one this floor protects?
+pub fn is_protected_resource_type(resource_type: &str) -> bool {
+    PROTECTED_RESOURCE_TYPES.contains(&resource_type)
+}
+
+/// Is `action` a destroy in the sense the floor cares about —
+/// `delete` outright, or `replace` (delete-then-recreate, so a
+/// "successful" replace still destroys the original)? Unrecognized
+/// action strings are NOT destructive by this definition (the
+/// vocabulary-boundary warning in `actions_match` already surfaces an
+/// out-of-vocabulary action elsewhere; this floor only ever raises the
+/// decision, so treating an unparseable action as non-destructive is
+/// the conservative choice — it never silently masks a real delete).
+fn is_destructive_action(action: &str) -> bool {
+    matches!(
+        DriftAction::parse_wire(action),
+        Some(DriftAction::Delete) | Some(DriftAction::Replace)
+    )
+}
 
 /// Outcome of evaluating one plan against a policy set.
 #[derive(Debug, Clone)]
@@ -67,7 +136,31 @@ pub fn evaluate(
         .map(|d| {
             let (decision, matched) = match compiled.iter().find(|r| r.matches(d)) {
                 Some(r) => (r.rule.decision, r.rule.name.clone()),
-                None => (fallback, "<default>".to_string()),
+                None => {
+                    // The protected-resource floor (see module docs):
+                    // an unconfigured fallback of AutoApply is raised to
+                    // RequireApproval when the change is a destroy on a
+                    // protected type. A fallback that's ALREADY stricter
+                    // (RequireApproval/Refuse) is left exactly as
+                    // configured — the floor only ever raises, never
+                    // lowers, the operator's own explicit stance.
+                    let resource_type = d
+                        .address
+                        .split('.')
+                        .next()
+                        .unwrap_or(d.address.as_str());
+                    if fallback == PolicyDecision::AutoApply
+                        && is_protected_resource_type(resource_type)
+                        && is_destructive_action(&d.action)
+                    {
+                        (
+                            PolicyDecision::RequireApproval,
+                            "<protected-resource-floor>".to_string(),
+                        )
+                    } else {
+                        (fallback, "<default>".to_string())
+                    }
+                }
             };
             match decision {
                 PolicyDecision::AutoApply => auto_apply_count += 1,
@@ -404,6 +497,115 @@ mod tests {
             },
             decision,
         }
+    }
+
+    // ── The protected-resource floor — regression for the real incident ──
+    // An unconfigured `cloudflare-pleme`-shaped InfrastructureTemplate
+    // (no spec.policies, no spec.defaultDecision — the exact CR shape
+    // that lost the live quero.cloud Cloudflare zone) must NEVER let a
+    // zone delete resolve to AutoApply again.
+
+    #[test]
+    fn protected_resource_delete_floors_to_require_approval_when_unconfigured() {
+        let drifts = vec![drift("cloudflare_zone.quero_cloud", "delete", "high", vec![])];
+        let out = evaluate(&[], None, &drifts);
+        assert_eq!(
+            out.aggregate,
+            PolicyDecision::RequireApproval,
+            "an unconfigured template must never auto-apply a cloudflare_zone delete"
+        );
+        assert_eq!(out.evaluation.auto_apply_count, 0);
+        assert_eq!(out.evaluation.require_approval_count, 1);
+        assert_eq!(
+            out.annotated_drifts[0].matched_policy.as_deref(),
+            Some("<protected-resource-floor>")
+        );
+    }
+
+    #[test]
+    fn protected_resource_replace_also_floors() {
+        // A replace is delete-then-recreate — the original is just as
+        // gone as an outright delete.
+        let drifts = vec![drift("aws_eks_cluster.camelot", "replace", "high", vec![])];
+        let out = evaluate(&[], None, &drifts);
+        assert_eq!(out.aggregate, PolicyDecision::RequireApproval);
+        assert_eq!(
+            out.annotated_drifts[0].matched_policy.as_deref(),
+            Some("<protected-resource-floor>")
+        );
+    }
+
+    #[test]
+    fn protected_resource_create_and_update_are_unaffected() {
+        // The floor guards destroys only — routine creates/updates on a
+        // protected type (e.g. a zone's settings changing) stay AutoApply
+        // exactly as before.
+        let drifts = vec![
+            drift("cloudflare_zone.quero_cloud", "create", "low", vec![]),
+            drift("cloudflare_zone.quero_cloud", "update", "low", vec!["plan"]),
+        ];
+        let out = evaluate(&[], None, &drifts);
+        assert_eq!(out.aggregate, PolicyDecision::AutoApply);
+        assert_eq!(out.evaluation.auto_apply_count, 2);
+    }
+
+    #[test]
+    fn protected_resource_floor_never_lowers_an_already_stricter_default() {
+        // If the operator already configured defaultDecision=Refuse, the
+        // floor (which only ever raises AutoApply to RequireApproval)
+        // must not accidentally DOWNGRADE that to RequireApproval.
+        let drifts = vec![drift("aws_vpc.main", "delete", "high", vec![])];
+        let out = evaluate(&[], Some(PolicyDecision::Refuse), &drifts);
+        assert_eq!(out.aggregate, PolicyDecision::Refuse);
+        assert_eq!(
+            out.annotated_drifts[0].matched_policy.as_deref(),
+            Some("<default>"),
+            "an already-configured stricter default is untouched by the floor, not relabeled"
+        );
+    }
+
+    #[test]
+    fn explicit_rule_still_overrides_the_protected_resource_floor() {
+        // An EXPLICIT, git-reviewed rule choosing AutoApply for a
+        // protected type's delete is a deliberate, auditable decision —
+        // the floor only guards the SILENT/unconfigured fallback path,
+        // never an explicit rule.
+        let rules = vec![rule(
+            "intentional-zone-teardown",
+            PolicyDecision::AutoApply,
+            vec!["cloudflare_zone"],
+            vec![],
+            vec!["delete"],
+            vec![],
+            vec![],
+        )];
+        let drifts = vec![drift("cloudflare_zone.scratch", "delete", "high", vec![])];
+        let out = evaluate(&rules, None, &drifts);
+        assert_eq!(out.aggregate, PolicyDecision::AutoApply);
+        assert_eq!(
+            out.annotated_drifts[0].matched_policy.as_deref(),
+            Some("intentional-zone-teardown")
+        );
+    }
+
+    #[test]
+    fn unprotected_resource_delete_stays_autoapply_when_unconfigured() {
+        // Confirms the floor is scoped to PROTECTED_RESOURCE_TYPES only —
+        // deleting a single DNS record (routine) is unaffected, matching
+        // the pre-existing empty_rules_default_autoapply behavior.
+        assert!(!is_protected_resource_type("cloudflare_dns_record"));
+        let drifts = vec![drift("cloudflare_dns_record.scratch", "delete", "low", vec![])];
+        let out = evaluate(&[], None, &drifts);
+        assert_eq!(out.aggregate, PolicyDecision::AutoApply);
+    }
+
+    #[test]
+    fn is_protected_resource_type_covers_the_documented_list() {
+        for t in PROTECTED_RESOURCE_TYPES {
+            assert!(is_protected_resource_type(t));
+        }
+        assert!(!is_protected_resource_type("github_repository"));
+        assert!(!is_protected_resource_type("cloudflare_dns_record"));
     }
 
     #[test]
@@ -743,14 +945,21 @@ mod tests {
                  vec!["cloudflare_zone"], vec![], vec!["delete"], vec!["high"], vec![]),
         ];
         let drifts = vec![
-            drift("cloudflare_zone.main", "delete", "high", vec![]),  // matches all 3
-            drift("cloudflare_zone.alt",  "update", "high", vec![]),  // wrong action
-            drift("cloudflare_zone.other","delete", "low",  vec![]),  // wrong risk
-            drift("aws_vpc.x",            "delete", "high", vec![]),  // wrong type
+            drift("cloudflare_zone.main", "delete", "high", vec![]),  // matches all 3 -> refuse
+            drift("cloudflare_zone.alt",  "update", "high", vec![]),  // wrong action -> default (non-destructive, unaffected by the floor)
+            drift("cloudflare_zone.other","delete", "low",  vec![]),  // wrong risk -> default, but a protected-type delete -> floors to RequireApproval
+            drift("aws_vpc.x",            "delete", "high", vec![]),  // wrong type -> default, but ALSO a protected-type delete -> floors to RequireApproval
         ];
         let out = evaluate(&rules, None, &drifts);
         assert_eq!(out.evaluation.refuse_count, 1);
-        assert_eq!(out.evaluation.auto_apply_count, 3);
+        // Only cloudflare_zone.alt (a non-destructive update) reaches the
+        // unconfigured AutoApply default; the other two non-matching
+        // drifts are destroys on protected types and correctly floor to
+        // RequireApproval instead — this test's own data happens to
+        // demonstrate the protected-resource floor alongside its
+        // original AND-semantics purpose.
+        assert_eq!(out.evaluation.auto_apply_count, 1);
+        assert_eq!(out.evaluation.require_approval_count, 2);
     }
 
     #[test]
