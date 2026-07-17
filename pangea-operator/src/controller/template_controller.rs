@@ -464,8 +464,10 @@ async fn reconcile_template(
             )
             .await;
             // Fall through: the code below reaches the generation-change
-            // handler (current_gen != observed_gen), which cleans the
-            // workspace and resets to Pending, then returns. `template`
+            // handler (generation_invalidates_render(current_gen,
+            // observed_gen), i.e. current_gen > observed_gen), which
+            // cleans the workspace and resets to Pending, then returns.
+            // `template`
             // is an `Arc` (immutable); the on-cluster clear PATCH above
             // is authoritative, and no code on this fall-through path
             // re-reads the stale in-memory `auto_suspended` before the
@@ -638,7 +640,7 @@ async fn reconcile_template(
         .and_then(|s| s.phase)
         .unwrap_or(Phase::Pending);
 
-    if current_gen != observed_gen && current_phase != Phase::Pending && current_phase != Phase::Destroying {
+    if generation_invalidates_render(current_gen, observed_gen) && current_phase != Phase::Pending && current_phase != Phase::Destroying {
         info!(
             current_gen,
             observed_gen,
@@ -6122,15 +6124,27 @@ impl From<ReconcileAction> for Action {
 /// Never-stuck breaker self-clear decision for the auto-suspend entry
 /// gate. Returns `true` when a template that is `status.autoSuspended`
 /// should have the latch cleared and be re-reconciled — i.e. when the
-/// live `metadata.generation` differs from the last-observed
+/// live `metadata.generation` is genuinely AHEAD of the last-observed
 /// `status.observedGeneration`, which is the operator's explicit
 /// "the spec changed since we parked it" corrective signal.
 ///
-/// Returns `false` when the generation is unchanged: no corrective
-/// edit landed, so the template stays parked (log + requeue) rather
-/// than churning the same known-bad spec.
+/// Returns `false` when the generation is unchanged OR has moved
+/// backward: no forward corrective edit landed, so the template stays
+/// parked (log + requeue) rather than churning the same known-bad
+/// spec.
+///
+/// Delegates to the shared `generation_invalidates_render` gate (see
+/// its doc comment above `compiled_config_available`) instead of its
+/// own comparison, so this decision and the render-reuse gate can
+/// never drift apart. (2026-07-17) Previously compared with `!=`,
+/// which also cleared the park when generation moved BACKWARD —
+/// e.g. a status-subresource replay or a controller restart observing
+/// a stale `metadata.generation` snapshot — a false corrective signal
+/// with no real spec edit behind it. `>` only fires on a genuine
+/// forward edit, matching the render-reuse gate's own directional
+/// fix.
 fn auto_suspend_gate_should_clear(current_gen: i64, observed_gen: i64) -> bool {
-    current_gen != observed_gen
+    generation_invalidates_render(current_gen, observed_gen)
 }
 
 /// Interval (seconds) a template stays parked (circuit breaker OPEN)
@@ -6318,6 +6332,21 @@ mod auto_suspend_gate_tests {
             auto_suspend_gate_should_clear(1, 0),
             "a real generation vs the default observed=0 must clear the park"
         );
+    }
+
+    #[test]
+    fn backward_generation_does_not_clear() {
+        // (2026-07-17) Regression lock for the directional fix: a
+        // `current_gen` that moved BACKWARD relative to `observed_gen`
+        // (e.g. a status-subresource replay or a controller restart
+        // observing a stale `metadata.generation` snapshot) is NOT a
+        // corrective spec edit and must NOT clear the auto-suspend
+        // latch. Under the old `current_gen != observed_gen` body this
+        // incorrectly returned `true` — any generation move, forward
+        // OR backward, cleared the park. `auto_suspend_gate_should_clear`
+        // now delegates to `generation_invalidates_render`, which only
+        // fires when `current_gen > observed_gen`.
+        assert!(!auto_suspend_gate_should_clear(3, 5));
     }
 }
 
