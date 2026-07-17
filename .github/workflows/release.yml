@@ -4,37 +4,50 @@ name: release
 # MERGE TO MAIN, tagged `embedded-amd64-<sha>` (the HelmRelease + Flux
 # ImagePolicy convention). Binaries + chart still publish on a v* tag.
 #
-# ── Runner resilience (hardened 2026-07-16 after a real outage) ────────────
-# The default build target is `rio-build-01`, a SINGLE named homelab
-# self-hosted runner -- there is no ARC pool or runner group backing it
-# despite an earlier header comment claiming one (`arc-rio-default` /
-# `pleme-arc-rio`); that comment described an unbuilt destination, not
-# reality, and is corrected here. Ground truth caught live: this exact node
-# deregistered entirely (`gh api /orgs/pleme-io/actions/runners` returned
-# `total_count: 0` fleet-wide) and the release for commit bb00341 (the
-# cyrilgdn_rabbitmq provider bundle) queued for 17+ hours with no path
-# forward -- a single point of failure with no fallback and no visible
-# alarm. Two structural fixes:
+# ── Runner resilience (hardened 2026-07-16, corrected 2026-07-17) ──────────
+# The 2026-07-16 pass added a `workflow_dispatch` escape hatch but left the
+# PUSH-triggered (i.e. every real auto-release merge) default pointed at
+# `rio-build-01` -- a push event has no `inputs` context at all, so
+# `inputs.runner || 'rio-build-01'` always resolved to the dead literal for
+# the one trigger that actually matters. Confirmed live 2026-07-17: 11
+# consecutive push-triggered runs sat permanently `queued` against
+# `rio-build-01`, which has 0 registered runners fleet-wide
+# (`gh api /orgs/pleme-io/actions/runners` — total_count: 0) — the exact
+# repeat of the outage the previous pass thought it had fixed.
 #
-# 1. `runner` is now a `workflow_dispatch` input (default `rio-build-01`),
-#    not hardcoded -- an operator can retarget a one-off run (e.g. to
-#    `ubuntu-latest`) without editing this file, the moment rio is
-#    unavailable. Push-triggered (auto-release) runs still default to
-#    `rio-build-01` since GH-hosted capacity for this build is unproven
-#    (see the memory-tuning note below) and shouldn't become the silent
-#    default for every merge.
-# 2. The `rio:8080` Attic substituter is rio's OWN LAN-local cache -- it is
-#    unreachable from anywhere but rio's own network (a GH-hosted runner
-#    cannot resolve `http://rio:8080`). Passing it unconditionally to a
-#    non-rio runner would waste the whole job on a doomed connection
-#    attempt with no benefit. It is now gated on `runner == 'rio-build-01'`
-#    so a fallback run degrades gracefully (slower cold build, still
-#    correct) instead of failing on an unreachable host.
+# The default now targets `camelot-builder-pleme` -- the PLEME-IO-ORG ARC
+# runner scale set (akeyless-k8s/clusters/camelot-mode1/infrastructure/ci/
+# runner-scale-set-pleme.yaml), NOT the akeylesslabs-scoped `camelot`
+# runner group. It registers against `githubConfigUrl:
+# https://github.com/pleme-io` into the org's `Default` runner group, so
+# every pleme-io repo (this one included) can target it by name with no
+# per-repo grant. 100%-spot, scale-to-zero (minRunners: 0, maxRunners: 6),
+# reconciled by the same in-cluster ARC controller as the akeylesslabs pool
+# -- confirmed live + Ready 2026-07-16/17, the same pool breathe's
+# image.yml already routes onto via `vars.CAMELOT_IMAGE_RUNNER`. This
+# retires rio (a single operator-owned homelab node with no fallback) as
+# the silent default for every merge, in favor of a pool with its own
+# scale-to-zero economics and no single point of failure.
 #
-# Recovery path when rio-build-01 is the target and shows 0 registered
-# runners: re-register the runner service on rio (see
-# k8s/clusters/rio/infrastructure/arc/RUNBOOK.md) -- this workflow cannot
-# do that from here, only degrade around the outage.
+# 1. `runner` is still a `workflow_dispatch` input, now defaulting to
+#    `camelot-builder-pleme` to match the push-triggered default (was
+#    `rio-build-01` -- kept them in lockstep so a blank manual dispatch
+#    behaves identically to a push). An operator can still retarget a
+#    one-off run to `rio-build-01` (to pick up its Attic cache) or
+#    `ubuntu-latest` (to rule out camelot-builder-pleme itself) without
+#    editing this file.
+# 2. The `rio:8080` Attic substituter is rio's OWN LAN-local cache --
+#    unreachable from anywhere but rio's own network (neither a GH-hosted
+#    runner nor a camelot-builder-pleme pod can resolve `http://rio:8080`).
+#    It stays gated on `runner == 'rio-build-01'` exactly as before, so it
+#    only ever fires on an explicit manual override back to rio.
+#
+# Recovery path when camelot-builder-pleme itself is unavailable: check
+# `akeyless-k8s/clusters/camelot-mode1/infrastructure/ci/runner-scale-set-pleme.yaml`
+# + its sibling `arc-controller` Kustomization are Ready via the
+# fluxcd-camelot MCP, or fall back to `workflow_dispatch` with
+# `runner: ubuntu-latest` for a one-off unblock -- this workflow cannot
+# reconcile cluster state from here, only degrade around the outage.
 #
 # ── No inline conditionals in the config values (hardened same pass) ──────
 # A `${{ cond && 'a' || 'b' }}` ternary repeated per-field is fragile: the
@@ -65,18 +78,19 @@ on:
         description: 'Version to publish (e.g. 0.1.0); informational — Chart.yaml is source of truth'
         required: false
       runner:
-        description: 'Override the image-build runner label (e.g. ubuntu-latest during a rio outage).'
+        description: 'Override the image-build runner label (e.g. rio-build-01 to pick up its Attic cache, or ubuntu-latest to rule out camelot-builder-pleme).'
         required: false
-        # The YAML-native single source of truth for the fallback runner --
+        # The YAML-native single source of truth for the default runner --
         # a manual dispatch that leaves this blank resolves to this value
         # AT THE INPUT LEVEL (visible in the GH UI, not buried in an
         # expression). A `push` trigger has no `inputs` block at all, so
-        # resolve-runner's `|| 'rio-build-01'` below still carries the same
-        # literal for that path -- GHA expression strings are opaque to
-        # YAML anchors/aliases (confirmed: an alias can't be spliced into
-        # the middle of a `${{ }}` string), so a second occurrence for the
-        # push-trigger case is the actual floor here, not a missed DRY-up.
-        default: rio-build-01
+        # resolve-runner's `|| 'camelot-builder-pleme'` below still carries
+        # the same literal for that path -- GHA expression strings are
+        # opaque to YAML anchors/aliases (confirmed: an alias can't be
+        # spliced into the middle of a `${{ }}` string), so a second
+        # occurrence for the push-trigger case is the actual floor here,
+        # not a missed DRY-up.
+        default: camelot-builder-pleme
 
 permissions:
   contents: write
@@ -95,15 +109,22 @@ jobs:
     name: resolve build runner
     runs-on: ubuntu-latest
     outputs:
-      runner: ${{ inputs.runner || 'rio-build-01' }}
-      use-rio-cache: ${{ !inputs.runner || inputs.runner == 'rio-build-01' }}
+      runner: ${{ inputs.runner || 'camelot-builder-pleme' }}
+      # rio's Attic cache is reachable ONLY from rio's own LAN, so it is
+      # only ever wired up when the target is EXPLICITLY rio-build-01 (a
+      # manual override) -- the default (camelot-builder-pleme) and any
+      # other override (e.g. ubuntu-latest) both skip it.
+      use-rio-cache: ${{ inputs.runner == 'rio-build-01' }}
     steps:
-      - run: echo "runner=${{ inputs.runner || 'rio-build-01' }}"
+      - run: echo "runner=${{ inputs.runner || 'camelot-builder-pleme' }}"
 
   # The image ships on every merge — the auto-release path. Two flat,
   # static variants (never both); `resolve-runner`'s single boolean output
   # picks which one runs, and neither variant's `with:` block contains a
-  # conditional field.
+  # conditional field. `image-rio` is now the NON-DEFAULT variant — it only
+  # runs on an explicit `workflow_dispatch` override back to `rio-build-01`
+  # (see the top-of-file comment); every push-triggered merge takes
+  # `image-fallback` onto `camelot-builder-pleme`.
   #
   # rio-build-01 is a single homelab node (~13Gi free). The embedded build
   # compiles native ruby gems (nio4r, puma, …) + Rust crates from source (no
@@ -116,11 +137,17 @@ jobs:
   # (codegen-units=1 + LTO + the embedded-ruby/magma binary) is one
   # memory-heavy rustc that OOM-killed (signal 9) on r40 under load; cores:1
   # makes that rustc single-threaded → lowest peak RAM regardless of node.
-  # Both settings are kept on the fallback variant too -- a non-rio runner's
-  # exact memory ceiling is unproven, and the constraint is the one heavy
-  # rustc, not the node.
+  # Both settings are kept on the fallback variant too -- camelot-builder-
+  # pleme's runner pod caps at 6Gi (runner-scale-set-pleme.yaml
+  # template.spec.containers[0].resources.limits.memory), TIGHTER than
+  # rio's ~13Gi, so the same OOM risk applies there and cores:1/maxJobs:1
+  # is the load-bearing mitigation, not a rio-specific tune. Unverified
+  # empirically on camelot-builder-pleme as of this change — watch the
+  # first few real runs for signal-9 exits; if it OOMs even at cores:1,
+  # the fix is a runner-pod memory bump in runner-scale-set-pleme.yaml
+  # (akeyless-k8s), not a further squeeze here.
   image-rio:
-    name: container image → ghcr.io (rio)
+    name: container image → ghcr.io (rio, manual override only)
     needs: resolve-runner
     if: needs.resolve-runner.outputs.use-rio-cache == 'true'
     uses: pleme-io/substrate/.github/workflows/image-push.yml@main
@@ -151,11 +178,13 @@ jobs:
       # (push failed: permission_denied: write_package). Map it explicitly.
       GHCR_TOKEN: ${{ secrets.BOT_PAT }}
 
-  # The degrade-around-the-outage variant: no rio-local cache (unreachable
-  # off rio's LAN), runner is whatever `inputs.runner` named. Cold build,
-  # same memory-safety settings, correct result -- just slower.
+  # The DEFAULT variant for every push-triggered merge: no rio-local cache
+  # (unreachable off rio's LAN), runner is `camelot-builder-pleme` unless
+  # overridden. Cold build (no fleet substituter wired yet), same
+  # memory-safety settings, correct result -- just slower than a
+  # cache-warm rio build.
   image-fallback:
-    name: container image → ghcr.io (fallback)
+    name: container image → ghcr.io (camelot-builder-pleme / override)
     needs: resolve-runner
     if: needs.resolve-runner.outputs.use-rio-cache != 'true'
     uses: pleme-io/substrate/.github/workflows/image-push.yml@main
@@ -176,20 +205,28 @@ jobs:
   # since that reusable's scan job is hard-chained behind sbom→sign→slsa
   # for a binary artifact-path this container image doesn't have; adding
   # that chain here is a separate, bigger change than this fix needs.
-  # Advisory only for now (continue-on-error) -- pangea-operator is
-  # already published + deployed by the time this runs, so a finding here
-  # is a signal to triage, not something that can un-publish the image.
+  #
+  # REAL GATE as of 2026-07-17 (was advisory/continue-on-error since
+  # 2026-07-14 pending this promotion). A finding here now fails the
+  # workflow run for real -- it cannot un-publish the image that was just
+  # pushed by image-rio/image-fallback (this fleet's shared image-push.yml
+  # reusable builds+pushes as one step; a genuine pre-publish gate would
+  # need image-scan's own `local-archive:` input wired ahead of the push,
+  # which is a change to the SHARED substrate reusable, out of scope for
+  # this repo-level fix), but it now turns CI red and blocks the false
+  # "green" a continue-on-error gate silently produced. Tier-honest: this
+  # is a real, blocking, POST-publish gate -- promoting it to pre-publish
+  # is a named follow-up against pleme-io/substrate's image-push.yml.
   #
   # `image-rio`/`image-fallback` are mutually exclusive (exactly one runs,
   # the other reports `skipped`) -- this is a genuine join condition (GHA
   # has no "depend on whichever of these ran" primitive), not a config-value
   # ternary; it decides CONTROL FLOW once, not a field's content repeatedly.
   cve-scan:
-    name: zero-tolerance CVE scan (advisory)
+    name: zero-tolerance CVE scan (blocking)
     needs: [image-rio, image-fallback]
     if: always() && (needs.image-rio.result == 'success' || needs.image-fallback.result == 'success')
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: pleme-io/actions/image-scan@main
         with:
