@@ -42,7 +42,7 @@
         in
           if envToken != ""
           then envToken
-          else "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3OTE5Nzg4ODQsIm5iZiI6MTc2MDQyMTI4NCwic3ViIjoibmV4dXMtY2kiLCJodHRwczovL2p3dC5hdHRpYy5ycy92MSI6eyJjYWNoZXMiOnsiKiI6eyJyIjoxLCJ3IjoxLCJjYyI6MSwiY3IiOjF9fX19.QuIglOUwZWUsmBS_frqtd4s3w3jybRT-q_PqM2ooaWo";
+          else "";  # env-only (ATTIC_TOKEN) — literal leaked JWT removed 2026-07-18, ROTATE
 
         defaultGhcrToken = let
           ghcrToken = builtins.getEnv "GHCR_TOKEN";
@@ -52,7 +52,7 @@
           then ghcrToken
           else if githubToken != ""
           then githubToken
-          else "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";
+          else "";  # env-only (GITHUB_TOKEN/GHCR_TOKEN) — literal leaked PAT removed 2026-07-18, ROTATE
 
         # Runtime tools environment helper
         mkRuntimeToolsEnv = { tools ? [] }:
