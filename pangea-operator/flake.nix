@@ -14,9 +14,16 @@
     };
     # Reference nexus flake for nexus-deploy and nix-lib
     nexus.url = "path:../../../..";
+    # Hardened OCI base images (distroless-glibc, no shell, nonroot-by-
+    # default) — the SAME fleet-wide primitive breathe + tool-image.nix
+    # build against (org CLAUDE.md Pillar 8 + hardened-images-by-default).
+    substrate = {
+      url = "github:pleme-io/substrate";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, rust-overlay, flake-utils, crane, nexus }:
+  outputs = { self, nixpkgs, rust-overlay, flake-utils, crane, nexus, substrate }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         overlays = [ (import rust-overlay) ];
@@ -124,50 +131,46 @@
         toolName = "pangea-operator";
         registry = "${registryBase}/${toolName}";
 
-        # Create /app directory with single binary
-        pangeaApp = pkgs.runCommand "pangea-app" {} ''
-          mkdir -p $out/app
-          cp ${pangeaOperator}/bin/pangea-operator $out/app/pangea-operator
-        '';
+        # Hardened OCI base images (distroless-glibc: glibc + CA roots +
+        # nonroot user, no shell) — the same substrate primitive breathe
+        # and substrate's own tool-image.nix build against.
+        hardened = import "${substrate}/lib/build/oci/hardened-base.nix" { inherit pkgs; };
 
-        # Docker image with operator binary, OpenTofu, and InSpec
-        pangeaImage = pkgs.dockerTools.buildLayeredImage {
-          name = registry;
-          tag = version;
-
-          contents = [
-            pangeaApp
-            pkgs.cacert        # CA certificates for TLS
+        # Docker image with operator binary, OpenTofu, and Packer.
+        #
+        # OpenTofu/Packer/tzdata are preserved verbatim from the pre-hardening
+        # image as `extraContents` — this pass is a hardening swap only, NOT
+        # a removal of the (likely-stale, magma-cutover-predating) tofu/packer
+        # bundling. See the org CLAUDE.md's MAGMA-NATIVE EXECUTION directive
+        # + this repo's own executor_magma/PANGEA_FORBID_TOFU posture for why
+        # that bundling looks like drift; investigated but NOT removed here.
+        pangeaImage = hardened.mkPackageImage {
+          service = "pangea-operator";
+          base = hardened.bases.distroless-glibc;
+          package = pangeaOperator;
+          publishName = registry;
+          publishTag = version;
+          entrypoint = [ "${pangeaOperator}/bin/pangea-operator" ];
+          env = [
+            "RUST_LOG=info,pangea_operator=debug"
+            "LOG_FORMAT=json"
+            "HEALTH_ADDR=0.0.0.0:8080"
+            "METRICS_ADDR=0.0.0.0:9090"
+            "GRAPHQL_ADDR=0.0.0.0:8081"
+            "GRPC_ADDR=0.0.0.0:50051"
+            "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
+          ];
+          exposedPorts = {
+            "8080/tcp" = {};   # Health
+            "8081/tcp" = {};   # GraphQL
+            "9090/tcp" = {};   # Metrics
+            "50051/tcp" = {};  # gRPC
+          };
+          extraContents = [
             pkgs.opentofu      # Infrastructure execution
             pkgs.packer        # AMI build execution
             pkgs.tzdata        # Timezone data
           ];
-
-          config = {
-            Entrypoint = [ "/app/pangea-operator" ];
-            Labels = {
-              "org.opencontainers.image.title" = "pangea-operator";
-              "org.opencontainers.image.description" = "Rust-based Kubernetes operator for Pangea infrastructure management";
-              "org.opencontainers.image.source" = "https://github.com/pleme-io/nexus";
-              "org.opencontainers.image.vendor" = "Pleme";
-              "org.opencontainers.image.version" = version;
-            };
-            Env = [
-              "RUST_LOG=info,pangea_operator=debug"
-              "LOG_FORMAT=json"
-              "HEALTH_ADDR=0.0.0.0:8080"
-              "METRICS_ADDR=0.0.0.0:9090"
-              "GRAPHQL_ADDR=0.0.0.0:8081"
-              "GRPC_ADDR=0.0.0.0:50051"
-              "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
-            ];
-            ExposedPorts = {
-              "8080/tcp" = {};   # Health
-              "8081/tcp" = {};   # GraphQL
-              "9090/tcp" = {};   # Metrics
-              "50051/tcp" = {};  # gRPC
-            };
-          };
         };
 
       in
