@@ -29,9 +29,20 @@ gen-types = { git = "https://github.com/pleme-io/gen" }
 # canonical innermost-wins-per-field merge (theory/CONVERGENCE-ADOPTION.md
 # §II.2). Git, not crates.io: the operator is a binary (not a published
 # library) and the re-homed `policy::CascadePolicy` is not on crates.io
-# 0.1.0 yet. Rev-pinned to the re-home commit for determinism (matches
-# how tend pins shigoto-emit) — bump deliberately on a shigoto upgrade.
-shigoto-types = { git = "https://github.com/pleme-io/shigoto", rev = "417bf9d538a1741c5576b29a4d71673e92cf5d22" }
+# 0.1.0 yet. Rev-pinned for determinism (matches how tend pins
+# shigoto-emit) — bump deliberately on a shigoto upgrade.
+#
+# Bumped 2026-07-18 (417bf9d -> e4e4c92, origin/main HEAD at bump time) to
+# pick up `shigoto-rank` (added at 8a35410, after the prior pin) — the
+# generic priority × urgency × fairness-deficit ranking primitive the
+# controller's scheduling module now delegates to. Purely additive between
+# the two revs for every symbol pangea-operator already consumed (verified
+# via `git diff` on shigoto-types — new `converge` module + rustfmt-only
+# churn, no changed signatures).
+shigoto-types = { git = "https://github.com/pleme-io/shigoto", rev = "e4e4c92b7327de197e492fe8cb7589f4d04c9309" }
+shigoto-dag = { git = "https://github.com/pleme-io/shigoto", rev = "e4e4c92b7327de197e492fe8cb7589f4d04c9309" }
+shigoto-budget = { git = "https://github.com/pleme-io/shigoto", rev = "e4e4c92b7327de197e492fe8cb7589f4d04c9309" }
+shigoto-rank = { git = "https://github.com/pleme-io/shigoto", rev = "e4e4c92b7327de197e492fe8cb7589f4d04c9309" }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

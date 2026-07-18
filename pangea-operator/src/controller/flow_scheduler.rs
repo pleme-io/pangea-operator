@@ -2,9 +2,34 @@
 //!
 //! Determines which steps are ready to execute, prioritizes critical path
 //! steps, respects parallelism limits, and cascades failures to dependents.
-//! Inspired by kenshi's scheduler.rs and dag.rs patterns.
+//!
+//! # Substrate delegation
+//!
+//! The step-execution POLICY (ready/warmable step detection, parallelism-capped
+//! batching, critical-path prioritization, failure cascade) is genuinely
+//! `InfrastructureFlow`-specific and stays here. The underlying dependency
+//! TOPOLOGY — step depth (distance from root) and the critical-path walk — is
+//! now [`shigoto_dag::Dag`], not the hand-rolled recursive DFS-with-memo this
+//! module used to carry (previously modeled on kenshi's scheduler.rs/dag.rs).
+//!
+//! That hand-rolled `compute_depths` had no cycle protection: a cyclic
+//! `depends_on` graph (which the CRD's own validation should reject, but this
+//! scheduler had no independent defense against) would recurse forever and
+//! stack-overflow the process. `Dag::waves` returns a typed `DagError::Cycle`
+//! instead — a cycle now degrades to "no computed depths" (every step reads
+//! back as depth 0 / non-critical, matching the `unwrap_or(0)` this module
+//! already used for absent depths) rather than crashing.
+//!
+//! `Dag` v0.1 exposes `predecessors()` (upstream neighbors) but no
+//! successors/outgoing-neighbors accessor, so [`cascade_failure`]'s forward
+//! walk (a failed step → its transitive dependents) still keeps its own small
+//! `dependents: HashMap<String, Vec<String>>` reverse-index, built directly
+//! from `step.depends_on` — that is the one piece of local adjacency this
+//! module still owns, and it is a plain index, not a topological algorithm.
 
 use crate::crd::{FlowStep, FlowStepStatus};
+use shigoto_dag::Dag;
+use shigoto_types::{JobId, JobKindId, JobScope, JobSubject};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Status of a step from the scheduler's perspective.
@@ -43,16 +68,37 @@ pub struct ScheduledStep {
     pub critical: bool,
 }
 
+/// The fixed work-kind every flow-step node uses in the DAG. `Dag` is generic
+/// over `JobId { scope, kind, subject }`; this module only ever needs one
+/// flat namespace (global scope, one kind), so `subject` alone carries the
+/// step's identity.
+fn step_kind() -> JobKindId {
+    JobKindId::new("infrastructure-flow-step")
+}
+
+fn step_id(name: &str) -> JobId {
+    JobId { scope: JobScope::Global, kind: step_kind(), subject: JobSubject::Pinned(name.to_string()) }
+}
+
+fn step_name(id: &JobId) -> Option<String> {
+    match &id.subject {
+        JobSubject::Pinned(s) => Some(s.clone()),
+        _ => None,
+    }
+}
+
 /// Flow scheduler that determines execution order and parallelism.
 pub struct FlowScheduler<'a> {
     steps: &'a [FlowStep],
     statuses: &'a BTreeMap<String, FlowStepStatus>,
     parallelism: u32,
-    /// Adjacency: step -> dependents
+    /// Adjacency: step -> dependents. See the module doc — this is the one
+    /// traversal direction `shigoto_dag::Dag` doesn't expose, kept as a plain
+    /// reverse-index (not a topological algorithm).
     dependents: HashMap<String, Vec<String>>,
-    /// Step depths (distance from root)
+    /// Step depths (distance from root), via `Dag::waves`.
     depths: HashMap<String, usize>,
-    /// Critical path (longest chain)
+    /// Critical path (longest chain), via `Dag::predecessors`.
     critical_set: HashSet<String>,
 }
 
@@ -63,23 +109,21 @@ impl<'a> FlowScheduler<'a> {
         parallelism: u32,
     ) -> Self {
         let mut dependents: HashMap<String, Vec<String>> = HashMap::new();
+        let mut dag = Dag::new();
         for step in steps {
+            dag.ensure_node(step_id(&step.name));
             for dep in &step.depends_on {
                 dependents.entry(dep.clone()).or_default().push(step.name.clone());
+                // Edge direction: upstream (dep) → downstream (step) — matches
+                // `Dag::predecessors(step)` returning step's direct upstreams.
+                dag.add_edge(step_id(dep), step_id(&step.name));
             }
         }
 
-        let depths = Self::compute_depths(steps);
-        let critical_set = Self::compute_critical_path(steps, &depths);
+        let depths = Self::compute_depths(&dag);
+        let critical_set = Self::compute_critical_path(&dag, &depths);
 
-        Self {
-            steps,
-            statuses,
-            parallelism,
-            dependents,
-            depths,
-            critical_set,
-        }
+        Self { steps, statuses, parallelism, dependents, depths, critical_set }
     }
 
     /// Get the current state of a step.
@@ -199,78 +243,68 @@ impl<'a> FlowScheduler<'a> {
         cancelled
     }
 
-    /// Compute depth (distance from root) for each step.
-    fn compute_depths(steps: &[FlowStep]) -> HashMap<String, usize> {
-        let mut depths = HashMap::new();
-        let step_map: HashMap<&str, &FlowStep> =
-            steps.iter().map(|s| (s.name.as_str(), s)).collect();
-
-        fn depth_of(
-            name: &str,
-            step_map: &HashMap<&str, &FlowStep>,
-            cache: &mut HashMap<String, usize>,
-        ) -> usize {
-            if let Some(&d) = cache.get(name) {
-                return d;
+    /// Compute depth (distance from root) for every step via
+    /// [`shigoto_dag::Dag::waves`] — wave 0 = roots (no deps), wave N = every
+    /// step whose longest upstream chain has length N. Replaces the
+    /// hand-rolled recursive DFS-with-memo (see module doc: that version had
+    /// no cycle protection). On a cycle, `waves` returns a typed
+    /// `DagError::Cycle`; this degrades to an empty depth map — every step
+    /// then reads back as depth 0 / non-critical via the existing
+    /// `unwrap_or(0)` call sites, never a crash. The `InfrastructureFlow`
+    /// CRD's own validation is the authoritative cycle gate; this is a
+    /// defensive fallback, not a promotion of cycles to a supported state.
+    fn compute_depths(dag: &Dag) -> HashMap<String, usize> {
+        match dag.waves(None) {
+            Ok(waves) => {
+                let mut depths = HashMap::new();
+                for (depth, wave) in waves.into_iter().enumerate() {
+                    for id in wave {
+                        if let Some(name) = step_name(&id) {
+                            depths.insert(name, depth);
+                        }
+                    }
+                }
+                depths
             }
-            let step = match step_map.get(name) {
-                Some(s) => s,
-                None => return 0,
-            };
-            let d = if step.depends_on.is_empty() {
-                0
-            } else {
-                step.depends_on
-                    .iter()
-                    .map(|dep| depth_of(dep, step_map, cache) + 1)
-                    .max()
-                    .unwrap_or(0)
-            };
-            cache.insert(name.to_string(), d);
-            d
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "InfrastructureFlow step graph has a dependency cycle; \
+                     critical-path prioritization degrades to depth 0 for every step"
+                );
+                HashMap::new()
+            }
         }
-
-        for step in steps {
-            depth_of(&step.name, &step_map, &mut depths);
-        }
-        depths
     }
 
-    /// Compute the critical path (longest dependency chain).
-    fn compute_critical_path(
-        steps: &[FlowStep],
-        depths: &HashMap<String, usize>,
-    ) -> HashSet<String> {
+    /// Compute the critical path (longest dependency chain) by walking back
+    /// from the deepest step to a root, at each hop taking the direct
+    /// predecessor ([`shigoto_dag::Dag::predecessors`]) with the greatest
+    /// depth. Ties resolve to whichever predecessor `Dag` returns last —
+    /// callers only need "on A longest chain", not a specific one among
+    /// equal-length ties (this module's own tests only assert membership +
+    /// path length, never a specific tie winner).
+    fn compute_critical_path(dag: &Dag, depths: &HashMap<String, usize>) -> HashSet<String> {
         let max_depth = depths.values().copied().max().unwrap_or(0);
-        let step_map: HashMap<&str, &FlowStep> =
-            steps.iter().map(|s| (s.name.as_str(), s)).collect();
-
         let mut path = HashSet::new();
 
         // Find the deepest node (end of critical path)
-        let deepest = depths
-            .iter()
-            .filter(|(_, &d)| d == max_depth)
-            .map(|(name, _)| name.clone())
-            .next();
+        let deepest = depths.iter().filter(|(_, &d)| d == max_depth).map(|(name, _)| name.clone()).next();
 
         if let Some(mut current) = deepest {
             path.insert(current.clone());
-            // Walk back to root via the deepest dependency at each level
-            while let Some(step) = step_map.get(current.as_str()) {
-                if step.depends_on.is_empty() {
-                    break;
-                }
-                let deepest_dep = step
-                    .depends_on
+            loop {
+                let preds = dag.predecessors(&step_id(&current));
+                let deepest_dep = preds
                     .iter()
-                    .max_by_key(|dep| depths.get(dep.as_str()).copied().unwrap_or(0))
-                    .cloned();
-                if let Some(dep) = deepest_dep {
-                    path.insert(dep.clone());
-                    current = dep;
-                } else {
-                    break;
+                    .filter_map(step_name)
+                    .max_by_key(|name| depths.get(name).copied().unwrap_or(0));
+                match deepest_dep {
+                    Some(dep) => {
+                        path.insert(dep.clone());
+                        current = dep;
+                    }
+                    None => break,
                 }
             }
         }
@@ -640,5 +674,27 @@ mod tests {
         let batch = sched.next_batch();
         assert_eq!(batch.len(), 1);
         assert!(batch[0].critical);
+    }
+
+    /// Regression: a cyclic `depends_on` graph must degrade to "no computed
+    /// depths / no critical path" instead of the stack overflow the original
+    /// hand-rolled recursive `compute_depths` was exposed to (no memoized
+    /// recursion ever detected re-entry into an in-progress node). Also
+    /// proves the scheduler stays USABLE on a cycle: ready-step detection
+    /// reads `depends_on` + status directly (never the DAG), so it is
+    /// unaffected — only critical-path prioritization degrades.
+    #[test]
+    fn test_cyclic_depends_on_does_not_crash_and_depths_degrade_to_zero() {
+        let steps = vec![step("a", &["b"]), step("b", &["a"])];
+        let statuses = BTreeMap::new();
+        let sched = FlowScheduler::new(&steps, &statuses, 2);
+        // No stack overflow reaching this line is the primary assertion.
+        assert!(sched.depths.is_empty(), "a cycle yields no computed depths");
+        assert!(sched.critical_set.is_empty(), "no critical path over an unresolved cycle");
+        // Both steps are blocked on each other (neither's dependency is ever
+        // Ready), so nothing is ready to schedule — but computing that must
+        // not panic or hang.
+        assert!(sched.find_ready_steps().is_empty());
+        assert!(sched.next_batch().is_empty());
     }
 }
