@@ -41,6 +41,30 @@ jobs:
       test-args: "--workspace --no-fail-fast"
     secrets: inherit
 
+  cargo-test-no-default-features:
+    # `cargo-test` above always compiles with executor_magma + embedded_ruby
+    # ON (default features, via the `.#ruby-eval` devshell) — so
+    # `magma_executor_for`'s `#[cfg(not(feature = "executor_magma"))]`
+    # fallback arm, and everything downstream of it (incl. the
+    # `resolve_and_check` effective-backend degrade it feeds), has never
+    # actually been *compiled* by CI, only reasoned about. This leg builds
+    # + runs the lib tests with default features off so that arm is real
+    # code under test, not just an unreached branch.
+    #
+    # Scoped to `-p pangea-operator` (not `--workspace`): `pangea-ruby-eval`
+    # is a workspace member that needs libruby to build unconditionally,
+    # independent of pangea-operator's own feature flags, so a bare
+    # `--workspace --no-default-features` would still pull it in. Same
+    # cheap ubuntu-latest / no-libruby shape as crd-drift.yml's
+    # `--no-default-features -- --generate-crds` step.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test -p pangea-operator --no-default-features (no libruby, no magma)
+        run: cargo test -p pangea-operator --no-default-features --lib --no-fail-fast
+
   coverage:
     needs: cargo-test
     runs-on: ubuntu-latest

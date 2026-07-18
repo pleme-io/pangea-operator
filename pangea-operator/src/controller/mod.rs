@@ -78,6 +78,53 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
+/// Marker error: an executor selection resolved (directly, or via a
+/// feature-gated degrade) to an EFFECTIVE `Tofu` backend while
+/// `PANGEA_FORBID_TOFU` is set. Carries no template name — the call
+/// site (which has the CR in hand) attaches that when converting to
+/// [`crate::error::Error::TofuForbidden`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TofuForbiddenSelection;
+
+/// Pure executor-routing decision, extracted from `executor_for_checked`
+/// / `executor_for_checked_with_creds` so the chokepoint is
+/// unit-testable without constructing a `ControllerState` (which needs
+/// a live `kube::Client`) — mirrors the pure-logic-extraction
+/// convention in `controller::policy_gate::evaluate`.
+///
+/// `chosen` is the CR/env-resolved backend (`ExecutorBackend::resolve`).
+/// `magma_available` reflects whether THIS build was compiled with the
+/// `executor_magma` feature (pass `cfg!(feature = "executor_magma")`).
+/// When it's off, a resolved `Magma` choice silently DEGRADES to tofu
+/// at the call site (`magma_executor_for`'s
+/// `#[cfg(not(feature = "executor_magma"))]` arm always returns the
+/// tofu executor), so the EFFECTIVE backend that will actually run is
+/// tofu even though `chosen` reads `Magma`. `forbid_tofu` must
+/// therefore gate on the EFFECTIVE backend, not the pre-degrade
+/// `chosen` value — checking `chosen == Tofu` alone let a
+/// `spec.executor=magma` CR on an executor_magma-less build silently
+/// run forbidden tofu (a live bug: `PANGEA_FORBID_TOFU` never fired
+/// because `chosen` read `Magma`, not `Tofu`).
+///
+/// Per the org ★★ MAGMA-NATIVE directive: an effective `Tofu`
+/// selection while `PANGEA_FORBID_TOFU` is set must fail loud, never
+/// silently build/run a tofu executor.
+pub fn resolve_and_check(
+    chosen: ExecutorBackend,
+    magma_available: bool,
+    forbid_tofu: bool,
+) -> std::result::Result<ExecutorBackend, TofuForbiddenSelection> {
+    let effective = if chosen == ExecutorBackend::Magma && !magma_available {
+        ExecutorBackend::Tofu
+    } else {
+        chosen
+    };
+    if effective == ExecutorBackend::Tofu && forbid_tofu {
+        return Err(TofuForbiddenSelection);
+    }
+    Ok(chosen)
+}
+
 /// Shared state for all controllers.
 #[derive(Clone)]
 pub struct ControllerState {
@@ -367,7 +414,11 @@ impl ControllerState {
     ///
     /// This makes the "silently ran tofu for spec.executor=magma"
     /// class (flake.nix:358 comment, caught by the rio-health-check
-    /// canary 2026-05-27) unrepresentable on the apply path.
+    /// canary 2026-05-27) unrepresentable on the apply path — including
+    /// on a build compiled WITHOUT the `executor_magma` feature, where
+    /// `resolve_and_check`'s `magma_available` param makes the silent
+    /// magma→tofu degrade subject to the same forbid check (see its
+    /// doc comment).
     pub fn executor_for_checked(
         &self,
         template: &crate::crd::InfrastructureTemplate,
@@ -379,14 +430,15 @@ impl ControllerState {
             Some(self.default_backend.label()),
         );
 
-        if chosen == ExecutorBackend::Tofu
-            && crate::executor::backend_select::forbid_tofu_from_env()
-        {
-            return Err(crate::error::Error::TofuForbidden {
-                template: template.name_any(),
-                reason: "PANGEA_FORBID_TOFU is set".to_string(),
-            });
-        }
+        resolve_and_check(
+            chosen,
+            cfg!(feature = "executor_magma"),
+            crate::executor::backend_select::forbid_tofu_from_env(),
+        )
+        .map_err(|TofuForbiddenSelection| crate::error::Error::TofuForbidden {
+            template: template.name_any(),
+            reason: "PANGEA_FORBID_TOFU is set".to_string(),
+        })?;
 
         Ok(match chosen {
             ExecutorBackend::Magma => self.magma_executor_for(template),
@@ -549,8 +601,12 @@ impl ControllerState {
             Some(self.default_backend.label()),
         );
 
-        if chosen == ExecutorBackend::Tofu
-            && crate::executor::backend_select::forbid_tofu_from_env()
+        if resolve_and_check(
+            chosen,
+            cfg!(feature = "executor_magma"),
+            crate::executor::backend_select::forbid_tofu_from_env(),
+        )
+        .is_err()
         {
             return Err(crate::error::Error::TofuForbidden {
                 template: template.name_any(),
@@ -695,5 +751,66 @@ impl ControllerState {
         // `db_pool` wraps the pool itself; reuse the same Arc'd pool.
         self.db_pool = Some(Arc::new(RwLock::new((*shared).clone())));
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── resolve_and_check ───────────────────────────────────────────
+    //
+    // Pure-function tests, no `ControllerState`/`kube::Client` needed.
+    // Covers the live bug this function fixes: a `chosen == Magma`
+    // selection on a build without the `executor_magma` feature
+    // silently degrades to an EFFECTIVE tofu executor, so
+    // `PANGEA_FORBID_TOFU` must gate on the effective backend, not
+    // the pre-degrade `chosen` value.
+
+    #[test]
+    fn magma_chosen_and_available_is_allowed_even_when_tofu_forbidden() {
+        // Normal case: magma_available=true means no degrade occurs,
+        // so forbid_tofu never even applies to this selection.
+        let result = resolve_and_check(ExecutorBackend::Magma, true, true);
+        assert_eq!(result, Ok(ExecutorBackend::Magma));
+    }
+
+    #[test]
+    fn magma_chosen_but_unavailable_is_forbidden_when_forbid_tofu_set() {
+        // THE live bug: spec.executor=magma on a build compiled
+        // without executor_magma degrades to an effective tofu run.
+        // Before this fix, `chosen == Tofu` never matched (chosen
+        // still reads Magma), so PANGEA_FORBID_TOFU silently never
+        // fired here. Must now be rejected.
+        let result = resolve_and_check(ExecutorBackend::Magma, false, true);
+        assert_eq!(result, Err(TofuForbiddenSelection));
+    }
+
+    #[test]
+    fn tofu_chosen_directly_is_forbidden_when_forbid_tofu_set() {
+        // The original, already-working case: a direct tofu
+        // selection under PANGEA_FORBID_TOFU must still be rejected.
+        let result = resolve_and_check(ExecutorBackend::Tofu, true, true);
+        assert_eq!(result, Err(TofuForbiddenSelection));
+        // magma_available is irrelevant to a directly-chosen tofu
+        // backend — confirm the same rejection holds when it's false.
+        let result = resolve_and_check(ExecutorBackend::Tofu, false, true);
+        assert_eq!(result, Err(TofuForbiddenSelection));
+    }
+
+    #[test]
+    fn tofu_chosen_is_allowed_when_forbid_tofu_not_set() {
+        // Tofu remains a legitimate, allowed backend when the
+        // operator hasn't set PANGEA_FORBID_TOFU.
+        let result = resolve_and_check(ExecutorBackend::Tofu, false, false);
+        assert_eq!(result, Ok(ExecutorBackend::Tofu));
+    }
+
+    #[test]
+    fn magma_chosen_and_available_is_allowed_when_forbid_tofu_not_set() {
+        // magma always allowed regardless of forbid_tofu when it's
+        // genuinely available and selected.
+        let result = resolve_and_check(ExecutorBackend::Magma, true, false);
+        assert_eq!(result, Ok(ExecutorBackend::Magma));
     }
 }
