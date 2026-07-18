@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "cargo_lock_sha256": "f7f949ac283236aa7da729e15ed7a298f2badd4324fdb24bb4d91beaa0d50a79",
+  "cargo_lock_sha256": "1246cfd73a8e4530ce5331bd1c028d45cfa81fb8c759fc666d7953fe8f8e95c6",
   "target_resolves": {
     "base": {
       "Inflector-0.11.4": {
@@ -12953,8 +12953,38 @@
             "tree": "target"
           },
           {
+            "name": "shigoto_budget",
+            "package_key": "shigoto-budget-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "shigoto_dag",
+            "package_key": "shigoto-dag-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "shigoto_rank",
+            "package_key": "shigoto-rank-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.0-417bf9d538a1741c5576b29a4d71673e92cf5d22",
+            "package_key": "shigoto-types-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -18072,6 +18102,44 @@
         "build_dependencies": [],
         "features": []
       },
+      "shigoto-budget-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309": {
+        "runtime_dependencies": [
+          {
+            "name": "serde",
+            "package_key": "serde-1.0.228",
+            "kind": "normal",
+            "features": [
+              "derive"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "shigoto_types",
+            "package_key": "shigoto-types-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
       "shigoto-budget-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": {
         "runtime_dependencies": [
           {
@@ -18089,6 +18157,54 @@
           {
             "name": "shigoto_types",
             "package_key": "shigoto-types-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "shigoto-dag-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309": {
+        "runtime_dependencies": [
+          {
+            "name": "petgraph",
+            "package_key": "petgraph-0.6.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde",
+            "package_key": "serde-1.0.228",
+            "kind": "normal",
+            "features": [
+              "derive"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "shigoto_types",
+            "package_key": "shigoto-types-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -18233,6 +18349,24 @@
             "package_key": "shigoto-types-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6",
             "kind": "normal",
             "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "shigoto-rank-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309": {
+        "runtime_dependencies": [
+          {
+            "name": "serde",
+            "package_key": "serde-1.0.228",
+            "kind": "normal",
+            "features": [
+              "derive"
+            ],
             "uses_default_features": true,
             "optional": false,
             "target": null,
@@ -18403,7 +18537,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-types-0.1.0-417bf9d538a1741c5576b29a4d71673e92cf5d22": {
+      "shigoto-types-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309": {
         "runtime_dependencies": [
           {
             "name": "async_trait",
@@ -18414,6 +18548,16 @@
             "optional": false,
             "target": null,
             "tree": "host"
+          },
+          {
+            "name": "blake3",
+            "package_key": "blake3-1.8.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
           },
           {
             "name": "chrono",
@@ -18440,6 +18584,16 @@
           {
             "name": "gen_types",
             "package_key": "gen-types-0.1.22-27231a64b77655fe89f42048a8264f72fa02f7f4",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "hex",
+            "package_key": "hex-0.4.3",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -31119,7 +31273,13 @@
     "shigoto-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": {
       "edition": "2024"
     },
+    "shigoto-budget-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309": {
+      "edition": "2024"
+    },
     "shigoto-budget-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": {
+      "edition": "2024"
+    },
+    "shigoto-dag-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309": {
       "edition": "2024"
     },
     "shigoto-dag-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": {
@@ -31131,13 +31291,16 @@
     "shigoto-gate-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": {
       "edition": "2024"
     },
+    "shigoto-rank-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309": {
+      "edition": "2024"
+    },
     "shigoto-retry-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": {
       "edition": "2024"
     },
     "shigoto-scheduler-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": {
       "edition": "2024"
     },
-    "shigoto-types-0.1.0-417bf9d538a1741c5576b29a4d71673e92cf5d22": {
+    "shigoto-types-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309": {
       "edition": "2024"
     },
     "shigoto-types-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": {
@@ -31567,13 +31730,16 @@
     "magma-types-0.1.10-5078d26572dd81a9994b37bb1b75bf9ead84832d": "sha256-OccLVL+REexgkSyOApjbVfMl0OiQHyKO3fHpmSKL4yI=",
     "samba-0.1.2-29650485132f635429291b08c5b2cdc5f9293500": "sha256-pENYz36juuVgZaJN7BlM/T8nEVnAzJWsXLiiI02EVdU=",
     "shigoto-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": "sha256-6HLdhsuhlRpUeT7MFKPu4H8d484JOMnkEUbtvcmghU4=",
+    "shigoto-budget-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309": "sha256-phfwlFVtQJ5X+AhR6PPLzWWhkRkjMO0GwFBR5ggk/jg=",
     "shigoto-budget-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": "sha256-6HLdhsuhlRpUeT7MFKPu4H8d484JOMnkEUbtvcmghU4=",
+    "shigoto-dag-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309": "sha256-phfwlFVtQJ5X+AhR6PPLzWWhkRkjMO0GwFBR5ggk/jg=",
     "shigoto-dag-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": "sha256-6HLdhsuhlRpUeT7MFKPu4H8d484JOMnkEUbtvcmghU4=",
     "shigoto-emit-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": "sha256-6HLdhsuhlRpUeT7MFKPu4H8d484JOMnkEUbtvcmghU4=",
     "shigoto-gate-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": "sha256-6HLdhsuhlRpUeT7MFKPu4H8d484JOMnkEUbtvcmghU4=",
+    "shigoto-rank-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309": "sha256-phfwlFVtQJ5X+AhR6PPLzWWhkRkjMO0GwFBR5ggk/jg=",
     "shigoto-retry-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": "sha256-6HLdhsuhlRpUeT7MFKPu4H8d484JOMnkEUbtvcmghU4=",
     "shigoto-scheduler-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": "sha256-6HLdhsuhlRpUeT7MFKPu4H8d484JOMnkEUbtvcmghU4=",
-    "shigoto-types-0.1.0-417bf9d538a1741c5576b29a4d71673e92cf5d22": "sha256-KaNUnx3IpQFGdlox6zK3vHHiGVXiy+fHyb4BxOxHQn4=",
+    "shigoto-types-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309": "sha256-phfwlFVtQJ5X+AhR6PPLzWWhkRkjMO0GwFBR5ggk/jg=",
     "shigoto-types-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": "sha256-6HLdhsuhlRpUeT7MFKPu4H8d484JOMnkEUbtvcmghU4=",
     "shikumi-0.1.166-c232ca27180d1aa33ea2ae5874def1e339690add": "sha256-rwNekY+zvV1Qywzpcoj3fMbB/3GrwwkR4qfFgwG00mY=",
     "tsunagu-0.1.1-242a5b56f3f83fd59b4a2312716c578be720ef12": "sha256-o4tFsK8XDHB1EKfiNDtwpsisH+Qz84VU/nUNa/hyg+0="
