@@ -65,8 +65,9 @@
 //! APIs and tested via `InMemoryStateBackend`. `import` returns
 //! NotImplemented (lands in M0.11 alongside auto-import parity).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::Instant;
 
 use async_trait::async_trait;
@@ -77,6 +78,88 @@ use crate::error::{Error, Result};
 use crate::executor::iac_executor::IacExecutor;
 use crate::executor::plan_change::PlannedChange;
 use crate::executor::tofu::TofuResult;
+
+// ── Import concurrency guard ──────────────────────────────────────
+//
+// `template_controller::run_import_prepass` dispatches every resolved
+// import target CONCURRENTLY (`buffer_unordered(10)` — see
+// `try_tofu_import`'s doc comment: "the pg backend's advisory lock
+// naturally serializes the state-write step"). That comment is
+// tofu-specific: a `tofu import` subprocess's OWN pg backend takes a
+// per-command advisory lock around its read-modify-write, so N
+// concurrent `tofu import` invocations against the same workspace are
+// safe by construction.
+//
+// magma has no equivalent. `MagmaExecutor::import()` below reads the
+// whole state row, mutates it in memory via the import prepass, and
+// writes the whole row back — and `StateBackend::save_state` is a
+// plain last-write-wins upsert (no compare-and-swap, no advisory
+// lock). Worse, `ControllerState::magma_executor_with_provider_configs`
+// constructs a FRESH `MagmaExecutor` on every call (see
+// `try_tofu_import`'s `state.executor_for(template)`), so a lock field
+// on `&self` can't serialize anything — two concurrent `import()`
+// calls for the SAME template never share an instance.
+//
+// This keyed, process-wide registry closes that gap: every
+// `MagmaExecutor::import()` call acquires the lock for its
+// `(schema_name, template_name, state_name)` triple before its
+// read-modify-write critical section, so concurrent imports against
+// the SAME workspace serialize (closing the lost-update race) while
+// imports against DIFFERENT templates still run fully in parallel.
+static IMPORT_STATE_LOCKS: OnceLock<StdMutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+    OnceLock::new();
+
+fn import_state_lock_key(schema_name: &str, template_name: &str, state_name: &str) -> String {
+    format!("{schema_name}/{template_name}/{state_name}")
+}
+
+async fn acquire_import_state_lock(key: String) -> tokio::sync::OwnedMutexGuard<()> {
+    let registry = IMPORT_STATE_LOCKS.get_or_init(|| StdMutex::new(HashMap::new()));
+    let mutex = {
+        // A poisoned std Mutex here would mean an earlier holder
+        // panicked while holding ONLY the registry lock (a bare map
+        // insert) — never while holding the returned tokio mutex.
+        // Recovering the inner map is safe; the registry's own
+        // consistency isn't affected by a panic elsewhere.
+        let mut map = registry
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Arc::clone(map.entry(key).or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))))
+    };
+    mutex.lock_owned().await
+}
+
+/// TEST-ONLY [`magma_apply::ImportEnvironment`], selected when
+/// `structural_apply` is set — mirroring the shape `apply()`/`destroy()`
+/// already use for the structural (no-real-provider) unit-test path.
+/// CI has no provider binaries, so a real
+/// `magma_apply::ConfiguredImportEnvironment` can't dial anything here;
+/// this canned, in-memory echo lets `MagmaExecutor::import()`'s OWN
+/// logic (locking, state read/write, error surfacing) be exercised
+/// without one. A sentinel id of `"missing"` fails, mirroring
+/// `mock_provider`'s convention in the magma repo's own integration
+/// suite, so the FailedImport path is testable too.
+struct StructuralImportEnvironment;
+
+#[async_trait]
+impl magma_apply::ImportEnvironment for StructuralImportEnvironment {
+    async fn import_resource_state(
+        &self,
+        type_name: &str,
+        id: &str,
+    ) -> std::result::Result<Vec<magma_types::ImportedInstance>, String> {
+        if id == "missing" {
+            return Err(format!(
+                "structural test environment: no resource with id {id:?}"
+            ));
+        }
+        Ok(vec![magma_types::ImportedInstance {
+            type_name: type_name.to_string(),
+            attributes: serde_json::json!({ "id": id, "name": id }),
+            private: Vec::new(),
+        }])
+    }
+}
 
 /// Typed outcome of reading the persisted plan from the DB-backed
 /// artifact store. The three states let `apply()` / `planned_changes()`
@@ -1469,17 +1552,115 @@ where
         ))
     }
 
+    /// Adopt an out-of-band cloud resource into magma state via the
+    /// provider's real `ImportResourceState` RPC — closing the
+    /// production root cause behind the repeated "+N create" plans for
+    /// infrastructure that was already real: this method used to be a
+    /// hard stub (`Err` every call), so `run_import_prepass`
+    /// (`template_controller.rs`) never actually absorbed anything for
+    /// a magma-executor CR and every subsequent `plan()` re-proposed a
+    /// Create for resources that already existed.
+    ///
+    /// Runs BEFORE `plan()` (per `run_import_prepass`'s call site in
+    /// `handle_applying`), so the state this mutates is exactly what
+    /// the FOLLOWING `plan()` reads — never an "import during apply"
+    /// flow. Reuses `magma_apply::run_explicit_prepass` +
+    /// `magma_apply::ConfiguredImportEnvironment` (which dials +
+    /// configures the real provider — see that type's doc for why the
+    /// raw/unconfigured `PluginImportEnvironment` is NOT used here);
+    /// see [`StructuralImportEnvironment`] for the CI/unit-test path
+    /// with no real provider binaries.
+    ///
+    /// Concurrency: `run_import_prepass` dispatches resolved import
+    /// targets CONCURRENTLY (`buffer_unordered(10)`); the
+    /// `acquire_import_state_lock` guard above serializes this
+    /// method's read-state → mutate → write-state critical section per
+    /// `(schema_name, template_name, state_name)` so concurrent imports
+    /// against the SAME workspace can't race a lost update (see that
+    /// guard's doc for the full "why").
     async fn import(
         &self,
-        _work_dir: &Path,
+        work_dir: &Path,
         address: &str,
         id: &str,
     ) -> Result<TofuResult> {
         let started = Instant::now();
-        let stderr = format!(
-            "magma import: not yet implemented for {address} ({id}); falls back to recreate\n",
+
+        let lock_key = import_state_lock_key(
+            &self.cfg.schema_name,
+            &self.cfg.template_name,
+            &self.cfg.state_name,
         );
-        Ok(err_tofu_result(stderr, started))
+        let _state_guard = acquire_import_state_lock(lock_key).await;
+
+        self.ensure_state_table().await?;
+        let backend = self.make_backend();
+        let mut state = magma_backend::Backend::read_state(&backend)
+            .await
+            .map_err(|e| Error::MagmaExecution(format!("read state: {e}")))?;
+
+        let directives = magma_types::ImportDirectives::default().with_explicit(address, id);
+
+        let outcome = if self.cfg.structural_apply {
+            let env = StructuralImportEnvironment;
+            magma_apply::run_explicit_prepass(&env, &directives, &mut state)
+                .await
+                .map_err(|e| Error::MagmaExecution(format!("import prepass: {e}")))?
+        } else {
+            // Same ApplyContext shape as apply()/destroy() — provider
+            // creds from the rendered config's `provider "<name>" {}`
+            // blocks merged with `spec.providerCredentials`
+            // (`build_provider_configs`). Best-effort config load: an
+            // unreadable/unrendered config still lets the import run
+            // with an empty provider config (the provider falls back to
+            // its own env credentials), matching `apply()`'s existing
+            // `if let Ok(cfg) = ...` tolerance.
+            let mut ctx = magma_apply::engine::ApplyContext::new(work_dir.to_path_buf());
+            if let Ok(cfg) = self.load_config_routed(work_dir).await {
+                for (name, value) in self.build_provider_configs(&cfg) {
+                    ctx = ctx.with_provider_config(name, value);
+                }
+            }
+            let env = magma_apply::ConfiguredImportEnvironment::new(&ctx);
+            magma_apply::run_explicit_prepass(&env, &directives, &mut state)
+                .await
+                .map_err(|e| Error::MagmaExecution(format!("import prepass: {e}")))?
+        };
+
+        if let Some(failed) = outcome.failed.first() {
+            return Ok(err_tofu_result(
+                format!(
+                    "magma import failed for {address} ({id}): {}\n",
+                    failed.reason
+                ),
+                started,
+            ));
+        }
+
+        // Persist the adopted state so the plan() that follows this
+        // prepass reads it. No bundle to pair it with here (import is a
+        // pre-plan state-adoption step, not a plan/apply outcome), so
+        // this is a plain write — the same call `apply()`'s disk-fallback
+        // branch makes, always taken here regardless of `artifact_store`
+        // since there's no atomic state+bundle transaction to fold into.
+        magma_backend::Backend::write_state(&backend, &state)
+            .await
+            .map_err(|e| Error::MagmaExecution(format!("write state: {e}")))?;
+
+        let absorbed = outcome
+            .imported
+            .first()
+            .map(|i| i.absorbed)
+            .unwrap_or(false);
+        let stdout = format!(
+            "magma import: {address} ({id}) {}\n",
+            if absorbed {
+                "adopted into state"
+            } else {
+                "already present in state (no-op)"
+            }
+        );
+        Ok(ok_tofu_result(stdout, started))
     }
 
     /// Magma-native, disk-free import-discovery readback (the P1a fix).
@@ -1698,12 +1879,138 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn import_returns_not_implemented_typed_failure() {
+    async fn import_adopts_a_resource_into_state() {
         let exec = MagmaExecutor::new(fixture_config());
         let tmp = tempfile::tempdir().unwrap();
-        let result = exec.import(tmp.path(), "aws_iam_role.x", "arn:1").await.unwrap();
+
+        let result = exec
+            .import(tmp.path(), "aws_iam_role.adopted", "arn:aws:iam::123:role/adopted")
+            .await
+            .unwrap();
+        assert!(result.success, "import should succeed: {}", result.stdout);
+        assert!(result.stdout.contains("adopted into state"));
+
+        let backend = exec.make_backend();
+        let state = magma_backend::Backend::read_state(&backend).await.unwrap();
+        assert_eq!(state.resources.len(), 1);
+        assert_eq!(state.resources[0].address.type_id.0, "aws_iam_role");
+        assert_eq!(state.resources[0].address.name, "adopted");
+    }
+
+    /// The load-bearing regression this whole fix closes: a
+    /// subsequently-planned resource that was just imported must NOT
+    /// show up as a Create — `plan()` reads the SAME state `import()`
+    /// just wrote.
+    #[tokio::test]
+    async fn import_then_plan_no_longer_proposes_a_create_for_the_adopted_resource() {
+        let exec = MagmaExecutor::new(fixture_config());
+        let tmp = tempfile::tempdir().unwrap();
+        render_workspace(
+            tmp.path(),
+            &json!({
+                "provider": { "aws": { "region": "us-east-1" } },
+                "resource": { "aws_iam_role": { "adopted": { "name": "adopted" } } },
+            }),
+        )
+        .await;
+
+        let import_result = exec
+            .import(tmp.path(), "aws_iam_role.adopted", "adopted")
+            .await
+            .unwrap();
+        assert!(import_result.success, "{}", import_result.stdout);
+
+        let plan_result = exec.plan(tmp.path(), None, &[]).await.unwrap();
+        assert!(plan_result.success);
+        assert_eq!(
+            plan_result.exit_code, 0,
+            "the imported resource must plan as NoOp, not Create: {}",
+            plan_result.stdout
+        );
+    }
+
+    #[tokio::test]
+    async fn import_is_idempotent_when_already_in_state() {
+        let exec = MagmaExecutor::new(fixture_config());
+        let tmp = tempfile::tempdir().unwrap();
+
+        let first = exec
+            .import(tmp.path(), "aws_iam_role.adopted", "role-id")
+            .await
+            .unwrap();
+        assert!(first.success);
+        assert!(first.stdout.contains("adopted into state"));
+
+        let second = exec
+            .import(tmp.path(), "aws_iam_role.adopted", "role-id")
+            .await
+            .unwrap();
+        assert!(second.success);
+        assert!(second.stdout.contains("already present in state"));
+
+        let backend = exec.make_backend();
+        let state = magma_backend::Backend::read_state(&backend).await.unwrap();
+        assert_eq!(state.resources.len(), 1, "idempotent: no duplicate");
+    }
+
+    #[tokio::test]
+    async fn import_surfaces_a_failed_id_as_a_typed_failure_not_a_hard_error() {
+        let exec = MagmaExecutor::new(fixture_config());
+        let tmp = tempfile::tempdir().unwrap();
+
+        let result = exec
+            .import(tmp.path(), "aws_iam_role.gone", "missing")
+            .await
+            .unwrap();
         assert!(!result.success);
-        assert!(result.stderr.contains("not yet implemented"));
+        assert!(result.stderr.contains("no resource with id"));
+
+        // A failed import must never be silently persisted into state.
+        let backend = exec.make_backend();
+        let state = magma_backend::Backend::read_state(&backend).await.unwrap();
+        assert_eq!(state.resources.len(), 0);
+    }
+
+    /// The concurrency-race regression `acquire_import_state_lock` closes:
+    /// `run_import_prepass` (template_controller.rs) dispatches every
+    /// resolved import target CONCURRENTLY via `buffer_unordered(10)`,
+    /// building a FRESH `MagmaExecutor` per call
+    /// (`state.executor_for(template)`) that all share the SAME
+    /// underlying state backend. Without the lock, N concurrent
+    /// read-modify-write cycles against the same workspace race and only
+    /// the last writer's single resource survives.
+    #[tokio::test]
+    async fn import_serializes_concurrent_calls_against_the_same_workspace() {
+        let shared_backend = Arc::new(InMemoryStateBackend::new());
+        let build = || {
+            MagmaExecutor::new(MagmaExecutorConfig {
+                state_backend: Arc::clone(&shared_backend),
+                ..fixture_config()
+            })
+        };
+        let tmp = tempfile::tempdir().unwrap();
+
+        let e1 = build();
+        let e2 = build();
+        let e3 = build();
+        let (r1, r2, r3) = tokio::join!(
+            e1.import(tmp.path(), "aws_iam_role.one", "id-1"),
+            e2.import(tmp.path(), "aws_iam_role.two", "id-2"),
+            e3.import(tmp.path(), "aws_iam_role.three", "id-3"),
+        );
+        assert!(r1.unwrap().success);
+        assert!(r2.unwrap().success);
+        assert!(r3.unwrap().success);
+
+        let read_exec = build();
+        let backend = read_exec.make_backend();
+        let state = magma_backend::Backend::read_state(&backend).await.unwrap();
+        assert_eq!(
+            state.resources.len(),
+            3,
+            "all three concurrent imports must land — a lost update means the \
+             in-process lock isn't serializing the read-modify-write cycle"
+        );
     }
 
     #[tokio::test]
