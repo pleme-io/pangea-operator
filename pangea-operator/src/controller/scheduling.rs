@@ -1,4 +1,5 @@
-//! Generic fair-priority scheduling — the trait-based, fleet-reusable core.
+//! Generic fair-priority scheduling — the operator-local adapter over
+//! shigoto's substrate-native ranking + admission primitives.
 //!
 //! # Why this is a trait, not operator code
 //!
@@ -6,41 +7,67 @@
 //! valuable order" is what *every* reconcile loop in the fleet needs — the
 //! pangea-operator (templates × workspaces), breathe (bands × nodes), eclusa
 //! (PRs × repos), Viggy (promessas × clusters). Re-inventing the ranking +
-//! anti-starvation in each is exactly the duplication the Compounding Directive
-//! forbids. So the *algorithm* lives here, generic over a [`Schedulable`]
-//! contract; a consumer implements eight small accessors on its own unit type
-//! and gets the whole policy — class tiers, urgency, fairness-deficit
-//! anti-starvation, dependency + backoff gating, bounded backpressure — for
-//! free, proven once.
+//! anti-starvation in each is exactly the duplication the Compounding
+//! Directive forbids. The *algorithm* itself now lives in the shared
+//! substrate — `shigoto-rank` (priority × urgency × fairness-deficit
+//! ranking) and `shigoto-budget` (global × per-scope concurrency admission,
+//! min-intersection) — and this module is the thin operator-local adapter: a
+//! consumer implements the same eight small accessors on its own unit type
+//! ([`Schedulable`]) and gets the whole policy for free, proven once, in the
+//! crate every fleet consumer of the pattern shares.
 //!
-//! This is the substrate-extraction shape: the module depends only on `std`, so
-//! it lifts into `shigoto` (next to `BudgetTree`) unchanged. The operator is
-//! its first consumer ([`super::reconcile_scheduler::ReconcileDemand`]); the
-//! budget admission half is [`super::workspace_budget`].
+//! # What moved, and what stayed local
+//!
+//! - **Ranking** ([`schedule`], the ordering half of [`pick_admitted`])
+//!   delegates to [`shigoto_rank::rank`]/[`shigoto_rank::pick`] via the
+//!   private [`RankAdapter`] wrapper. A blanket `impl shigoto_rank::Schedulable
+//!   for T where T: Schedulable` is illegal under Rust's orphan rule (neither
+//!   the foreign trait nor a bare generic type parameter is local), so the
+//!   adapter is the standard bridge shape. [`PriorityClass`] is now a direct
+//!   re-export of `shigoto_rank::PriorityClass` — the discriminants
+//!   (`Critical = 0 .. Low = 3`) are identical, so this is a true
+//!   deduplication, not just an algorithm swap.
+//! - **Admission** ([`FairBudget`]/[`BudgetPermit`]) delegates to
+//!   [`shigoto_budget::BudgetTree`] — the same min-intersection global ×
+//!   per-scope cap, keyed by a synthetic [`shigoto_types::JobId`] (the
+//!   fairness scope becomes `JobScope::Workspace`). `FairBudget` keeps the
+//!   thread-safe `Arc<Mutex<..>>` + RAII-permit shape its two consumers
+//!   already depend on ([`super::workspace_budget`],
+//!   [`super::reconcile_scheduler`]) — `BudgetTree` itself takes `&mut self`
+//!   and has no RAII surface, so this module is exactly the bridge those
+//!   call sites need, unchanged from their side.
+//! - **[`UrgencyWeights`] stays a local struct**, not a re-export: its
+//!   default VALUES (`per_drift = 120`, `per_deficit = 600`) are this
+//!   operator's own production tuning, and differ from
+//!   `shigoto_rank::UrgencyWeights`'s own defaults (`drift = 600`,
+//!   `fairness_deficit = 1800`). Re-exporting the shigoto type outright would
+//!   silently change live scheduling behavior — [`UrgencyWeights::to_shigoto`]
+//!   is the one-line translation at the call boundary instead.
+//!
+//! **Correction to this module's own history:** it used to claim it "lifts
+//! into shigoto next to `BudgetTree` unchanged" — true for the admission half,
+//! but `shigoto-budget::BudgetTree` is a pure concurrency cap with no
+//! priority/urgency/fairness-deficit concept at all. The ranking algorithm's
+//! actual substrate home is the sibling crate `shigoto-rank`, not
+//! `BudgetTree`. Both are consumed here now, each for the half it owns.
 //!
 //! # Tier honesty
 //!
-//! The proofs are mechanical CI forcing-functions over the *decision function*
-//! (total order, class dominance, no-starvation-by-deficit, gating, bounded
-//! dispatch). They are not a runtime liveness guarantee (that depends on
-//! throughput vs arrival) — they guarantee the policy is total, deterministic,
+//! The proofs are mechanical CI forcing-functions over the *decision
+//! function* (total order, class dominance, no-starvation-by-deficit,
+//! gating, bounded dispatch) — now exercised by shigoto-rank's and
+//! shigoto-budget's own test suites plus this module's adapter tests. They
+//! are not a runtime liveness guarantee (that depends on throughput vs
+//! arrival) — they guarantee the policy is total, deterministic,
 //! class-correct, and starvation-free by construction.
 
-use std::cmp::Reverse;
+pub use shigoto_rank::PriorityClass;
 
-/// Hard priority tiers. Lower discriminant = higher priority.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum PriorityClass {
-    /// Life-safety / SLA-bound — preempts everything below.
-    Critical = 0,
-    High = 1,
-    Normal = 2,
-    /// Best-effort / experimental.
-    Low = 3,
-}
-
-/// Tunable urgency weights. Defaults: behind-target and drift dominate raw age,
-/// and the fairness deficit can eventually overcome any of them.
+/// Tunable urgency weights. Defaults: behind-target and drift dominate raw
+/// age, and the fairness deficit can eventually overcome any of them. Kept
+/// as a local type (not a re-export of [`shigoto_rank::UrgencyWeights`])
+/// because its default VALUES are this operator's own production tuning,
+/// not shigoto's generic defaults — see the module doc.
 #[derive(Debug, Clone, Copy)]
 pub struct UrgencyWeights {
     pub per_stale_sec: u64,
@@ -55,9 +82,25 @@ impl Default for UrgencyWeights {
     }
 }
 
-/// The contract a unit implements to be scheduled. Eight accessors describe the
-/// unit; the `urgency`/`rank_key` default methods are the shared algorithm — a
+impl UrgencyWeights {
+    /// Translate to shigoto-rank's weight shape at the call boundary — same
+    /// numeric semantics, shigoto's field names.
+    fn to_shigoto(self) -> shigoto_rank::UrgencyWeights {
+        shigoto_rank::UrgencyWeights {
+            staleness: self.per_stale_sec,
+            behind_target: self.behind_target,
+            drift: self.per_drift,
+            fairness_deficit: self.per_deficit,
+        }
+    }
+}
+
+/// The contract a unit implements to be scheduled. Eight accessors describe
+/// the unit; [`schedule`]/[`pick_admitted`] are the shared algorithm — a
 /// consumer never re-implements ranking, only describes its unit.
+/// `sched_scope` is the one accessor beyond
+/// [`shigoto_rank::Schedulable`]'s seven — it feeds the admission budget's
+/// per-scope fairness dimension, not the ranking order itself.
 pub trait Schedulable {
     /// Stable unique id — the deterministic tiebreak.
     fn sched_id(&self) -> &str;
@@ -75,36 +118,55 @@ pub trait Schedulable {
     /// Eligible to be ranked: dependencies satisfied AND past any backoff
     /// window. An ineligible unit is simply not a candidate this tick.
     fn eligible(&self, now_secs: u64) -> bool;
+}
 
-    /// Within-class urgency (default algorithm). Higher = sooner. The fairness
-    /// deficit is additive + unbounded-growing, so a starved unit's urgency
-    /// rises every round skipped until it must be scheduled.
-    fn urgency(&self, w: &UrgencyWeights) -> u64 {
-        self.staleness_secs()
-            .saturating_mul(w.per_stale_sec)
-            .saturating_add(if self.behind_target() { w.behind_target } else { 0 })
-            .saturating_add(u64::from(self.drift_magnitude()).saturating_mul(w.per_drift))
-            .saturating_add(self.fairness_deficit().saturating_mul(w.per_deficit))
+/// Local adapter bridging [`Schedulable`] onto [`shigoto_rank::Schedulable`]
+/// — required by Rust's orphan rule (a blanket `impl shigoto_rank::Schedulable
+/// for T where T: Schedulable` is illegal: neither the foreign trait nor the
+/// bare type parameter `T` is local). Wrapping is free (holds only a
+/// borrow); `sched_scope` is deliberately NOT forwarded — ranking never sees
+/// scope, only the admission budget does.
+#[derive(Clone, Copy)]
+struct RankAdapter<'a, T: Schedulable>(&'a T);
+
+impl<T: Schedulable> shigoto_rank::Schedulable for RankAdapter<'_, T> {
+    fn sched_id(&self) -> &str {
+        self.0.sched_id()
     }
-
-    /// Total scheduling order: class (hard tier) → urgency (desc) → id (stable).
-    fn rank_key(&self, w: &UrgencyWeights) -> (PriorityClass, Reverse<u64>, &str) {
-        (self.priority_class(), Reverse(self.urgency(w)), self.sched_id())
+    fn priority_class(&self) -> PriorityClass {
+        self.0.priority_class()
+    }
+    fn staleness_secs(&self) -> u64 {
+        self.0.staleness_secs()
+    }
+    fn behind_target(&self) -> bool {
+        self.0.behind_target()
+    }
+    fn drift_magnitude(&self) -> u32 {
+        self.0.drift_magnitude()
+    }
+    fn fairness_deficit(&self) -> u64 {
+        self.0.fairness_deficit()
+    }
+    fn eligible(&self, now_secs: u64) -> bool {
+        self.0.eligible(now_secs)
     }
 }
 
 /// Pick the next units to dispatch from `pending`, in scheduling order, up to
 /// `slots` (the admission budget's free capacity). Pure + deterministic.
-/// Ineligible units (deps unmet / in backoff) are excluded entirely.
+/// Ineligible units (deps unmet / in backoff) are excluded entirely. The
+/// actual ordering is [`shigoto_rank::pick`] — this function only bridges
+/// types at the boundary via [`RankAdapter`].
 pub fn schedule<'a, T: Schedulable>(
     pending: &'a [T],
     now_secs: u64,
     weights: &UrgencyWeights,
     slots: usize,
 ) -> Vec<&'a T> {
-    let mut eligible: Vec<&T> = pending.iter().filter(|d| d.eligible(now_secs)).collect();
-    eligible.sort_by(|a, b| a.rank_key(weights).cmp(&b.rank_key(weights)));
-    eligible.into_iter().take(slots).collect()
+    let adapters: Vec<RankAdapter<'a, T>> = pending.iter().map(RankAdapter).collect();
+    let w = weights.to_shigoto();
+    shigoto_rank::pick(&adapters, now_secs, &w, slots).into_iter().map(|a| a.0).collect()
 }
 
 /// The DISPATCH ENGINE — the single decision a central reconcile queue makes each
@@ -150,10 +212,15 @@ pub fn pick_admitted<'a, T: Schedulable>(
 
 // ──────────────────────────────────────────────────────────────────────────
 // Admission control — the no-crash bound that pairs with the policy above.
+// Delegates to shigoto-budget's BudgetTree (global × per-scope, min-
+// intersection) — the actual shigoto primitive this module's original doc
+// comment meant when it said "lifts into shigoto next to BudgetTree".
 // ──────────────────────────────────────────────────────────────────────────
 
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+
+use shigoto_budget::{BudgetSpec, BudgetTree};
+use shigoto_types::{JobId, JobKindId, JobScope, JobSubject};
 
 /// Admission caps. `per_scope` bounds one scope's concurrent in-flight work
 /// (the fair slice); `global` bounds the total (the pool). A scope == the
@@ -170,10 +237,21 @@ impl Default for BudgetConfig {
     }
 }
 
-#[derive(Default)]
-struct Inflight {
-    global: usize,
-    per_scope: HashMap<String, usize>,
+/// Fixed work-kind every `FairBudget` allocation uses. `BudgetTree` has a
+/// three-dimension model (global × by-kind × by-scope); `FairBudget` only
+/// ever needed two (global × by-scope), so `by_kind` stays permanently empty
+/// (unbounded) — every id shares this one constant kind, and the by-kind cap
+/// is simply never populated.
+fn budget_kind() -> JobKindId {
+    JobKindId::new("pangea-operator-fair-budget")
+}
+
+fn budget_job_id(scope: &str) -> JobId {
+    JobId { scope: JobScope::Workspace(scope.to_string()), kind: budget_kind(), subject: JobSubject::None }
+}
+
+fn cap(n: usize) -> BudgetSpec {
+    BudgetSpec::max_concurrent(u32::try_from(n).unwrap_or(u32::MAX))
 }
 
 /// Scope-fair concurrency admission. The no-crash bound: only `global` units do
@@ -181,47 +259,50 @@ struct Inflight {
 /// a wedged scope can never starve the others. Generic over the scope string —
 /// works for workspaces, tenants, namespaces, repos. Lock held only for O(1)
 /// arithmetic, never across `.await` (deadlock-free).
+///
+/// Wraps [`shigoto_budget::BudgetTree`] — the caps + counters themselves live
+/// there; this type supplies the `Arc<Mutex<..>>` thread-safety and
+/// RAII-permit surface `BudgetTree`'s own `&mut self` API doesn't provide.
 pub struct FairBudget {
     cfg: BudgetConfig,
-    inflight: Mutex<Inflight>,
+    tree: Mutex<BudgetTree>,
 }
 
 impl FairBudget {
     pub fn new(cfg: BudgetConfig) -> Arc<Self> {
-        Arc::new(FairBudget { cfg, inflight: Mutex::new(Inflight::default()) })
+        let mut tree = BudgetTree::new();
+        tree.global = Some(cap(cfg.global));
+        Arc::new(FairBudget { cfg, tree: Mutex::new(tree) })
     }
 
     /// Try to take a slot for `scope`. `Some(permit)` if both caps allow (the
     /// permit frees the slot on drop), else `None` — the caller requeues.
     /// Never blocks.
     pub fn try_acquire(self: &Arc<Self>, scope: &str) -> Option<BudgetPermit> {
-        let mut g = self.inflight.lock().expect("budget mutex poisoned");
-        let now = *g.per_scope.get(scope).unwrap_or(&0);
-        if g.global >= self.cfg.global || now >= self.cfg.per_scope {
-            return None;
+        let id = budget_job_id(scope);
+        let mut t = self.tree.lock().expect("budget mutex poisoned");
+        // FairBudget applies `per_scope` uniformly to every scope, never
+        // pre-declared — register this scope's cap lazily, the first time
+        // it's seen (BudgetTree treats an absent scope as unbounded).
+        t.by_scope.entry(id.scope.clone()).or_insert_with(|| cap(self.cfg.per_scope));
+        match t.try_allocate(&id) {
+            Ok(()) => Some(BudgetPermit { budget: Arc::clone(self), scope: scope.to_string(), released: false }),
+            Err(_) => None,
         }
-        g.global += 1;
-        *g.per_scope.entry(scope.to_string()).or_insert(0) += 1;
-        Some(BudgetPermit { budget: Arc::clone(self), scope: scope.to_string(), released: false })
     }
 
     pub fn in_flight(&self, scope: &str) -> usize {
-        *self.inflight.lock().expect("budget mutex poisoned").per_scope.get(scope).unwrap_or(&0)
+        let t = self.tree.lock().expect("budget mutex poisoned");
+        t.running_scope(&JobScope::Workspace(scope.to_string())) as usize
     }
 
     pub fn total_in_flight(&self) -> usize {
-        self.inflight.lock().expect("budget mutex poisoned").global
+        self.tree.lock().expect("budget mutex poisoned").running_global() as usize
     }
 
     fn release(&self, scope: &str) {
-        let mut g = self.inflight.lock().expect("budget mutex poisoned");
-        g.global = g.global.saturating_sub(1);
-        if let Some(c) = g.per_scope.get_mut(scope) {
-            *c = c.saturating_sub(1);
-            if *c == 0 {
-                g.per_scope.remove(scope);
-            }
-        }
+        let id = budget_job_id(scope);
+        self.tree.lock().expect("budget mutex poisoned").release(&id);
     }
 }
 

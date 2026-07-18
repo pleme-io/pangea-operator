@@ -3344,7 +3344,10 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
- "shigoto-types 0.1.0",
+ "shigoto-budget 0.1.10",
+ "shigoto-dag 0.1.10",
+ "shigoto-rank",
+ "shigoto-types 0.1.10",
  "shikumi",
  "sqlx",
  "strum 0.26.3",
@@ -4851,8 +4854,8 @@ name = "shigoto"
 version = "0.1.6"
 source = "git+https://github.com/pleme-io/shigoto?rev=c8792add60be360ff29788f87f3bd46a2b666af6#c8792add60be360ff29788f87f3bd46a2b666af6"
 dependencies = [
- "shigoto-budget",
- "shigoto-dag",
+ "shigoto-budget 0.1.6",
+ "shigoto-dag 0.1.6",
  "shigoto-emit",
  "shigoto-gate",
  "shigoto-retry",
@@ -4871,6 +4874,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "shigoto-budget"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/shigoto?rev=e4e4c92b7327de197e492fe8cb7589f4d04c9309#e4e4c92b7327de197e492fe8cb7589f4d04c9309"
+dependencies = [
+ "serde",
+ "shigoto-types 0.1.10",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "shigoto-dag"
 version = "0.1.6"
 source = "git+https://github.com/pleme-io/shigoto?rev=c8792add60be360ff29788f87f3bd46a2b666af6#c8792add60be360ff29788f87f3bd46a2b666af6"
@@ -4878,6 +4891,17 @@ dependencies = [
  "petgraph 0.6.5",
  "serde",
  "shigoto-types 0.1.6",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "shigoto-dag"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/shigoto?rev=e4e4c92b7327de197e492fe8cb7589f4d04c9309#e4e4c92b7327de197e492fe8cb7589f4d04c9309"
+dependencies = [
+ "petgraph 0.6.5",
+ "serde",
+ "shigoto-types 0.1.10",
  "thiserror 2.0.18",
 ]
 
@@ -4898,8 +4922,16 @@ name = "shigoto-gate"
 version = "0.1.6"
 source = "git+https://github.com/pleme-io/shigoto?rev=c8792add60be360ff29788f87f3bd46a2b666af6#c8792add60be360ff29788f87f3bd46a2b666af6"
 dependencies = [
- "shigoto-dag",
+ "shigoto-dag 0.1.6",
  "shigoto-types 0.1.6",
+]
+
+[[package]]
+name = "shigoto-rank"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/shigoto?rev=e4e4c92b7327de197e492fe8cb7589f4d04c9309#e4e4c92b7327de197e492fe8cb7589f4d04c9309"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -4919,8 +4951,8 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "shigoto-budget",
- "shigoto-dag",
+ "shigoto-budget 0.1.6",
+ "shigoto-dag 0.1.6",
  "shigoto-emit",
  "shigoto-gate",
  "shigoto-retry",
@@ -4932,13 +4964,15 @@ dependencies = [
 
 [[package]]
 name = "shigoto-types"
-version = "0.1.0"
-source = "git+https://github.com/pleme-io/shigoto?rev=417bf9d538a1741c5576b29a4d71673e92cf5d22#417bf9d538a1741c5576b29a4d71673e92cf5d22"
+version = "0.1.6"
+source = "git+https://github.com/pleme-io/shigoto?rev=c8792add60be360ff29788f87f3bd46a2b666af6#c8792add60be360ff29788f87f3bd46a2b666af6"
 dependencies = [
  "async-trait",
+ "blake3",
  "chrono",
  "gen-platform",
  "gen-types",
+ "hex",
  "schemars 0.8.22",
  "serde",
  "serde_json",
@@ -4947,8 +4981,8 @@ dependencies = [
 
 [[package]]
 name = "shigoto-types"
-version = "0.1.6"
-source = "git+https://github.com/pleme-io/shigoto?rev=c8792add60be360ff29788f87f3bd46a2b666af6#c8792add60be360ff29788f87f3bd46a2b666af6"
+version = "0.1.10"
+source = "git+https://github.com/pleme-io/shigoto?rev=e4e4c92b7327de197e492fe8cb7589f4d04c9309#e4e4c92b7327de197e492fe8cb7589f4d04c9309"
 dependencies = [
  "async-trait",
  "blake3",

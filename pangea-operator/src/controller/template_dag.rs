@@ -15,15 +15,73 @@
 //!   "waiting for upstream" loop.
 //!
 //! It lifts what `flow_scheduler.rs` does inside one `InfrastructureFlow` to the
-//! top-level template/workspace layer. Pure `std`, fully unit-testable.
+//! top-level template/workspace layer.
+//!
+//! # Substrate delegation
+//!
+//! The topology itself — nodes, edges, topological order, cycle detection — is
+//! [`shigoto_dag::Dag`], not a hand-rolled Kahn's-algorithm walk. `Dag` operates
+//! over typed [`shigoto_types::JobId`]s rather than bare template-name strings,
+//! so this module keeps a thin `String ⇄ JobId` bridge (every template becomes a
+//! `JobId` with a fixed `kind` and the template name as its `subject`) — that
+//! bridge, plus the small `names: BTreeSet<String>` index needed because `Dag`
+//! v0.1 doesn't expose "list every node" (only `predecessors`, `toposort`,
+//! `waves`, `node_count`/`edge_count`), is genuinely new code; the topological
+//! ordering and cycle detection are not.
+//!
+//! [`apply_order`](TemplateDag::apply_order) is built from
+//! [`Dag::waves`](shigoto_dag::Dag::waves) rather than `Dag::toposort` directly:
+//! waves are topologically ordered *and* deterministically tie-broken within a
+//! wave (`shigoto_dag`'s own `stable_job_key`, which — since every template
+//! shares one scope + kind here — reduces to sorting by template name). That
+//! reproduces this module's original "ties broken by name" guarantee for free.
+//!
+//! On a cycle, `shigoto_dag::DagError::Cycle` names only ONE node on it (the one
+//! `petgraph::algo::toposort` happened to reject). This module's original API
+//! promised the FULL unresolvable set (every template that can never become
+//! ready). [`unresolvable_nodes`](TemplateDag::unresolvable_nodes) recovers that
+//! set via a small fixed-point scan built on [`Dag::predecessors`] — the same
+//! primitive [`deps_satisfied`](TemplateDag::deps_satisfied) already uses, not a
+//! second topological sort.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::BTreeSet;
+
+use shigoto_dag::{Dag, DagError as ShigotoDagError};
+use shigoto_types::{JobId, JobKindId, JobScope, JobSubject};
+
+/// The fixed work-kind every template node uses. `Dag` is generic over
+/// `JobId { scope, kind, subject }`; this module only ever needs one flat
+/// namespace (global scope, one kind), so `subject` alone carries the
+/// template's identity.
+fn template_kind() -> JobKindId {
+    JobKindId::new("pangea-template")
+}
+
+fn node_id(template: &str) -> JobId {
+    JobId { scope: JobScope::Global, kind: template_kind(), subject: JobSubject::Pinned(template.to_string()) }
+}
+
+fn node_name(id: &JobId) -> Option<String> {
+    match &id.subject {
+        JobSubject::Pinned(s) => Some(s.clone()),
+        _ => None,
+    }
+}
 
 /// A template-dependency DAG: each template → the set of upstream templates it
 /// depends on (an edge `t → u` means "t needs u's outputs/Ready-ness first").
-#[derive(Debug, Default, Clone)]
+///
+/// No `#[derive(Debug)]`: `shigoto_dag::Dag` doesn't implement `Debug` (v0.1
+/// carries no such impl). `names` alone (via `nodes()`) is the useful debug
+/// surface for this type anyway.
+#[derive(Default)]
 pub struct TemplateDag {
-    upstreams: BTreeMap<String, BTreeSet<String>>,
+    dag: Dag,
+    /// Every template name ever seen via [`add`](Self::add) — `Dag` v0.1 has no
+    /// "list all nodes" accessor, so this is the thin index that makes
+    /// [`nodes`](Self::nodes)/[`eligible`](Self::eligible) possible without a
+    /// second graph structure.
+    names: BTreeSet<String>,
 }
 
 /// Why a DAG operation could not produce an order.
@@ -46,85 +104,58 @@ impl std::fmt::Display for DagError {
 impl TemplateDag {
     #[must_use]
     pub fn new() -> Self {
-        Self { upstreams: BTreeMap::new() }
+        Self { dag: Dag::new(), names: BTreeSet::new() }
     }
 
     /// Register a template and the upstreams it depends on. Idempotent; an
     /// upstream named here that is never itself `add`ed is still a node (a
-    /// leaf with no dependencies of its own).
+    /// leaf with no dependencies of its own) — `Dag::add_edge` ensures both
+    /// endpoints exist.
     pub fn add(&mut self, template: &str, upstreams: &[String]) {
-        // Add the edges (borrow released at the end of this statement)…
-        self.upstreams.entry(template.to_string()).or_default().extend(upstreams.iter().cloned());
-        // …then ensure every named upstream exists as a node even if it has no
-        // edges of its own (a separate borrow — avoids holding two at once).
+        self.names.insert(template.to_string());
+        let t_id = node_id(template);
+        self.dag.ensure_node(t_id.clone());
         for u in upstreams {
-            self.upstreams.entry(u.clone()).or_default();
+            self.names.insert(u.clone());
+            // Edge direction: upstream → downstream (u must reach a terminal
+            // phase before t can start) — matches `Dag::predecessors(t)`
+            // returning t's direct upstreams, which `deps_satisfied` relies on.
+            self.dag.add_edge(node_id(u), t_id.clone());
         }
     }
 
     /// All template names in the DAG (deterministic order).
     #[must_use]
     pub fn nodes(&self) -> Vec<String> {
-        self.upstreams.keys().cloned().collect()
+        self.names.iter().cloned().collect()
     }
 
     /// True iff every upstream of `template` is in `ready`. A template with no
     /// upstreams is trivially satisfied (a root).
     #[must_use]
     pub fn deps_satisfied(&self, template: &str, ready: &BTreeSet<String>) -> bool {
-        self.upstreams.get(template).is_none_or(|ups| ups.iter().all(|u| ready.contains(u)))
+        self.dag
+            .predecessors(&node_id(template))
+            .iter()
+            .all(|p| node_name(p).is_some_and(|n| ready.contains(&n)))
     }
 
     /// The templates the scheduler may dispatch NOW: every node whose upstreams
     /// are all `ready` and which is not itself already `ready`. Deterministic.
     #[must_use]
     pub fn eligible(&self, ready: &BTreeSet<String>) -> Vec<String> {
-        self.upstreams
-            .keys()
-            .filter(|t| !ready.contains(*t) && self.deps_satisfied(t, ready))
-            .cloned()
-            .collect()
+        self.names.iter().filter(|t| !ready.contains(*t) && self.deps_satisfied(t, ready)).cloned().collect()
     }
 
-    /// Topological apply order — every template after all its upstreams (Kahn's
-    /// algorithm, ties broken by name for determinism). `Err(Cycle)` if the
+    /// Topological apply order — every template after all its upstreams, ties
+    /// broken by name for determinism (via [`Dag::waves`]). `Err(Cycle)` if the
     /// graph has a cycle.
     pub fn apply_order(&self) -> Result<Vec<String>, DagError> {
-        // in-degree = number of upstreams each node still waits on.
-        let mut indeg: BTreeMap<String, usize> =
-            self.upstreams.iter().map(|(t, ups)| (t.clone(), ups.len())).collect();
-        // dependents: u → templates that depend on u (to decrement on removal).
-        let mut dependents: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for (t, ups) in &self.upstreams {
-            for u in ups {
-                dependents.entry(u.clone()).or_default().push(t.clone());
+        match self.dag.waves(None) {
+            Ok(waves) => Ok(waves.into_iter().flatten().filter_map(|id| node_name(&id)).collect()),
+            Err(ShigotoDagError::Cycle(_) | ShigotoDagError::DanglingEdge(_)) => {
+                Err(DagError::Cycle(self.unresolvable_nodes()))
             }
-        }
-        let mut ready: VecDeque<String> =
-            indeg.iter().filter(|(_, d)| **d == 0).map(|(t, _)| t.clone()).collect();
-        let mut order = Vec::with_capacity(indeg.len());
-        while let Some(t) = ready.pop_front() {
-            order.push(t.clone());
-            if let Some(deps) = dependents.get(&t) {
-                for d in deps {
-                    if let Some(e) = indeg.get_mut(d) {
-                        *e -= 1;
-                        if *e == 0 {
-                            // insert keeping name order (small N; deterministic).
-                            let pos = ready.iter().position(|x| x > d).unwrap_or(ready.len());
-                            ready.insert(pos, d.clone());
-                        }
-                    }
-                }
-            }
-        }
-        if order.len() == indeg.len() {
-            Ok(order)
-        } else {
-            // the un-emitted nodes form (or feed) the cycle.
-            let emitted: BTreeSet<&String> = order.iter().collect();
-            let cyc: Vec<String> = indeg.keys().filter(|t| !emitted.contains(t)).cloned().collect();
-            Err(DagError::Cycle(cyc))
         }
     }
 
@@ -134,6 +165,31 @@ impl TemplateDag {
             o.reverse();
             o
         })
+    }
+
+    /// On a cycle, recover the FULL set of templates that can never become
+    /// ready (not just the single node `petgraph`'s toposort happened to
+    /// reject). A straightforward fixed-point over [`deps_satisfied`]: grow
+    /// the `ready` set with every node whose upstreams are already in it,
+    /// until nothing more can be added; whatever's left is unorderable. This
+    /// is O(V²) worst case — fine at template-node-count scale, and it is a
+    /// diagnostic path only reached on error, not the hot apply path (which
+    /// stays `Dag::waves`, O(V + E)).
+    fn unresolvable_nodes(&self) -> Vec<String> {
+        let mut ready: BTreeSet<String> = BTreeSet::new();
+        loop {
+            let mut grew = false;
+            for name in &self.names {
+                if !ready.contains(name) && self.deps_satisfied(name, &ready) {
+                    ready.insert(name.clone());
+                    grew = true;
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        self.names.iter().filter(|n| !ready.contains(*n)).cloned().collect()
     }
 }
 
@@ -195,10 +251,39 @@ mod tests {
         assert!(d.eligible(&ready(&[])).is_empty(), "neither can start — correctly stuck, surfaced as a cycle");
     }
 
+    /// Regression: a cycle among a subset of a larger graph must surface
+    /// EXACTLY the unresolvable subset (not the whole graph, and not just
+    /// the one node `petgraph`'s toposort happened to name) — proves
+    /// `unresolvable_nodes`'s fixed-point recovers the full set `Dag`'s
+    /// single-node `DagError::Cycle` doesn't carry.
+    #[test]
+    fn cycle_among_a_subset_reports_exactly_the_stuck_templates() {
+        // root has no deps (resolvable). x <-> y form a cycle, both
+        // independently depending on the resolvable root — so the ONLY
+        // reason x and y are stuck is each other, not root.
+        let d = dag(&[("root", &[]), ("x", &["root", "y"]), ("y", &["root", "x"])]);
+        match d.apply_order() {
+            Err(DagError::Cycle(c)) => {
+                assert_eq!(c, vec!["x".to_string(), "y".to_string()], "root resolves; only x,y are stuck");
+            }
+            other => panic!("expected a cycle error, got {other:?}"),
+        }
+        // root is NOT in a cycle even though the graph as a whole has one.
+        assert_eq!(d.eligible(&ready(&[])), vec!["root"], "root has no deps — eligible despite the x/y cycle");
+    }
+
     #[test]
     fn roots_have_no_upstreams() {
         let d = dag(&[("solo", &[])]);
         assert!(d.deps_satisfied("solo", &ready(&[])));
         assert_eq!(d.apply_order().unwrap(), vec!["solo"]);
+    }
+
+    #[test]
+    fn nodes_lists_every_registered_template_including_bare_upstreams() {
+        // "vpc" is only ever named as an upstream, never `add`ed directly —
+        // still must appear as a node (a leaf).
+        let d = dag(&[("app", &["db"]), ("db", &["vpc"])]);
+        assert_eq!(d.nodes(), vec!["app".to_string(), "db".to_string(), "vpc".to_string()]);
     }
 }

@@ -62,6 +62,16 @@ gen-types = { workspace = true }
 # Convergence primitives — CascadePolicy for the reactive-policy cascade.
 shigoto-types = { workspace = true }
 
+# Scheduling substrate — the controller's fair-priority ranking
+# (controller::scheduling) and typed dependency DAGs (controller::
+# template_dag, controller::flow_scheduler) delegate to these rather than
+# hand-rolling the algorithm locally. See controller/scheduling.rs's module
+# doc for the full split (ranking -> shigoto-rank, admission -> shigoto-
+# budget, topology -> shigoto-dag).
+shigoto-dag = { workspace = true }
+shigoto-budget = { workspace = true }
+shigoto-rank = { workspace = true }
+
 # In-process Ruby evaluator (feature-gated; see [features].embedded_ruby).
 pangea-ruby-eval = { path = "../pangea-ruby-eval", optional = true }
 
