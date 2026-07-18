@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout operator
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -29,7 +29,7 @@ jobs:
           echo "generated $(grep -c '^kind: CustomResourceDefinition' /tmp/all-crds.yaml) CRDs"
 
       - name: Checkout helmworks (public — no token)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: pleme-io/helmworks
           path: _helmworks

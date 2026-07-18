@@ -6,7 +6,7 @@ jobs:
   flake-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
       # `nix flake check` builds EVERY packages.x86_64-linux.* + apps.x86_64-linux.*
@@ -59,7 +59,7 @@ jobs:
     # `--no-default-features -- --generate-crds` step.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: cargo test -p pangea-operator --no-default-features (no libruby, no magma)
@@ -69,7 +69,7 @@ jobs:
     needs: cargo-test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # Coverage baseline (theory/PANGEA-OPERATOR.md §XVII row 6): informational
