@@ -2202,6 +2202,83 @@ mod lock_contention_tests {
     }
 }
 
+/// Derive `(PlanSummary, DriftDetail list)` from a magma `CycleArtifact`
+/// — shared by both magma drift-extraction paths in `handle_planning`
+/// (the disk-fallback path, where `plan_result.artifact` is populated
+/// directly, and the DB-backed path, where the same shape is fetched
+/// back from Postgres via `fetch_db_backed_cycle_artifact`) so the two
+/// paths can never drift apart on how a `CycleArtifact` becomes policy
+/// input.
+fn plan_summary_and_drifts_from_artifact(
+    art: &crate::executor::cycle_artifact::CycleArtifact,
+) -> (crate::executor::PlanSummary, Vec<crate::crd::DriftDetail>) {
+    let (added, changed, destroyed, total) = art.summary_counts();
+    let s = crate::executor::PlanSummary {
+        added,
+        changed,
+        destroyed,
+        total,
+        has_changes: added > 0 || changed > 0 || destroyed > 0,
+        // changes_by_type left empty — magma's CycleArtifact doesn't
+        // carry per-type buckets today; a follow-up slice can wire
+        // these from `resource_changes` if a consumer needs them.
+        changes_by_type: std::collections::HashMap::new(),
+    };
+    let details = art.drift_details(50);
+    (s, details)
+}
+
+/// Fetch the `CycleArtifact` `MagmaExecutor::plan` already persisted to
+/// Postgres for THIS template's most recent plan (`magma.rs`'s
+/// `store.put_bundle(...)`, committed before `WorkspaceRunner::plan`
+/// returns). Needed because `MagmaWorkspaceRunner::plan` deliberately
+/// returns `artifact: None` on the DB-backed zero-disk path (see its
+/// own doc comment: "the cycle receipt is enriched from the DB
+/// downstream") — so `plan_result.artifact` alone is NEVER populated
+/// for the production magma posture (`PANGEA_FORBID_TOFU` +
+/// Postgres-backed state), and without this fetch `handle_planning`'s
+/// drift extraction fell through to the "no analyzable output" branch
+/// for EVERY DB-backed magma plan, unconditionally, regardless of the
+/// plan's real content. Mirrors `record_reconcile_cycle`'s own
+/// `db_bundle_bytes` fetch (`controller/template/cycle_receipts.rs`)
+/// so both call sites derive the SAME typed shape from the SAME
+/// bundle. `None` on a missing bundle or any read/parse failure —
+/// best-effort, the caller's existing "no analyzable output" fallback
+/// already handles that case safely.
+///
+/// Closes the root cause of a live cross-template hash collision
+/// (2026-07-17, Camelot Mode-1): five unrelated `InfrastructureTemplate`
+/// CRs — plans ranging from 1 to 50 resources — all converged on the
+/// identical `status.pendingPlanHash` "eac9f28515f12ae7", because every
+/// one of them hit this exact gap: with `raw_drifts` always empty,
+/// `canonical_drift_fingerprint(&policy_outcome.annotated_drifts)` is
+/// always `""`, and `workspace.read_state_bytes()` (a raw on-disk
+/// read) is always `None` on the same zero-disk path, so
+/// `plan_approval_hash("", None)` collapsed to one fleet-wide constant.
+/// Approving any single CR's plan at that hash would have made every
+/// other affected CR's unrelated plan appear pre-approved too.
+async fn fetch_db_backed_cycle_artifact(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+) -> Option<crate::executor::cycle_artifact::CycleArtifact> {
+    let store = state.artifact_store.as_ref()?;
+    let schema_name = format!("pangea_{}", template.spec.pangea_namespace);
+    let name = template.name_any();
+    match store.get_bundle_bytes(&schema_name, &name).await {
+        Ok(Some(bytes)) => crate::executor::magma_bundle::cycle_artifact_from_bytes(&bytes),
+        Ok(None) => None,
+        Err(e) => {
+            warn!(
+                error = %e,
+                schema = %schema_name,
+                template = %name,
+                "DB-backed magma plan: bundle read failed while deriving drift details"
+            );
+            None
+        }
+    }
+}
+
 /// Handle Planning phase - run `tofu plan` and analyze changes.
 /// Public wrapper for `handle_planning` so trait impls in
 /// `controller::template_phase` can dispatch to it. The body lives
@@ -2279,12 +2356,13 @@ async fn handle_planning(
         return Ok(ReconcileAction::Requeue(ERROR_REQUEUE_INTERVAL));
     }
 
-    // Two-path drift extraction (same final shape):
+    // Three-path drift extraction (same final shape):
     //   1. **Tofu path** — `raw_show_json` populated: use legacy
     //      `Plan::from_json`. Carries per-attribute drift detail the
     //      policy engine reads.
-    //   2. **Magma path** — `raw_show_json` empty, `artifact` populated:
-    //      derive `PlanSummary` + `DriftDetail` from
+    //   2. **Magma disk-fallback path** — `raw_show_json` empty,
+    //      `artifact` populated directly on `plan_result`: derive
+    //      `PlanSummary` + `DriftDetail` from
     //      `CycleArtifact.resource_changes`. Today the per-attribute
     //      block is empty (the bundle has before/after but
     //      `TypedResourceChange` doesn't surface them yet — a follow-up
@@ -2292,6 +2370,15 @@ async fn handle_planning(
     //      previously had `Plan::from_json` silently failing (magma's
     //      show_plan emits magma-shape JSON tofu can't parse): the
     //      policy engine now sees the resources it should.
+    //   3. **Magma DB-backed path** — `raw_show_json` empty AND
+    //      `plan_result.artifact` is `None` (the zero-disk production
+    //      posture; see `fetch_db_backed_cycle_artifact`): fetch the
+    //      SAME plan's bundle back from Postgres and derive the
+    //      identical shape as path 2. Without this path, EVERY
+    //      DB-backed magma plan silently fell through to "no
+    //      analyzable output" regardless of real content — see
+    //      `fetch_db_backed_cycle_artifact`'s doc comment for the live
+    //      incident this closes.
     // Drift details capped at 50 so the status object stays tractable.
     let (summary, raw_drifts) = if !plan_result.raw_show_json.is_empty() {
         match Plan::from_json(&plan_result.raw_show_json) {
@@ -2325,20 +2412,9 @@ async fn handle_planning(
             }
         }
     } else if let Some(art) = plan_result.artifact.as_ref() {
-        // Magma path: derive equivalent shapes from the typed artifact.
-        let (added, changed, destroyed, total) = art.summary_counts();
-        let s = crate::executor::PlanSummary {
-            added,
-            changed,
-            destroyed,
-            total,
-            has_changes: added > 0 || changed > 0 || destroyed > 0,
-            // changes_by_type left empty — magma's CycleArtifact doesn't
-            // carry per-type buckets today; a follow-up slice can wire
-            // these from `resource_changes` if a consumer needs them.
-            changes_by_type: std::collections::HashMap::new(),
-        };
-        let details = art.drift_details(50);
+        // Magma disk-fallback path: derive equivalent shapes from the
+        // typed artifact `plan_result` already carries.
+        let (s, details) = plan_summary_and_drifts_from_artifact(art);
         info!(
             runner = runner.name(),
             added = s.added,
@@ -2348,10 +2424,25 @@ async fn handle_planning(
             "Plan analysis complete (magma path: CycleArtifact)"
         );
         (Some(s), details)
+    } else if let Some(art) = fetch_db_backed_cycle_artifact(template, state).await {
+        // Magma DB-backed (zero-disk) path: `plan_result.artifact` is
+        // always `None` here by design — fetch the just-persisted
+        // bundle back from Postgres instead. See
+        // `fetch_db_backed_cycle_artifact`'s doc comment.
+        let (s, details) = plan_summary_and_drifts_from_artifact(&art);
+        info!(
+            runner = runner.name(),
+            added = s.added,
+            changed = s.changed,
+            destroyed = s.destroyed,
+            drift_count = details.len(),
+            "Plan analysis complete (magma path: DB-backed bundle fetch)"
+        );
+        (Some(s), details)
     } else {
         warn!(
             runner = runner.name(),
-            "Plan succeeded but produced no analyzable output (no show-JSON, no artifact)"
+            "Plan succeeded but produced no analyzable output (no show-JSON, no artifact, no DB-backed bundle)"
         );
         (None, Vec::new())
     };
@@ -5517,6 +5608,128 @@ mod canonical_drift_fingerprint_tests {
     fn empty_drift_list_is_stable() {
         assert_eq!(canonical_drift_fingerprint(&[]), canonical_drift_fingerprint(&[]));
         assert_eq!(canonical_drift_fingerprint(&[]), "");
+    }
+}
+
+/// Regression tests for a live incident (2026-07-17, Camelot Mode-1):
+/// five unrelated `InfrastructureTemplate` CRs — plans ranging from 1
+/// to 50 resources — all converged on the identical
+/// `status.pendingPlanHash` `"eac9f28515f12ae7"`.
+///
+/// Root cause: `MagmaWorkspaceRunner::plan` deliberately returns
+/// `artifact: None` on the DB-backed (zero-disk, production-default)
+/// path — see `executor::workspace_runner`'s doc comment: "the cycle
+/// receipt is enriched from the DB downstream." But `handle_planning`'s
+/// drift extraction only had two paths (tofu's `raw_show_json`, and a
+/// magma path gated on `plan_result.artifact.is_some()`) — with BOTH
+/// empty on the DB-backed path, every such plan silently fell through
+/// to "no analyzable output," producing an EMPTY drift list regardless
+/// of the plan's real content. `canonical_drift_fingerprint(&[])` is
+/// always `""`, and `workspace.read_state_bytes()` (a raw on-disk read)
+/// is also always `None` on the same zero-disk path — so
+/// `plan_approval_hash("", None)` collapsed to one fleet-wide constant
+/// every DB-backed magma template converged on whenever it needed
+/// approval. Approving any single CR's plan at that hash would have
+/// made every other affected CR's UNRELATED plan appear pre-approved.
+///
+/// The fix adds the missing third path (`fetch_db_backed_cycle_artifact`
+/// in `template_controller.rs`, reusing the SAME Postgres bundle fetch
+/// `record_reconcile_cycle` already performs) so the policy engine (and
+/// the approval hash) sees the resources a DB-backed plan actually
+/// touches. These tests exercise the shared derivation
+/// (`plan_summary_and_drifts_from_artifact`) both paths now feed
+/// through, proving two genuinely different plans get genuinely
+/// different hashes — and neither collapses to the old constant.
+#[cfg(test)]
+mod db_backed_magma_drift_extraction_tests {
+    use super::{canonical_drift_fingerprint, plan_approval_hash, plan_summary_and_drifts_from_artifact};
+    use crate::executor::cycle_artifact::{CycleArtifact, PlanAction, TypedResourceChange};
+
+    /// Build a `CycleArtifact` the way `CycleArtifact::from_magma_plan`
+    /// would for a plan that creates exactly these resources against
+    /// empty state — i.e. the exact shape every colliding CR in the
+    /// live incident had (`+N create` from scratch, no prior state).
+    fn artifact_with_creates(addresses: &[&str]) -> CycleArtifact {
+        let resource_changes: Vec<TypedResourceChange> = addresses
+            .iter()
+            .map(|addr| TypedResourceChange {
+                address: (*addr).to_string(),
+                action: PlanAction::Create,
+                severity: crate::executor::cycle_artifact::action_to_severity(&PlanAction::Create),
+            })
+            .collect();
+        CycleArtifact {
+            action_distribution: CycleArtifact::action_distribution_from(&resource_changes),
+            resource_changes,
+            ..Default::default()
+        }
+    }
+
+    /// Reproduce `route_through_approval_gate`'s exact hash derivation
+    /// from a `CycleArtifact`, assuming no on-disk state — the
+    /// DB-backed posture, where `workspace.read_state_bytes()` always
+    /// reads `None` (see `Workspace::read_state_bytes`'s own doc
+    /// comment: "a workspace whose backend never writes state to
+    /// disk").
+    fn pending_plan_hash_for(art: &CycleArtifact) -> String {
+        let (_summary, drifts) = plan_summary_and_drifts_from_artifact(art);
+        let plan_content = canonical_drift_fingerprint(&drifts);
+        plan_approval_hash(&plan_content, None)
+    }
+
+    #[test]
+    fn two_genuinely_different_plans_get_genuinely_different_hashes() {
+        // camelot-flux-bootstrap's real live shape: one resource.
+        let flux_bootstrap = artifact_with_creates(&["flux_bootstrap_git.this"]);
+        // camelot-eks's real live shape has 50 resources; a
+        // representative subset is enough to prove non-collision here
+        // (the fingerprint's own full-address-set behavior is covered
+        // by `canonical_drift_fingerprint_tests`).
+        let eks = artifact_with_creates(&[
+            "aws_vpc.camelot-eks-vpc",
+            "aws_eks_cluster.camelot-eks",
+            "aws_subnet.camelot-eks-public-0",
+        ]);
+        // camelot-breathe-controller-iam's real live shape: three
+        // IAM resources.
+        let breathe_iam = artifact_with_creates(&[
+            "aws_iam_role.camelot-breathe-controller",
+            "aws_iam_role_policy.camelot-breathe-controller-policy",
+            "aws_iam_instance_profile.camelot-breathe-controller",
+        ]);
+
+        let hash_flux = pending_plan_hash_for(&flux_bootstrap);
+        let hash_eks = pending_plan_hash_for(&eks);
+        let hash_iam = pending_plan_hash_for(&breathe_iam);
+
+        assert_ne!(hash_flux, hash_eks, "a 1-resource plan and a 3-resource plan must not collide");
+        assert_ne!(hash_flux, hash_iam, "two different 1-vs-3-resource plans must not collide");
+        assert_ne!(hash_eks, hash_iam, "two different 3-resource plans must not collide");
+    }
+
+    #[test]
+    fn no_real_plan_collapses_to_the_live_empty_drift_collision_constant() {
+        // "eac9f28515f12ae7" is `plan_approval_hash("", None)` — the
+        // exact value every affected CR converged on live (verified by
+        // direct computation against the deployed hash function). Any
+        // `CycleArtifact` with real resource_changes must now hash to
+        // something else.
+        let collision_constant = plan_approval_hash("", None);
+        assert_eq!(
+            collision_constant, "eac9f28515f12ae7",
+            "sanity check: must match the value observed live on Camelot Mode-1"
+        );
+
+        let flux_bootstrap = artifact_with_creates(&["flux_bootstrap_git.this"]);
+        let eks = artifact_with_creates(&["aws_vpc.camelot-eks-vpc", "aws_eks_cluster.camelot-eks"]);
+        let breathe_iam = artifact_with_creates(&[
+            "aws_iam_role.camelot-breathe-controller",
+            "aws_iam_role_policy.camelot-breathe-controller-policy",
+        ]);
+
+        assert_ne!(pending_plan_hash_for(&flux_bootstrap), collision_constant);
+        assert_ne!(pending_plan_hash_for(&eks), collision_constant);
+        assert_ne!(pending_plan_hash_for(&breathe_iam), collision_constant);
     }
 }
 
