@@ -356,11 +356,181 @@ jobs:
             dist/pangea-operator-${{ matrix.suffix }}
             dist/pangea-operator-${{ matrix.suffix }}.sha256
 
+  # ── Helm chart job (fixed here, 2026-07-19) ────────────────────────────
+  # pleme-io/actions/helm-oci-publish@v1 is a `runs: using: docker` action
+  # (docker://ghcr.io/pleme-io/action-helm-oci-publish:latest) -- its own
+  # entrypoint script (run.tlisp) opens with `(exec-ok? "nix" "run" ".#forge"
+  # "--" "--help")`, and its own doc comment states the precondition "Nix
+  # already installed" -- but that image ships with no `nix` binary on
+  # PATH, so every invocation fails immediately: "tatara-script: error: in
+  # native `exec-ok?`: No such file or directory (os error 2)" (confirmed
+  # live, run 29670319134). helm-publish.yml (the calling reusable, in
+  # pleme-io/substrate) DOES install Nix first via
+  # DeterminateSystems/nix-installer-action -- but that lands on the HOST
+  # runner, and a `docker`-type action always executes inside its OWN,
+  # separately-built container image; nothing installed on the host is
+  # visible inside it. So "install nix before it" cannot fix this from the
+  # calling side by adding a step ahead of the SAME docker action -- the
+  # real fix is baking `nix` into
+  # ghcr.io/pleme-io/action-helm-oci-publish:latest itself, which belongs
+  # upstream in pleme-io/actions (a shared, multi-consumer image) and needs
+  # its own careful pass. Out of scope here.
+  #
+  # The workaround landed HERE stays scoped to this repo: it no longer
+  # calls the shared helm-chart-release.yml / helm-publish.yml reusables
+  # (their `publish` job IS the broken docker-action call) or the broken
+  # docker image at all. It installs Nix on the HOST (the same
+  # DeterminateSystems/nix-installer-action step helm-publish.yml already
+  # used -- it puts `nix` on PATH for every later step in the SAME job) and
+  # then runs helm-oci-publish's own run.tlisp -- copied verbatim below, not
+  # reimplemented -- via the COMPOSITE `pleme-io/actions/tatara-script@v1`
+  # action, which executes on the host runner rather than inside a
+  # container. run.tlisp already supports this exact invocation shape (its
+  # own doc comment: "Docker mode preferred; bare names retained as
+  # composite fallback"); this repo's flake has no `.#forge` app, so
+  # `forge-available?` is false here and the plain `helm lint && helm
+  # package && helm push` fallback path runs -- exactly what would have run
+  # inside the container had it not been missing nix. Once
+  # ghcr.io/pleme-io/action-helm-oci-publish:latest bakes in nix upstream,
+  # this job can revert to `uses:
+  # pleme-io/substrate/.github/workflows/helm-chart-release.yml@main`.
   chart:
     name: Helm chart → ArtifactHub OCI
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
-    uses: pleme-io/substrate/.github/workflows/helm-chart-release.yml@main
-    with:
-      chart-path: ./pangea-operator/charts/pangea-operator
-      oci-registry: oci://ghcr.io/pleme-io/pangea-operator/charts
-    secrets: inherit
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive chart version from tag
+        id: derive
+        uses: pleme-io/actions/derive-version-from-tag@v1
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      # Ported verbatim from pleme-io/substrate's helm-publish.yml (this
+      # exact step already ran successfully in the failing run being
+      # fixed here -- "Login Succeeded" -- it is the Nix install that runs
+      # ahead of it, not this step itself, that had never landed in a
+      # pangea-operator-local job before).
+      - name: Registry login
+        env:
+          REGISTRY: oci://ghcr.io/pleme-io/pangea-operator/charts
+          TOKEN: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          host="${REGISTRY#oci://}"
+          host="${host%%/*}"
+          echo "$TOKEN" | nix shell nixpkgs#kubernetes-helm --command \
+            helm registry login "$host" --username "${{ github.actor }}" --password-stdin
+
+      # Verbatim copy of pleme-io/actions/helm-oci-publish/run.tlisp
+      # (2026-07-19) -- see the job comment above for why it runs here,
+      # via tatara-script on the host, instead of through the broken
+      # docker action.
+      - name: Lint, package & push chart
+        uses: pleme-io/actions/tatara-script@v1
+        with:
+          script: |
+            ;; helm-oci-publish/run.tlisp — lint + package + push a Helm chart.
+            ;;
+            ;; Tries `nix run .#forge -- helm release ...` first; falls back to
+            ;; `nix shell nixpkgs#kubernetes-helm` for lint/package/push if forge
+            ;; isn't exposed in the consumer's flake.
+            ;;
+            ;; Inputs (env):
+            ;;   CHART_PATH      — path to the chart directory (must contain Chart.yaml)
+            ;;   REGISTRY        — oci:// URL
+            ;;   VERSION         — optional override; empty means "use Chart.yaml's version"
+            ;;   LIB_CHART_DIR   — optional sibling library chart dir (for file:// deps)
+            ;;   LIB_CHART_NAME  — library chart name (default "pleme-lib")
+            ;;
+            ;; Pre-condition: helm registry login already done by the caller
+            ;; workflow (the docker/login-equivalent for OCI Helm). Nix already
+            ;; installed.
+
+            ;; INPUT_* (Docker mode) preferred; bare names retained as composite fallback.
+            (define chart-path     (env-get "INPUT_CHART_PATH"     (env-get "CHART_PATH"     "")))
+            (define registry       (env-get "INPUT_REGISTRY"       (env-get "REGISTRY"       "")))
+            (define version        (env-get "INPUT_VERSION"        (env-get "VERSION"        "")))
+            (define lib-chart-dir  (env-get "INPUT_LIB_CHART_DIR"  (env-get "LIB_CHART_DIR"  "")))
+            (define lib-chart-name (env-get "INPUT_LIB_CHART_NAME" (env-get "LIB_CHART_NAME" "pleme-lib")))
+
+            (when (or (equal? chart-path "") (equal? registry ""))
+              (log-error "helm-oci-publish: missing INPUT_CHART_PATH or INPUT_REGISTRY")
+              (exit 1))
+
+            (define (forge-available?)
+              (exec-ok? "nix" "run" ".#forge" "--" "--help"))
+
+            (define (push-via-forge)
+              ;; Build args list dynamically: --version and --lib-chart-dir are
+              ;; only included when their inputs are non-empty.
+              (define base (list "nix" "run" ".#forge" "--"
+                                 "helm" "release"
+                                 "--chart-dir" chart-path
+                                 "--registry"  registry))
+              (define with-version
+                (if (equal? version "")
+                  base
+                  (append base (list "--version" version))))
+              (define final
+                (if (equal? lib-chart-dir "")
+                  with-version
+                  (append with-version
+                          (list "--lib-chart-dir" lib-chart-dir
+                                "--lib-chart-name" lib-chart-name))))
+              (apply exec-check final))
+
+            (define (helm-lint)
+              (exec-check "nix" "shell" "nixpkgs#kubernetes-helm" "--command"
+                          "helm" "lint" chart-path))
+
+            (define (helm-package)
+              ;; Always package into ./dist so a subsequent helm-push knows where
+              ;; to look. If VERSION is empty, helm uses Chart.yaml's version.
+              (exec-check "nix" "shell" "nixpkgs#kubernetes-helm" "--command"
+                          "sh" "-c"
+                          (string-append "mkdir -p dist && helm package " chart-path
+                                         " --destination dist"
+                                         (if (equal? version "") ""
+                                             (string-append " --version " version)))))
+
+            (define (helm-push)
+              (exec-check "nix" "shell" "nixpkgs#kubernetes-helm" "--command"
+                          "sh" "-c"
+                          (string-append "tgz=$(ls -1 dist/*.tgz | head -n1) && "
+                                         "helm push \"$tgz\" " registry)))
+
+            (define (push-via-helm-cli)
+              (define lint-status    (helm-lint))
+              (cond
+                ((not (= lint-status 0)) (exit lint-status))
+                (else
+                 (define pkg-status (helm-package))
+                 (cond
+                   ((not (= pkg-status 0)) (exit pkg-status))
+                   (else (helm-push))))))
+
+            (log-info (string-append "publishing " chart-path " -> " registry))
+
+            (define status
+              (if (forge-available?)
+                (begin (log-info "using forge helm release") (push-via-forge))
+                (begin (log-info "forge not in flake; using helm CLI") (push-via-helm-cli))))
+
+            (when (not (= status 0))
+              (log-error (string-append "helm publish failed (status "
+                                        (string-format "{}" status) ")"))
+              (exit status))
+
+            (log-info "helm chart published")
+        env:
+          CHART_PATH: ./pangea-operator/charts/pangea-operator
+          REGISTRY: oci://ghcr.io/pleme-io/pangea-operator/charts
+          VERSION: ${{ steps.derive.outputs.version }}
+          LIB_CHART_DIR: ""
+          LIB_CHART_NAME: pleme-lib
