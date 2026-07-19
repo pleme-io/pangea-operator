@@ -12,10 +12,12 @@ use crate::crd::{
 use crate::error::Error;
 
 use futures::StreamExt;
+use k8s_openapi::api::core::v1::ObjectReference;
 use kube::{
     api::{Api, Patch, PatchParams},
     runtime::controller::Action,
-    ResourceExt,
+    runtime::events::{Event, EventType, Recorder, Reporter},
+    Resource, ResourceExt,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -255,15 +257,12 @@ async fn enforce_on_targets(
 async fn execute_reaction(
     binding: &ComplianceBinding,
     reaction: &crate::crd::Reaction,
-    _state: &ControllerState,
+    state: &ControllerState,
 ) -> std::result::Result<(), Error> {
     match reaction.action {
         ReactionAction::Webhook => {
             if let Some(ref url) = reaction.webhook_url {
-                let message = reaction
-                    .message_template
-                    .as_deref()
-                    .unwrap_or("Compliance state changed");
+                let message = reaction_message(reaction);
 
                 let payload = serde_json::json!({
                     "binding": binding.name_any(),
@@ -293,14 +292,212 @@ async fn execute_reaction(
             // Handled by enforce_on_targets
         }
         ReactionAction::Event => {
-            // TODO: emit K8s Event on target resources
+            emit_target_events(binding, reaction, state).await;
         }
         ReactionAction::Reconcile => {
-            // TODO: trigger reconciliation by touching annotation
+            request_target_reconcile(binding, state).await;
         }
     }
 
     Ok(())
+}
+
+/// Default message body shared by every reaction kind that surfaces
+/// text to a human or an event stream (`Webhook`, `Event`).
+fn reaction_message(reaction: &crate::crd::Reaction) -> &str {
+    reaction
+        .message_template
+        .as_deref()
+        .unwrap_or("Compliance state changed")
+}
+
+/// Build the `ObjectReference` for a compliance-binding target.
+///
+/// Constructed directly from the typed `TargetKind` (group/version/kind
+/// come from each CRD's own `#[kube(...)]` registration) rather than a
+/// live GET — the same 4 kinds `enforce_on_targets` already patches
+/// without fetching first, and a target that doesn't exist yet would
+/// fail there before an Event ever needed to be emitted on it.
+fn target_object_ref(target: &crate::crd::BindingTarget, namespace: &str) -> ObjectReference {
+    let (api_version, kind) = match target.kind {
+        TargetKind::InfrastructureTemplate => (
+            <InfrastructureTemplate as Resource>::api_version(&()),
+            <InfrastructureTemplate as Resource>::kind(&()),
+        ),
+        TargetKind::InfrastructureFlow => (
+            <InfrastructureFlow as Resource>::api_version(&()),
+            <InfrastructureFlow as Resource>::kind(&()),
+        ),
+        TargetKind::ImagePipeline => (
+            <ImagePipeline as Resource>::api_version(&()),
+            <ImagePipeline as Resource>::kind(&()),
+        ),
+        TargetKind::PackerBuild => (
+            <PackerBuild as Resource>::api_version(&()),
+            <PackerBuild as Resource>::kind(&()),
+        ),
+    };
+    ObjectReference {
+        api_version: Some(api_version.into_owned()),
+        kind: Some(kind.into_owned()),
+        name: Some(target.name.clone()),
+        namespace: Some(namespace.to_string()),
+        ..Default::default()
+    }
+}
+
+/// `EventType` + PascalCase `reason` for a `ReactionAction::Event`
+/// reaction, derived from the `ComplianceEvent` that triggered it.
+/// Pure so the mapping is unit-testable without a live client.
+fn reaction_event_type_and_reason(reaction: &crate::crd::Reaction) -> (EventType, String) {
+    let event_type = match reaction.event {
+        crate::crd::ComplianceEvent::NonCompliant
+        | crate::crd::ComplianceEvent::ControlFailed
+        | crate::crd::ComplianceEvent::Error => EventType::Warning,
+        crate::crd::ComplianceEvent::Compliant | crate::crd::ComplianceEvent::HashChanged => {
+            EventType::Normal
+        }
+    };
+    (event_type, format!("Compliance{}", reaction.event))
+}
+
+/// `ReactionAction::Event`: emit a K8s Event on each of the binding's
+/// targets (per the CRD doc comment: "Emit a K8s Event on the target
+/// resource"). Best-effort — mirrors `template::events::record_event`'s
+/// swallow-and-warn contract, since Events are observability, not
+/// load-bearing; a publish failure never fails the reconcile.
+async fn emit_target_events(
+    binding: &ComplianceBinding,
+    reaction: &crate::crd::Reaction,
+    state: &ControllerState,
+) {
+    let namespace = binding.namespace().unwrap_or_default();
+    let (event_type, reason) = reaction_event_type_and_reason(reaction);
+    let message = reaction_message(reaction).to_string();
+
+    let reporter = Reporter {
+        controller: "pangea-operator".into(),
+        instance: std::env::var("POD_NAME").ok(),
+    };
+    let recorder = Recorder::new(state.client.clone(), reporter);
+
+    for target in &binding.spec.targets {
+        let target_ns = target.namespace.as_deref().unwrap_or(&namespace);
+        let obj_ref = target_object_ref(target, target_ns);
+        let event = Event {
+            type_: event_type,
+            reason: reason.clone(),
+            note: Some(message.clone()),
+            action: reason.clone(),
+            secondary: None,
+        };
+        if let Err(e) = recorder.publish(&event, &obj_ref).await {
+            warn!(
+                binding = %binding.name_any(),
+                target = %target.name,
+                kind = %target.kind,
+                error = %e,
+                "Failed to record compliance-binding reaction Event"
+            );
+        }
+    }
+}
+
+/// Annotation a `ReactionAction::Reconcile` request patches onto each
+/// target. Reuses the exact key the GraphQL `apply` mutation already
+/// patches onto `InfrastructureTemplate`
+/// (`api::graphql::resolvers::MutationRoot::apply`) rather than minting
+/// a second "force reconcile" convention.
+const RECONCILE_REQUESTED_ANNOTATION: &str = "pangea.pleme.io/reconcile-requested";
+
+/// Build the merge-patch body for a `ReactionAction::Reconcile`
+/// request. Pure so the patch shape is unit-testable without a live
+/// client.
+fn reconcile_request_patch(requested_at: chrono::DateTime<chrono::Utc>) -> serde_json::Value {
+    serde_json::json!({
+        "metadata": {
+            "annotations": {
+                RECONCILE_REQUESTED_ANNOTATION: requested_at.to_rfc3339(),
+            }
+        }
+    })
+}
+
+/// `ReactionAction::Reconcile`: patch a reconcile-requested annotation
+/// onto each of the binding's targets (per the CRD doc comment:
+/// "Trigger a reconciliation of the target"). Best-effort, matching
+/// every other reaction kind in this function — a patch failure logs
+/// and is dropped, it never fails the reconcile.
+///
+/// Scope note: every target controller (`InfrastructureTemplate`,
+/// `InfrastructureFlow`, `ImagePipeline`, `PackerBuild`) runs behind
+/// `generation_filter::filtered_controller`, which drops watch events
+/// whose `metadata.generation` is unchanged — an annotation-only patch
+/// never bumps `generation`, so this does not jump the target ahead of
+/// its own periodic `Action::requeue` tick (same characteristic the
+/// existing GraphQL `reconcile-requested`/`approved`/`destroy-requested`
+/// annotations already have). What it fixes is the reported gap: the
+/// request becomes observable (`kubectl get -o yaml` on the target, plus
+/// a log line) instead of a silent no-op. An immediate-reconcile trigger
+/// would need a spec-level field (bumps `generation`) — a schema change
+/// across 4 CRDs, out of scope for this fix.
+async fn request_target_reconcile(binding: &ComplianceBinding, state: &ControllerState) {
+    let namespace = binding.namespace().unwrap_or_default();
+    let patch = reconcile_request_patch(chrono::Utc::now());
+    let pp = PatchParams::apply("pangea-operator");
+
+    for target in &binding.spec.targets {
+        let target_ns = target.namespace.as_deref().unwrap_or(&namespace);
+
+        let result: std::result::Result<(), kube::Error> = match target.kind {
+            TargetKind::InfrastructureTemplate => {
+                let api: Api<InfrastructureTemplate> =
+                    Api::namespaced(state.client.clone(), target_ns);
+                api.patch(&target.name, &pp, &Patch::Merge(&patch))
+                    .await
+                    .map(|_| ())
+            }
+            TargetKind::InfrastructureFlow => {
+                let api: Api<InfrastructureFlow> =
+                    Api::namespaced(state.client.clone(), target_ns);
+                api.patch(&target.name, &pp, &Patch::Merge(&patch))
+                    .await
+                    .map(|_| ())
+            }
+            TargetKind::ImagePipeline => {
+                let api: Api<ImagePipeline> = Api::namespaced(state.client.clone(), target_ns);
+                api.patch(&target.name, &pp, &Patch::Merge(&patch))
+                    .await
+                    .map(|_| ())
+            }
+            TargetKind::PackerBuild => {
+                let api: Api<PackerBuild> = Api::namespaced(state.client.clone(), target_ns);
+                api.patch(&target.name, &pp, &Patch::Merge(&patch))
+                    .await
+                    .map(|_| ())
+            }
+        };
+
+        match result {
+            Ok(()) => {
+                info!(
+                    binding = %binding.name_any(),
+                    target = %target.name,
+                    kind = %target.kind,
+                    "Reconcile requested on target (annotation patched)"
+                );
+            }
+            Err(e) => {
+                warn!(
+                    binding = %binding.name_any(),
+                    target = %target.name,
+                    kind = %target.kind,
+                    error = %e,
+                    "Failed to patch reconcile-requested annotation"
+                );
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -619,5 +816,126 @@ mod tests {
         }
         // Default is Unknown — the binding starts in observation mode.
         assert_eq!(BindingComplianceState::default(), BindingComplianceState::Unknown);
+    }
+
+    // ── ReactionAction::Event / ::Reconcile — was a silent no-op TODO,
+    // now builds a real ObjectReference / Event payload / annotation
+    // patch. These functions didn't exist before the fix (the match
+    // arms were empty), so these tests could not have compiled, let
+    // alone passed, prior to it. ──
+
+    use super::{
+        reaction_event_type_and_reason, reaction_message, reconcile_request_patch,
+        target_object_ref, RECONCILE_REQUESTED_ANNOTATION,
+    };
+    use crate::crd::compliance_binding::{BindingTarget, ComplianceEvent, Reaction, TargetKind};
+    use crate::crd::{ImagePipeline, InfrastructureFlow, InfrastructureTemplate, PackerBuild};
+    use kube::runtime::events::EventType;
+
+    fn target(kind: TargetKind, name: &str) -> BindingTarget {
+        BindingTarget {
+            kind,
+            name: name.into(),
+            namespace: None,
+        }
+    }
+
+    fn reaction(event: ComplianceEvent, action: crate::crd::ReactionAction) -> Reaction {
+        Reaction {
+            event,
+            action,
+            webhook_url: None,
+            message_template: None,
+        }
+    }
+
+    #[test]
+    fn target_object_ref_matches_each_crd_registration() {
+        // Each arm must resolve to the SAME group/version/kind the CRD
+        // itself is registered under (`#[kube(group, version, kind)]`) —
+        // a mismatch here would emit an Event `regarding` an object
+        // reference the apiserver can't resolve.
+        let cases: [(TargetKind, &str); 4] = [
+            (TargetKind::InfrastructureTemplate, "InfrastructureTemplate"),
+            (TargetKind::InfrastructureFlow, "InfrastructureFlow"),
+            (TargetKind::ImagePipeline, "ImagePipeline"),
+            (TargetKind::PackerBuild, "PackerBuild"),
+        ];
+        for (kind, expected_kind) in cases {
+            let t = target(kind, "my-target");
+            let obj_ref = target_object_ref(&t, "my-ns");
+            assert_eq!(obj_ref.api_version.as_deref(), Some("pangea.pleme.io/v1alpha1"));
+            assert_eq!(obj_ref.kind.as_deref(), Some(expected_kind));
+            assert_eq!(obj_ref.name.as_deref(), Some("my-target"));
+            assert_eq!(obj_ref.namespace.as_deref(), Some("my-ns"));
+        }
+
+        // Cross-check against each CRD's own kube() registration directly,
+        // so this test breaks if a CRD's kind/group/version ever drifts
+        // independently of this match.
+        assert_eq!(
+            <InfrastructureTemplate as kube::Resource>::kind(&()).as_ref(),
+            "InfrastructureTemplate"
+        );
+        assert_eq!(
+            <InfrastructureFlow as kube::Resource>::kind(&()).as_ref(),
+            "InfrastructureFlow"
+        );
+        assert_eq!(
+            <ImagePipeline as kube::Resource>::kind(&()).as_ref(),
+            "ImagePipeline"
+        );
+        assert_eq!(
+            <PackerBuild as kube::Resource>::kind(&()).as_ref(),
+            "PackerBuild"
+        );
+    }
+
+    #[test]
+    fn reaction_event_maps_noncompliant_to_warning() {
+        let r = reaction(ComplianceEvent::NonCompliant, crate::crd::ReactionAction::Event);
+        let (event_type, reason) = reaction_event_type_and_reason(&r);
+        assert_eq!(event_type, EventType::Warning);
+        assert_eq!(reason, "ComplianceNonCompliant");
+    }
+
+    #[test]
+    fn reaction_event_maps_compliant_to_normal() {
+        let r = reaction(ComplianceEvent::Compliant, crate::crd::ReactionAction::Event);
+        let (event_type, reason) = reaction_event_type_and_reason(&r);
+        assert_eq!(event_type, EventType::Normal);
+        assert_eq!(reason, "ComplianceCompliant");
+    }
+
+    #[test]
+    fn reaction_event_maps_error_to_warning() {
+        let r = reaction(ComplianceEvent::Error, crate::crd::ReactionAction::Event);
+        let (event_type, _reason) = reaction_event_type_and_reason(&r);
+        assert_eq!(event_type, EventType::Warning);
+    }
+
+    #[test]
+    fn reaction_message_falls_back_to_default() {
+        let r = reaction(ComplianceEvent::NonCompliant, crate::crd::ReactionAction::Event);
+        assert_eq!(reaction_message(&r), "Compliance state changed");
+    }
+
+    #[test]
+    fn reaction_message_uses_template_when_set() {
+        let mut r = reaction(ComplianceEvent::NonCompliant, crate::crd::ReactionAction::Event);
+        r.message_template = Some("custom message".into());
+        assert_eq!(reaction_message(&r), "custom message");
+    }
+
+    #[test]
+    fn reconcile_request_patch_carries_the_shared_annotation_key() {
+        // Same annotation key the GraphQL `apply` mutation already
+        // patches onto InfrastructureTemplate — one convention, not two.
+        assert_eq!(RECONCILE_REQUESTED_ANNOTATION, "pangea.pleme.io/reconcile-requested");
+
+        let ts = chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2026, 7, 19, 0, 0, 0).unwrap();
+        let patch = reconcile_request_patch(ts);
+        let annotated = &patch["metadata"]["annotations"][RECONCILE_REQUESTED_ANNOTATION];
+        assert_eq!(annotated.as_str(), Some(ts.to_rfc3339().as_str()));
     }
 }
