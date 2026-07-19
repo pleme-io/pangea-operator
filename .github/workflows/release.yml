@@ -263,13 +263,98 @@ jobs:
 
   # Binaries + chart publish on a version tag (or manual dispatch) — not on
   # every merge.
+  #
+  # ── Cross-arch libruby gap (fixed here, 2026-07-19) ────────────────────
+  # This job used to call the shared pleme-io/substrate/rust-binary-release.yml
+  # reusable directly with no `features`/`no-default-features` override, so
+  # every one of its 4 matrix legs compiled pangea-operator's Cargo.toml
+  # DEFAULT features -- which include `embedded_ruby` (pangea-ruby-eval ->
+  # magnus -> rb-sys, linking libruby via FFI). rb-sys's build script
+  # discovers Ruby via the HOST's `ruby`/RbConfig, so it always resolves to
+  # whatever Ruby ships on the runner's NATIVE architecture -- macos-latest
+  # is Apple-Silicon (arm64) native, ubuntu-latest is x86_64 native. For the
+  # two legs matching the runner's native arch (macos aarch64-apple-darwin,
+  # linux x86_64-unknown-linux-gnu) that's correct and they link fine
+  # (confirmed live, run 29670319134). For the two CROSS legs (macos
+  # x86_64-apple-darwin, linux aarch64-unknown-linux-gnu) rb-sys still
+  # points the linker at the NATIVE-arch libruby -- no matching cross-arch
+  # libruby exists anywhere on these generic GH-hosted runners, so the link
+  # fails: "ld: symbol(s) not found for architecture x86_64" on macOS,
+  # "cannot find -lruby-3.2" on the aarch64-linux cross-linker (same run).
+  # This is NOT a Nix/flake.nix problem -- this job never touches Nix at all
+  # (plain dtolnay/rust-toolchain + cargo build); flake.nix's
+  # mkEmbeddedOperatorImage solves cross-arch Ruby correctly, but only for
+  # the embedded-ruby DOCKER image (via nixpkgs' own cross-compiled
+  # `ruby_3_3`), and that machinery is entirely separate from this
+  # cargo-only job.
+  #
+  # The genuine load-bearing fix -- teaching pleme-io/actions/rust-cross-build
+  # (or the substrate rust-binary-release.yml reusable) to provision a real
+  # cross-arch Ruby (an aarch64 ruby-dev sysroot on the ubuntu cross leg, a
+  # Rosetta/ruby-build x86_64 Ruby on the macOS leg) -- belongs upstream in
+  # those shared, multi-consumer repos and needs its own careful pass (most
+  # other consumers don't need Ruby at all; getting the toolchain wrong
+  # risks breaking them). Out of scope here.
+  #
+  # The fix landed HERE is scoped to this repo only. The shared reusable's
+  # `features`/`no-default-features` inputs apply ONE pair to its WHOLE
+  # matrix, so there is no way to special-case just the 2 cross legs through
+  # it -- this job inlines the same 4-leg matrix directly and calls
+  # `pleme-io/actions/rust-cross-build@v1` (the same composite action the
+  # reusable itself delegates to) per leg, passing `no-default-features:
+  # true` + `features: "graphql grpc executor_magma"` (everything except
+  # embedded_ruby) ONLY on the 2 cross legs. The 2 native legs are
+  # unaffected -- full default features, exactly as before. A cross-arch
+  # binary without embedded_ruby is not a regression: the feature has a
+  # documented graceful-degradation path (falls back to the pangea-compiler
+  # HTTP sidecar -- see pangea-operator/Cargo.toml's `embedded_ruby` doc
+  # comment), and was in fact the default shape before 2026-06-02.
   binaries:
     name: cross-arch binaries → GH Release
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
-    uses: pleme-io/substrate/.github/workflows/rust-binary-release.yml@main
-    with:
-      binary-name: pangea-operator
-    secrets: inherit
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, suffix: linux-x86_64, no-default-features: "false", features: "" }
+          # cross leg -- no aarch64 libruby available; drop embedded_ruby (see comment above)
+          - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu, suffix: linux-aarch64, no-default-features: "true", features: "graphql grpc executor_magma" }
+          # cross leg -- macos-latest is arm64 native, no x86_64 libruby available; drop embedded_ruby
+          - { os: macos-latest, target: x86_64-apple-darwin, suffix: macos-x86_64, no-default-features: "true", features: "graphql grpc executor_magma" }
+          - { os: macos-latest, target: aarch64-apple-darwin, suffix: macos-aarch64, no-default-features: "false", features: "" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compiler (linux aarch64 only)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Configure cross-linker
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      - name: Build + stage
+        uses: pleme-io/actions/rust-cross-build@v1
+        with:
+          binary-name: pangea-operator
+          target: ${{ matrix.target }}
+          suffix: ${{ matrix.suffix }}
+          features: ${{ matrix.features }}
+          no-default-features: ${{ matrix.no-default-features }}
+
+      - name: Attach binaries to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/pangea-operator-${{ matrix.suffix }}
+            dist/pangea-operator-${{ matrix.suffix }}.sha256
 
   chart:
     name: Helm chart → ArtifactHub OCI
