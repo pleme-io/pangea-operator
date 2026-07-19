@@ -240,6 +240,7 @@ regex = "1"
 
 # Utilities
 chrono = { workspace = true, features = ["serde"] }
+cron.workspace = true
 uuid = { version = "1", features = ["v4", "serde"] }
 url = "2"
 urlencoding = "2"

@@ -85,6 +85,15 @@ pub enum Error {
     #[error("Configuration error: {0}")]
     Config(String),
 
+    /// `ComplianceSchedule.spec.schedule` failed to parse as a cron
+    /// expression, or the parsed expression has no future occurrences.
+    /// Surfaces as `status.phase = Error` with this message rather than
+    /// silently falling back to a fixed poll interval, so a typo in the
+    /// cron string is visible on the CR instead of the schedule quietly
+    /// never firing.
+    #[error("invalid cron schedule '{schedule}': {reason}")]
+    InvalidCronSchedule { schedule: String, reason: String },
+
     /// Secret not found.
     #[error("Secret not found: {namespace}/{name}")]
     SecretNotFound { namespace: String, name: String },

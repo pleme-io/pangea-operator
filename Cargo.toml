@@ -58,6 +58,9 @@ log = "0.4"
 
 # Time
 chrono = { version = "0.4", features = ["serde"], default-features = false }
+# Cron expression parsing + next-fire-time computation
+# (ComplianceScheduleController::handle_scheduled — spec.schedule).
+cron = "0.15"
 
 # Error handling
 anyhow = "1"

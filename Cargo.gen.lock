@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "cargo_lock_sha256": "8074fa7a56eac536019edcee61e03595151ffef028c6e003d24bb24e7fb275c0",
+  "cargo_lock_sha256": "916c26b64a44b7450c3217b6b4bfe5e0e1f0d68c0bbb81affffc3e4b038135cd",
   "target_resolves": {
     "base": {
       "Inflector-0.11.4": {
@@ -2952,6 +2952,44 @@
       },
       "crc-catalog-2.5.0": {
         "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
+      },
+      "cron-0.15.0": {
+        "runtime_dependencies": [
+          {
+            "name": "chrono",
+            "package_key": "chrono-0.4.44",
+            "kind": "normal",
+            "features": [
+              "clock"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "once_cell",
+            "package_key": "once_cell-1.21.4",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "winnow",
+            "package_key": "winnow-0.6.26",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
         "build_dependencies": [],
         "features": []
       },
@@ -12514,6 +12552,16 @@
             "tree": "target"
           },
           {
+            "name": "cron",
+            "package_key": "cron-0.15.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": "cfg(unix)",
+            "tree": "target"
+          },
+          {
             "name": "derive_builder",
             "package_key": "derive_builder-0.20.2",
             "kind": "normal",
@@ -14577,7 +14625,7 @@
         "runtime_dependencies": [
           {
             "name": "heck",
-            "package_key": "heck-0.4.1",
+            "package_key": "heck-0.5.0",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -23869,6 +23917,15 @@
         "build_dependencies": [],
         "features": []
       },
+      "winnow-0.6.26": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": [
+          "alloc",
+          "default",
+          "std"
+        ]
+      },
       "winnow-0.7.15": {
         "runtime_dependencies": [],
         "build_dependencies": [],
@@ -30033,6 +30090,9 @@
     "crc-catalog-2.5.0": {
       "edition": "2018"
     },
+    "cron-0.15.0": {
+      "edition": "2021"
+    },
     "crossbeam-queue-0.3.12": {
       "edition": "2021"
     },
@@ -31566,6 +31626,9 @@
     },
     "whoami-1.6.1": {
       "edition": "2018"
+    },
+    "winnow-0.6.26": {
+      "edition": "2021"
     },
     "winnow-0.7.15": {
       "edition": "2021"
