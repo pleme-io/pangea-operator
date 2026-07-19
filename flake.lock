@@ -867,6 +867,22 @@
         "type": "indirect"
       }
     },
+    "nixpkgs-security": {
+      "locked": {
+        "lastModified": 1784356753,
+        "narHash": "sha256-12KrbMiWLcf8m7pCvAtZh1ZrgF85ZXDXvfR/fWTKy84=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "61b7c44c4073f0b827768aff0049561b5110ea5a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
     "nixpkgs_2": {
       "locked": {
         "lastModified": 1765186076,
@@ -1233,6 +1249,7 @@
           "substrate",
           "nixpkgs"
         ],
+        "nixpkgs-security": "nixpkgs-security",
         "pangea-akeyless": "pangea-akeyless",
         "pangea-aws": "pangea-aws",
         "pangea-azure": "pangea-azure",

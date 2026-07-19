@@ -1,0 +1,151 @@
+# Named, tracked CVE exceptions for the zero-tolerance "container image →
+# ghcr.io" CVE scan gate (release.yml's `cve-scan` job,
+# pleme-io/actions/image-scan@main, fail-on-severity: UNKNOWN). Every entry
+# here MUST carry its own justification — this file is never a substitute
+# for actually fixing what can be fixed. Style + discipline mirrored from
+# pleme-io/hardened-images' own .trivyignore (the sibling initiative that
+# established this pattern for the fleet). Re-check each entry whenever its
+# package's upstream releases a newer version.
+#
+# Ground truth for every entry below: a real `trivy image --format json`
+# scan of ghcr.io/pleme-io/pangea-operator:embedded-amd64-r166-96fa855c65
+# (run 29698809855, 2026-07-19) — 267 total findings, 10 CRITICAL. That scan
+# is the FIRST time this gate ever actually evaluated a real image (a
+# substring-match bug in the old gate code silently no-op'd it since it was
+# added — fixed pleme-io/actions commit 2026-07-17, two days before this
+# run). The 6 opentofu/packer/terraform-provider CRITICALs fixed by this
+# same commit's flake.nix change (opentofu, packer, terraform-provider-
+# github/-cloudflare/-aws/-kubernetes bumped via a nixpkgs-security escape
+# hatch) are NOT listed here — they're closed for real, not ignorefile'd.
+
+# --- pangea-compiler embedded Ruby gemset -------------------------------
+# net-imap 0.4.21 (bundled gem, installed by ruby_3_3's own upstream build,
+# NOT a Gemfile.lock dependency — confirmed via direct inspection of the
+# substituted x86_64-linux ruby_3_3 store path:
+# lib/ruby/gems/3.3.0/{specifications,gems,cache}/net-imap-0.4.21.*).
+# Ruby 3.3.12 (released 2026-07-16, 3 days before this scan) bumps the
+# bundled net-imap to 0.4.25, closing all 8 of these — but no nixpkgs
+# channel has packaged 3.3.12 yet as of 2026-07-19 (confirmed: nixpkgs
+# nixos-unstable @ 61b7c44, the tip of the branch at scan time, still
+# ships ruby_3_3 == 3.3.10). A real fix exists and is fully scoped: a
+# `ruby_3_3.overrideAttrs` `postFixup` file-swap (net-imap is pure Ruby,
+# no C extension — the same technique pleme-io/hardened-images uses for
+# Neo4j's jackson-databind jars) replacing the net-imap-0.4.21 gem tree +
+# gemspec + cache entry with the real published net-imap-0.4.25.gem
+# (paths verified against the real store layout above). NOT applied here:
+# unlike Neo4j's jar swap (unpack a tarball, no compile), overriding
+# ruby_3_3 forces Nix to treat it as a new derivation and recompile the
+# WHOLE Ruby interpreter from source — no reachable x86_64-linux builder
+# from this workstation to verify that build succeeds and Ruby still
+# boots correctly afterward before shipping it blind. Named, scoped
+# follow-up, not swept under the rug.
+CVE-2026-42257
+CVE-2026-42245
+CVE-2026-42246
+CVE-2026-42256
+CVE-2026-42258
+CVE-2026-47240
+CVE-2026-47242
+CVE-2026-47241
+
+# erb 4.0.3 (ruby_3_3's own default gem, loaded from the CORE stdlib path
+# lib/ruby/3.3.0/erb.rb — confirmed via direct inspection, ahead of any
+# gem search path). Fixed at 4.0.3.1 by ruby 3.3.12 (same release as
+# net-imap above, same "no nixpkgs channel has it yet" blocker). The
+# standalone `erb` gem on rubygems.org has diverged onto its own 6.0.x
+# version line (unrelated to ruby's internal 4.0.x bundled-gem numbering);
+# trivy's own fix range (">= 6.0.4") confirms 6.0.x is an eligible
+# replacement, but swapping ruby's CORE stdlib erb.rb carries real
+# behavioral-compat risk (this file is loaded ahead of any gem override,
+# by more of the ruby runtime than a leaf gem like net-imap) that this
+# pass had no way to verify — whether any pangea-* gem in this image's own
+# closure uses ERB templating was not audited, and there is no reachable
+# builder to test a swap even if the API is compatible. Same underlying
+# fix mechanism as net-imap (a ruby_3_3 postFixup override once nixpkgs
+# ships 3.3.12, or a verified core-lib file swap) — named follow-up.
+CVE-2026-41316
+
+# zlib 3.1.1 (ruby_3_3's own default gem — a C EXTENSION wrapping libz,
+# confirmed via the compiled lib/ruby/3.3.0/x86_64-linux/zlib.so alongside
+# the gem's Ruby wrapper). Fixed >= 3.2.3. Ruby 3.3.12 does NOT bump zlib
+# (checked its own release notes directly — only erb + net-imap are
+# named). Unlike net-imap/erb, a fix here requires actually RECOMPILING
+# the C extension against the newer zlib gem's ext/ source (extconf.rb +
+# make), not a pure-file swap — meaningfully more involved than either
+# Ruby-only case above and not attempted blind with no reachable builder
+# to verify the compiled artifact still loads. Genuinely narrow exposure:
+# the advisory is specifically in Zlib::GzipReader, which nothing in this
+# image's own operator code path calls.
+CVE-2026-27820
+
+# --- magma provider mirror: terraform-provider-random / -porkbun / -rabbitmq
+# All three verified 2026-07-19 to have NO newer upstream release on any
+# channel — `gh api repos/<owner>/<repo>/releases/latest` returns the
+# SAME version already packaged (random 3.9.0, porkbun 0.3.0, rabbitmq
+# 1.10.1), and a direct check of each repo's go.mod at its default-branch
+# HEAD (i.e. even unreleased work) still pins the same vulnerable
+# google.golang.org/grpc (porkbun: v1.67.1, rabbitmq: v1.72.1 — both well
+# below the 1.79.3 fix line for CVE-2026-33186). terraform-provider-porkbun
+# additionally does not exist at all as a nixpkgs attribute on the
+# nixpkgs-security escape-hatch pin (nixos-unstable), confirmed via a
+# direct `nix eval` failure ("attribute 'porkbun' missing") — there is no
+# channel this provider could be sourced from even if a newer nixpkgs
+# packaging existed. Bumping ANY of these three to close their CVEs would
+# require a from-scratch go.mod/go.sum patch (bumping grpc-go and, for
+# random, also golang.org/x/crypto + x/net + x/text + the Go toolchain
+# itself) with a real vendorHash recompute — unverifiable from this
+# workstation with no reachable x86_64-linux builder, and materially
+# riskier than a version bump (a wrong vendorHash or a subtly incompatible
+# grpc-go pin breaks the whole provider's RPC handshake with magma at
+# runtime, not just at scan time). These three provider derivations are
+# left on the ORIGINAL (fleet-anchored) nixpkgs pin, unchanged by this
+# commit's nixpkgs-security escape hatch.
+CVE-2026-33186
+
+# terraform-provider-random's own residual set (golang.org/x/crypto,
+# golang.org/x/net, golang.org/x/text, and the Go toolchain's stdlib —
+# NOT grpc, unlike porkbun/rabbitmq above). Same "no upstream release,
+# no vendorHash recompute without a builder" reasoning as above.
+# CVE-2026-39822 / CVE-2026-42505 (Go toolchain, go1.26.4) are the SAME
+# two advisories pleme-io/hardened-images already independently verified
+# unfixable-via-nixpkgs as of 2026-07-18 (see that repo's own .trivyignore,
+# node-exporter section) — cross-checked here, not re-derived.
+CVE-2026-39827
+CVE-2026-39828
+CVE-2026-39829
+CVE-2026-39830
+CVE-2026-39831
+CVE-2026-39832
+CVE-2026-39833
+CVE-2026-39834
+CVE-2026-39835
+CVE-2026-42508
+CVE-2026-46595
+CVE-2026-46597
+CVE-2026-46598
+GO-2026-5932
+CVE-2026-25680
+CVE-2026-25681
+CVE-2026-27136
+CVE-2026-39821
+CVE-2026-42502
+CVE-2026-42506
+CVE-2026-46600
+CVE-2026-56852
+CVE-2026-27145
+CVE-2026-39822
+CVE-2026-42504
+CVE-2026-42505
+CVE-2026-42507
+
+# terraform-provider-porkbun / -rabbitmq's remaining shared residuals
+# (golang.org/x/net, x/sys, x/text — beyond the grpc CRITICAL already
+# listed above). Same reasoning: no newer upstream release, no builder to
+# verify a hand-patched go.sum.
+CVE-2024-45338
+CVE-2026-33814
+CVE-2025-22870
+CVE-2025-22872
+CVE-2025-47911
+CVE-2025-58190
+CVE-2026-39824

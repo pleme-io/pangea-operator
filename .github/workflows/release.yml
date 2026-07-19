@@ -256,10 +256,15 @@ jobs:
     if: always() && (needs.image-rio.result == 'success' || needs.image-fallback.result == 'success')
     runs-on: ubuntu-latest
     steps:
+      # Needed so `.trivyignore` (the named, cited residual-CVE exceptions
+      # — see that file's own header) is on disk for the ignore-file input
+      # below. This job runs on a fresh runner with no prior checkout step.
+      - uses: actions/checkout@v4
       - uses: pleme-io/actions/image-scan@main
         with:
           image-ref: ghcr.io/pleme-io/pangea-operator:embedded-amd64-r${{ github.run_number }}-${{ github.sha }}
           fail-on-severity: UNKNOWN
+          ignore-file: .trivyignore
 
   # Binaries + chart publish on a version tag (or manual dispatch) — not on
   # every merge.

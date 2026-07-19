@@ -5,6 +5,19 @@
     nixpkgs.follows = "substrate/nixpkgs";
     substrate.url = "github:pleme-io/substrate";
     ruby-nix.url = "github:inscapist/ruby-nix";
+    # Security-escape-hatch nixpkgs snapshot (2026-07-19, CVE remediation
+    # for the embedded operator image — trivy run 29698809855 found 267
+    # findings, 10 CRITICAL, across opentofu/packer/7 bundled terraform
+    # providers + the pangea-compiler Gemfile). `nixpkgs` above stays on
+    # substrate's fleet-pinned anchor (26.05.20260603, deliberately frozen
+    # for zero release-skew across the whole fleet per substrate/flake.nix's
+    # own comment — NOT something a single repo's CVE fix should move) —
+    # same shape as pleme-io/hardened-images' `nixpkgs-vector` /
+    # `nixpkgs-node-exporter` escape hatches: a SECOND, independent nixpkgs
+    # snapshot used ONLY to source the handful of packages that need a
+    # newer upstream release than the fleet anchor carries. Deliberately
+    # NOT `inputs.nixpkgs.follows` — the whole point is a different rev.
+    nixpkgs-security.url = "github:NixOS/nixpkgs/nixos-unstable";
 
     # Path-gem source-only inputs for the embedded-ruby operator image —
     # the same 13 typed primitive providers + composers the (now-sunset)
@@ -65,7 +78,7 @@
     };
   };
 
-  outputs = inputs @ { self, nixpkgs, substrate, ruby-nix, ... }:
+  outputs = inputs @ { self, nixpkgs, nixpkgs-security, substrate, ruby-nix, ... }:
     let
       lib = nixpkgs.lib;
 
@@ -148,6 +161,29 @@
       mkEmbeddedOperatorImage = imageSystem:
         let
           imagePkgs = import nixpkgs { system = imageSystem; config.allowUnfree = true; };
+          # The nixpkgs-security escape hatch (see the flake input comment)
+          # — sources ONLY opentofu/packer/4 of the 7 mirrored terraform
+          # providers, each verified 2026-07-19 against the real upstream
+          # go.mod of the newer release nixpkgs-security packages:
+          #   opentofu               1.11.8 -> 1.12.4  (grpc 1.79.3, the fix)
+          #   packer                 1.15.3 -> 1.15.4  (go1.25.11 toolchain;
+          #                          containerd/go-git/mongo-driver/x-pkgs
+          #                          all substantially newer than the stale
+          #                          pins driving the primary pin's findings)
+          #   terraform-provider-github     6.12.1 -> 6.13.0 (grpc 1.79.3)
+          #   terraform-provider-cloudflare 5.19.1 -> 5.22.0 (grpc 1.79.3)
+          #   terraform-provider-aws        6.46.0 -> 6.55.0
+          #   terraform-provider-kubernetes 3.1.0  -> 3.2.1
+          # terraform-provider-random/-porkbun/-rabbitmq stay on the
+          # PRIMARY pin below (`imagePkgs.terraform-providers`) — verified
+          # 2026-07-19 that none has released ANY newer version upstream
+          # (random 3.9.0 and rabbitmq 1.10.1 are both already the latest
+          # GitHub release AND still the tip of their default branch;
+          # porkbun 0.3.0 likewise, and its attribute doesn't even exist on
+          # nixpkgs-security's terraform-providers set) — a channel bump
+          # cannot help these three; see .trivyignore for the residual CVE
+          # citations.
+          securityPkgs = import nixpkgs-security { system = imageSystem; config.allowUnfree = true; };
           ruby = imagePkgs.ruby_3_3;
           libclang = imagePkgs.llvmPackages.libclang;
           # bindgen needs libc headers (stdio.h, stddef.h, …) on its
@@ -232,15 +268,19 @@
           # appears (surfaces as a ProviderUnavailable anomaly otherwise).
           magmaProviderMirror = imagePkgs.buildEnv {
             name = "magma-provider-mirror";
-            paths = with imagePkgs.terraform-providers; [
+            paths = (with securityPkgs.terraform-providers; [
               cloudflare_cloudflare
               integrations_github
               hashicorp_aws
               hashicorp_kubernetes
+            ]) ++ (with imagePkgs.terraform-providers; [
+              # No newer upstream release exists for these three on ANY
+              # channel (verified 2026-07-19) — stays on the primary pin.
+              # See .trivyignore for the residual CVE citations.
               hashicorp_random
               porkbun
               cyrilgdn_rabbitmq
-            ];
+            ]);
           };
         in
         builders.mkCrate2nixDockerImage {
@@ -269,16 +309,23 @@
           rootFeatures = [ "default" "embedded_ruby" "executor_magma" ];
           extraContents = pkgs: (with pkgs; [
             ruby_3_3
-            opentofu # TofuExecutor: unconditionally constructed at
-            # controller startup, resolved whenever spec.executor /
-            # PANGEA_EXECUTOR names tofu (PANGEA_FORBID_TOFU is the
-            # explicit kill-switch) — a real, tested, config-selectable
-            # fallback per MAGMA-NATIVE EXECUTION, not dead weight.
             git
             busybox
             gemWs.env
           ]) ++ [
-            (import nixpkgs { inherit (pkgs.stdenv.hostPlatform) system; config.allowUnfree = true; }).packer
+            # opentofu / packer sourced from nixpkgs-security (see the
+            # flake input + securityPkgs comments above), not the primary
+            # `pkgs`/`nixpkgs` — both had CVE-flagged embedded Go deps at
+            # the primary pin's versions (opentofu: grpc-go CVE-2026-33186;
+            # packer: stale containerd/go-git/mongo-driver/x-pkgs), fixed
+            # by the newer upstream releases nixpkgs-security packages.
+            securityPkgs.opentofu # TofuExecutor: unconditionally
+            # constructed at controller startup, resolved whenever
+            # spec.executor / PANGEA_EXECUTOR names tofu (PANGEA_FORBID_TOFU
+            # is the explicit kill-switch) — a real, tested,
+            # config-selectable fallback per MAGMA-NATIVE EXECUTION, not
+            # dead weight.
+            securityPkgs.packer
             # PackerExecutor: unconditionally built, driven by the
             # unconditionally-spawned PackerBuildController + sibling
             # AmiTestController reconciling AMI builds — a separate,

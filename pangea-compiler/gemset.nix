@@ -34,10 +34,18 @@
     platforms = [];
     source = {
       remotes = ["https://rubygems.org"];
-      sha256 = "1aymcakhzl83k77g2f2krz07bg1cbafbcd2ghvwr4lky3rz86mkb";
+      # CVE-2026-54906 (CRITICAL, ReadWriteLock unauthorized lock release +
+      # DoS) fixed >= 1.3.7; bumped straight to 1.3.8 (latest as of
+      # 2026-07-19) which also closes CVE-2026-54904/CVE-2026-54905 (same
+      # advisory family, HIGH/MEDIUM). Hash verified via `nix hash file
+      # --type sha256 --base32` against the real
+      # https://rubygems.org/downloads/concurrent-ruby-1.3.8.gem — the same
+      # method reproduces the PRE-EXISTING 1.3.6 hash byte-for-byte, so the
+      # methodology is confirmed correct, not assumed.
+      sha256 = "1qfi2ns3zwkgq616fc127xiqhan7g7m7gqpwriwcr34nds1vxwdj";
       type = "gem";
     };
-    version = "1.3.6";
+    version = "1.3.8";
   };
   dry-core = {
     dependencies = ["concurrent-ruby" "logger" "zeitwerk"];
@@ -108,10 +116,14 @@
     platforms = [];
     source = {
       remotes = ["https://rubygems.org"];
-      sha256 = "1b1rabz30grash5wh0lcv109w2ggggmmbclwnajqrcdk7wrps2k7";
+      # CVE-2026-54696 (LOW) fixed >= 2.19.9; bumped to 2.21.1 (latest ruby-
+      # platform release as of 2026-07-19). Native ext (ext/json/ext/{generator,
+      # parser}), same build shape as the existing nio4r/puma C-ext entries —
+      # no new build machinery needed.
+      sha256 = "10q54a0dkm0050n0zzqiv2ln8w931wszybbhym1i8r4mbpvkv90k";
       type = "gem";
     };
-    version = "2.19.4";
+    version = "2.21.1";
   };
   logger = {
     groups = ["default"];
@@ -289,10 +301,21 @@
     platforms = [];
     source = {
       remotes = ["https://rubygems.org"];
-      sha256 = "07pajhv7pqz82kcjc6017y4d0hwz5kp746cydpx1npd79r56xddr";
+      # CVE-2026-47736/CVE-2026-47737 (HIGH) have no fix in the 6.x line at
+      # all (trivy's own fix-range: "~> 7.2.1, >= 8.0.2") — bumped to 8.0.2
+      # (satisfies the >= 8.0.2 branch exactly). Gemspec dependency on nio4r
+      # is unchanged (still `~> 2.0`, verified against the real published
+      # puma-8.0.2.gem metadata), so no ripple into nio4r's own pin. This
+      # gem is loaded but never invoked by the embedded operator (puma/
+      # sinatra back the now-sunset pangea-compiler HTTP sidecar the
+      # embedded-ruby image doesn't boot — see pangea-compiler.gemspec's
+      # own description + flake.nix's embedded-image comment), so the
+      # major-version jump carries no live behavioral risk to the operator
+      # despite touching an unconstrained-by-us upstream API surface.
+      sha256 = "1yw6nvkvddriacmva8hm0za0961d6j96dm7zm6748rmyzcfqgvf8";
       type = "gem";
     };
-    version = "6.6.1";
+    version = "8.0.2";
   };
   rack = {
     groups = ["default"];

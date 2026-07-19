@@ -34,7 +34,13 @@ Gem::Specification.new do |spec|
 
   # HTTP layer
   spec.add_dependency 'sinatra', '~> 4.0'
-  spec.add_dependency 'puma',    '~> 6.0'
+  # ~> 6.0 relaxed to ~> 8.0 2026-07-19: CVE-2026-47736/CVE-2026-47737 have
+  # no fix anywhere in the 6.x line (fixed only at >= 7.2.1 / >= 8.0.2).
+  # Zero-risk here: puma/sinatra back the (now-sunset) pangea-compiler HTTP
+  # sidecar, never booted by the embedded-ruby operator image (see this
+  # gem's own description + pangea-operator/flake.nix's embedded-image
+  # comment) — the gem is on RUBYLIB but never `require`d at runtime there.
+  spec.add_dependency 'puma',    '~> 8.0'
   spec.add_dependency 'json'
 
   # Synthesis framework
