@@ -1929,6 +1929,88 @@ mod tests {
         );
     }
 
+    /// The camelot-eks live-incident regression: `magma_plan::plan()`
+    /// (pinned via this repo's `magma-plan` git dependency) used to
+    /// HARDCODE `Action::NoOp` for every resource present in BOTH
+    /// config and state — regardless of whether the config's declared
+    /// attributes actually diverged from what was recorded. An
+    /// imported/adopted resource is the textbook trigger for this: the
+    /// real production import path
+    /// (`magma_apply::ConfiguredImportEnvironment`, stood in here by
+    /// `StructuralImportEnvironment`) writes only an
+    /// `ImportResourceState` STUB — id-only, no follow-up
+    /// `ReadResource` — so nearly every other attribute in the written
+    /// state is either absent or null. Ground-truthed live 2026-07-19
+    /// against the real Postgres state row for
+    /// `aws_eks_node_group.camelot-eks_controllers_ng` (schema
+    /// `pangea_camelot-dev_camelot-eks_states`): `instance_types` was
+    /// stored as JSON `null`, not the stale AND not the corrected
+    /// instance-type list. Before magma commit e357b4d
+    /// ("magma-plan: config-subset drift detection for in-both
+    /// resources"), a subsequent Planning cycle against a corrected
+    /// `main.tf.json` reported this resource as `noOp` — which, had a
+    /// human approved the resulting auto/require-approval gate,
+    /// would have applied blind and left the node group's tiny
+    /// instance types (and the ARC CI-runner memory starvation they
+    /// caused) in place forever, since magma's apply step never
+    /// touches a resource its own plan says needs zero changes.
+    ///
+    /// This test reproduces that exact shape at the layer
+    /// `handle_planning` actually calls (`MagmaExecutor::plan()`, not
+    /// the isolated `magma-plan` unit tests) so a future regression in
+    /// EITHER the `magma-plan` dependency OR this crate's own
+    /// `to_universal_plan` / `CycleArtifact` projection surfaces here.
+    #[tokio::test]
+    async fn import_then_plan_surfaces_drift_when_config_diverges_from_the_imported_state() {
+        let exec = MagmaExecutor::new(fixture_config());
+        let tmp = tempfile::tempdir().unwrap();
+
+        // `StructuralImportEnvironment::import_resource_state` echoes
+        // `{"id": id, "name": id}` for the imported address — the
+        // stand-in for the real provider's id-only ImportResourceState
+        // stub. Recorded state: name == "stale-instance-type".
+        let import_result = exec
+            .import(tmp.path(), "aws_iam_role.adopted", "stale-instance-type")
+            .await
+            .unwrap();
+        assert!(import_result.success, "{}", import_result.stdout);
+
+        // The rendered config now declares a DIFFERENT value for the
+        // SAME declared attribute the import echoed — the exact shape
+        // of the camelot-eks bug (instance_types corrected in
+        // main.tf.json after the node group was already adopted into
+        // state).
+        render_workspace(
+            tmp.path(),
+            &json!({
+                "provider": { "aws": { "region": "us-east-1" } },
+                "resource": {
+                    "aws_iam_role": {
+                        "adopted": { "name": "corrected-instance-type" },
+                    },
+                },
+            }),
+        )
+        .await;
+
+        let plan_result = exec.plan(tmp.path(), None, &[]).await.unwrap();
+        assert!(plan_result.success);
+        assert_eq!(
+            plan_result.exit_code, 2,
+            "a config-declared attribute that diverges from the \
+             imported (stub) state must be reported as a real change \
+             — NEVER silently swallowed as NoOp, which would let an \
+             auto/require-approval gate apply blind: {}",
+            plan_result.stdout
+        );
+        assert!(
+            plan_result.stdout.contains("\"action\": \"update\""),
+            "the drifted resource must classify as Action::Update, not \
+             hardcoded NoOp: {}",
+            plan_result.stdout
+        );
+    }
+
     #[tokio::test]
     async fn import_is_idempotent_when_already_in_state() {
         let exec = MagmaExecutor::new(fixture_config());
