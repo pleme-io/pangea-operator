@@ -4,48 +4,60 @@ name: release
 # MERGE TO MAIN, tagged `embedded-amd64-<sha>` (the HelmRelease + Flux
 # ImagePolicy convention). Binaries + chart still publish on a v* tag.
 #
-# ── Runner resilience (hardened 2026-07-16, corrected 2026-07-17) ──────────
+# ── Runner resilience (hardened 2026-07-16, corrected 2026-07-17, RETARGETED
+#    TO MODE-3 2026-07-19) ───────────────────────────────────────────────────
 # The 2026-07-16 pass added a `workflow_dispatch` escape hatch but left the
 # PUSH-triggered (i.e. every real auto-release merge) default pointed at
 # `rio-build-01` -- a push event has no `inputs` context at all, so
 # `inputs.runner || 'rio-build-01'` always resolved to the dead literal for
 # the one trigger that actually matters. Confirmed live 2026-07-17: 11
 # consecutive push-triggered runs sat permanently `queued` against
-# `rio-build-01`, which has 0 registered runners fleet-wide
-# (`gh api /orgs/pleme-io/actions/runners` — total_count: 0) — the exact
-# repeat of the outage the previous pass thought it had fixed.
+# `rio-build-01`, which has 0 registered runners fleet-wide.
 #
-# The default now targets `camelot-builder-pleme` -- the PLEME-IO-ORG ARC
-# runner scale set (akeyless-k8s/clusters/camelot-mode1/infrastructure/ci/
-# runner-scale-set-pleme.yaml), NOT the akeylesslabs-scoped `camelot`
-# runner group. It registers against `githubConfigUrl:
-# https://github.com/pleme-io` into the org's `Default` runner group, so
-# every pleme-io repo (this one included) can target it by name with no
-# per-repo grant. 100%-spot, scale-to-zero (minRunners: 0, maxRunners: 6),
-# reconciled by the same in-cluster ARC controller as the akeylesslabs pool
-# -- confirmed live + Ready 2026-07-16/17, the same pool breathe's
-# image.yml already routes onto via `vars.CAMELOT_IMAGE_RUNNER`. This
-# retires rio (a single operator-owned homelab node with no fallback) as
-# the silent default for every merge, in favor of a pool with its own
-# scale-to-zero economics and no single point of failure.
+# The 2026-07-17 pass moved the default to `camelot-builder-pleme` (Mode-1,
+# akeyless-k8s/clusters/camelot-mode1/infrastructure/ci/runner-scale-set-pleme.yaml).
+# That pool's sole node went NotReady/Unreachable 2026-07-17T18:19 and was
+# never replaced (its own self-healing InfrastructureTemplate,
+# camelot-builder-pool, sat suspend:true) -- 28+ consecutive runs stuck
+# queued, root-caused 2026-07-19, the same day Mode-1 was decided to be
+# retired entirely (fleet-wide Mode-1 -> Mode-3/EKS consolidation).
+#
+# RETARGETED 2026-07-19: the default now points at `camelot-builder-pleme-eks`
+# -- the direct Mode-3/EKS clone of the same pool (akeyless-k8s/clusters/
+# camelot-eks/infrastructure/ci/runner-scale-set-pleme.yaml), ported 2026-07-17
+# for exactly this reason and confirmed live + Ready (HelmRelease
+# Released=True, ExternalSecret synced, chart-version-locked to the shared
+# arc-controller at 0.12.1). Same shape as Mode-1's pool in every load-bearing
+# way: registers against `githubConfigUrl: https://github.com/pleme-io` into
+# the org's unrestricted `Default` runner group, so every pleme-io repo
+# (this one included) targets it by name with no per-repo grant; 100%-spot,
+# scale-to-zero. Real concurrency today is closer to ~3 runners (one
+# t3.large node's worth) than the pool's eventual ceiling -- breathe's own
+# elastic scale-out for this nodegroup is only partially wired (a separate,
+# tracked gap) -- so expect some queueing under load until that lands, not
+# permanent starvation the way Mode-1's dead node was.
+#
+# BONUS, not just parity: this also activates `extraSubstituters` below,
+# which was wired but a silent no-op on Mode-1 (camelot-eks's sui cache is
+# only reachable from inside camelot-eks's own network) -- a build on
+# camelot-builder-pleme-eks gets real substitute-cache benefit for the
+# first time.
 #
 # 1. `runner` is still a `workflow_dispatch` input, now defaulting to
-#    `camelot-builder-pleme` to match the push-triggered default (was
-#    `rio-build-01` -- kept them in lockstep so a blank manual dispatch
-#    behaves identically to a push). An operator can still retarget a
-#    one-off run to `rio-build-01` (to pick up its Attic cache) or
-#    `ubuntu-latest` (to rule out camelot-builder-pleme itself) without
-#    editing this file.
+#    `camelot-builder-pleme-eks` to match the push-triggered default (kept
+#    in lockstep so a blank manual dispatch behaves identically to a push).
+#    An operator can still retarget a one-off run to `rio-build-01` (to pick
+#    up its Attic cache) or `ubuntu-latest` (to rule out the ARC pool
+#    entirely) without editing this file.
 # 2. The `rio:8080` Attic substituter is rio's OWN LAN-local cache --
-#    unreachable from anywhere but rio's own network (neither a GH-hosted
-#    runner nor a camelot-builder-pleme pod can resolve `http://rio:8080`).
-#    It stays gated on `runner == 'rio-build-01'` exactly as before, so it
-#    only ever fires on an explicit manual override back to rio.
+#    unreachable from anywhere but rio's own network. It stays gated on
+#    `runner == 'rio-build-01'` exactly as before, so it only ever fires on
+#    an explicit manual override back to rio.
 #
-# Recovery path when camelot-builder-pleme itself is unavailable: check
-# `akeyless-k8s/clusters/camelot-mode1/infrastructure/ci/runner-scale-set-pleme.yaml`
+# Recovery path when camelot-builder-pleme-eks itself is unavailable: check
+# `akeyless-k8s/clusters/camelot-eks/infrastructure/ci/runner-scale-set-pleme.yaml`
 # + its sibling `arc-controller` Kustomization are Ready via the
-# fluxcd-camelot MCP, or fall back to `workflow_dispatch` with
+# fluxcd-camelot-eks MCP, or fall back to `workflow_dispatch` with
 # `runner: ubuntu-latest` for a one-off unblock -- this workflow cannot
 # reconcile cluster state from here, only degrade around the outage.
 #
@@ -78,19 +90,19 @@ on:
         description: 'Version to publish (e.g. 0.1.0); informational — Chart.yaml is source of truth'
         required: false
       runner:
-        description: 'Override the image-build runner label (e.g. rio-build-01 to pick up its Attic cache, or ubuntu-latest to rule out camelot-builder-pleme).'
+        description: 'Override the image-build runner label (e.g. rio-build-01 to pick up its Attic cache, or ubuntu-latest to rule out camelot-builder-pleme-eks).'
         required: false
         # The YAML-native single source of truth for the default runner --
         # a manual dispatch that leaves this blank resolves to this value
         # AT THE INPUT LEVEL (visible in the GH UI, not buried in an
         # expression). A `push` trigger has no `inputs` block at all, so
-        # resolve-runner's `|| 'camelot-builder-pleme'` below still carries
-        # the same literal for that path -- GHA expression strings are
-        # opaque to YAML anchors/aliases (confirmed: an alias can't be
+        # resolve-runner's `|| 'camelot-builder-pleme-eks'` below still
+        # carries the same literal for that path -- GHA expression strings
+        # are opaque to YAML anchors/aliases (confirmed: an alias can't be
         # spliced into the middle of a `${{ }}` string), so a second
         # occurrence for the push-trigger case is the actual floor here,
         # not a missed DRY-up.
-        default: camelot-builder-pleme
+        default: camelot-builder-pleme-eks
 
 permissions:
   contents: write
@@ -109,14 +121,14 @@ jobs:
     name: resolve build runner
     runs-on: ubuntu-latest
     outputs:
-      runner: ${{ inputs.runner || 'camelot-builder-pleme' }}
+      runner: ${{ inputs.runner || 'camelot-builder-pleme-eks' }}
       # rio's Attic cache is reachable ONLY from rio's own LAN, so it is
       # only ever wired up when the target is EXPLICITLY rio-build-01 (a
-      # manual override) -- the default (camelot-builder-pleme) and any
+      # manual override) -- the default (camelot-builder-pleme-eks) and any
       # other override (e.g. ubuntu-latest) both skip it.
       use-rio-cache: ${{ inputs.runner == 'rio-build-01' }}
     steps:
-      - run: echo "runner=${{ inputs.runner || 'camelot-builder-pleme' }}"
+      - run: echo "runner=${{ inputs.runner || 'camelot-builder-pleme-eks' }}"
 
   # The image ships on every merge — the auto-release path. Two flat,
   # static variants (never both); `resolve-runner`'s single boolean output
@@ -124,7 +136,7 @@ jobs:
   # conditional field. `image-rio` is now the NON-DEFAULT variant — it only
   # runs on an explicit `workflow_dispatch` override back to `rio-build-01`
   # (see the top-of-file comment); every push-triggered merge takes
-  # `image-fallback` onto `camelot-builder-pleme`.
+  # `image-fallback` onto `camelot-builder-pleme-eks`.
   #
   # rio-build-01 is a single homelab node (~13Gi free). The embedded build
   # compiles native ruby gems (nio4r, puma, …) + Rust crates from source (no
@@ -138,14 +150,15 @@ jobs:
   # memory-heavy rustc that OOM-killed (signal 9) on r40 under load; cores:1
   # makes that rustc single-threaded → lowest peak RAM regardless of node.
   # Both settings are kept on the fallback variant too -- camelot-builder-
-  # pleme's runner pod caps at 6Gi (runner-scale-set-pleme.yaml
+  # pleme-eks's runner pod caps at 6Gi (akeyless-k8s clusters/camelot-eks/
+  # infrastructure/ci/runner-scale-set-pleme.yaml
   # template.spec.containers[0].resources.limits.memory), TIGHTER than
   # rio's ~13Gi, so the same OOM risk applies there and cores:1/maxJobs:1
   # is the load-bearing mitigation, not a rio-specific tune. Unverified
-  # empirically on camelot-builder-pleme as of this change — watch the
-  # first few real runs for signal-9 exits; if it OOMs even at cores:1,
-  # the fix is a runner-pod memory bump in runner-scale-set-pleme.yaml
-  # (akeyless-k8s), not a further squeeze here.
+  # empirically on camelot-builder-pleme-eks as of this retarget — watch
+  # the first few real runs on this pool for signal-9 exits; if it OOMs
+  # even at cores:1, the fix is a runner-pod memory bump in that same
+  # runner-scale-set-pleme.yaml, not a further squeeze here.
   image-rio:
     name: container image → ghcr.io (rio, manual override only)
     needs: resolve-runner
@@ -179,12 +192,12 @@ jobs:
       GHCR_TOKEN: ${{ secrets.BOT_PAT }}
 
   # The DEFAULT variant for every push-triggered merge: no rio-local cache
-  # (unreachable off rio's LAN), runner is `camelot-builder-pleme` unless
-  # overridden. Cold build (no fleet substituter wired yet), same
-  # memory-safety settings, correct result -- just slower than a
-  # cache-warm rio build.
+  # (unreachable off rio's LAN), runner is `camelot-builder-pleme-eks`
+  # unless overridden. Warm build -- camelot-eks's own sui cache substituter
+  # is reachable from this pool (see extraSubstituters below), unlike
+  # Mode-1's now-retired pool.
   image-fallback:
-    name: container image → ghcr.io (camelot-builder-pleme / override)
+    name: container image → ghcr.io (camelot-builder-pleme-eks / override)
     needs: resolve-runner
     if: needs.resolve-runner.outputs.use-rio-cache != 'true'
     uses: pleme-io/substrate/.github/workflows/image-push.yml@main
@@ -201,12 +214,14 @@ jobs:
       # two-field wiring breathe/image.yml already ships. Only reachable from
       # an ARC pod genuinely inside camelot-eks's own network (its NetworkPolicy
       # gates ingress on pleme.io/estrato=build); a GitHub-hosted runner or a
-      # Mode-1 (camelot-mode1) pod can't resolve this Kubernetes-internal
-      # hostname, so on those targets it's a harmless no-op (nix substituters
-      # fail open). Wired here for parity + for when this job targets an
-      # eks-scoped ARC runner; the runner label itself still needs to point at
-      # camelot-eks specifically to get real cache benefit -- see
-      # pending-camelot-cache: task #20.
+      # Mode-1 pod can't resolve this Kubernetes-internal hostname, so on
+      # those targets it's a harmless no-op (nix substituters fail open).
+      # ACTIVATED 2026-07-19: the default runner above is now
+      # camelot-builder-pleme-eks (Mode-1's pool retired), so this is no
+      # longer a parity-only no-op -- builds on the default path now get
+      # real substitute-cache benefit from sui. pending-camelot-cache: task
+      # #20 tracked the runner-label half of this; that half is done, the
+      # rest of #20 (broader fleet-wide cache coverage) remains open.
       extraSubstituters: ${{ vars.CAMELOT_SUI_SUBSTITUTER }}
       requireSigs: ${{ vars.CAMELOT_SUI_REQUIRE_SIGS }}
     secrets:
