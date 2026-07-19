@@ -196,6 +196,19 @@ jobs:
       runner: ${{ needs.resolve-runner.outputs.runner }}
       buildCores: "1"
       maxJobs: "1"
+      # Camelot's in-cluster sui binary-cache (theory/ATATAME.md's "sui cache
+      # serve" L1 origin, deployed camelot-eks/infrastructure/sui) -- the same
+      # two-field wiring breathe/image.yml already ships. Only reachable from
+      # an ARC pod genuinely inside camelot-eks's own network (its NetworkPolicy
+      # gates ingress on pleme.io/estrato=build); a GitHub-hosted runner or a
+      # Mode-1 (camelot-mode1) pod can't resolve this Kubernetes-internal
+      # hostname, so on those targets it's a harmless no-op (nix substituters
+      # fail open). Wired here for parity + for when this job targets an
+      # eks-scoped ARC runner; the runner label itself still needs to point at
+      # camelot-eks specifically to get real cache benefit -- see
+      # pending-camelot-cache: task #20.
+      extraSubstituters: ${{ vars.CAMELOT_SUI_SUBSTITUTER }}
+      requireSigs: ${{ vars.CAMELOT_SUI_REQUIRE_SIGS }}
     secrets:
       GHCR_TOKEN: ${{ secrets.BOT_PAT }}
 
