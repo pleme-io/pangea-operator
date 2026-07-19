@@ -3005,13 +3005,16 @@ async fn handle_applying(
     // didn't already carry for that address. This enforces the exact
     // same invariant `route_through_approval_gate` enforces before
     // Applying is ever entered — closing the copy of that gap which
-    // reopens mid-Applying whenever imports occur. Tofu-executor path
-    // only (matches this CR's live executor; the magma path doesn't yet
-    // run imports through this same prepass).
+    // reopens mid-Applying whenever imports occur. `run_import_prepass`
+    // runs on BOTH executors (magma imports via `executor.import`, see
+    // that function's magma-native `planned_changes()` discovery tier),
+    // so this gate must too — see `drift_details_from_plan_result`'s doc
+    // for the 2026-07-19 fix that closed the magma-inert gap this
+    // comment used to (incorrectly) claim as a known limitation.
     if plan_file.is_none() && !imported_addresses.is_empty() {
         let recheck = runner.plan(&workspace).await?;
         if recheck.success {
-            let fresh_drifts = drift_details_from_tofu_show_json(&recheck.raw_show_json);
+            let fresh_drifts = drift_details_from_plan_result(&recheck, template, state).await;
             if let Some(escalation) =
                 find_unapproved_destructive_escalation(&prior_drifts, &fresh_drifts)
             {
@@ -5129,13 +5132,15 @@ fn canonical_drift_fingerprint(drifts: &[DriftDetail]) -> String {
 }
 
 /// Extract `DriftDetail`s from a raw `tofu show -json` payload — the
-/// tofu-executor-only slice of `handle_planning`'s two-path drift
-/// extraction, reused by `handle_applying`'s post-import safety
-/// recheck (below). Empty input or a parse failure returns an empty
-/// list rather than propagating an error: the caller treats "no
-/// drift details available" as "cannot prove safety", which the
-/// caller's own fallback (fail closed, requeue to Planning) already
-/// handles correctly.
+/// tofu-executor-only leg of the three-path drift extraction
+/// `handle_planning` uses (see that function's "Three-path drift
+/// extraction" doc comment) and, via `drift_details_from_plan_result`
+/// below, one leg of `handle_applying`'s post-import safety recheck.
+/// Empty input or a parse failure returns an empty list rather than
+/// propagating an error: the caller treats "no drift details
+/// available" as "cannot prove safety", which the caller's own
+/// fallback (fail closed, requeue to Planning) already handles
+/// correctly.
 pub(crate) fn drift_details_from_tofu_show_json(raw_show_json: &str) -> Vec<DriftDetail> {
     if raw_show_json.is_empty() {
         return Vec::new();
@@ -5158,6 +5163,58 @@ pub(crate) fn drift_details_from_tofu_show_json(raw_show_json: &str) -> Vec<Drif
             Vec::new()
         }
     }
+}
+
+/// Extract fresh `DriftDetail`s from a `PlanResult`, honoring the SAME
+/// three-path shape `handle_planning`'s drift extraction uses (tofu's
+/// `raw_show_json` / magma's disk-fallback `artifact` / magma's
+/// DB-backed bundle fetched back from Postgres via
+/// `fetch_db_backed_cycle_artifact`).
+///
+/// This exists because `handle_applying`'s r101 post-import safety
+/// recheck (the SAFETY GATE above) used to call
+/// `drift_details_from_tofu_show_json` directly against
+/// `PlanResult.raw_show_json` — which `MagmaWorkspaceRunner::plan`
+/// ALWAYS sets to an empty string (see that method's doc comment: "Magma
+/// doesn't emit tofu-format show-JSON"), on BOTH the disk-fallback path
+/// AND the production DB-backed path. That made `fresh_drifts` always
+/// empty for every magma-executed CR — the fleet's default executor —
+/// so `find_unapproved_destructive_escalation` never had a non-empty
+/// `fresh` list to search and the r101 gate was silently a no-op under
+/// magma. Fixed 2026-07-19 by reusing the exact DB-backed extraction
+/// path that closed the same class of gap in `handle_planning` (the
+/// 2026-07-17 plan-hash-collision incident) — no new plan-shape
+/// parsing, no new artifact plumbing, just the already-typed
+/// `CycleArtifact` this same `runner.plan()` call already persisted.
+///
+/// Soundness note: `plan_result` here is always the output of a plan
+/// call issued *after* the import prepass ran (see the SAFETY GATE call
+/// site), so every leg below reads data from THAT fresh plan, never a
+/// stale pre-import one — `MagmaExecutor::plan` recomputes from live
+/// state and unconditionally re-persists (`put_plan`/`put_bundle`)
+/// before returning, so the DB-backed leg's `fetch_db_backed_cycle_artifact`
+/// fetch reads back exactly the bundle this same call just wrote.
+async fn drift_details_from_plan_result(
+    plan_result: &crate::executor::workspace_runner::PlanResult,
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+) -> Vec<DriftDetail> {
+    if !plan_result.raw_show_json.is_empty() {
+        return drift_details_from_tofu_show_json(&plan_result.raw_show_json);
+    }
+    if let Some(art) = plan_result.artifact.as_ref() {
+        return plan_summary_and_drifts_from_artifact(art).1;
+    }
+    if let Some(art) = fetch_db_backed_cycle_artifact(template, state).await {
+        return plan_summary_and_drifts_from_artifact(&art).1;
+    }
+    warn!(
+        template = %template.name_any(),
+        "post-import recheck: plan succeeded but produced no analyzable output \
+         (no show-JSON, no artifact, no DB-backed bundle) — treating as zero \
+         fresh drift (fails open, matching the existing failed-recheck fallthrough)"
+    );
+    Vec::new()
 }
 
 /// The single source of truth for what counts as a **destructive** IaC
