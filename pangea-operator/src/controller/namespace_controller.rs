@@ -1,14 +1,18 @@
 //! Controller for PangeaNamespace resources.
 
-use crate::crd::{BackendType, PangeaNamespace, PangeaNamespaceStatus};
+use crate::backend::{BackendManager, Credentials};
+use crate::crd::{BackendType, PangeaNamespace, PangeaNamespaceStatus, PostgresSecretRef};
 use crate::error::{Error, Result};
 
 use futures::StreamExt;
+use k8s_openapi::api::core::v1::Secret;
+use k8s_openapi::ByteString;
 use kube::{
     api::{Api, Patch, PatchParams},
     runtime::controller::Action,
     ResourceExt,
 };
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use tracing::{debug, error, info, instrument};
 
@@ -94,9 +98,21 @@ async fn reconcile_namespace(
     // Validate backend configuration
     validate_backend(&namespace)?;
 
-    // Verify backend connectivity
-    let backend_ready = match namespace.spec.backend.r#type {
-        BackendType::Pg => verify_postgres_backend(&namespace, &state).await,
+    // Verify backend connectivity. For Postgres this resolves the
+    // credentials Secret and opens a real connection (which
+    // `PostgresBackend::connect` liveness-probes with `SELECT 1`) —
+    // the connected `BackendManager` is handed back and reused below
+    // for schema provisioning, so one reconcile tick pays for one
+    // connection pool, not two.
+    let mut pg_manager: Option<BackendManager> = None;
+    let backend_ready: Result<bool> = match namespace.spec.backend.r#type {
+        BackendType::Pg => match verify_postgres_backend(&namespace, &state).await {
+            Ok(manager) => {
+                pg_manager = Some(manager);
+                Ok(true)
+            }
+            Err(e) => Err(e),
+        },
         BackendType::S3 => verify_s3_backend(&namespace).await,
         BackendType::Local => Ok(true),
     };
@@ -111,9 +127,13 @@ async fn reconcile_namespace(
     update_status(&namespace, ready, error_msg, &state).await?;
 
     if ready {
-        // Ensure PostgreSQL schema exists
-        if namespace.uses_postgres() {
-            ensure_schema(&namespace, &state).await?;
+        // Ensure PostgreSQL schema exists — reuses the connection
+        // established by `verify_postgres_backend` above. `pg_manager`
+        // is `Some` exactly when the backend is Postgres AND the
+        // connectivity check succeeded, so this is unrepresentable
+        // without a live, verified connection.
+        if let Some(manager) = pg_manager.as_ref() {
+            ensure_schema(&namespace, manager).await?;
         }
         Ok(Action::requeue(DEFAULT_REQUEUE_INTERVAL))
     } else {
@@ -146,10 +166,20 @@ fn validate_backend(namespace: &PangeaNamespace) -> Result<()> {
 }
 
 /// Verify PostgreSQL backend connectivity.
+///
+/// Resolves `spec.backend.pg.secretRef` from the referenced Kubernetes
+/// Secret and drives a real `BackendManager::from_namespace` connect.
+/// `PostgresBackend::connect` opens a pool AND executes a `SELECT 1`
+/// liveness probe while establishing it, so a bad host, expired
+/// credentials, or an unreachable database surface here as a typed
+/// `Error::Database` / `Error::Config` / `Error::SecretNotFound` —
+/// never the previous "pg config is syntactically present ⇒ ready"
+/// false positive. On success, returns the connected manager for reuse
+/// by [`ensure_schema`].
 async fn verify_postgres_backend(
     namespace: &PangeaNamespace,
-    _state: &ControllerState,
-) -> Result<bool> {
+    state: &ControllerState,
+) -> Result<BackendManager> {
     let pg = namespace
         .spec
         .backend
@@ -157,18 +187,119 @@ async fn verify_postgres_backend(
         .as_ref()
         .ok_or_else(|| Error::Config("Missing PostgreSQL configuration".into()))?;
 
-    // TODO: Resolve credentials from Secret
-    // TODO: Test connection to PostgreSQL
-
     debug!(
         host = %pg.host,
         port = %pg.port,
         database = %pg.database,
-        "PostgreSQL backend configured"
+        "Verifying PostgreSQL backend connectivity"
     );
 
-    // For now, assume ready if configuration exists
-    Ok(true)
+    let credentials = resolve_pg_credentials(&pg.secret_ref, state).await?;
+
+    BackendManager::from_namespace(namespace, credentials).await
+}
+
+/// Resolve PostgreSQL credentials from the Kubernetes Secret referenced
+/// by `secretRef`. Mirrors the Secret-fetch pattern in
+/// `controller::template::provider_creds` (get-or-`SecretNotFound`,
+/// decode `data` values as UTF-8), specialized to the
+/// username/password/CA-cert keys `PostgresSecretRef` declares.
+async fn resolve_pg_credentials(
+    secret_ref: &PostgresSecretRef,
+    state: &ControllerState,
+) -> Result<Credentials> {
+    let ns = resolve_secret_namespace(
+        secret_ref.namespace.as_deref(),
+        std::env::var("POD_NAMESPACE").ok().as_deref(),
+    );
+
+    let secret_api: Api<Secret> = Api::namespaced(state.client.clone(), &ns);
+    let secret = secret_api
+        .get(&secret_ref.name)
+        .await
+        .map_err(|_| Error::SecretNotFound {
+            namespace: ns.clone(),
+            name: secret_ref.name.clone(),
+        })?;
+
+    let data = secret.data.as_ref().ok_or_else(|| {
+        Error::Config(format!(
+            "PostgreSQL credentials secret {}/{} has no data",
+            ns, secret_ref.name
+        ))
+    })?;
+
+    credentials_from_secret_data(secret_ref, &ns, data)
+}
+
+/// Pure extraction of [`Credentials`] from a Secret's decoded `data`
+/// map — split out from [`resolve_pg_credentials`] so the key-lookup
+/// logic (default vs. custom `username_key`/`password_key`/
+/// `ca_cert_key`, and the typed errors when a declared key is missing)
+/// is unit-testable without a live Kubernetes API.
+fn credentials_from_secret_data(
+    secret_ref: &PostgresSecretRef,
+    secret_namespace: &str,
+    data: &BTreeMap<String, ByteString>,
+) -> Result<Credentials> {
+    let username = data
+        .get(secret_ref.username_key.as_str())
+        .map(|v| String::from_utf8_lossy(&v.0).to_string())
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "key '{}' not found in PostgreSQL secret {}/{}",
+                secret_ref.username_key, secret_namespace, secret_ref.name
+            ))
+        })?;
+
+    let password = data
+        .get(secret_ref.password_key.as_str())
+        .map(|v| String::from_utf8_lossy(&v.0).to_string())
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "key '{}' not found in PostgreSQL secret {}/{}",
+                secret_ref.password_key, secret_namespace, secret_ref.name
+            ))
+        })?;
+
+    let mut credentials = Credentials::new(username, password);
+
+    // A declared `ca_cert_key` that isn't actually present in the
+    // Secret fails loudly (a misconfigured/rotated Secret must not
+    // silently drop custom-CA verification and connect as if it
+    // weren't configured — no silent security downgrades).
+    if let Some(ca_cert_key) = secret_ref.ca_cert_key.as_deref() {
+        let ca_cert = data
+            .get(ca_cert_key)
+            .map(|v| String::from_utf8_lossy(&v.0).to_string())
+            .ok_or_else(|| {
+                Error::Config(format!(
+                    "key '{}' not found in PostgreSQL secret {}/{}",
+                    ca_cert_key, secret_namespace, secret_ref.name
+                ))
+            })?;
+        credentials = credentials.with_ca_cert(ca_cert);
+    }
+
+    Ok(credentials)
+}
+
+/// Resolve the namespace to look up a `PostgresSecretRef` in.
+///
+/// `PangeaNamespace` is cluster-scoped (unlike `InfrastructureTemplate`,
+/// it has no owning namespace of its own to default a bare secret
+/// reference to), so an explicit `secretRef.namespace` wins, falling
+/// back to `POD_NAMESPACE` and finally the fleet-wide `"pangea-system"`
+/// convention already used by `leader::LeaderConfig::from_env` /
+/// `config::detect_identity`. Takes the env value as a parameter (rather
+/// than reading `std::env::var` itself) so this resolution logic is
+/// unit-testable without mutating global process state.
+fn resolve_secret_namespace(explicit: Option<&str>, pod_namespace_env: Option<&str>) -> String {
+    explicit
+        .filter(|s| !s.is_empty())
+        .or_else(|| pod_namespace_env.filter(|s| !s.is_empty()))
+        .unwrap_or("pangea-system")
+        .to_string()
 }
 
 /// Verify S3 backend configuration.
@@ -191,15 +322,17 @@ async fn verify_s3_backend(namespace: &PangeaNamespace) -> Result<bool> {
 }
 
 /// Ensure PostgreSQL schema exists for this namespace.
-async fn ensure_schema(namespace: &PangeaNamespace, _state: &ControllerState) -> Result<()> {
+///
+/// Issues a real `CREATE SCHEMA IF NOT EXISTS` via the already-connected
+/// `BackendManager`'s `SchemaManager` — the shipped, previously-unused
+/// `backend::SchemaManager::ensure_schema` (which validates the schema
+/// name against SQL-injection before executing).
+async fn ensure_schema(namespace: &PangeaNamespace, manager: &BackendManager) -> Result<()> {
     let schema_name = namespace.schema_name();
 
     debug!(schema_name = %schema_name, "Ensuring PostgreSQL schema exists");
 
-    // TODO: Connect to PostgreSQL and create schema if not exists
-    // CREATE SCHEMA IF NOT EXISTS {schema_name};
-
-    Ok(())
+    manager.schema_manager().ensure_schema(&schema_name).await
 }
 
 /// Update namespace status.
@@ -234,9 +367,8 @@ async fn update_status(
         .and_then(|s| s.last_verified_at)
         .map(|t| now.signed_duration_since(t));
 
-    let meaningful_change = prev_ready != backend_ready
-        || prev_error != error
-        || prev_schema != schema_name;
+    let meaningful_change =
+        prev_ready != backend_ready || prev_error != error || prev_schema != schema_name;
     let stale = last_verified_age
         .map(|d| d >= chrono::Duration::seconds(60))
         .unwrap_or(true);
@@ -268,11 +400,7 @@ async fn update_status(
 }
 
 /// Error policy for the namespace controller.
-fn error_policy(
-    _obj: Arc<PangeaNamespace>,
-    error: &Error,
-    ctx: Arc<ControllerState>,
-) -> Action {
+fn error_policy(_obj: Arc<PangeaNamespace>, error: &Error, ctx: Arc<ControllerState>) -> Action {
     crate::controller::error_policy::run_error_policy(
         &ctx.metrics,
         crate::crd::ControllerKind::Namespace,
@@ -365,5 +493,155 @@ mod deep_tests {
             s3: None,
         });
         assert!(validate_backend(&n).is_ok());
+    }
+}
+
+/// Tests for the Secret → `Credentials` resolution logic that
+/// [`verify_postgres_backend`]/[`ensure_schema`] depend on. Before this
+/// change, `verify_postgres_backend` never called any of this code —
+/// it unconditionally returned `Ok(true)` whenever `spec.backend.pg`
+/// was merely present. These tests exercise the real credential
+/// extraction now load-bearing for `PangeaNamespace.status.backendReady`.
+#[cfg(test)]
+mod credential_resolution_tests {
+    use super::{credentials_from_secret_data, resolve_secret_namespace};
+    use crate::crd::PostgresSecretRef;
+    use k8s_openapi::ByteString;
+    use std::collections::BTreeMap;
+
+    fn secret_ref() -> PostgresSecretRef {
+        PostgresSecretRef {
+            name: "db-secret".to_string(),
+            namespace: None,
+            username_key: "username".to_string(),
+            password_key: "password".to_string(),
+            ca_cert_key: None,
+        }
+    }
+
+    fn data(pairs: &[(&str, &str)]) -> BTreeMap<String, ByteString> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), ByteString(v.as_bytes().to_vec())))
+            .collect()
+    }
+
+    #[test]
+    fn resolves_username_and_password_with_default_keys() {
+        let d = data(&[("username", "pangea"), ("password", "s3cr3t")]);
+        let creds = credentials_from_secret_data(&secret_ref(), "pangea-system", &d)
+            .expect("username+password present");
+        assert_eq!(creds.username, "pangea");
+        assert_eq!(creds.password, "s3cr3t");
+        assert!(creds.ca_cert.is_none());
+    }
+
+    #[test]
+    fn resolves_with_custom_key_names() {
+        let sref = PostgresSecretRef {
+            username_key: "db_user".to_string(),
+            password_key: "db_pwd".to_string(),
+            ..secret_ref()
+        };
+        let d = data(&[("db_user", "custom-user"), ("db_pwd", "custom-pass")]);
+        let creds =
+            credentials_from_secret_data(&sref, "pangea-system", &d).expect("custom keys present");
+        assert_eq!(creds.username, "custom-user");
+        assert_eq!(creds.password, "custom-pass");
+    }
+
+    /// The load-bearing regression case: a `PostgresSecretRef` whose
+    /// Secret exists but is missing the username key must NOT silently
+    /// resolve to empty/absent credentials — it must be a typed,
+    /// diagnosable error (this is exactly the class of bug that let
+    /// `verify_postgres_backend` previously report `backendReady=true`
+    /// with no real credentials at all).
+    #[test]
+    fn missing_username_key_is_a_typed_error() {
+        let d = data(&[("password", "s3cr3t")]);
+        let err = credentials_from_secret_data(&secret_ref(), "pangea-system", &d)
+            .expect_err("missing username must error, not silently succeed");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("username"),
+            "error should name the missing key: {msg}"
+        );
+        assert!(
+            msg.contains("db-secret"),
+            "error should name the secret: {msg}"
+        );
+    }
+
+    #[test]
+    fn missing_password_key_is_a_typed_error() {
+        let d = data(&[("username", "pangea")]);
+        let err = credentials_from_secret_data(&secret_ref(), "pangea-system", &d)
+            .expect_err("missing password must error, not silently succeed");
+        assert!(format!("{err}").contains("password"));
+    }
+
+    #[test]
+    fn resolves_ca_cert_when_key_present() {
+        let sref = PostgresSecretRef {
+            ca_cert_key: Some("ca.crt".to_string()),
+            ..secret_ref()
+        };
+        let d = data(&[
+            ("username", "pangea"),
+            ("password", "s3cr3t"),
+            (
+                "ca.crt",
+                "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----",
+            ),
+        ]);
+        let creds =
+            credentials_from_secret_data(&sref, "pangea-system", &d).expect("ca cert present");
+        assert!(creds.ca_cert.unwrap().contains("BEGIN CERTIFICATE"));
+    }
+
+    /// A declared `caCertKey` that isn't actually in the Secret must
+    /// fail loudly rather than silently connecting without custom-CA
+    /// verification — a misconfigured Secret must not downgrade TLS
+    /// trust silently.
+    #[test]
+    fn declared_but_missing_ca_cert_key_is_a_typed_error() {
+        let sref = PostgresSecretRef {
+            ca_cert_key: Some("ca.crt".to_string()),
+            ..secret_ref()
+        };
+        let d = data(&[("username", "pangea"), ("password", "s3cr3t")]);
+        let err = credentials_from_secret_data(&sref, "pangea-system", &d)
+            .expect_err("declared but absent ca_cert_key must error");
+        assert!(format!("{err}").contains("ca.crt"));
+    }
+
+    #[test]
+    fn no_ca_cert_key_declared_yields_no_ca_cert_and_no_error() {
+        let d = data(&[("username", "pangea"), ("password", "s3cr3t")]);
+        let creds = credentials_from_secret_data(&secret_ref(), "pangea-system", &d).unwrap();
+        assert!(creds.ca_cert.is_none());
+    }
+
+    #[test]
+    fn explicit_namespace_wins() {
+        assert_eq!(
+            resolve_secret_namespace(Some("db-ns"), Some("pod-ns")),
+            "db-ns"
+        );
+    }
+
+    #[test]
+    fn falls_back_to_pod_namespace_env_when_no_explicit_namespace() {
+        assert_eq!(resolve_secret_namespace(None, Some("pod-ns")), "pod-ns");
+    }
+
+    #[test]
+    fn falls_back_to_pangea_system_when_nothing_set() {
+        assert_eq!(resolve_secret_namespace(None, None), "pangea-system");
+    }
+
+    #[test]
+    fn empty_explicit_namespace_falls_through_like_none() {
+        assert_eq!(resolve_secret_namespace(Some(""), Some("pod-ns")), "pod-ns");
     }
 }
