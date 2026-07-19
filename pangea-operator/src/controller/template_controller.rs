@@ -5242,11 +5242,8 @@ async fn drift_details_from_plan_result(
     template: &InfrastructureTemplate,
     state: &ControllerState,
 ) -> Vec<DriftDetail> {
-    if !plan_result.raw_show_json.is_empty() {
-        return drift_details_from_tofu_show_json(&plan_result.raw_show_json);
-    }
-    if let Some(art) = plan_result.artifact.as_ref() {
-        return plan_summary_and_drifts_from_artifact(art).1;
+    if let Some(drifts) = drift_details_from_plan_result_sync(plan_result) {
+        return drifts;
     }
     if let Some(art) = fetch_db_backed_cycle_artifact(template, state).await {
         return plan_summary_and_drifts_from_artifact(&art).1;
@@ -5258,6 +5255,184 @@ async fn drift_details_from_plan_result(
          fresh drift (fails open, matching the existing failed-recheck fallthrough)"
     );
     Vec::new()
+}
+
+/// The two synchronous, `ControllerState`-free legs of
+/// `drift_details_from_plan_result`: tofu's `raw_show_json`, and
+/// magma's disk-fallback `artifact`. Factored out so the fix's core
+/// logic — that a magma `PlanResult` (empty `raw_show_json`) must still
+/// yield real drift details when it carries a typed `artifact` — is
+/// directly unit-testable without constructing a `ControllerState`
+/// (which needs a live k8s `Client` and isn't test-constructible
+/// anywhere in this codebase today; see
+/// `drift_details_from_plan_result_tests`, below). Returns `None` when
+/// neither leg has data, telling the caller to fall through to the
+/// DB-backed fetch (the only leg that genuinely needs `state`).
+fn drift_details_from_plan_result_sync(
+    plan_result: &crate::executor::workspace_runner::PlanResult,
+) -> Option<Vec<DriftDetail>> {
+    if !plan_result.raw_show_json.is_empty() {
+        return Some(drift_details_from_tofu_show_json(&plan_result.raw_show_json));
+    }
+    if let Some(art) = plan_result.artifact.as_ref() {
+        return Some(plan_summary_and_drifts_from_artifact(art).1);
+    }
+    None
+}
+
+#[cfg(test)]
+mod drift_details_from_plan_result_tests {
+    use super::{
+        drift_details_from_plan_result_sync, drift_details_from_tofu_show_json,
+        find_unapproved_destructive_escalation,
+    };
+    use crate::crd::DriftDetail;
+    use crate::executor::cycle_artifact::{CycleArtifact, PlanAction, TypedResourceChange};
+    use crate::executor::workspace_runner::PlanResult;
+
+    fn drift(address: &str, action: &str) -> DriftDetail {
+        DriftDetail {
+            address: address.to_string(),
+            action: action.to_string(),
+            risk: "low".to_string(),
+            attributes: vec![],
+            policy_decision: None,
+            matched_policy: None,
+        }
+    }
+
+    fn magma_plan_result_with_artifact(artifact: CycleArtifact) -> PlanResult {
+        // Mirrors `MagmaWorkspaceRunner::plan`'s ACTUAL shape on the
+        // disk-fallback path: `raw_show_json` is always an empty
+        // string (magma emits no tofu-format show-JSON — see that
+        // method's own doc comment), `artifact` is populated directly.
+        PlanResult {
+            artifact: Some(artifact),
+            plan_file: None,
+            raw_stdout: String::new(),
+            raw_show_json: String::new(),
+            has_changes: true,
+            success: true,
+            raw_stderr: String::new(),
+        }
+    }
+
+    // ── The bug this closes, reproduced directly (2026-07-19) ────────
+    //
+    // Before the fix, `handle_applying`'s r101 SAFETY GATE called
+    // `drift_details_from_tofu_show_json(&recheck.raw_show_json)`
+    // directly. On a magma `PlanResult` `raw_show_json` is UNCONDITIONALLY
+    // empty, so that call always returned `Vec::new()` regardless of
+    // what the plan actually contained — silently disarming the gate
+    // for every magma-executed CR. This test proves both halves: the
+    // OLD code path is empty even though the plan clearly carries a
+    // destructive `replace`, and the NEW sync helper correctly surfaces
+    // it.
+    #[test]
+    fn old_tofu_only_extraction_missed_a_destructive_replace_a_magma_plan_result_carries() {
+        let art = CycleArtifact {
+            action_distribution: CycleArtifact::action_distribution_from(&[TypedResourceChange {
+                address: "aws_eks_cluster.camelot-eks".to_string(),
+                action: PlanAction::Replace,
+                severity: crate::executor::cycle_artifact::action_to_severity(&PlanAction::Replace),
+            }]),
+            resource_changes: vec![TypedResourceChange {
+                address: "aws_eks_cluster.camelot-eks".to_string(),
+                action: PlanAction::Replace,
+                severity: crate::executor::cycle_artifact::action_to_severity(&PlanAction::Replace),
+            }],
+            ..Default::default()
+        };
+        let plan_result = magma_plan_result_with_artifact(art);
+
+        // OLD behavior (what the gate did before this fix): parse
+        // `raw_show_json` directly — always empty for magma, so this
+        // MUST stay empty even though the plan has a real replace.
+        let old_extraction = drift_details_from_tofu_show_json(&plan_result.raw_show_json);
+        assert!(
+            old_extraction.is_empty(),
+            "sanity check: this is the exact blind spot the fix closes — \
+             raw_show_json is unconditionally empty on the magma path"
+        );
+
+        // NEW behavior: the sync helper falls through to `artifact`
+        // and surfaces the destructive replace.
+        let fresh_drifts = drift_details_from_plan_result_sync(&plan_result)
+            .expect("a magma PlanResult with a populated artifact must yield Some(..)");
+        assert_eq!(fresh_drifts.len(), 1);
+        assert_eq!(fresh_drifts[0].address, "aws_eks_cluster.camelot-eks");
+        assert_eq!(fresh_drifts[0].action, "replace");
+    }
+
+    // ── End-to-end shape: the r101 gate's own escalation check, fed
+    // by the NEW extraction, correctly flags the exact camelot-eks
+    // incident scenario on a magma-shaped PlanResult. ──────────────────
+    #[test]
+    fn magma_plan_result_feeds_the_r101_escalation_check_correctly() {
+        let approved = vec![drift("aws_eks_node_group.system_ng", "create")];
+        let art = CycleArtifact {
+            action_distribution: CycleArtifact::action_distribution_from(&[
+                TypedResourceChange {
+                    address: "aws_eks_cluster.camelot-eks".to_string(),
+                    action: PlanAction::Replace,
+                    severity: crate::executor::cycle_artifact::action_to_severity(
+                        &PlanAction::Replace,
+                    ),
+                },
+                TypedResourceChange {
+                    address: "aws_eks_node_group.system_ng".to_string(),
+                    action: PlanAction::Create,
+                    severity: crate::executor::cycle_artifact::action_to_severity(
+                        &PlanAction::Create,
+                    ),
+                },
+            ]),
+            resource_changes: vec![
+                TypedResourceChange {
+                    address: "aws_eks_cluster.camelot-eks".to_string(),
+                    action: PlanAction::Replace,
+                    severity: crate::executor::cycle_artifact::action_to_severity(
+                        &PlanAction::Replace,
+                    ),
+                },
+                TypedResourceChange {
+                    address: "aws_eks_node_group.system_ng".to_string(),
+                    action: PlanAction::Create,
+                    severity: crate::executor::cycle_artifact::action_to_severity(
+                        &PlanAction::Create,
+                    ),
+                },
+            ],
+            ..Default::default()
+        };
+        let plan_result = magma_plan_result_with_artifact(art);
+
+        let fresh_drifts = drift_details_from_plan_result_sync(&plan_result).unwrap_or_default();
+        let escalation = find_unapproved_destructive_escalation(&approved, &fresh_drifts);
+        assert_eq!(
+            escalation.map(|d| d.address.as_str()),
+            Some("aws_eks_cluster.camelot-eks"),
+            "the r101 gate must flag the unapproved replace once fed the magma-correct \
+             extraction — this is exactly what stayed silently unflagged before the fix"
+        );
+    }
+
+    #[test]
+    fn tofu_raw_show_json_leg_is_unaffected_when_populated() {
+        // Sanity: the pre-existing tofu path (raw_show_json non-empty)
+        // must keep working exactly as before — this fix only adds
+        // legs, it doesn't reorder tofu's.
+        let plan_result = PlanResult {
+            artifact: None,
+            plan_file: None,
+            raw_stdout: String::new(),
+            raw_show_json: String::new(),
+            has_changes: false,
+            success: true,
+            raw_stderr: String::new(),
+        };
+        assert!(drift_details_from_plan_result_sync(&plan_result).is_none());
+    }
 }
 
 /// The single source of truth for what counts as a **destructive** IaC
