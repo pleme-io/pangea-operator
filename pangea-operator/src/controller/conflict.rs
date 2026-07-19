@@ -317,9 +317,12 @@ async fn gather_attrs(
 /// apply`. Returns `Ok(None)` when conflict resolution is disabled for
 /// this template (caller proceeds with the original failure unchanged),
 /// or `Ok(Some(outcome))` after running the import + re-apply loop.
-/// `Err` propagates only from the destroyProtection safety net's own
-/// `update_phase_with_error` call (a genuine K8s status-patch failure) —
-/// never from the conflict-resolution logic itself.
+/// `Err` propagates from the destroyProtection safety net's own
+/// `update_phase_with_error` call (a genuine K8s status-patch failure)
+/// and from resolving a credential-aware executor below (a
+/// `PANGEA_FORBID_TOFU` violation, or a `spec.providerCredentials`
+/// Secret read failure) — never from the conflict-resolution logic
+/// itself.
 ///
 /// `failed_result` is the apply result that just failed; the caller
 /// passes the three workspace paths so this module needs no `Workspace`
@@ -341,7 +344,26 @@ pub async fn resolve_conflicts_post_apply(
     // the conflict-resolution import + re-apply loop through MagmaExecutor;
     // everything else stays on the shared tofu executor. Mirrors the
     // selection every phase handler in template_controller now makes.
-    let executor = state.executor_for(template);
+    //
+    // MUST be the credential-aware constructor, not the bare
+    // `executor_for`: this function's loop below issues REAL provider
+    // RPCs (`executor.import()` and `executor.apply()`, re-applying with
+    // a freshly recomputed plan). On the magma path credentials are
+    // carried IN the executor instance itself (threaded into
+    // `ApplyContext` at call time, never baked into an on-disk file the
+    // way tofu's `providers.tf.json` is) — a `MagmaExecutor` built via
+    // the sync, credential-blind `executor_for` has an EMPTY
+    // `provider_configs` map, so every mutating RPC it issues silently
+    // falls back to the provider plugin's own ambient credential chain
+    // (pod env / EC2 instance role) instead of `spec.providerCredentials`.
+    // This was confirmed live: an `AttachRolePolicy` call during a
+    // post-import re-apply ran under the wrong ambient instance-role
+    // credentials despite `spec.providerCredentials` being correctly
+    // declared on the CR — because this function's `executor` was built
+    // credential-blind while `handle_applying`'s primary apply path
+    // (correctly) resolves credentials via this same constructor. Per
+    // ★★ MAGMA-NATIVE; mirrors `handle_applying` / `handle_destroying`.
+    let executor = state.executor_for_checked_with_creds(template).await?;
 
     let max_rounds = policy.rounds();
     let variables = template.spec.variables.clone().unwrap_or_default();

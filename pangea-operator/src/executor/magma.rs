@@ -95,10 +95,13 @@ use crate::executor::tofu::TofuResult;
 // writes the whole row back — and `StateBackend::save_state` is a
 // plain last-write-wins upsert (no compare-and-swap, no advisory
 // lock). Worse, `ControllerState::magma_executor_with_provider_configs`
-// constructs a FRESH `MagmaExecutor` on every call (see
-// `try_tofu_import`'s `state.executor_for(template)`), so a lock field
-// on `&self` can't serialize anything — two concurrent `import()`
-// calls for the SAME template never share an instance.
+// constructs a FRESH `MagmaExecutor` per call site (`try_tofu_import`'s
+// concurrent dispatch shares ONE credential-aware instance across its
+// own `buffer_unordered` fan-out via `Arc::clone`, but `conflict.rs`'s
+// `resolve_conflicts_post_apply` builds its own separate instance), so
+// a lock field on `&self` still can't serialize the general case —
+// concurrent `import()` calls for the SAME template from DIFFERENT call
+// sites (or different reconcile ticks) never share an instance.
 //
 // This keyed, process-wide registry closes that gap: every
 // `MagmaExecutor::import()` call acquires the lock for its
@@ -1895,6 +1898,90 @@ mod tests {
         assert_eq!(state.resources.len(), 1);
         assert_eq!(state.resources[0].address.type_id.0, "aws_iam_role");
         assert_eq!(state.resources[0].address.name, "adopted");
+    }
+
+    /// Mechanism pin for the credential-drop class closed in
+    /// `controller::template_controller::try_tofu_import` and
+    /// `controller::conflict::resolve_conflicts_post_apply` (both used to
+    /// build their `IacExecutor` via the sync, credential-blind
+    /// `ControllerState::executor_for`, whose magma arm always
+    /// constructs a `MagmaExecutor` with an EMPTY `provider_configs` map
+    /// — see `magma_executor_for`'s doc comment: "no
+    /// spec.providerCredentials forwarding ... the mutating apply/destroy
+    /// path resolves creds via `executor_for_checked_with_creds`"; those
+    /// two call sites were the mutating exceptions that never got
+    /// updated). `import()` / `apply()` / `destroy()` all thread
+    /// credentials into the provider RPC exclusively via
+    /// `build_provider_configs`, which folds the rendered config's own
+    /// `provider "<name>" {}` blocks with `self.cfg.provider_configs` —
+    /// the ONLY carrier for `spec.providerCredentials` once it has been
+    /// resolved by the controller layer. A provider with NO rendered
+    /// block (rio's cloudflare provider; an AWS provider block that
+    /// deliberately omits explicit keys) gets ZERO credentials unless
+    /// `provider_configs` was populated at CONSTRUCTION time — this is
+    /// the live incident's exact shape: an `AttachRolePolicy` RPC issued
+    /// through an executor built via the credential-blind constructor
+    /// silently ran under the pod's ambient EC2 instance-role credentials
+    /// instead of the CR's declared `spec.providerCredentials`.
+    #[tokio::test]
+    async fn build_provider_configs_drops_spec_provider_credentials_when_constructed_credential_blind(
+    ) {
+        let tmp = tempfile::tempdir().unwrap();
+        render_workspace(
+            tmp.path(),
+            &json!({
+                // No top-level "provider" block at all — the exact shape
+                // rio's rendered config has for cloudflare, and any
+                // template whose AWS identity is meant to come from
+                // spec.providerCredentials rather than an inline
+                // provider block.
+                "resource": { "aws_iam_role": { "r": { "name": "x" } } },
+            }),
+        )
+        .await;
+        let cfg = MagmaExecutor::<InMemoryStateBackend>::load_config(tmp.path())
+            .await
+            .unwrap();
+
+        // Credential-BLIND construction — what the pre-fix
+        // `state.executor_for()` built for `try_tofu_import` /
+        // `resolve_conflicts_post_apply` (`provider_configs` empty, the
+        // same shape `magma_executor_for` produces).
+        let blind = MagmaExecutor::new(fixture_config());
+        assert!(
+            blind.build_provider_configs(&cfg).is_empty(),
+            "an executor built with an empty provider_configs map must \
+             produce NO provider credentials for a provider with no \
+             rendered block — this is the exact silent-ambient-credential \
+             fallback the live incident hit"
+        );
+
+        // Credential-AWARE construction — what
+        // `state.executor_for_checked_with_creds()` builds
+        // (spec.providerCredentials resolved by the controller layer and
+        // threaded into MagmaExecutorConfig.provider_configs). Both
+        // fixed call sites now route through this constructor.
+        let mut aware_cfg = fixture_config();
+        aware_cfg.provider_configs.insert(
+            "aws".to_string(),
+            json!({
+                "region": "us-east-1",
+                "access_key": "AKIA_FAKE",
+                "secret_key": "fake-secret",
+            }),
+        );
+        let aware = MagmaExecutor::new(aware_cfg);
+        let built = aware.build_provider_configs(&cfg);
+        assert_eq!(
+            built
+                .get("aws")
+                .and_then(|v| v.get("access_key"))
+                .and_then(|v| v.as_str()),
+            Some("AKIA_FAKE"),
+            "an executor built WITH provider_configs must carry \
+             spec.providerCredentials through to the provider RPC even \
+             when the rendered config has no matching provider block"
+        );
     }
 
     /// The load-bearing regression this whole fix closes: a

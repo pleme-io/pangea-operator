@@ -4206,38 +4206,74 @@ async fn run_import_prepass(
     // serial=1/15s = 7000s+ ≈ 2h; buffer_unordered(10) ≈ 12-15min.
     const IMPORT_CONCURRENCY: usize = 10;
     let total_targets = targets.len();
-    if total_targets > 0 {
-        info!(
-            total = total_targets,
-            concurrency = IMPORT_CONCURRENCY,
-            "Running import prepass concurrently"
-        );
+    if total_targets == 0 {
+        return Vec::new();
     }
+
+    // Credential-aware executor for the actual import RPCs. `executor`
+    // above (built via the sync, credential-blind `state.executor_for`)
+    // is fine for DISCOVERY — `planned_changes()` / `show_plan()` only
+    // read an already-computed plan (Postgres row or local checkpoint),
+    // never a live provider RPC. `try_tofu_import` below is different:
+    // it calls `executor.import()`, which on the magma path DOES issue
+    // a real provider Read/Import RPC. Magma carries provider
+    // credentials IN the executor instance (threaded into `ApplyContext`
+    // at call time — never baked into an on-disk file the way tofu's
+    // `providers.tf.json` is), so an executor built via the
+    // credential-blind constructor has an EMPTY `provider_configs` map
+    // and every RPC it issues silently falls back to the provider
+    // plugin's own ambient credential chain (pod env / EC2 instance
+    // role) instead of `spec.providerCredentials`. Resolve ONCE here
+    // (not per-target inside the concurrent loop below — that would
+    // re-read the credential Secret(s) once per import target) via the
+    // same checked, credential-aware constructor `handle_applying`'s own
+    // apply/destroy calls use. Per ★★ MAGMA-NATIVE.
+    let import_executor = match state.executor_for_checked_with_creds(template).await {
+        Ok(exec) => exec,
+        Err(e) => {
+            warn!(
+                error = %e,
+                "import prepass: failed to resolve a credential-aware executor \
+                 (spec.providerCredentials / PANGEA_FORBID_TOFU) — pre-apply import \
+                 disabled this cycle (post-apply conflict catch + magma reactive \
+                 adopt cover)."
+            );
+            return Vec::new();
+        }
+    };
+
+    info!(
+        total = total_targets,
+        concurrency = IMPORT_CONCURRENCY,
+        "Running import prepass concurrently"
+    );
     let imported: Vec<String> = futures::stream::iter(targets.into_iter())
-        .map(|t| async move {
-            let ok = try_tofu_import(
-                template,
-                state,
-                workspace_path,
-                &t.address,
-                &t.id,
-                &t.source,
-            )
-            .await;
-            if ok { Some(t.address) } else { None }
+        .map(|t| {
+            let import_executor = Arc::clone(&import_executor);
+            async move {
+                let ok = try_tofu_import(
+                    template,
+                    state,
+                    &import_executor,
+                    workspace_path,
+                    &t.address,
+                    &t.id,
+                    &t.source,
+                )
+                .await;
+                if ok { Some(t.address) } else { None }
+            }
         })
         .buffer_unordered(IMPORT_CONCURRENCY)
         .filter_map(|maybe_addr| async move { maybe_addr })
         .collect()
         .await;
 
-    if total_targets > 0 {
-        info!(
-            imported = imported.len(),
-            total = total_targets,
-            "Import prepass complete"
-        );
-    }
+    info!(
+        imported = imported.len(),
+        total = total_targets,
+        "Import prepass complete"
+    );
     imported
 }
 
@@ -4245,9 +4281,17 @@ async fn run_import_prepass(
 /// Failures are non-fatal — we log + emit a Warning event and let the
 /// apply path handle the resource (where it'll fail visibly with a
 /// real error message instead of a silently-skipped import).
+///
+/// `executor` is the credential-aware executor `run_import_prepass`
+/// resolved once via `state.executor_for_checked_with_creds` — this
+/// function must NOT re-derive its own via the bare, credential-blind
+/// `state.executor_for`, or the real provider Read/Import RPC below
+/// silently runs under ambient credentials instead of
+/// `spec.providerCredentials`.
 async fn try_tofu_import(
     template: &InfrastructureTemplate,
     state: &ControllerState,
+    executor: &Arc<dyn crate::executor::IacExecutor>,
     workspace_path: &std::path::Path,
     addr: &str,
     import_id: &str,
@@ -4259,7 +4303,6 @@ async fn try_tofu_import(
         source = %source_label,
         "Running tofu import for create-action"
     );
-    let executor = state.executor_for(template);
     match executor.import(workspace_path, addr, import_id).await {
         Ok(r) if r.success => {
             record_event(
