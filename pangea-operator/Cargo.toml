@@ -172,6 +172,21 @@ tracing-opentelemetry = "0.27"
 # dependency. Bumping to 0.27 of both opentelemetry crates produces
 # duplicate types where tracing-opentelemetry's `with_tracer` bound
 # doesn't accept the 0.27 Tracer.
+#
+# KNOWN, TRACKED EXCEPTION (2026-07-18): opentelemetry_sdk 0.26.0 carries
+# GHSA-w9wp-h8wv-79jx / CVE-2026-48504 (unbounded allocation parsing W3C
+# Baggage headers; availability-only, no data exposure). Patched version
+# is 0.32.1 — six minor releases away, and `cargo update -p
+# opentelemetry_sdk --dry-run` confirms 0.26.0 is already the newest
+# release satisfying the `"0.26"` manifest constraint (no in-range patch
+# exists). Reaching 0.32.1 requires bumping opentelemetry +
+# opentelemetry-otlp + opentelemetry_sdk + tracing-opentelemetry in
+# lockstep across an ecosystem with a documented history of breaking
+# `with_tracer`/Tracer-type changes between adjacent 0.x releases (see
+# the pin comment above — the last such bump broke the build). Not
+# attempted blind; tracked as a deliberate exception pending a scoped
+# opentelemetry migration. No cargo-deny/cargo-audit ignore file exists
+# in this repo to register the exception in machine-readable form.
 opentelemetry = { version = "0.26", features = ["trace"] }
 opentelemetry-otlp = { version = "0.26", features = ["tonic"] }
 opentelemetry_sdk = { version = "0.26", features = ["rt-tokio"] }
@@ -180,7 +195,18 @@ opentelemetry_sdk = { version = "0.26", features = ["rt-tokio"] }
 # open FDs / threads. The collector module is gated by prometheus to
 # `target_os = "linux"`, so registration is cfg-gated in metrics.rs
 # (no-op on macOS dev hosts; live on the Linux operator pod).
-prometheus = { version = "0.13", features = ["process"] }
+#
+# `default-features = false` (2026-07-18, GHSA-2gh3-rmm4-6rq5 /
+# CVE-2025-53605): prometheus 0.13's `default = ["protobuf"]` pulls the
+# `protobuf` crate pinned to `^2.0` — a line that was never patched for
+# the uncontrolled-recursion advisory (only 3.7.2+ is fixed, and 0.13.x
+# hard-caps at `^2.0`, so no `cargo update` alone can reach it). We only
+# use `prometheus::TextEncoder` + the `Encoder` trait (metrics.rs) — no
+# `ProtobufEncoder`, no `prometheus::proto` — so the protobuf-gated
+# surface was dead weight. Disabling the default feature drops the
+# `protobuf` dependency (and the CVE) from the graph entirely; `process`
+# stays explicit since we do use process_collector.
+prometheus = { version = "0.13", default-features = false, features = ["process"] }
 
 # Stable cross-process hash for the anomaly_tracker module's
 # error_signature primitive. Already transitively present via magma;

@@ -16,6 +16,22 @@ name = "pangea-operator-mcp"
 path = "src/main.rs"
 
 [dependencies]
+# KNOWN, TRACKED EXCEPTION (2026-07-18): rmcp 0.15.0 carries
+# GHSA-89vp-x53w-74fx / CVE-2026-42559, a DNS-rebinding flaw in rmcp's
+# *Streamable HTTP server transport*. Verified unreachable in this
+# binary: the vulnerable surface lives behind the `transport-streamable-
+# http-server` feature (which itself requires `server-side-http` +
+# `transport-worker`, pulling in axum/tower/sse-stream/http-body). We
+# enable only `server` + `transport-io` (stdio transport) — confirmed
+# against both the feature graph (`rmcp`'s Cargo.toml) and the resolved
+# Cargo.lock dependency list for `rmcp`, which contains none of
+# axum/tower/http/http-body/sse-stream/uuid. No HTTP transport code is
+# compiled in. Patched version is 1.4.0 — a 0.x→1.x jump outside the
+# `"0.15"` manifest range (`cargo update -p rmcp --dry-run` cannot reach
+# it without a manifest bump), and a stabilization major release is
+# likely to carry real API breakage; not attempted blind given the
+# vulnerability is already unreachable here. Revisit on a scoped rmcp 1.x
+# migration, not as a security fix.
 rmcp = { version = "0.15", features = ["server", "transport-io"] }
 kube = { workspace = true }
 k8s-openapi = { workspace = true }

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "cargo_lock_sha256": "1246cfd73a8e4530ce5331bd1c028d45cfa81fb8c759fc666d7953fe8f8e95c6",
+  "cargo_lock_sha256": "4501542007c17335e2fef5b39e8881dbe656f8bb4e8c2fe3baa2597896cfdd3c",
   "target_resolves": {
     "base": {
       "Inflector-0.11.4": {
@@ -12840,7 +12840,7 @@
             "features": [
               "process"
             ],
-            "uses_default_features": true,
+            "uses_default_features": false,
             "optional": false,
             "target": null,
             "tree": "target"
@@ -14787,11 +14787,6 @@
           "default",
           "std"
         ]
-      },
-      "protobuf-2.28.0": {
-        "runtime_dependencies": [],
-        "build_dependencies": [],
-        "features": []
       },
       "protoc-bin-vendored-3.2.0": {
         "runtime_dependencies": [
@@ -24814,16 +24809,6 @@
                 "tree": "target"
               },
               {
-                "name": "protobuf",
-                "package_key": "protobuf-2.28.0",
-                "kind": "normal",
-                "features": [],
-                "uses_default_features": true,
-                "optional": true,
-                "target": null,
-                "tree": "target"
-              },
-              {
                 "name": "thiserror",
                 "package_key": "thiserror-1.0.69",
                 "kind": "normal",
@@ -24836,11 +24821,9 @@
             ],
             "build_dependencies": [],
             "features": [
-              "default",
               "libc",
               "process",
-              "procfs",
-              "protobuf"
+              "procfs"
             ]
           },
           "ring-0.17.14": {
@@ -25823,16 +25806,6 @@
                 "tree": "target"
               },
               {
-                "name": "protobuf",
-                "package_key": "protobuf-2.28.0",
-                "kind": "normal",
-                "features": [],
-                "uses_default_features": true,
-                "optional": true,
-                "target": null,
-                "tree": "target"
-              },
-              {
                 "name": "thiserror",
                 "package_key": "thiserror-1.0.69",
                 "kind": "normal",
@@ -25845,11 +25818,9 @@
             ],
             "build_dependencies": [],
             "features": [
-              "default",
               "libc",
               "process",
-              "procfs",
-              "protobuf"
+              "procfs"
             ]
           },
           "ring-0.17.14": {
@@ -26737,16 +26708,6 @@
                 "tree": "target"
               },
               {
-                "name": "protobuf",
-                "package_key": "protobuf-2.28.0",
-                "kind": "normal",
-                "features": [],
-                "uses_default_features": true,
-                "optional": true,
-                "target": null,
-                "tree": "target"
-              },
-              {
                 "name": "thiserror",
                 "package_key": "thiserror-1.0.69",
                 "kind": "normal",
@@ -26759,11 +26720,9 @@
             ],
             "build_dependencies": [],
             "features": [
-              "default",
               "libc",
               "process",
-              "procfs",
-              "protobuf"
+              "procfs"
             ]
           },
           "ring-0.17.14": {
@@ -27584,16 +27543,6 @@
                 "tree": "target"
               },
               {
-                "name": "protobuf",
-                "package_key": "protobuf-2.28.0",
-                "kind": "normal",
-                "features": [],
-                "uses_default_features": true,
-                "optional": true,
-                "target": null,
-                "tree": "target"
-              },
-              {
                 "name": "thiserror",
                 "package_key": "thiserror-1.0.69",
                 "kind": "normal",
@@ -27606,11 +27555,9 @@
             ],
             "build_dependencies": [],
             "features": [
-              "default",
               "libc",
               "process",
-              "procfs",
-              "protobuf"
+              "procfs"
             ]
           },
           "ring-0.17.14": {
@@ -28547,16 +28494,6 @@
                 "tree": "target"
               },
               {
-                "name": "protobuf",
-                "package_key": "protobuf-2.28.0",
-                "kind": "normal",
-                "features": [],
-                "uses_default_features": true,
-                "optional": true,
-                "target": null,
-                "tree": "target"
-              },
-              {
                 "name": "thiserror",
                 "package_key": "thiserror-1.0.69",
                 "kind": "normal",
@@ -28569,11 +28506,9 @@
             ],
             "build_dependencies": [],
             "features": [
-              "default",
               "libc",
               "process",
-              "procfs",
-              "protobuf"
+              "procfs"
             ]
           },
           "ring-0.17.14": {
@@ -29415,16 +29350,6 @@
                 "tree": "target"
               },
               {
-                "name": "protobuf",
-                "package_key": "protobuf-2.28.0",
-                "kind": "normal",
-                "features": [],
-                "uses_default_features": true,
-                "optional": true,
-                "target": null,
-                "tree": "target"
-              },
-              {
                 "name": "thiserror",
                 "package_key": "thiserror-1.0.69",
                 "kind": "normal",
@@ -29437,11 +29362,9 @@
             ],
             "build_dependencies": [],
             "features": [
-              "default",
               "libc",
               "process",
-              "procfs",
-              "protobuf"
+              "procfs"
             ]
           },
           "ring-0.17.14": {
@@ -30983,10 +30906,6 @@
     },
     "prost-types-0.13.5": {
       "edition": "2021"
-    },
-    "protobuf-2.28.0": {
-      "edition": "2018",
-      "build_script": "build.rs"
     },
     "protoc-bin-vendored-3.2.0": {
       "edition": "2021",
