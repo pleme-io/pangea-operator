@@ -22,7 +22,15 @@ pub use lock::{LockGuard, StateLock};
 pub use postgres::PostgresBackend;
 pub use retry::{is_connection_level, RetryPolicy, RetryingStateBackend};
 pub use schema::SchemaManager;
-pub use state::StateStore;
+// `StateEntry`/`TerraformState` are the types the PUBLIC `StateBackend`
+// trait's methods return (`state_backend.rs`) — any external mock
+// implementation of that trait (see its own doc comment: "lets future
+// tests inject `InMemoryStateBackend`... without testcontainers") needs
+// to name them, which a private `mod state` alone does not allow
+// (E0603 on the path, regardless of the structs' own `pub` modifier).
+// Re-exported here so the trait's public interface is actually usable
+// from outside this module, not just internally.
+pub use state::{StateEntry, StateStore, TerraformState};
 pub use state_backend::{InMemoryStateBackend, PostgresStateBackend, StateBackend};
 pub use tofu_pg_state_backend::TofuPgStateBackend;
 

@@ -1,6 +1,6 @@
 //! Controller for InfrastructureTemplate resources.
 
-use crate::backend::{BackendConfigGenerator, Credentials};
+use crate::backend::{BackendConfigGenerator, Credentials, StateBackend};
 use crate::crd::{
     DriftDetail, InfrastructureTemplate, PangeaNamespace, Phase, PolicyDecision, ResourceSummary,
 };
@@ -2228,6 +2228,27 @@ fn plan_summary_and_drifts_from_artifact(
     (s, details)
 }
 
+/// The `(schema_name, template_name)` pair magma's Postgres-backed
+/// artifacts AND state are keyed on for a given CR. MUST stay in sync
+/// with `ControllerState::magma_executor_with_provider_configs`'s own
+/// derivation (`controller/mod.rs`) — that function is what actually
+/// builds the `MagmaExecutor` that reads/writes state under this exact
+/// key (`schema_name = "pangea_{spec.pangeaNamespace}"`, `state_name =
+/// "default"`); reading with any other derivation would silently miss
+/// the row or read the wrong one. Collapses what was three independent
+/// hand-copies of `format!("pangea_{}", template.spec.pangea_namespace)`
+/// (`magma_executor_with_provider_configs`, `fetch_db_backed_cycle_artifact`,
+/// and now `current_state_fingerprint`) down to two — `mod.rs` lives in a
+/// different module and is left as a documented, cross-referenced
+/// duplicate rather than pulled in here, to keep this fix's blast radius
+/// contained to the approval-hash gap it closes.
+fn magma_state_key(template: &InfrastructureTemplate) -> (String, String) {
+    (
+        format!("pangea_{}", template.spec.pangea_namespace),
+        template.name_any(),
+    )
+}
+
 /// Fetch the `CycleArtifact` `MagmaExecutor::plan` already persisted to
 /// Postgres for THIS template's most recent plan (`magma.rs`'s
 /// `store.put_bundle(...)`, committed before `WorkspaceRunner::plan`
@@ -2262,8 +2283,7 @@ async fn fetch_db_backed_cycle_artifact(
     state: &ControllerState,
 ) -> Option<crate::executor::cycle_artifact::CycleArtifact> {
     let store = state.artifact_store.as_ref()?;
-    let schema_name = format!("pangea_{}", template.spec.pangea_namespace);
-    let name = template.name_any();
+    let (schema_name, name) = magma_state_key(template);
     match store.get_bundle_bytes(&schema_name, &name).await {
         Ok(Some(bytes)) => crate::executor::magma_bundle::cycle_artifact_from_bytes(&bytes),
         Ok(None) => None,
@@ -2597,8 +2617,17 @@ async fn handle_planning(
                 .as_ref()
                 .and_then(|s| s.last_applied_at)
                 .is_some();
-            let state_present_now = workspace.read_state_bytes().await.is_some();
             let durable = is_durable_state_backend(template, state);
+            let (schema_name, template_name) = magma_state_key(template);
+            let state_fingerprint = current_state_fingerprint(
+                durable,
+                state.state_backend.as_ref(),
+                &schema_name,
+                &template_name,
+                &workspace,
+            )
+            .await;
+            let state_present_now = state_fingerprint.is_present();
 
             match evaluate_auto_apply_gate(durable, previously_applied, state_present_now) {
                 AutoApplyGate::BlockedByStateContinuityBreach => {
@@ -2617,6 +2646,7 @@ async fn handle_planning(
                         &policy_outcome,
                         plan_text.clone(),
                         ApprovalGateReason::AutoApplyStateContinuityBreach,
+                        state_fingerprint,
                     )
                     .await
                 }
@@ -2651,15 +2681,30 @@ async fn handle_planning(
             // silently inherited the old approval even though the
             // underlying state had completely changed by the time it
             // ran. `plan_approval_hash` also folds in a fingerprint of
-            // the on-disk state, so two plans that are textually
-            // identical in SHAPE (e.g. both "create everything from an
-            // empty state") but computed against DIFFERENT actual
-            // state can never collide. Closes both halves of
+            // the real infrastructure state — `current_state_fingerprint`,
+            // Postgres for magma, on-disk for tofu — so two plans that
+            // are textually identical in SHAPE (e.g. both "create
+            // everything from an empty state") but computed against
+            // DIFFERENT actual state can never collide. Closes both
+            // halves of
             // docs/postmortems/2026-07-12-camelot-eks-state-wipe-duplicate-vpc.md
-            // bug 2. Note: this is a hash-format change — any CR with
-            // an in-flight (not-yet-applied) approval at upgrade time
-            // will require re-approval, which is the intended fail-safe
-            // behavior, not a regression.
+            // bug 2 for tofu, and the magma-specific gap where the
+            // approval hash was `plan_text`-derived ONLY (see
+            // `CurrentStateFingerprint`'s doc comment). Note: this is a
+            // hash-format change — any CR with an in-flight
+            // (not-yet-applied) approval at upgrade time will require
+            // re-approval, which is the intended fail-safe behavior,
+            // not a regression.
+            let durable = is_durable_state_backend(template, state);
+            let (schema_name, template_name) = magma_state_key(template);
+            let state_fingerprint = current_state_fingerprint(
+                durable,
+                state.state_backend.as_ref(),
+                &schema_name,
+                &template_name,
+                &workspace,
+            )
+            .await;
             route_through_approval_gate(
                 template,
                 state,
@@ -2670,6 +2715,7 @@ async fn handle_planning(
                 ApprovalGateReason::PolicyDecision {
                     require_approval_count: policy_outcome.evaluation.require_approval_count,
                 },
+                state_fingerprint,
             )
             .await
         }
@@ -2791,19 +2837,169 @@ impl ApprovalGateReason {
     }
 }
 
+/// The CURRENT real infrastructure state, fetched from whichever store
+/// the template's chosen executor actually persists it to, used to
+/// fingerprint a plan-approval hash (`plan_approval_hash`,
+/// `route_through_approval_gate`).
+///
+/// A plain `Option<Vec<u8>>` cannot express this honestly — it can only
+/// say "bytes" or "nothing," and "nothing" is ambiguous between two
+/// completely different facts: *the backend genuinely has no state yet*
+/// (a legitimate, hashable value — a brand-new template's first plan)
+/// and *the read itself failed* (a Postgres error, not "zero rows" —
+/// unknown, and must never be treated as if it were the first case).
+/// Collapsing those two into one `None` is exactly the shape of bug
+/// this type exists to make unrepresentable: before this fix,
+/// `Workspace::read_state_bytes()` (a raw on-disk read, `fs::read(...)
+/// .ok()`) was called unconditionally regardless of executor, so every
+/// magma-backed template — whose real state lives in Postgres, never on
+/// the pod-local disk — read `None` on every cycle, and
+/// `plan_approval_hash` folded that constant `None` into the hash
+/// alongside the plan text. The approval hash for a magma template was
+/// therefore `plan_text`-derived ONLY, unconditionally: a human's
+/// approval of one plan silently and permanently authorized ANY future
+/// plan with the same `plan_text` shape, regardless of what actually
+/// changed in real infrastructure state between then and now — the
+/// state-fingerprint protection `docs/postmortems/2026-07-12-camelot-eks-state-wipe-duplicate-vpc.md`
+/// added existed in name only for every magma CR.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CurrentStateFingerprint {
+    /// The backend was queried successfully and has no state for this
+    /// template — a genuine, hashable fact (first-ever plan, or a
+    /// legitimately-empty backend).
+    Absent,
+    /// The backend was queried successfully and returned real state
+    /// bytes.
+    Present(Vec<u8>),
+    /// The state read itself failed. Distinct from `Absent` on purpose
+    /// — an approval hash MUST NEVER be computed from this outcome (see
+    /// `route_through_approval_gate`, which fails closed on this
+    /// variant rather than silently degrading to a `plan_text`-only
+    /// hash).
+    Unreadable,
+}
+
+impl CurrentStateFingerprint {
+    /// `true` only for `Present`. `Unreadable` is deliberately NOT
+    /// treated as "present" — an unknown state can never satisfy a
+    /// continuity check that exists to prove state is still there;
+    /// mirrors `is_durable_state_backend`'s own documented asymmetry
+    /// (over-asking for approval is acceptable, silently applying is
+    /// not).
+    fn is_present(&self) -> bool {
+        matches!(self, Self::Present(_))
+    }
+}
+
+/// What `route_through_approval_gate` should do with a
+/// `CurrentStateFingerprint` this cycle: either hash against real state
+/// bytes, or refuse to compute (let alone compare) an approval hash at
+/// all this cycle. Pure and directly unit-testable — mirrors
+/// `evaluate_auto_apply_gate`'s shape — so the fail-closed decision
+/// itself has a test that needs no `ControllerState`/`kube::Client`;
+/// only the Event-recording + requeue consequence stays inline in
+/// `route_through_approval_gate`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ApprovalHashInput<'a> {
+    /// Compute `plan_approval_hash` against these bytes (`Some`) or the
+    /// tagged-absent case (`None`) — both are legitimate, known facts
+    /// about real state.
+    Hashable(Option<&'a [u8]>),
+    /// `CurrentStateFingerprint::Unreadable` — real state could not be
+    /// confirmed. MUST NOT be silently degraded into `Hashable(None)`;
+    /// see `CurrentStateFingerprint`'s doc comment for the incident
+    /// class that degradation reproduces.
+    RefuseUnreadable,
+}
+
+fn resolve_approval_hash_input(fingerprint: &CurrentStateFingerprint) -> ApprovalHashInput<'_> {
+    match fingerprint {
+        CurrentStateFingerprint::Absent => ApprovalHashInput::Hashable(None),
+        CurrentStateFingerprint::Present(bytes) => ApprovalHashInput::Hashable(Some(bytes.as_slice())),
+        CurrentStateFingerprint::Unreadable => ApprovalHashInput::RefuseUnreadable,
+    }
+}
+
+/// Fetch [`CurrentStateFingerprint`] for `template`, reading from
+/// whichever store its chosen executor actually persists state to:
+/// magma's Postgres-backed `StateBackend` (the SAME `TofuPgStateBackend`
+/// rows tofu itself would read — see that type's module doc) when
+/// `is_magma_backed`, or the workspace's local-disk
+/// `terraform.tfstate` (`Workspace::read_state_bytes`) otherwise.
+///
+/// Deliberately takes the already-resolved `is_magma_backed` bool and
+/// an `Option<&Arc<dyn StateBackend>>` rather than `&ControllerState`
+/// directly — mirrors `state_continuity_breach`'s existing shape so
+/// this stays unit-testable with `InMemoryStateBackend` + a tempdir
+/// `Workspace`, no `kube::Client` required. Callers pass
+/// `is_durable_state_backend(template, state)` and
+/// `state.state_backend.as_ref()`.
+async fn current_state_fingerprint(
+    is_magma_backed: bool,
+    state_backend: Option<&Arc<dyn StateBackend>>,
+    schema_name: &str,
+    template_name: &str,
+    workspace: &crate::executor::Workspace,
+) -> CurrentStateFingerprint {
+    if is_magma_backed {
+        let Some(backend) = state_backend else {
+            // Structurally shouldn't happen: `is_magma_backed` (via
+            // `is_durable_state_backend` → `executor_for`) only
+            // resolves to magma when `state_backend` is `Some` — see
+            // `ControllerState::magma_executor_with_provider_configs`'s
+            // early-return-to-tofu path when the backend is missing.
+            // Stay honest rather than assume the invariant holds: treat
+            // a violation as unreadable, never as a silently-hashable
+            // absence.
+            warn!(
+                schema = schema_name,
+                template = template_name,
+                "plan-approval state fingerprint: executor resolved to magma but \
+                 no state backend is wired in — treating state as unreadable"
+            );
+            return CurrentStateFingerprint::Unreadable;
+        };
+        match backend.get_state(schema_name, template_name, "default").await {
+            Ok(Some(entry)) => match entry.data {
+                Some(bytes) => CurrentStateFingerprint::Present(bytes),
+                None => CurrentStateFingerprint::Absent,
+            },
+            Ok(None) => CurrentStateFingerprint::Absent,
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    schema = schema_name,
+                    template = template_name,
+                    "plan-approval state fingerprint: magma Postgres state read failed"
+                );
+                CurrentStateFingerprint::Unreadable
+            }
+        }
+    } else {
+        match workspace.read_state_bytes().await {
+            Some(bytes) => CurrentStateFingerprint::Present(bytes),
+            None => CurrentStateFingerprint::Absent,
+        }
+    }
+}
+
 /// Route a Planning-phase cycle through the state-fingerprinted
 /// approval gate: recompute `plan_approval_hash` from THIS cycle's
-/// plan + on-disk state, compare against `status.approvedPlanHash`,
-/// and either proceed to `Applying` (already approved — the hash
-/// match itself proves the approval was granted against THIS exact
-/// plan+state, not a stale one) or park at `Planning` with
-/// `status.pendingPlanHash` set so a human can bless it.
+/// plan + real infrastructure state (`current_state_fingerprint`,
+/// executor-aware — Postgres for magma, on-disk for tofu), compare
+/// against `status.approvedPlanHash`, and either proceed to `Applying`
+/// (already approved — the hash match itself proves the approval was
+/// granted against THIS exact plan+state, not a stale one) or park at
+/// `Planning` with `status.pendingPlanHash` set so a human can bless it.
 ///
 /// Shared by two callers — `PolicyDecision::RequireApproval` (the
 /// policy engine's own decision) and `PolicyDecision::AutoApply` when
 /// `state_continuity_breach` fires — so the state-fingerprinting
 /// protection lives in exactly one place instead of two independent
-/// (and driftable) copies.
+/// (and driftable) copies. Both callers fetch `state_fingerprint` via
+/// `current_state_fingerprint` before calling in — this function no
+/// longer reads state itself, so it can fail closed on
+/// `CurrentStateFingerprint::Unreadable` without a second read.
 async fn route_through_approval_gate(
     template: &InfrastructureTemplate,
     state: &ControllerState,
@@ -2812,10 +3008,40 @@ async fn route_through_approval_gate(
     policy_outcome: &crate::executor::PolicyOutcome,
     plan_text: Option<String>,
     reason: ApprovalGateReason,
+    state_fingerprint: CurrentStateFingerprint,
 ) -> Result<ReconcileAction> {
     let plan_content = canonical_drift_fingerprint(&policy_outcome.annotated_drifts);
-    let state_bytes = workspace.read_state_bytes().await;
-    let plan_hash = plan_approval_hash(&plan_content, state_bytes.as_deref());
+
+    let state_bytes = match resolve_approval_hash_input(&state_fingerprint) {
+        ApprovalHashInput::Hashable(bytes) => bytes,
+        ApprovalHashInput::RefuseUnreadable => {
+            // Fail CLOSED: never compute — let alone compare — an
+            // approval hash while real state is unknown. Degrading to a
+            // `plan_text`-only hash here would silently reproduce the
+            // exact bug `CurrentStateFingerprint` exists to close (see
+            // its doc comment). Neither `status.pendingPlanHash` nor
+            // `status.approvedPlanHash` is touched this cycle; the next
+            // reconcile retries the read.
+            warn!(
+                template = %template.name_any(),
+                "Approval gate: current infrastructure state could not be read; \
+                 refusing to compute or compare a plan-approval hash this cycle. \
+                 Holding at Planning until state becomes readable again."
+            );
+            record_event(
+                template,
+                state,
+                EventType::Warning,
+                "StateUnreadable",
+                "Could not read current infrastructure state while evaluating the \
+                 plan-approval gate; holding at Planning rather than risk comparing \
+                 against a stale approval hash. Will retry automatically.",
+            )
+            .await;
+            return Ok(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL));
+        }
+    };
+    let plan_hash = plan_approval_hash(&plan_content, state_bytes);
 
     let is_approved = template
         .status
@@ -5105,13 +5331,23 @@ fn content_hash(input: &str) -> u64 {
 /// Compute the plan-approval hash stored in `status.pendingPlanHash`
 /// and compared against `status.approvedPlanHash`.
 ///
-/// Folds in a fingerprint of the on-disk state ALONGSIDE the plan text
-/// (`content_hash`'s existing job) so two plans that are textually
-/// identical in shape — e.g. both "create everything" from an empty
-/// state — but computed against DIFFERENT actual state can never
-/// produce the same hash. `state_bytes` is tagged (present vs absent)
-/// before hashing so `Some(&[])` (an empty-but-present state file)
-/// can never collide with `None` (no state file at all).
+/// Folds in a fingerprint of the CURRENT real infrastructure state
+/// ALONGSIDE the plan text (`content_hash`'s existing job) so two plans
+/// that are textually identical in shape — e.g. both "create
+/// everything" from an empty state — but computed against DIFFERENT
+/// actual state can never produce the same hash. `state_bytes` is
+/// tagged (present vs absent) before hashing so `Some(&[])` (an
+/// empty-but-present state) can never collide with `None` (no state at
+/// all).
+///
+/// Callers MUST source `state_bytes` from [`CurrentStateFingerprint`]
+/// (via `current_state_fingerprint`), never from
+/// `Workspace::read_state_bytes()` directly — that on-disk read is
+/// `None` unconditionally for every magma-backed template (state lives
+/// in Postgres, not on the pod-local disk), which collapsed this
+/// function to a `plan_text`-only hash for the fleet's default
+/// executor until `current_state_fingerprint` closed that gap. See
+/// `CurrentStateFingerprint`'s doc comment for the full incident.
 ///
 /// This closes bug 2 of
 /// docs/postmortems/2026-07-12-camelot-eks-state-wipe-duplicate-vpc.md:
@@ -5809,6 +6045,265 @@ mod plan_approval_hash_tests {
     }
 }
 
+/// Regression tests for the confirmed 2026-07-19 gap: `plan_approval_hash`
+/// folding in `Workspace::read_state_bytes()` (a raw on-disk read)
+/// unconditionally, regardless of executor. For every magma-backed
+/// template — whose real state lives in Postgres, never on the
+/// pod-local disk — that read was `None` every cycle, so the approval
+/// hash was `plan_text`-derived ONLY: a human's approval of one plan
+/// silently and permanently authorized ANY future plan with the same
+/// `plan_text` shape, regardless of what actually changed in real
+/// infrastructure state. `current_state_fingerprint` + the
+/// `CurrentStateFingerprint`/`ApprovalHashInput` types close this by
+/// making the executor-aware read explicit and by refusing (never
+/// silently degrading) when the real state read itself fails. See
+/// `CurrentStateFingerprint`'s own doc comment for the full mechanism.
+#[cfg(test)]
+mod current_state_fingerprint_tests {
+    use super::{
+        current_state_fingerprint, plan_approval_hash, resolve_approval_hash_input,
+        ApprovalHashInput, CurrentStateFingerprint, StateBackend,
+    };
+    use crate::backend::{InMemoryStateBackend, StateEntry, TerraformState};
+    use crate::error::{Error, Result};
+    use crate::executor::WorkspaceManager;
+    use async_trait::async_trait;
+    use std::sync::Arc;
+
+    /// A `StateBackend` whose `get_state` always fails — simulates a
+    /// genuine Postgres read error (connection refused past
+    /// `RetryingStateBackend`'s bounded backoff, a query error, etc.),
+    /// as distinct from `InMemoryStateBackend` returning `Ok(None)`
+    /// (queried successfully; no such row — a legitimate `Absent`).
+    struct FailingStateBackend;
+
+    #[async_trait]
+    impl StateBackend for FailingStateBackend {
+        async fn get_state(
+            &self,
+            _schema_name: &str,
+            _template_name: &str,
+            _state_name: &str,
+        ) -> Result<Option<StateEntry>> {
+            Err(Error::StateBackend("simulated connection failure".to_string()))
+        }
+        async fn get_parsed_state(
+            &self,
+            _schema_name: &str,
+            _template_name: &str,
+            _state_name: &str,
+        ) -> Result<Option<TerraformState>> {
+            Err(Error::StateBackend("simulated connection failure".to_string()))
+        }
+        async fn save_state(
+            &self,
+            _schema_name: &str,
+            _template_name: &str,
+            _state_name: &str,
+            _data: &[u8],
+        ) -> Result<i64> {
+            Err(Error::StateBackend("simulated connection failure".to_string()))
+        }
+        async fn delete_state(
+            &self,
+            _schema_name: &str,
+            _template_name: &str,
+            _state_name: &str,
+        ) -> Result<bool> {
+            Err(Error::StateBackend("simulated connection failure".to_string()))
+        }
+        async fn list_states(
+            &self,
+            _schema_name: &str,
+            _template_name: &str,
+        ) -> Result<Vec<StateEntry>> {
+            Err(Error::StateBackend("simulated connection failure".to_string()))
+        }
+    }
+
+    async fn workspace_with_state(content: Option<&[u8]>) -> (tempfile::TempDir, crate::executor::Workspace) {
+        let base = tempfile::tempdir().expect("create temp base dir");
+        let wm = WorkspaceManager::new(base.path().to_path_buf());
+        let ws = wm.get_or_create("ns", "tmpl").await.expect("create workspace");
+        if let Some(bytes) = content {
+            tokio::fs::write(ws.state_path(), bytes).await.expect("seed state file");
+        }
+        (base, ws)
+    }
+
+    // ── The core confirmed bug: a magma template's fingerprint MUST
+    // reflect real Postgres state, not a constant `None`. ─────────────
+
+    #[tokio::test]
+    async fn magma_backed_template_reads_real_state_from_the_backend() {
+        let backend = InMemoryStateBackend::new();
+        backend
+            .save_state("pangea_camelot", "camelot-eks", "default", b"vpc-real-state-bytes")
+            .await
+            .expect("seed magma state");
+        let backend: Option<Arc<dyn StateBackend>> = Some(Arc::new(backend));
+        let (_dir, ws) = workspace_with_state(None).await;
+
+        let fingerprint = current_state_fingerprint(
+            /* is_magma_backed */ true,
+            backend.as_ref(),
+            "pangea_camelot",
+            "camelot-eks",
+            &ws,
+        )
+        .await;
+
+        assert_eq!(
+            fingerprint,
+            CurrentStateFingerprint::Present(b"vpc-real-state-bytes".to_vec()),
+            "a magma template's fingerprint must be the REAL Postgres state, \
+             never the constant None the old on-disk read always produced"
+        );
+    }
+
+    #[tokio::test]
+    async fn magma_backed_template_with_no_state_row_is_a_legitimate_absent() {
+        // Queried successfully; simply no row yet (first-ever plan).
+        // Must be `Absent`, NOT `Unreadable` — those are different
+        // facts (see `CurrentStateFingerprint`'s doc comment).
+        let backend: Option<Arc<dyn StateBackend>> = Some(Arc::new(InMemoryStateBackend::new()));
+        let (_dir, ws) = workspace_with_state(None).await;
+
+        let fingerprint = current_state_fingerprint(true, backend.as_ref(), "pangea_ns", "tmpl", &ws).await;
+
+        assert_eq!(fingerprint, CurrentStateFingerprint::Absent);
+    }
+
+    #[tokio::test]
+    async fn two_plans_with_identical_plan_text_but_different_magma_state_hash_differently() {
+        // The core invariant this whole fix restores: same plan_text,
+        // genuinely different real (Postgres) state, must never
+        // collide — reproduces the exact class of bug that made a
+        // magma template's approval hash `plan_text`-derived only.
+        let backend_a = InMemoryStateBackend::new();
+        backend_a
+            .save_state("pangea_camelot", "camelot-eks", "default", b"vpc-094734439e62440a8-partial-state")
+            .await
+            .unwrap();
+        let backend_a: Option<Arc<dyn StateBackend>> = Some(Arc::new(backend_a));
+
+        let backend_b = InMemoryStateBackend::new();
+        backend_b
+            .save_state("pangea_camelot", "camelot-eks", "default", b"vpc-06987bc0cd6d8aaad-different-state")
+            .await
+            .unwrap();
+        let backend_b: Option<Arc<dyn StateBackend>> = Some(Arc::new(backend_b));
+
+        let (_dir_a, ws_a) = workspace_with_state(None).await;
+        let (_dir_b, ws_b) = workspace_with_state(None).await;
+
+        let fp_a = current_state_fingerprint(true, backend_a.as_ref(), "pangea_camelot", "camelot-eks", &ws_a).await;
+        let fp_b = current_state_fingerprint(true, backend_b.as_ref(), "pangea_camelot", "camelot-eks", &ws_b).await;
+
+        let plan_text = "Plan: 50 to add, 0 to change, 0 to destroy.";
+        let hash_a = match resolve_approval_hash_input(&fp_a) {
+            ApprovalHashInput::Hashable(bytes) => plan_approval_hash(plan_text, bytes),
+            ApprovalHashInput::RefuseUnreadable => panic!("expected Hashable"),
+        };
+        let hash_b = match resolve_approval_hash_input(&fp_b) {
+            ApprovalHashInput::Hashable(bytes) => plan_approval_hash(plan_text, bytes),
+            ApprovalHashInput::RefuseUnreadable => panic!("expected Hashable"),
+        };
+
+        assert_ne!(
+            hash_a, hash_b,
+            "identical plan_text against two DIFFERENT real magma states must \
+             hash differently — a human approving hash_a must never look like \
+             an approval of hash_b's plan"
+        );
+    }
+
+    // ── The tofu path stays exactly what it was — unaffected by this
+    // fix (existing `Workspace::read_state_bytes` behavior, regression
+    // for the 2026-07-12 postmortem's own fix). ────────────────────────
+
+    #[tokio::test]
+    async fn tofu_backed_template_reads_from_disk_ignoring_any_state_backend() {
+        let (_dir, ws) = workspace_with_state(Some(b"tofu-local-state")).await;
+        // Even a wired, populated magma backend must be ignored on the
+        // tofu path — `is_magma_backed: false` is what selects disk.
+        let backend = InMemoryStateBackend::new();
+        backend.save_state("pangea_ns", "tmpl", "default", b"WRONG-this-must-not-be-read").await.unwrap();
+        let backend: Option<Arc<dyn StateBackend>> = Some(Arc::new(backend));
+
+        let fingerprint = current_state_fingerprint(false, backend.as_ref(), "pangea_ns", "tmpl", &ws).await;
+
+        assert_eq!(fingerprint, CurrentStateFingerprint::Present(b"tofu-local-state".to_vec()));
+    }
+
+    #[tokio::test]
+    async fn tofu_backed_template_with_no_state_file_is_absent() {
+        let (_dir, ws) = workspace_with_state(None).await;
+        let fingerprint = current_state_fingerprint(false, None, "pangea_ns", "tmpl", &ws).await;
+        assert_eq!(fingerprint, CurrentStateFingerprint::Absent);
+    }
+
+    // ── Fail-closed: an unreadable state must never silently degrade
+    // into a hashable value. ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn magma_state_read_failure_is_unreadable_not_absent() {
+        let backend: Option<Arc<dyn StateBackend>> = Some(Arc::new(FailingStateBackend));
+        let (_dir, ws) = workspace_with_state(None).await;
+
+        let fingerprint = current_state_fingerprint(true, backend.as_ref(), "pangea_ns", "tmpl", &ws).await;
+
+        assert_eq!(
+            fingerprint,
+            CurrentStateFingerprint::Unreadable,
+            "a genuine read FAILURE must never be conflated with a confirmed-empty state"
+        );
+    }
+
+    #[tokio::test]
+    async fn magma_resolved_but_backend_missing_is_unreadable_not_absent() {
+        // Structurally shouldn't happen (see the function's own doc
+        // comment) but must degrade honestly if it ever does.
+        let (_dir, ws) = workspace_with_state(None).await;
+        let fingerprint = current_state_fingerprint(true, None, "pangea_ns", "tmpl", &ws).await;
+        assert_eq!(fingerprint, CurrentStateFingerprint::Unreadable);
+    }
+
+    #[test]
+    fn unreadable_state_never_silently_proceeds_to_a_hash() {
+        // Exercises the exact decision `route_through_approval_gate`
+        // makes: `Unreadable` MUST resolve to `RefuseUnreadable`, never
+        // to `Hashable(None)` — that degradation is precisely the bug
+        // this fix closes for magma. `Absent` and `Present` MUST both
+        // resolve to `Hashable`, since both are legitimate, known facts.
+        assert_eq!(
+            resolve_approval_hash_input(&CurrentStateFingerprint::Unreadable),
+            ApprovalHashInput::RefuseUnreadable
+        );
+        assert_eq!(
+            resolve_approval_hash_input(&CurrentStateFingerprint::Absent),
+            ApprovalHashInput::Hashable(None)
+        );
+        let present = CurrentStateFingerprint::Present(b"real-bytes".to_vec());
+        assert_eq!(
+            resolve_approval_hash_input(&present),
+            ApprovalHashInput::Hashable(Some(b"real-bytes".as_slice()))
+        );
+    }
+
+    #[test]
+    fn is_present_treats_unreadable_as_not_present() {
+        // Feeds `evaluate_auto_apply_gate`'s `state_present_now` — an
+        // unknown state must never look "confirmed there," matching
+        // `is_durable_state_backend`'s documented fail-safe asymmetry
+        // (over-asking for approval is acceptable, silently applying
+        // is not).
+        assert!(!CurrentStateFingerprint::Absent.is_present());
+        assert!(!CurrentStateFingerprint::Unreadable.is_present());
+        assert!(CurrentStateFingerprint::Present(vec![1, 2, 3]).is_present());
+    }
+}
+
 #[cfg(test)]
 mod canonical_drift_fingerprint_tests {
     use super::canonical_drift_fingerprint;
@@ -5940,12 +6435,15 @@ mod db_backed_magma_drift_extraction_tests {
         }
     }
 
-    /// Reproduce `route_through_approval_gate`'s exact hash derivation
-    /// from a `CycleArtifact`, assuming no on-disk state — the
-    /// DB-backed posture, where `workspace.read_state_bytes()` always
-    /// reads `None` (see `Workspace::read_state_bytes`'s own doc
-    /// comment: "a workspace whose backend never writes state to
-    /// disk").
+    /// Reproduce `route_through_approval_gate`'s hash derivation from a
+    /// `CycleArtifact`, isolating the DRIFT-fingerprint half of the fix
+    /// this module regression-tests: `state_bytes` is fixed at `None`
+    /// (Absent) for every case here on purpose, so these tests prove
+    /// `canonical_drift_fingerprint` alone breaks the collision — they
+    /// do NOT exercise the separate, real-Postgres-backed state half of
+    /// the hash `current_state_fingerprint` now provides for magma
+    /// templates (see `CurrentStateFingerprint`'s doc comment and
+    /// `current_state_fingerprint_tests` below for that half).
     fn pending_plan_hash_for(art: &CycleArtifact) -> String {
         let (_summary, drifts) = plan_summary_and_drifts_from_artifact(art);
         let plan_content = canonical_drift_fingerprint(&drifts);
