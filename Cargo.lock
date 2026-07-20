@@ -87,7 +87,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -98,7 +98,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1141,7 +1141,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1242,7 +1242,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -2539,7 +2539,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 [[package]]
 name = "magma-apply"
 version = "0.1.10"
-source = "git+https://github.com/pleme-io/magma#fb3905fdfb02f733248e15e1f937542c94485508"
+source = "git+https://github.com/pleme-io/magma#485765d88fc961be4a9f9dcb16836d06be31340f"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2567,7 +2567,7 @@ dependencies = [
 [[package]]
 name = "magma-attest"
 version = "0.1.10"
-source = "git+https://github.com/pleme-io/magma#fb3905fdfb02f733248e15e1f937542c94485508"
+source = "git+https://github.com/pleme-io/magma#485765d88fc961be4a9f9dcb16836d06be31340f"
 dependencies = [
  "blake3",
  "chrono",
@@ -2581,7 +2581,7 @@ dependencies = [
 [[package]]
 name = "magma-backend"
 version = "0.1.10"
-source = "git+https://github.com/pleme-io/magma#fb3905fdfb02f733248e15e1f937542c94485508"
+source = "git+https://github.com/pleme-io/magma#485765d88fc961be4a9f9dcb16836d06be31340f"
 dependencies = [
  "async-trait",
  "magma-state",
@@ -2597,7 +2597,7 @@ dependencies = [
 [[package]]
 name = "magma-bundle"
 version = "0.1.10"
-source = "git+https://github.com/pleme-io/magma#fb3905fdfb02f733248e15e1f937542c94485508"
+source = "git+https://github.com/pleme-io/magma#485765d88fc961be4a9f9dcb16836d06be31340f"
 dependencies = [
  "blake3",
  "chrono",
@@ -2614,7 +2614,7 @@ dependencies = [
 [[package]]
 name = "magma-config"
 version = "0.1.10"
-source = "git+https://github.com/pleme-io/magma#fb3905fdfb02f733248e15e1f937542c94485508"
+source = "git+https://github.com/pleme-io/magma#485765d88fc961be4a9f9dcb16836d06be31340f"
 dependencies = [
  "magma-types",
  "serde",
@@ -2626,7 +2626,7 @@ dependencies = [
 [[package]]
 name = "magma-converge"
 version = "0.1.10"
-source = "git+https://github.com/pleme-io/magma#fb3905fdfb02f733248e15e1f937542c94485508"
+source = "git+https://github.com/pleme-io/magma#485765d88fc961be4a9f9dcb16836d06be31340f"
 dependencies = [
  "async-trait",
  "blake3",
@@ -2650,7 +2650,7 @@ dependencies = [
 [[package]]
 name = "magma-cty"
 version = "0.1.10"
-source = "git+https://github.com/pleme-io/magma#fb3905fdfb02f733248e15e1f937542c94485508"
+source = "git+https://github.com/pleme-io/magma#485765d88fc961be4a9f9dcb16836d06be31340f"
 dependencies = [
  "rmpv",
  "serde",
@@ -2661,7 +2661,7 @@ dependencies = [
 [[package]]
 name = "magma-drift"
 version = "0.1.10"
-source = "git+https://github.com/pleme-io/magma#fb3905fdfb02f733248e15e1f937542c94485508"
+source = "git+https://github.com/pleme-io/magma#485765d88fc961be4a9f9dcb16836d06be31340f"
 dependencies = [
  "blake3",
  "chrono",
@@ -2676,7 +2676,7 @@ dependencies = [
 [[package]]
 name = "magma-flow"
 version = "0.1.10"
-source = "git+https://github.com/pleme-io/magma#fb3905fdfb02f733248e15e1f937542c94485508"
+source = "git+https://github.com/pleme-io/magma#485765d88fc961be4a9f9dcb16836d06be31340f"
 dependencies = [
  "hex",
  "magma-backend",
@@ -2694,7 +2694,7 @@ dependencies = [
 [[package]]
 name = "magma-fsm"
 version = "0.1.10"
-source = "git+https://github.com/pleme-io/magma#fb3905fdfb02f733248e15e1f937542c94485508"
+source = "git+https://github.com/pleme-io/magma#485765d88fc961be4a9f9dcb16836d06be31340f"
 dependencies = [
  "chrono",
  "magma-converge",
@@ -2706,7 +2706,7 @@ dependencies = [
 [[package]]
 name = "magma-graph"
 version = "0.1.10"
-source = "git+https://github.com/pleme-io/magma#fb3905fdfb02f733248e15e1f937542c94485508"
+source = "git+https://github.com/pleme-io/magma#485765d88fc961be4a9f9dcb16836d06be31340f"
 dependencies = [
  "magma-types",
  "petgraph 0.6.5",
@@ -2717,7 +2717,7 @@ dependencies = [
 [[package]]
 name = "magma-operator-backend"
 version = "0.1.10"
-source = "git+https://github.com/pleme-io/magma#fb3905fdfb02f733248e15e1f937542c94485508"
+source = "git+https://github.com/pleme-io/magma#485765d88fc961be4a9f9dcb16836d06be31340f"
 dependencies = [
  "async-trait",
  "magma-backend",
@@ -2732,7 +2732,7 @@ dependencies = [
 [[package]]
 name = "magma-pangea"
 version = "0.1.10"
-source = "git+https://github.com/pleme-io/magma#fb3905fdfb02f733248e15e1f937542c94485508"
+source = "git+https://github.com/pleme-io/magma#485765d88fc961be4a9f9dcb16836d06be31340f"
 dependencies = [
  "async-trait",
  "magma-config",
@@ -2750,7 +2750,7 @@ dependencies = [
 [[package]]
 name = "magma-plan"
 version = "0.1.10"
-source = "git+https://github.com/pleme-io/magma#fb3905fdfb02f733248e15e1f937542c94485508"
+source = "git+https://github.com/pleme-io/magma#485765d88fc961be4a9f9dcb16836d06be31340f"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2770,7 +2770,7 @@ dependencies = [
 [[package]]
 name = "magma-plugin"
 version = "0.1.10"
-source = "git+https://github.com/pleme-io/magma#fb3905fdfb02f733248e15e1f937542c94485508"
+source = "git+https://github.com/pleme-io/magma#485765d88fc961be4a9f9dcb16836d06be31340f"
 dependencies = [
  "async-trait",
  "base64",
@@ -2799,7 +2799,7 @@ dependencies = [
 [[package]]
 name = "magma-protocol"
 version = "0.1.10"
-source = "git+https://github.com/pleme-io/magma#fb3905fdfb02f733248e15e1f937542c94485508"
+source = "git+https://github.com/pleme-io/magma#485765d88fc961be4a9f9dcb16836d06be31340f"
 dependencies = [
  "prost",
  "prost-build",
@@ -2814,7 +2814,7 @@ dependencies = [
 [[package]]
 name = "magma-providers"
 version = "0.1.10"
-source = "git+https://github.com/pleme-io/magma#fb3905fdfb02f733248e15e1f937542c94485508"
+source = "git+https://github.com/pleme-io/magma#485765d88fc961be4a9f9dcb16836d06be31340f"
 dependencies = [
  "magma-plugin",
  "magma-types",
@@ -2828,7 +2828,7 @@ dependencies = [
 [[package]]
 name = "magma-rubygems"
 version = "0.1.10"
-source = "git+https://github.com/pleme-io/magma#fb3905fdfb02f733248e15e1f937542c94485508"
+source = "git+https://github.com/pleme-io/magma#485765d88fc961be4a9f9dcb16836d06be31340f"
 dependencies = [
  "blake3",
  "hex",
@@ -2841,7 +2841,7 @@ dependencies = [
 [[package]]
 name = "magma-state"
 version = "0.1.10"
-source = "git+https://github.com/pleme-io/magma#fb3905fdfb02f733248e15e1f937542c94485508"
+source = "git+https://github.com/pleme-io/magma#485765d88fc961be4a9f9dcb16836d06be31340f"
 dependencies = [
  "base64",
  "chrono",
@@ -2857,7 +2857,7 @@ dependencies = [
 [[package]]
 name = "magma-stream"
 version = "0.1.10"
-source = "git+https://github.com/pleme-io/magma#fb3905fdfb02f733248e15e1f937542c94485508"
+source = "git+https://github.com/pleme-io/magma#485765d88fc961be4a9f9dcb16836d06be31340f"
 dependencies = [
  "async-trait",
  "blake3",
@@ -2875,7 +2875,7 @@ dependencies = [
 [[package]]
 name = "magma-test-laws"
 version = "0.1.10"
-source = "git+https://github.com/pleme-io/magma#fb3905fdfb02f733248e15e1f937542c94485508"
+source = "git+https://github.com/pleme-io/magma#485765d88fc961be4a9f9dcb16836d06be31340f"
 dependencies = [
  "magma-apply",
  "magma-config",
@@ -2892,7 +2892,7 @@ dependencies = [
 [[package]]
 name = "magma-types"
 version = "0.1.10"
-source = "git+https://github.com/pleme-io/magma#fb3905fdfb02f733248e15e1f937542c94485508"
+source = "git+https://github.com/pleme-io/magma#485765d88fc961be4a9f9dcb16836d06be31340f"
 dependencies = [
  "chrono",
  "gen-platform",
@@ -3059,7 +3059,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3847,7 +3847,7 @@ version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be769465445e8c1474e9c5dac2018218498557af32d9ed057325ec9a41ae81bf"
 dependencies = [
- "heck 0.5.0",
+ "heck 0.4.1",
  "itertools",
  "log",
  "multimap",
@@ -4451,7 +4451,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4532,7 +4532,7 @@ dependencies = [
  "security-framework 3.7.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5094,7 +5094,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52d1cfed4120b4d927bf7c0f86d2087a4a7d6027c906d9f9d525a80573b9be51"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5479,7 +5479,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5489,7 +5489,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
