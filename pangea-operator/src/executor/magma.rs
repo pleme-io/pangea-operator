@@ -29,7 +29,8 @@
 //! serde_json::Value (terraform-shaped)
 //!   ↓ magma_config::Config::from_json
 //! magma::config::Config
-//!   ↓ magma_plan::plan(&cfg, &state)
+//!   ↓ magma_apply::engine::refresh_then_plan(&cfg, &mut state, ctx) (real
+//!     ReadResource refresh, Terraform-parity, then magma_plan::plan)
 //! magma::types::Plan
 //!   ↓ checkpoint to disk (restart safety) + magma_apply::engine::run_plan_with_providers
 //! magma::types::ApplyOutcome
@@ -656,6 +657,40 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
 
         out
     }
+
+    /// The routing decision `plan()` makes before calling
+    /// `magma_apply::engine::refresh_then_plan`: build the real
+    /// `ApplyContext` a plan-time refresh needs, or `None` to skip
+    /// refresh entirely. Isolated into its own method (rather than
+    /// inlined in `plan()`) specifically so the routing decision is
+    /// unit-testable without dialing a real provider binary — see
+    /// `refresh_ctx_for_*` in the test module below.
+    ///
+    /// * `structural_apply` (TEST-ONLY: CI has no provider binaries) ⇒
+    ///   `None` — `refresh_then_plan(cfg, state, None)` behaves exactly
+    ///   like the pre-fix bare `magma_plan::plan(cfg, state)` call, so
+    ///   every existing `structural_apply: true` unit test in this file
+    ///   keeps its old behavior unchanged.
+    /// * production (`structural_apply: false`) ⇒ `Some`, built the
+    ///   SAME way `apply()`/`destroy()` build their own `ApplyContext`
+    ///   (`build_provider_configs`, folding `spec.providerCredentials`
+    ///   with the rendered config's own `provider "x" {}` blocks) — a
+    ///   refresh `ReadResource` RPC needs the same real provider
+    ///   credentials a mutating apply does.
+    fn refresh_ctx_for(
+        &self,
+        work_dir: &Path,
+        cfg: &magma_config::Config,
+    ) -> Option<magma_apply::engine::ApplyContext> {
+        if self.cfg.structural_apply {
+            return None;
+        }
+        let mut ctx = magma_apply::engine::ApplyContext::new(work_dir.to_path_buf());
+        for (name, value) in self.build_provider_configs(cfg) {
+            ctx = ctx.with_provider_config(name, value);
+        }
+        Some(ctx)
+    }
 }
 
 fn ok_tofu_result(stdout: String, started: Instant) -> TofuResult {
@@ -996,11 +1031,68 @@ where
 
         let backend = self.make_backend();
         self.ensure_state_table().await?;
-        let state = magma_backend::Backend::read_state(&backend)
+        let mut state = magma_backend::Backend::read_state(&backend)
             .await
             .map_err(|e| Error::MagmaExecution(format!("read state: {e}")))?;
-        let plan = magma_plan::plan(&cfg, &state)
-            .map_err(|e| Error::MagmaExecution(format!("magma_plan: {e}")))?;
+
+        // Terraform-parity plan-time refresh — the ONE place this
+        // executor's `plan()` goes instead of a bare `magma_plan::plan`
+        // call, so a plan cycle gets real Terraform's implicit-refresh
+        // guarantee: every state instance is re-read from the live
+        // provider (`ReadResource`) BEFORE it is diffed against config.
+        //
+        // BUG THIS CLOSES (camelot-eks live incident, ground-truthed
+        // 2026-07-19 against the real Postgres state row): the import
+        // path (`MagmaExecutor::import` /
+        // `magma_apply::ConfiguredImportEnvironment`) writes only an
+        // `ImportResourceState` STUB — id-only, no follow-up
+        // `ReadResource` — so nearly every other attribute of an
+        // adopted resource is recorded as JSON `null`
+        // (`aws_vpc.camelot-eks-vpc`'s stored state had `cidr_block`,
+        // `tags`, `enable_dns_support`, `enable_dns_hostnames`, … all
+        // `null`; only `id`/`region` populated). A bare
+        // `magma_plan::plan(&cfg, &state)` diffs config directly
+        // against that stub, so EVERY real (non-null) config value
+        // reads as a false "changed" attribute — 53 of 54 camelot-eks
+        // resources planned as needing an update, when the real drift
+        // was far smaller. `refresh_then_plan` backfills the stub from
+        // the live provider first, so the diff runs against real
+        // attributes.
+        //
+        // `structural_apply` (TEST-ONLY: no real provider binaries in
+        // CI) skips refresh entirely — `ctx = None` behaves exactly
+        // like the pre-fix bare `plan` call. In production the
+        // `ApplyContext` is built the SAME way `apply()` builds its own
+        // (`build_provider_configs`, folding `spec.providerCredentials`
+        // with the rendered config's own `provider "x" {}` blocks) —
+        // a refresh `ReadResource` RPC needs the same real provider
+        // credentials a mutating apply does, and `handle_planning`
+        // already constructs this executor via the credential-aware
+        // `executor_runner_for_with_creds` for exactly this reason (a
+        // data-source read at plan time is already a real provider
+        // RPC).
+        let refresh_ctx = self.refresh_ctx_for(work_dir, &cfg);
+        let (plan, refresh_report) =
+            magma_apply::engine::refresh_then_plan(&cfg, &mut state, refresh_ctx.as_ref())
+                .await
+                .map_err(|e| Error::MagmaExecution(format!("magma_plan: {e}")))?;
+
+        // Terraform parity (mirrors magma-cli's `cmd_plan`/`cmd_apply` —
+        // see `report_refresh`'s call sites there): persist the
+        // refreshed state even though `plan` itself makes no other
+        // change. Without this, the backfill above is transient —
+        // visible only to THIS cycle's diff — and the underlying
+        // Postgres state row stays the null-stub the import path wrote:
+        // a resource that refresh-plans as NoOp is never touched by a
+        // later `apply()` (which folds provider-returned state only for
+        // CHANGED resources), so its stub would never self-heal.
+        // `refresh_report` is only `Some` when refresh actually ran
+        // (`structural_apply` false), matching the write's gate above.
+        if refresh_report.is_some() {
+            magma_backend::Backend::write_state(&backend, &state)
+                .await
+                .map_err(|e| Error::MagmaExecution(format!("write refreshed state: {e}")))?;
+        }
 
         // The revision this plan was COMPUTED FROM: the source_revision of
         // the rendered_config it was derived from (loaded above via
@@ -2095,6 +2187,115 @@ mod tests {
             "the drifted resource must classify as Action::Update, not \
              hardcoded NoOp: {}",
             plan_result.stdout
+        );
+    }
+
+    // ── refresh_ctx_for routing (the camelot-eks plan-time-refresh fix) ──
+    //
+    // The call-site bug this closes: `plan()` called bare
+    // `magma_plan::plan(&cfg, &state)` against whatever state was last
+    // written, never `magma_apply::engine::refresh_then_plan`, so an
+    // import-adopted resource's null-attribute stub (see the
+    // `import_then_plan_surfaces_drift_when_config_diverges_from_the_imported_state`
+    // test above for that half of the incident) was NEVER backfilled from
+    // the live provider before diffing — every real config value read as
+    // false drift.
+    //
+    // A genuinely live `ReadResource` RPC needs a real provider binary
+    // this test environment doesn't have, so these tests prove the
+    // ROUTING is correct — `plan()`'s call now reaches
+    // `refresh_then_plan` with the right `Some`/`None` argument shape —
+    // rather than exercising a real refresh end-to-end (that is
+    // magma's own job; see `magma-test/tests/integration_refresh_then_plan.rs`
+    // in the magma repo, which proves `refresh_then_plan` itself dials a
+    // real mock provider and backfills a null-stub instance).
+
+    /// `structural_apply: true` (every unit test's `fixture_config` in
+    /// this file — CI has no provider binaries) must skip refresh
+    /// entirely, so `refresh_then_plan(cfg, state, None)` behaves
+    /// EXACTLY like the pre-fix bare `magma_plan::plan` call. If this
+    /// regressed to always building `Some`, every `structural_apply:
+    /// true` test in this module would attempt to spawn a real provider
+    /// process and fail/hang in CI.
+    #[tokio::test]
+    async fn refresh_ctx_for_skips_refresh_under_structural_apply() {
+        let exec = MagmaExecutor::new(fixture_config());
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = magma_config::Config::from_json(json!({
+            "provider": { "aws": { "region": "us-east-1" } },
+        }))
+        .unwrap();
+
+        assert!(
+            exec.refresh_ctx_for(tmp.path(), &cfg).is_none(),
+            "structural_apply: true must route plan() through \
+             refresh_then_plan(cfg, state, None) — the exact pre-fix \
+             bare-plan behavior — never attempt a real provider RPC"
+        );
+    }
+
+    /// The actual fix: outside test mode (`structural_apply: false`,
+    /// the production default — see `MagmaExecutorConfig`'s `Default`
+    /// impl), `plan()` must build a REAL `ApplyContext` and route
+    /// through `refresh_then_plan(cfg, state, Some(&ctx))`, not bare
+    /// `plan`. Also pins the credential-forwarding shape: a plan-time
+    /// refresh RPC needs the same real provider credentials
+    /// `apply()`/`destroy()` already thread through
+    /// `build_provider_configs` (`spec.providerCredentials` merged with
+    /// the rendered config's own `provider "x" {}` blocks) — without
+    /// this, a refresh `ReadResource` against a provider with no
+    /// rendered block (rio's cloudflare provider is the documented
+    /// live example) would dial with a null config exactly like the
+    /// credential-drop incident `build_provider_configs_drops_spec_provider_credentials_when_constructed_credential_blind`
+    /// above closed for apply/destroy.
+    #[tokio::test]
+    async fn refresh_ctx_for_builds_a_real_credential_aware_context_in_production_mode() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = magma_config::Config::from_json(json!({
+            // No rendered "provider" block for aws at all — the exact
+            // shape a provider whose credentials live ONLY in
+            // spec.providerCredentials has (rio's cloudflare provider).
+            "resource": { "aws_iam_role": { "r": { "name": "x" } } },
+        }))
+        .unwrap();
+
+        let mut aware_cfg = fixture_config();
+        aware_cfg.structural_apply = false;
+        aware_cfg.provider_configs.insert(
+            "aws".to_string(),
+            json!({
+                "region": "us-east-1",
+                "access_key": "AKIA_FAKE",
+                "secret_key": "fake-secret",
+            }),
+        );
+        let exec = MagmaExecutor::new(aware_cfg);
+
+        let ctx = exec
+            .refresh_ctx_for(tmp.path(), &cfg)
+            .expect(
+                "structural_apply: false must route plan() through \
+                 refresh_then_plan(cfg, state, Some(&ctx)) — a real \
+                 ApplyContext, not None",
+            );
+        assert_eq!(
+            ctx.workspace_dir,
+            tmp.path(),
+            "the refresh ApplyContext must be scoped to the same \
+             work_dir plan() was called with (provider plugin \
+             resolution reads from it)"
+        );
+        assert_eq!(
+            ctx.provider_configs
+                .get("aws")
+                .and_then(|v| v.get("access_key"))
+                .and_then(|v| v.as_str()),
+            Some("AKIA_FAKE"),
+            "the refresh ApplyContext must carry spec.providerCredentials \
+             through to the ReadResource RPC even when the rendered \
+             config has no matching provider block — the exact \
+             credential-drop shape build_provider_configs already \
+             closed for apply()/destroy()"
         );
     }
 
