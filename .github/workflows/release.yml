@@ -183,6 +183,16 @@ jobs:
       extraSubstituters: "http://rio:8080/nexus"
       extraTrustedPublicKeys: "nexus:aZ0dDIXpfD1fIzN4z9waAWim7R8paT1qZhxQydlUZ90="
       netrcFile: "/etc/attic/netrc"
+      # Pre-publish CVE gate (fixed here 2026-07-19 -- see the standalone
+      # cve-scan job's old header comment, now removed, for the incident).
+      # image-push.yml scans the LOCAL image.tar.gz BEFORE the push step
+      # runs; a CRITICAL/HIGH/... finding fails the job here and "Push image"
+      # never executes, so a vulnerable tag can never reach ghcr.io, and
+      # Flux's ImagePolicy/ImageUpdateAutomation (★ AUTOBUMP) can never poll
+      # it. Same threshold + exception file the old post-publish job used.
+      scanBeforePush: true
+      scanFailOnSeverity: "UNKNOWN"
+      scanIgnoreFile: ".trivyignore"
     secrets:
       # BOT_PAT carries write:packages for ghcr.io/pleme-io/* — the proven
       # ghcr-push token (matches caixa-/helm-auto-release.yml). `secrets: inherit`
@@ -224,47 +234,41 @@ jobs:
       # rest of #20 (broader fleet-wide cache coverage) remains open.
       extraSubstituters: ${{ vars.CAMELOT_SUI_SUBSTITUTER }}
       requireSigs: ${{ vars.CAMELOT_SUI_REQUIRE_SIGS }}
+      # Pre-publish CVE gate -- same rationale as image-rio above. This is
+      # the variant every real push-triggered merge actually takes (the
+      # default runner), so this is the load-bearing half of the fix.
+      scanBeforePush: true
+      scanFailOnSeverity: "UNKNOWN"
+      scanIgnoreFile: ".trivyignore"
     secrets:
       GHCR_TOKEN: ${{ secrets.BOT_PAT }}
 
-  # Zero-tolerance CVE gate on the JUST-published embedded image -- found
-  # live 2026-07-14: this pipeline had never once scanned its own
-  # published artifact. Direct image-scan call (not compliance-attest.yml)
-  # since that reusable's scan job is hard-chained behind sbom→sign→slsa
-  # for a binary artifact-path this container image doesn't have; adding
-  # that chain here is a separate, bigger change than this fix needs.
+  # ── The standalone post-publish cve-scan job that used to live here is
+  # REMOVED (2026-07-19) — root cause + fix history below.
   #
-  # REAL GATE as of 2026-07-17 (was advisory/continue-on-error since
-  # 2026-07-14 pending this promotion). A finding here now fails the
-  # workflow run for real -- it cannot un-publish the image that was just
-  # pushed by image-rio/image-fallback (this fleet's shared image-push.yml
-  # reusable builds+pushes as one step; a genuine pre-publish gate would
-  # need image-scan's own `local-archive:` input wired ahead of the push,
-  # which is a change to the SHARED substrate reusable, out of scope for
-  # this repo-level fix), but it now turns CI red and blocks the false
-  # "green" a continue-on-error gate silently produced. Tier-honest: this
-  # is a real, blocking, POST-publish gate -- promoting it to pre-publish
-  # is a named follow-up against pleme-io/substrate's image-push.yml.
+  # Found live 2026-07-14: this pipeline had never once scanned its own
+  # published artifact. A direct image-scan call was added as a JOB AFTER
+  # image-rio/image-fallback, scanning the tag those jobs had ALREADY
+  # pushed to ghcr.io. Promoted from advisory (continue-on-error) to a real
+  # blocking gate 2026-07-17 -- but "blocking" here only ever meant it
+  # turned THIS WORKFLOW RUN red; it could never un-publish the image that
+  # was already live. Confirmed live 2026-07-19 (tag embedded-amd64-r174):
+  # a build whose post-publish scan FAILED (CRITICAL) still had its tag
+  # picked up by Flux's ImagePolicy/ImageUpdateAutomation (★ AUTOBUMP)
+  # within minutes and ran in-cluster for ~1.5h before the next (clean)
+  # build superseded it -- the gate was a receipt, not a gate, by
+  # construction: nothing in the CI graph or in Flux's registry poll ever
+  # depended on this job's result.
   #
-  # `image-rio`/`image-fallback` are mutually exclusive (exactly one runs,
-  # the other reports `skipped`) -- this is a genuine join condition (GHA
-  # has no "depend on whichever of these ran" primitive), not a config-value
-  # ternary; it decides CONTROL FLOW once, not a field's content repeatedly.
-  cve-scan:
-    name: zero-tolerance CVE scan (blocking)
-    needs: [image-rio, image-fallback]
-    if: always() && (needs.image-rio.result == 'success' || needs.image-fallback.result == 'success')
-    runs-on: ubuntu-latest
-    steps:
-      # Needed so `.trivyignore` (the named, cited residual-CVE exceptions
-      # — see that file's own header) is on disk for the ignore-file input
-      # below. This job runs on a fresh runner with no prior checkout step.
-      - uses: actions/checkout@v4
-      - uses: pleme-io/actions/image-scan@main
-        with:
-          image-ref: ghcr.io/pleme-io/pangea-operator:embedded-amd64-r${{ github.run_number }}-${{ github.sha }}
-          fail-on-severity: UNKNOWN
-          ignore-file: .trivyignore
+  # The fix moves the SAME scan (same threshold `UNKNOWN`, same
+  # `.trivyignore`) into pleme-io/substrate's image-push.yml reusable
+  # itself, BETWEEN the local build step and the push step (its
+  # `scanBeforePush` input, opted into by image-rio/image-fallback above).
+  # A failing scan now stops image-push.yml's own job before "Push image"
+  # runs -- the vulnerable tag never reaches ghcr.io, so there is nothing
+  # for Flux to poll. This also fixes every OTHER consumer of
+  # image-push.yml fleet-wide, not just this repo (the org's own
+  # solve-once-in-one-place doctrine) -- opt-in via the same three inputs.
 
   # Binaries + chart publish on a version tag (or manual dispatch) — not on
   # every merge.
