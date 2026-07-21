@@ -228,6 +228,13 @@ async fn reconcile_flow(
                             variables,
                             variable_refs: None,
                             auto_approve: step.auto_approve.unwrap_or(true),
+                            // Flow-spawned templates default auto_approve to
+                            // true (see above) -- the GitOps-native manual
+                            // approval field has nothing to do until a step
+                            // explicitly opts into requireApproval, same
+                            // rationale as the other None-defaulted fields
+                            // below.
+                            spec_approved_plan_hash: None,
                             refresh_interval: step.refresh_interval.clone().unwrap_or_else(|| "10m".into()),
                             suspend: false,
                             // Flow-spawned templates inherit the operator-wide

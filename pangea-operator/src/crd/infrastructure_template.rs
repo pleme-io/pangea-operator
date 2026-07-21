@@ -58,6 +58,29 @@ pub struct InfrastructureTemplateSpec {
     #[serde(default)]
     pub auto_approve: bool,
 
+    /// GitOps-native approval: commit the plan hash the operator reported
+    /// in `status.pendingPlanHash`/its `PlanPending` event here (a
+    /// declare-and-observe spec edit, per ★★ PLATFORM-MEDIATED
+    /// INFRASTRUCTURE) instead of a direct `kubectl patch ... --subresource
+    /// status`. Checked as an OR alternative to `status.approvedPlanHash`
+    /// (see `handle_planning`'s `is_approved` gate) -- either satisfies the
+    /// approval, so existing direct-patch workflows (and this field's own
+    /// `PlanPending` event text) keep working unchanged. Clusters whose
+    /// tooling refuses imperative status-subresource mutations against a
+    /// FluxCD-managed namespace (this fleet's own `guardrail`
+    /// `kubectl-imperative-camelot` rule is the motivating case) now have a
+    /// real committed-manifest path: bump this field, commit, let Flux
+    /// apply it, observe `status.lastCycle` for the outcome. The operator
+    /// NEVER writes this field (spec is git-owned; a controller write here
+    /// would fight Flux's own reconciliation of the committed manifest) --
+    /// unlike `status.approvedPlanHash`, which the operator actively resets
+    /// on drift (see `update_pending_plan_hash`), this one goes stale
+    /// passively: a plan-hash change simply stops matching the old
+    /// committed value, so a stale approval never silently re-approves a
+    /// DIFFERENT plan without needing an explicit clear.
+    #[serde(default, rename = "approvedPlanHash", skip_serializing_if = "Option::is_none")]
+    pub spec_approved_plan_hash: Option<String>,
+
     /// Interval for drift detection checks.
     /// Defaults to "5m" (5 minutes).
     #[serde(default = "default_refresh_interval")]

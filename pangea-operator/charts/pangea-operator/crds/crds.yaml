@@ -58,6 +58,10 @@ spec:
           spec:
             description: InfrastructureTemplate represents a Pangea infrastructure template to be compiled, planned, and applied by the operator.
             properties:
+              approvedPlanHash:
+                description: 'GitOps-native approval: commit the plan hash the operator reported in `status.pendingPlanHash`/its `PlanPending` event here (a declare-and-observe spec edit, per ★★ PLATFORM-MEDIATED INFRASTRUCTURE) instead of a direct `kubectl patch ... --subresource status`. Checked as an OR alternative to `status.approvedPlanHash` (see `handle_planning`''s `is_approved` gate) -- either satisfies the approval, so existing direct-patch workflows (and this field''s own `PlanPending` event text) keep working unchanged. Clusters whose tooling refuses imperative status-subresource mutations against a FluxCD-managed namespace (this fleet''s own `guardrail` `kubectl-imperative-camelot` rule is the motivating case) now have a real committed-manifest path: bump this field, commit, let Flux apply it, observe `status.lastCycle` for the outcome. The operator NEVER writes this field (spec is git-owned; a controller write here would fight Flux''s own reconciliation of the committed manifest) -- unlike `status.approvedPlanHash`, which the operator actively resets on drift (see `update_pending_plan_hash`), this one goes stale passively: a plan-hash change simply stops matching the old committed value, so a stale approval never silently re-approves a DIFFERENT plan without needing an explicit clear.'
+                nullable: true
+                type: string
               autoApprove:
                 default: false
                 description: Whether to automatically apply changes without manual approval.
@@ -250,7 +254,7 @@ spec:
                       description: Match criteria. All set fields must match (AND); within each list, any entry counts (OR).
                       properties:
                         actions:
-                          description: 'Restrict to specific actions. Empty = any action. Valid values: `create`, `update`, `delete`, `replace`.'
+                          description: 'Restrict to specific actions. Empty = any action. Valid values: `create`, `update`, `delete`, `replace` (see [`DriftAction`]). Matched case-sensitively against `DriftDetail.action` — `executor::policy::actions_match` warns and treats the whole clause as no-match if either side falls outside this vocabulary, rather than silently comparing two strings that were never going to be equal.'
                           items:
                             type: string
                           type: array
@@ -270,7 +274,7 @@ spec:
                             type: string
                           type: array
                         riskLevels:
-                          description: 'Restrict to specific risk levels. Empty = any risk. Valid values: `none`, `low`, `medium`, `high`.'
+                          description: 'Restrict to specific risk levels. Empty = any risk. Valid values: `none`, `low`, `medium`, `high` (see [`RiskLevel`]). Matched case-sensitively against `DriftDetail.risk` — `executor::policy::risk_levels_match` warns and treats the whole clause as no-match if either side falls outside this vocabulary, rather than silently comparing two strings that were never going to be equal.'
                           items:
                             type: string
                           type: array
@@ -515,6 +519,43 @@ spec:
                     minimum: 0.0
                     type: integer
                 type: object
+              secretFiles:
+                description: |-
+                  Secrets resolved into ephemeral, pod-local files under the template's tofu workspace — written once per Initializing-phase reconcile, immediately before `tofu init`, by `controller::template::secret_files::write_secret_files`. A rendered template references each by `${file("${path.module}/<name>")}` HCL interpolation.
+
+                  Generalizes the shape `handle_compiling`'s git-auth resolution already proves for git credentials (resolve a Secret → write to a file in the workspace → reference from rendered HCL) to ANY named secret a workspace's Ruby needs as a file on disk — not just git auth. First consumer: a raw (non-cloud-managed) `kubernetes { token = ... }` provider block, which has no Ruby `provider :xyz do` surface to inline an `ENV.fetch` into and isn't provider-block-shaped credential data (region, api_token, …) either.
+
+                  Deliberately OUTSIDE the `ProviderCredentials`/`ProviderKind` exhaustiveness chain (see that type's own doc comment) — this is not a provider credential the operator renders into `providers.tf.json`, it's an arbitrary named file the rendered HCL reads via `file(...)`. Never written to git; lives only in the pod-local emptyDir workspace (★★ MAGMA-NATIVE's one sanctioned filesystem reach — no new persistence surface, no new secret-at-rest concern beyond what `_git_user`/`_git_pass` already establish).
+
+                  Skipped entirely on the magma path (`load_config_routed` reads providers from the resolved config, never from workspace files) — same gating as `write_provider_config`. Empty (default) = no secret files written; existing templates pay nothing for this.
+                items:
+                  description: One named secret resolved into a workspace file. See `InfrastructureTemplateSpec::secret_files`.
+                  properties:
+                    key:
+                      description: Key within the Secret's `.data` map.
+                      type: string
+                    name:
+                      description: Filename written under the workspace directory, referenced from rendered HCL as `${file("${path.module}/<name>")}`. Must be a bare filename — no path separators, no `..`, no leading `.` (validated at write time by `secret_files::write_secret_files`, not at the schema layer, to keep the CRD a plain string field rather than a regex-pattern one).
+                      type: string
+                    secretRef:
+                      description: Secret to read the value from.
+                      properties:
+                        name:
+                          description: Name of the Secret.
+                          type: string
+                        namespace:
+                          description: Namespace of the Secret (defaults to same namespace as the resource).
+                          nullable: true
+                          type: string
+                      required:
+                      - name
+                      type: object
+                  required:
+                  - key
+                  - name
+                  - secretRef
+                  type: object
+                type: array
               settlingPolicy:
                 description: |-
                   Bounds on how long the operator may keep cycling through drift→apply→drift loops before declaring the template stuck. State settling is the operator's primary success metric — when it can't reach a settled state after the configured number of cycles, this is escalated loudly via a `Settled=False` condition + Warning event.
@@ -607,6 +648,9 @@ spec:
                 additionalProperties:
                   description: Cross-template variable reference. Fetches an output from another template.
                   properties:
+                    mockOutput:
+                      description: Plan-time fallback value used when the upstream template's real output isn't available yet (Terragrunt `mock_outputs` parity, P2). With a mock, this template can PLAN before its upstream has applied; the operator still gates APPLY until the real output lands (a mocked value is never applied). `null`/absent ⇒ the upstream must be Ready before this template proceeds.
+                      x-kubernetes-preserve-unknown-fields: true
                     outputKey:
                       description: Key in the source template's status.outputs to read.
                       type: string
@@ -1441,6 +1485,11 @@ spec:
                 additionalProperties:
                   type: string
                 description: Default tags to apply to all resources in this namespace.
+                type: object
+              defaultVariables:
+                additionalProperties: true
+                description: Namespace-default VARIABLES inherited by every template using this namespace — the OUTERMOST layer of the config-inheritance cascade (P1, Terragrunt `root.hcl` parity). Deep-merged under the workspace's and the template's variables (`controller::config_cascade`); a template inherits these fleet-wide defaults and overrides per key.
+                nullable: true
                 type: object
               description:
                 description: Description of this Pangea namespace.
@@ -4384,6 +4433,58 @@ spec:
           spec:
             description: ArchitectureGem declares a Pangea architecture gem to be loaded + smoke-tested by the operator's compiler sidecar.
             properties:
+              dependencies:
+                description: Runtime dependency gems the operator loads IN-MEMORY before this gem — each is cloned + its `lib/` is prepended to the live interpreter's `$LOAD_PATH` (hot, no restart), in declared order, BEFORE the main gem is prepared, so the main gem's `require`s resolve. This is how the operator manages an architecture gem's own dependencies for itself (e.g. `pangea-dashboards` under `pangea-architectures`) — **no image bundling, no rebuild to add a gem**. Idempotent across reconcile cycles like the main gem.
+                items:
+                  description: A runtime gem dependency the operator clones + `lib/`-prepends to the live `$LOAD_PATH` before the main architecture gem. The typed border for "the operator manages a gem's own dependencies in-memory, for itself."
+                  properties:
+                    gemName:
+                      description: Gem name as it appears in `require` statements (e.g. `pangea-dashboards`).
+                      type: string
+                    gitRepository:
+                      description: Git repository to clone the dependency from. The operator clones it into the gem cache + prepends its `lib/` to `$LOAD_PATH` (embedded Ruby) at reconcile, before the main gem.
+                      properties:
+                        path:
+                          description: Path to the template file within the repository.
+                          type: string
+                        ref:
+                          default: main
+                          description: Git reference (branch, tag, or commit SHA).
+                          type: string
+                        secretRef:
+                          description: Reference to a Secret containing Git credentials.
+                          nullable: true
+                          properties:
+                            name:
+                              description: Name of the Secret.
+                              type: string
+                            namespace:
+                              description: Namespace of the Secret (defaults to same namespace as the resource).
+                              nullable: true
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        url:
+                          description: Git repository URL.
+                          type: string
+                      required:
+                      - path
+                      - url
+                      type: object
+                    kind:
+                      default: Ruby
+                      description: Which evaluator interprets the dependency's source. Defaults to `Ruby`.
+                      enum:
+                      - Ruby
+                      - Lisp
+                      - Wasm
+                      type: string
+                  required:
+                  - gemName
+                  - gitRepository
+                  type: object
+                type: array
               expectedClasses:
                 description: |-
                   Classes the operator EXPECTS this gem to expose. Operator refuses to advance past `Verifying` if any expected class is missing from the compiler's loaded namespace.
@@ -5029,6 +5130,11 @@ spec:
                 default: false
                 description: Suspend reconciliation of every template under this catalog.
                 type: boolean
+              variables:
+                additionalProperties: true
+                description: Workspace-default VARIABLES inherited by every template in this workspace — the Terragrunt `root.hcl` / `include` analogue (config inheritance, P1). A template's own `spec.variables` deep-merges ONTO these (innermost-wins per key; nested objects merge recursively), so a template inherits fleet/workspace defaults and overrides only what it needs. Resolved by `controller::config_cascade` at compile time, layered `PangeaNamespace.defaultVariables → this → template.spec.variables`.
+                nullable: true
+                type: object
             required:
             - source
             type: object
@@ -5798,6 +5904,287 @@ spec:
         required:
         - spec
         title: PangeaFleetStatus
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: reconciliationloops.pangea.pleme.io
+spec:
+  group: pangea.pleme.io
+  names:
+    categories:
+    - pangea
+    kind: ReconciliationLoop
+    plural: reconciliationloops
+    shortNames:
+    - roda
+    singular: reconciliationloop
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.cadence
+      name: Cadence
+      type: string
+    - jsonPath: .spec.concurrency
+      name: Concurrency
+      type: integer
+    - jsonPath: .status.matchedCount
+      name: Members
+      type: integer
+    - jsonPath: .spec.suspend
+      name: Suspended
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for ReconciliationLoopSpec via `CustomResource`
+        properties:
+          spec:
+            properties:
+              anomalyPolicy:
+                description: Per-loop reactive/anomaly policy default (failure / timeout escalation).
+                nullable: true
+                properties:
+                  failureEscalation:
+                    description: What to do when consecutive Failed reconciles exceed threshold.
+                    nullable: true
+                    properties:
+                      maxConsecutiveFailures:
+                        default: 5
+                        description: Threshold. Default 5.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      onExhaustion:
+                        default: alert
+                        description: What to do when threshold is reached.
+                        enum:
+                        - alert
+                        - suspend
+                        - page
+                        type: string
+                      routing:
+                        description: Where to route the notification.
+                        nullable: true
+                        properties:
+                          githubIssueTemplate:
+                            description: GitHub issue template name. Operator opens an issue in the workspace's source repo.
+                            nullable: true
+                            type: string
+                          ntfyTopic:
+                            description: ntfy topic name (homelab convention — see pleme-io alertmanager-ntfy module).
+                            nullable: true
+                            type: string
+                          slackChannel:
+                            description: Slack channel (SaaS convention — Datadog/Splunk-paired clusters).
+                            nullable: true
+                            type: string
+                        type: object
+                    type: object
+                  phaseTimeout:
+                    description: What to do when stuck in a non-terminal phase too long.
+                    nullable: true
+                    properties:
+                      applying:
+                        default: 30m
+                        description: '`Applying` threshold. Default `30m`.'
+                        type: string
+                      compiling:
+                        default: 5m
+                        description: How long can `Compiling` last before escalating. Format same as refreshInterval (`5m`, `30s`, `1h`). Default `5m`.
+                        type: string
+                      onTimeout:
+                        default: alert
+                        description: What to do when the threshold is exceeded.
+                        enum:
+                        - alert
+                        - suspend
+                        - page
+                        type: string
+                      planning:
+                        default: 10m
+                        description: '`Planning` threshold. Default `10m`.'
+                        type: string
+                      routing:
+                        description: Where to route the notification.
+                        nullable: true
+                        properties:
+                          githubIssueTemplate:
+                            description: GitHub issue template name. Operator opens an issue in the workspace's source repo.
+                            nullable: true
+                            type: string
+                          ntfyTopic:
+                            description: ntfy topic name (homelab convention — see pleme-io alertmanager-ntfy module).
+                            nullable: true
+                            type: string
+                          slackChannel:
+                            description: Slack channel (SaaS convention — Datadog/Splunk-paired clusters).
+                            nullable: true
+                            type: string
+                        type: object
+                    type: object
+                  verifiedBlocked:
+                    description: What to do when `Verified=False` persists past timeout.
+                    nullable: true
+                    properties:
+                      onBlocked:
+                        default: alert
+                        description: What to do when the threshold is exceeded.
+                        enum:
+                        - alert
+                        - suspend
+                        - page
+                        type: string
+                      routing:
+                        description: Where to route the notification.
+                        nullable: true
+                        properties:
+                          githubIssueTemplate:
+                            description: GitHub issue template name. Operator opens an issue in the workspace's source repo.
+                            nullable: true
+                            type: string
+                          ntfyTopic:
+                            description: ntfy topic name (homelab convention — see pleme-io alertmanager-ntfy module).
+                            nullable: true
+                            type: string
+                          slackChannel:
+                            description: Slack channel (SaaS convention — Datadog/Splunk-paired clusters).
+                            nullable: true
+                            type: string
+                        type: object
+                      timeout:
+                        default: 10m
+                        description: How long can `Verified=False` persist. Default `10m`.
+                        type: string
+                    type: object
+                type: object
+              cadence:
+                default: 5m
+                description: 'Base requeue interval for this loop''s tick (e.g. "5m", "30s"). The scheduling dual of the state axis: fine state, bounded loops.'
+                type: string
+              concurrency:
+                default: 4
+                description: Parallel reconciles within this one loop (the shigoto wave width).
+                format: uint32
+                minimum: 0.0
+                type: integer
+              selector:
+                description: Which workspaces (InfrastructureTemplates) this loop drives. A template is a member iff every label in `matchLabels` is present + equal on the template's `metadata.labels`. An empty selector matches nothing (never "everything" — a runaway loop is unrepresentable by default).
+                properties:
+                  matchLabels:
+                    additionalProperties:
+                      type: string
+                    default: {}
+                    description: All of these label key=value pairs must be present + equal on a template for it to be a member. Empty ⇒ matches nothing.
+                    type: object
+                type: object
+              settlingPolicy:
+                description: Per-loop settling policy default (drift-cycle exhaustion bound).
+                nullable: true
+                properties:
+                  maxConsecutiveDriftCycles:
+                    default: 4
+                    description: After this many consecutive drift cycles, take `onExhaustion` action.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  onExhaustion:
+                    default: fail
+                    description: What to do when `maxConsecutiveDriftCycles` is hit.
+                    enum:
+                    - fail
+                    - alert
+                    - retry
+                    type: string
+                type: object
+              suspend:
+                default: false
+                description: Halt this loop's ticking until cleared.
+                type: boolean
+              workerBudget:
+                default: 16
+                description: shigoto scheduler budget bound for this loop's Dag.
+                format: uint32
+                minimum: 0.0
+                type: integer
+            required:
+            - selector
+            type: object
+          status:
+            nullable: true
+            properties:
+              conditions:
+                default: []
+                description: Standard typed conditions (Ready / Healthy), timestamp-stable.
+                items:
+                  description: Kubernetes-style condition.
+                  properties:
+                    lastTransitionTime:
+                      description: Last time the condition transitioned.
+                      format: date-time
+                      type: string
+                    message:
+                      description: Human-readable message.
+                      type: string
+                    reason:
+                      description: Machine-readable reason for the condition.
+                      type: string
+                    status:
+                      description: Status of the condition (True, False, Unknown).
+                      type: string
+                    type:
+                      description: Type of condition.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              lastTickAt:
+                description: When this loop last completed a cadence tick.
+                format: date-time
+                nullable: true
+                type: string
+              matchedCount:
+                default: 0
+                description: Count of `matched_workspaces` (printer column).
+                format: uint32
+                minimum: 0.0
+                type: integer
+              matchedWorkspaces:
+                default: []
+                description: The `namespace/name` of every InfrastructureTemplate currently bound to this loop (the resolved membership — the observability half of `roda`).
+                items:
+                  type: string
+                type: array
+              observedGeneration:
+                default: 0
+                description: Generation this status reflects (diff-gate against spec mutations).
+                format: int64
+                type: integer
+              phase:
+                description: Lifecycle phase of the loop itself.
+                enum:
+                - Active
+                - Suspended
+                - Empty
+                nullable: true
+                type: string
+            type: object
+        required:
+        - spec
+        title: ReconciliationLoop
         type: object
     served: true
     storage: true

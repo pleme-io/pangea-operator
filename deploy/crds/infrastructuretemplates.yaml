@@ -58,6 +58,10 @@ spec:
           spec:
             description: InfrastructureTemplate represents a Pangea infrastructure template to be compiled, planned, and applied by the operator.
             properties:
+              approvedPlanHash:
+                description: 'GitOps-native approval: commit the plan hash the operator reported in `status.pendingPlanHash`/its `PlanPending` event here (a declare-and-observe spec edit, per ★★ PLATFORM-MEDIATED INFRASTRUCTURE) instead of a direct `kubectl patch ... --subresource status`. Checked as an OR alternative to `status.approvedPlanHash` (see `handle_planning`''s `is_approved` gate) -- either satisfies the approval, so existing direct-patch workflows (and this field''s own `PlanPending` event text) keep working unchanged. Clusters whose tooling refuses imperative status-subresource mutations against a FluxCD-managed namespace (this fleet''s own `guardrail` `kubectl-imperative-camelot` rule is the motivating case) now have a real committed-manifest path: bump this field, commit, let Flux apply it, observe `status.lastCycle` for the outcome. The operator NEVER writes this field (spec is git-owned; a controller write here would fight Flux''s own reconciliation of the committed manifest) -- unlike `status.approvedPlanHash`, which the operator actively resets on drift (see `update_pending_plan_hash`), this one goes stale passively: a plan-hash change simply stops matching the old committed value, so a stale approval never silently re-approves a DIFFERENT plan without needing an explicit clear.'
+                nullable: true
+                type: string
               autoApprove:
                 default: false
                 description: Whether to automatically apply changes without manual approval.
@@ -250,7 +254,7 @@ spec:
                       description: Match criteria. All set fields must match (AND); within each list, any entry counts (OR).
                       properties:
                         actions:
-                          description: 'Restrict to specific actions. Empty = any action. Valid values: `create`, `update`, `delete`, `replace`.'
+                          description: 'Restrict to specific actions. Empty = any action. Valid values: `create`, `update`, `delete`, `replace` (see [`DriftAction`]). Matched case-sensitively against `DriftDetail.action` — `executor::policy::actions_match` warns and treats the whole clause as no-match if either side falls outside this vocabulary, rather than silently comparing two strings that were never going to be equal.'
                           items:
                             type: string
                           type: array
@@ -270,7 +274,7 @@ spec:
                             type: string
                           type: array
                         riskLevels:
-                          description: 'Restrict to specific risk levels. Empty = any risk. Valid values: `none`, `low`, `medium`, `high`.'
+                          description: 'Restrict to specific risk levels. Empty = any risk. Valid values: `none`, `low`, `medium`, `high` (see [`RiskLevel`]). Matched case-sensitively against `DriftDetail.risk` — `executor::policy::risk_levels_match` warns and treats the whole clause as no-match if either side falls outside this vocabulary, rather than silently comparing two strings that were never going to be equal.'
                           items:
                             type: string
                           type: array
@@ -515,6 +519,43 @@ spec:
                     minimum: 0.0
                     type: integer
                 type: object
+              secretFiles:
+                description: |-
+                  Secrets resolved into ephemeral, pod-local files under the template's tofu workspace — written once per Initializing-phase reconcile, immediately before `tofu init`, by `controller::template::secret_files::write_secret_files`. A rendered template references each by `${file("${path.module}/<name>")}` HCL interpolation.
+
+                  Generalizes the shape `handle_compiling`'s git-auth resolution already proves for git credentials (resolve a Secret → write to a file in the workspace → reference from rendered HCL) to ANY named secret a workspace's Ruby needs as a file on disk — not just git auth. First consumer: a raw (non-cloud-managed) `kubernetes { token = ... }` provider block, which has no Ruby `provider :xyz do` surface to inline an `ENV.fetch` into and isn't provider-block-shaped credential data (region, api_token, …) either.
+
+                  Deliberately OUTSIDE the `ProviderCredentials`/`ProviderKind` exhaustiveness chain (see that type's own doc comment) — this is not a provider credential the operator renders into `providers.tf.json`, it's an arbitrary named file the rendered HCL reads via `file(...)`. Never written to git; lives only in the pod-local emptyDir workspace (★★ MAGMA-NATIVE's one sanctioned filesystem reach — no new persistence surface, no new secret-at-rest concern beyond what `_git_user`/`_git_pass` already establish).
+
+                  Skipped entirely on the magma path (`load_config_routed` reads providers from the resolved config, never from workspace files) — same gating as `write_provider_config`. Empty (default) = no secret files written; existing templates pay nothing for this.
+                items:
+                  description: One named secret resolved into a workspace file. See `InfrastructureTemplateSpec::secret_files`.
+                  properties:
+                    key:
+                      description: Key within the Secret's `.data` map.
+                      type: string
+                    name:
+                      description: Filename written under the workspace directory, referenced from rendered HCL as `${file("${path.module}/<name>")}`. Must be a bare filename — no path separators, no `..`, no leading `.` (validated at write time by `secret_files::write_secret_files`, not at the schema layer, to keep the CRD a plain string field rather than a regex-pattern one).
+                      type: string
+                    secretRef:
+                      description: Secret to read the value from.
+                      properties:
+                        name:
+                          description: Name of the Secret.
+                          type: string
+                        namespace:
+                          description: Namespace of the Secret (defaults to same namespace as the resource).
+                          nullable: true
+                          type: string
+                      required:
+                      - name
+                      type: object
+                  required:
+                  - key
+                  - name
+                  - secretRef
+                  type: object
+                type: array
               settlingPolicy:
                 description: |-
                   Bounds on how long the operator may keep cycling through drift→apply→drift loops before declaring the template stuck. State settling is the operator's primary success metric — when it can't reach a settled state after the configured number of cycles, this is escalated loudly via a `Settled=False` condition + Warning event.
@@ -607,6 +648,9 @@ spec:
                 additionalProperties:
                   description: Cross-template variable reference. Fetches an output from another template.
                   properties:
+                    mockOutput:
+                      description: Plan-time fallback value used when the upstream template's real output isn't available yet (Terragrunt `mock_outputs` parity, P2). With a mock, this template can PLAN before its upstream has applied; the operator still gates APPLY until the real output lands (a mocked value is never applied). `null`/absent ⇒ the upstream must be Ready before this template proceeds.
+                      x-kubernetes-preserve-unknown-fields: true
                     outputKey:
                       description: Key in the source template's status.outputs to read.
                       type: string

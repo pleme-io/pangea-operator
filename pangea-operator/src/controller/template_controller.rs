@@ -2,7 +2,8 @@
 
 use crate::backend::{BackendConfigGenerator, Credentials, StateBackend};
 use crate::crd::{
-    DriftDetail, InfrastructureTemplate, PangeaNamespace, Phase, PolicyDecision, ResourceSummary,
+    DriftDetail, InfrastructureTemplate, InfrastructureTemplateSpec, InfrastructureTemplateStatus,
+    PangeaNamespace, Phase, PolicyDecision, ResourceSummary,
 };
 use crate::error::{Error, Result};
 use crate::executor::{evaluate_policy, policy_is_configured, Plan, PlanAction, PlannedChange};
@@ -2983,6 +2984,42 @@ async fn current_state_fingerprint(
     }
 }
 
+/// Two equally-valid approval sources, either satisfies the gate:
+///   - `status.approvedPlanHash` -- the original mechanism, a direct
+///     `kubectl patch --subresource status` (still the operator's own
+///     documented UX, see the `PlanPending` event text in the caller).
+///   - `spec.approvedPlanHash` -- GitOps-native: commit the reported
+///     `pendingPlanHash` into the CR's spec instead. Added for fleets
+///     whose tooling refuses imperative status-subresource mutations
+///     against a GitOps-managed namespace (this fleet's own `guardrail`
+///     `kubectl-imperative-camelot` rule is the motivating case) --
+///     status subresources are controller-owned observed-state by K8s
+///     convention, never reconciled by Flux from a committed manifest,
+///     so a cluster with that policy had no way to approve a plan at
+///     all before this field existed. Per ★★ PLATFORM-MEDIATED
+///     INFRASTRUCTURE: declare (commit `spec.approvedPlanHash`) and
+///     observe (`status.lastCycle`), never `kubectl patch`.
+///
+/// Extracted as a pure function (no I/O, no `ControllerState`) so this
+/// two-source OR is directly unit-testable without the full async
+/// `route_through_approval_gate` plumbing.
+fn is_plan_approved(
+    status: &Option<InfrastructureTemplateStatus>,
+    spec: &InfrastructureTemplateSpec,
+    plan_hash: &str,
+) -> bool {
+    status
+        .as_ref()
+        .and_then(|s| s.approved_plan_hash.as_deref())
+        .map(|approved| approved == plan_hash)
+        .unwrap_or(false)
+        || spec
+            .spec_approved_plan_hash
+            .as_deref()
+            .map(|approved| approved == plan_hash)
+            .unwrap_or(false)
+}
+
 /// Route a Planning-phase cycle through the state-fingerprinted
 /// approval gate: recompute `plan_approval_hash` from THIS cycle's
 /// plan + real infrastructure state (`current_state_fingerprint`,
@@ -3043,12 +3080,7 @@ async fn route_through_approval_gate(
     };
     let plan_hash = plan_approval_hash(&plan_content, state_bytes);
 
-    let is_approved = template
-        .status
-        .as_ref()
-        .and_then(|s| s.approved_plan_hash.as_deref())
-        .map(|approved| approved == plan_hash)
-        .unwrap_or(false);
+    let is_approved = is_plan_approved(&template.status, &template.spec, &plan_hash);
 
     if is_approved {
         info!(plan_hash, "Plan approved by user, proceeding to apply");
@@ -3078,11 +3110,12 @@ async fn route_through_approval_gate(
             EventType::Normal,
             "PlanPending",
             &format!(
-                "{} Approve with: kubectl patch infra {} -n {} --type merge --subresource status -p '{{\"status\":{{\"approvedPlanHash\":\"{}\"}}}}'",
+                "{} Approve via GitOps: commit spec.approvedPlanHash: \"{plan_hash}\" to this CR's manifest. \
+                 Or via direct kubectl (where imperative cluster mutations are permitted): \
+                 kubectl patch infra {} -n {} --type merge --subresource status -p '{{\"status\":{{\"approvedPlanHash\":\"{plan_hash}\"}}}}'",
                 reason.waiting_message(),
                 template.name_any(),
                 template.namespace().unwrap_or_default(),
-                plan_hash
             ),
         ).await;
         Ok(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL))
@@ -6045,6 +6078,96 @@ mod plan_approval_hash_tests {
     }
 }
 
+/// `is_plan_approved`'s two-source OR: `status.approvedPlanHash` (direct
+/// kubectl patch) and `spec.approvedPlanHash` (GitOps-native, committed)
+/// are equally valid -- pins that neither alone is required, a mismatch
+/// on either alone still refuses, and a matching one is decisive even
+/// with the other absent/stale.
+#[cfg(test)]
+mod is_plan_approved_tests {
+    use super::{is_plan_approved, InfrastructureTemplateSpec, InfrastructureTemplateStatus};
+    use crate::crd::TemplateSource;
+
+    fn spec_with(approved: Option<&str>) -> InfrastructureTemplateSpec {
+        InfrastructureTemplateSpec {
+            source: TemplateSource { inline: Some(String::new()), config_map_ref: None, git_repository: None },
+            pangea_namespace: "test".to_string(),
+            template_name: None,
+            variables: None,
+            variable_refs: None,
+            auto_approve: false,
+            spec_approved_plan_hash: approved.map(str::to_string),
+            refresh_interval: "10m".to_string(),
+            suspend: false,
+            executor: None,
+            destroy_protection: false,
+            retry_policy: None,
+            provider_credentials: None,
+            compliance_profiles: vec![],
+            policies: vec![],
+            default_decision: None,
+            settling_policy: None,
+            reactive_policy: None,
+            import_policy: None,
+            import_hints: Default::default(),
+            conflict_policy: None,
+            output_bindings: vec![],
+            secret_files: vec![],
+        }
+    }
+
+    fn status_with(approved: Option<&str>) -> Option<InfrastructureTemplateStatus> {
+        Some(InfrastructureTemplateStatus {
+            approved_plan_hash: approved.map(str::to_string),
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn neither_source_set_is_not_approved() {
+        assert!(!is_plan_approved(&None, &spec_with(None), "abc123"));
+    }
+
+    #[test]
+    fn status_only_match_is_approved() {
+        assert!(is_plan_approved(&status_with(Some("abc123")), &spec_with(None), "abc123"));
+    }
+
+    #[test]
+    fn spec_only_match_is_approved() {
+        assert!(is_plan_approved(&None, &spec_with(Some("abc123")), "abc123"));
+    }
+
+    #[test]
+    fn status_matches_but_spec_present_and_stale_is_still_approved() {
+        // The OR: a stale/mismatched spec value must never veto a real
+        // status-side approval, and vice versa (checked below).
+        assert!(is_plan_approved(
+            &status_with(Some("abc123")),
+            &spec_with(Some("some-older-hash")),
+            "abc123"
+        ));
+    }
+
+    #[test]
+    fn spec_matches_but_status_present_and_stale_is_still_approved() {
+        assert!(is_plan_approved(
+            &status_with(Some("some-older-hash")),
+            &spec_with(Some("abc123")),
+            "abc123"
+        ));
+    }
+
+    #[test]
+    fn both_sources_stale_is_not_approved() {
+        assert!(!is_plan_approved(
+            &status_with(Some("stale-a")),
+            &spec_with(Some("stale-b")),
+            "abc123"
+        ));
+    }
+}
+
 /// Regression tests for the confirmed 2026-07-19 gap: `plan_approval_hash`
 /// folding in `Workspace::read_state_bytes()` (a raw on-disk read)
 /// unconditionally, regardless of executor. For every magma-backed
@@ -6863,6 +6986,7 @@ mod state_continuity_breach_tests {
             variables:           None,
             variable_refs:       None,
             auto_approve:        true,
+            spec_approved_plan_hash: None,
             refresh_interval:    "10m".to_string(),
             suspend:             false,
             executor:            None,
