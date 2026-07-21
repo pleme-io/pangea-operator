@@ -658,6 +658,44 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
         out
     }
 
+    /// Resolve the provider-config map an `apply()`/`destroy()` call
+    /// forwards into its `ApplyContext`, routing rendered-config load
+    /// failures to the base `spec.providerCredentials` map instead of an
+    /// empty one. `load_config_routed` failing (a transient artifact-store
+    /// read, an evicted DB row between the plan-phase load and this
+    /// independent reload) must never silently drop `self.cfg.provider_configs`
+    /// — that base map lives in memory already and needs no rendered
+    /// config to be forwarded. Doing so used to leave a real mutating RPC
+    /// (an `AttachRolePolicy`, a `DestroyResource`) to fall back to the
+    /// provider's own ambient credential chain (pod env / EC2 instance
+    /// role) — the exact class `build_provider_configs`'s own doc comment
+    /// names for the credential-blind-executor incident, reached here
+    /// through a second, un-audited door. `phase` is `"apply"`/`"destroy"`,
+    /// forwarded into the error log so a stuck-empty-context incident is
+    /// traceable to which call path hit it.
+    async fn provider_configs_for(
+        &self,
+        work_dir: &Path,
+        phase: &'static str,
+    ) -> std::collections::BTreeMap<String, serde_json::Value> {
+        match self.load_config_routed(work_dir).await {
+            Ok(cfg) => self.build_provider_configs(&cfg),
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    phase,
+                    schema = %self.cfg.schema_name,
+                    template = %self.cfg.template_name,
+                    "load_config_routed failed -- falling back to \
+                     spec.providerCredentials base only (no rendered \
+                     provider-block augmentation); this must never silently \
+                     drop credentials to the provider's ambient fallback"
+                );
+                self.cfg.provider_configs.clone()
+            }
+        }
+    }
+
     /// The routing decision `plan()` makes before calling
     /// `magma_apply::engine::refresh_then_plan`: build the real
     /// `ApplyContext` a plan-time refresh needs, or `None` to skip
@@ -1337,10 +1375,12 @@ where
         //     cloudflare provider got a null api_token and every real RPC
         //     failed ("channel closed"). Absent in both -> no per-provider
         //     block, and the provider falls back to its own env credentials.
-        if let Ok(cfg) = self.load_config_routed(work_dir).await {
-            for (name, value) in self.build_provider_configs(&cfg) {
-                ctx = ctx.with_provider_config(name, value);
-            }
+        //
+        // See `provider_configs_for`'s doc comment for the load-failure
+        // fallback this now goes through — a load error no longer drops
+        // `self.cfg.provider_configs` to empty.
+        for (name, value) in self.provider_configs_for(work_dir, "apply").await {
+            ctx = ctx.with_provider_config(name, value);
         }
         let outcome = if self.cfg.structural_apply {
             // TEST-ONLY structural apply: mutate magma state directly, no
@@ -1579,10 +1619,12 @@ where
         // DB-backed path, `main.tf.json` on the disk fallback. A destroy
         // must reach the provider with real creds for the DestroyResource
         // RPC, same as apply.
-        if let Ok(cfg) = self.load_config_routed(work_dir).await {
-            for (name, value) in self.build_provider_configs(&cfg) {
-                ctx = ctx.with_provider_config(name, value);
-            }
+        //
+        // Same credential-drop class as `apply()` above — see
+        // `provider_configs_for`'s doc comment for the load-failure
+        // fallback this now goes through.
+        for (name, value) in self.provider_configs_for(work_dir, "destroy").await {
+            ctx = ctx.with_provider_config(name, value);
         }
         let outcome = if self.cfg.structural_apply {
             // TEST-ONLY structural destroy: remove from magma state directly,
@@ -2073,6 +2115,54 @@ mod tests {
             "an executor built WITH provider_configs must carry \
              spec.providerCredentials through to the provider RPC even \
              when the rendered config has no matching provider block"
+        );
+    }
+
+    /// The SECOND, still-open door onto the same credential-drop class:
+    /// even a credential-AWARE executor (`self.cfg.provider_configs`
+    /// correctly populated, exactly like `executor_for_checked_with_creds`
+    /// builds it) used to drop those base credentials to empty inside
+    /// `apply()`/`destroy()` themselves whenever `load_config_routed`
+    /// returned `Err` — a transient artifact-store read, an evicted DB
+    /// row between the plan-phase load and this independent reload. The
+    /// pre-fix code was `if let Ok(cfg) = self.load_config_routed(...).await
+    /// { forward the merged map }` with NO `else` — a load failure meant
+    /// the entire forwarding block, base credentials included, was
+    /// silently skipped, leaving `ApplyContext.provider_configs` empty for
+    /// a REAL mutating apply/destroy RPC. `provider_configs_for` is the
+    /// extracted, directly-testable seam both `apply()` and `destroy()`
+    /// now share; this pins that a `load_config_routed` failure (here:
+    /// `work_dir` has no `main.tf.json` at all, so disk-path
+    /// `load_config` errors) still returns the base
+    /// `spec.providerCredentials` map unmerged, not an empty one.
+    #[tokio::test]
+    async fn provider_configs_for_falls_back_to_spec_credentials_on_load_failure() {
+        let mut cfg = fixture_config();
+        cfg.provider_configs.insert(
+            "aws".to_string(),
+            json!({
+                "region": "us-east-1",
+                "access_key": "AKIA_FAKE",
+                "secret_key": "fake-secret",
+            }),
+        );
+        let exec = MagmaExecutor::new(cfg);
+
+        // No `render_workspace` call — `work_dir` has no `main.tf.json`,
+        // so `load_config_routed`'s disk-path `load_config` errors.
+        let tmp = tempfile::tempdir().unwrap();
+
+        let resolved = exec.provider_configs_for(tmp.path(), "apply").await;
+        assert_eq!(
+            resolved
+                .get("aws")
+                .and_then(|v| v.get("access_key"))
+                .and_then(|v| v.as_str()),
+            Some("AKIA_FAKE"),
+            "a load_config_routed failure must still forward \
+             self.cfg.provider_configs (the base spec.providerCredentials \
+             map) — dropping it silently leaves the real apply/destroy RPC \
+             to the provider's own ambient credential chain"
         );
     }
 
