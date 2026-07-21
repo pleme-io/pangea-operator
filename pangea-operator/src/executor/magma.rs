@@ -2894,8 +2894,15 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(parsed["version"], 4);
         let provider = parsed["resources"][0]["provider"].as_str().unwrap();
+        // magma's `tfstate_v4` canonicalizes provider references to
+        // `registry.opentofu.org` (what a real `tofu apply` actually
+        // writes), not `registry.terraform.io` — see
+        // `magma-operator-backend/src/lib.rs`'s own module doc example
+        // and `magma-state/src/tfstate_v4.rs:35`. This assertion
+        // pre-dates that (correct, upstream-aligned) magma behavior
+        // change and was never updated to match.
         assert!(
-            provider.contains("registry.terraform.io/hashicorp/aws"),
+            provider.contains("registry.opentofu.org/hashicorp/aws"),
             "expected canonical tofu provider form, got: {provider}",
         );
     }
