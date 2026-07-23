@@ -119,7 +119,16 @@ jobs:
   # doesn't exist in GHA, not out of unnecessary indirection.
   resolve-runner:
     name: resolve build runner
-    runs-on: ubuntu-latest
+    # Was ubuntu-latest -- a metered GitHub-hosted runner, which fails this
+    # PRIVATE repo's runs outright under an account billing/spending-limit
+    # gate ("recent account payments have failed"), even though this job
+    # does zero real work (one echo of a computed string) and exists only
+    # because a reusable-workflow `with:` block can read `needs.*` but not
+    # top-level `env:`. The job that decides "route to the self-hosted
+    # pool" was itself never routed there -- fixed to the same literal
+    # (camelot-builder-pleme-eks) every other job in this file already
+    # defaults to.
+    runs-on: camelot-builder-pleme-eks
     outputs:
       runner: ${{ inputs.runner || 'camelot-builder-pleme-eks' }}
       # rio's Attic cache is reachable ONLY from rio's own LAN, so it is

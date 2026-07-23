@@ -14,7 +14,10 @@ on: [push, pull_request]
 
 jobs:
   crd-drift:
-    runs-on: ubuntu-latest
+    # Routed off the metered default -- see release.yml's resolve-runner
+    # fix: this PRIVATE repo's GitHub-hosted runs fail outright under an
+    # account billing gate, independent of this job's own content.
+    runs-on: camelot-builder-pleme-eks
     steps:
       - name: Checkout operator
         uses: actions/checkout@v4

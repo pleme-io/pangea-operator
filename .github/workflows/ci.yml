@@ -4,7 +4,12 @@ on: [push, pull_request]
 
 jobs:
   flake-check:
-    runs-on: ubuntu-latest
+    # Routed off the metered default -- this PRIVATE repo's GitHub-hosted
+    # runs currently fail outright under an account billing/spending-limit
+    # gate ("recent account payments have failed"), independent of any
+    # job's own content. Matches release.yml's resolve-runner fix and the
+    # camelot skill's documented fleet pattern for private pleme-io repos.
+    runs-on: camelot-builder-pleme-eks
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main
@@ -57,7 +62,12 @@ jobs:
     # `--workspace --no-default-features` would still pull it in. Same
     # cheap ubuntu-latest / no-libruby shape as crd-drift.yml's
     # `--no-default-features -- --generate-crds` step.
-    runs-on: ubuntu-latest
+    # Routed off the metered default -- this PRIVATE repo's GitHub-hosted
+    # runs currently fail outright under an account billing/spending-limit
+    # gate ("recent account payments have failed"), independent of any
+    # job's own content. Matches release.yml's resolve-runner fix and the
+    # camelot skill's documented fleet pattern for private pleme-io repos.
+    runs-on: camelot-builder-pleme-eks
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -67,7 +77,12 @@ jobs:
 
   coverage:
     needs: cargo-test
-    runs-on: ubuntu-latest
+    # Routed off the metered default -- this PRIVATE repo's GitHub-hosted
+    # runs currently fail outright under an account billing/spending-limit
+    # gate ("recent account payments have failed"), independent of any
+    # job's own content. Matches release.yml's resolve-runner fix and the
+    # camelot skill's documented fleet pattern for private pleme-io repos.
+    runs-on: camelot-builder-pleme-eks
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
