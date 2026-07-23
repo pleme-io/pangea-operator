@@ -1,0 +1,122 @@
+# Job-shaped retirada — the automatic queue-starvation watcher
+# (breathe-retirada-ci, theory/BREATHABILITY.md "Retirada's job-shaped
+# sibling"). Wired here 2026-07-23 as part of an evidence-gated rollout
+# from pleme-io/breathe + pleme-io/hardened-images to the rest of the
+# fleet's camelot-builder-pleme-eks consumers.
+#
+# ── Evidence that justified wiring THIS repo (checked before touching
+#    anything, per the rollout's own discipline) ──────────────────────
+# `release.yml`'s real run history shows **92** `cancelled` conclusions
+# total (`gh api repos/pleme-io/pangea-operator/actions/workflows/release.yml/runs?status=cancelled`)
+# -- the largest count of any workflow checked in this rollout. A
+# systematic sample of 20 of those 92 (the `container image → ghcr.io
+# (camelot-builder-pleme-eks / override)` job -- the one release.yml job
+# actually routed to camelot-builder-pleme-eks) shows `runner_id: 0` for
+# the job's ENTIRE observed lifetime AND a created→completed duration of
+# EXACTLY 24h00m00s (±1s) in 20/20 sampled runs -- the textbook GitHub
+# queue-timeout signature, identical to the two confirmed incidents this
+# crate was built from (breathe run 29930406877, hardened-images run
+# 30007679929). A smaller number of this workflow's cancelled runs show
+# much shorter durations (seconds to minutes), consistent with a human
+# cancelling a stuck-looking run during active debugging rather than
+# GitHub's own timeout -- the SAME zero-runner-assigned root cause caught
+# early, not a different failure mode. No `concurrency:` group exists on
+# release.yml that would explain the 24h-exact cancellations as an
+# ordinary push-supersede.
+#
+# ── Why this ships report-only (dry-run forced true), same as
+#    hardened-images + autorevivy ───────────────────────────────────
+# release.yml DOES expose a `runner` workflow_dispatch input, but neither
+# of its two real values is a safe redispatch target: GitHub-hosted
+# (`ubuntu-latest`) fails outright on this PRIVATE repo under the org's
+# billing/spending-limit gate (documented in this repo's own ci.yml), and
+# `rio-build-01` is PERMANENTLY retired (2026-07-20 operator decision,
+# never coming back). So there is no safe redispatch target -- `--dry-run`
+# is forced to `true` unconditionally below, shipping as a report-only
+# watcher until this repo grows a genuine on-demand-fallback destination.
+#
+# Effective cadence + adaptive threshold: identical mechanism to
+# breathe's own retirada-ci-watch.yml -- see that file's header comment
+# for the full rationale (GitHub's 5-minute schedule floor worked around
+# via an internal --loop-for-secs/--poll-interval-secs loop; the
+# starvation threshold is the p95 of real observed Wake latency scaled
+# 3x, never a hand-tuned constant).
+#
+# --label-prefix camelot-builder-pleme (the default) is correct here:
+# both release.yml's resolve-runner job and its image-fallback job target
+# `camelot-builder-pleme-eks`, a real prefix match.
+#
+# Needs ONLY this repo's own default GITHUB_TOKEN (actions:write,
+# declared below) -- no k8s RBAC, no cluster credentials, no new secret.
+#
+# Vendored, not shared: pleme-io/breathe and pleme-io/pangea-operator are
+# both private repos, so this repo's own default GITHUB_TOKEN cannot
+# git-clone breathe to reuse its crate directly (a new cross-repo PAT was
+# deliberately not introduced). retirada-ci-watch/ is a verbatim port of
+# breathe-retirada-ci's decision core + CLI -- see that crate's own doc
+# comments for what was/wasn't changed in the port.
+name: retirada-ci-watch
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      dryRun:
+        description: "Report findings without dispatching anything. NOTE: this repo currently forces dry-run=true unconditionally regardless of this input -- see the workflow file's own header comment (neither of release.yml's real runner targets is a safe redispatch destination today)."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: retirada-ci-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    if: github.repository == 'pleme-io/pangea-operator'
+    # GitHub-hosted runners fail before they start on this PRIVATE repo
+    # (org billing/spending-limit gate) -- route the watcher itself onto
+    # the same self-hosted pool it observes, same as hardened-images +
+    # autorevivy.
+    runs-on: camelot-builder-pleme-eks
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # camelot-builder-pleme-eks has no C linker at all (`error: linker
+      # \`cc\` not found` -- confirmed live in hardened-images' own
+      # deployment 2026-07-23) -- rustc always needs an external linker
+      # even for a pure-Rust crate. Borrow Nix for just the missing
+      # system dependency (nix-installer-action is already proven on
+      # this exact pool elsewhere in this repo's own CI, e.g. ci.yml).
+      - uses: DeterminateSystems/nix-installer-action@main
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "retirada-ci-watch -> target"
+          shared-key: retirada-ci-watch
+
+      - run: nix shell nixpkgs#gcc -c cargo build --release --features watch-cli --bin retirada-ci-watch
+        working-directory: retirada-ci-watch
+
+      - name: Watch release.yml for starved jobs (internal loop, ~60s effective cadence)
+        working-directory: retirada-ci-watch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUST_LOG: info
+        # --dry-run is forced to true unconditionally -- see this file's
+        # header comment (neither runner-input value is a safe redispatch
+        # destination today). Once one exists, flip to
+        # `--dry-run=${{ inputs.dryRun || 'false' }}` (breathe's own
+        # pattern) and pass the matching --runner-override-input/-value
+        # (release.yml's input is named `runner`, not `runnerOverride`).
+        run: >-
+          ./target/release/retirada-ci-watch
+          --repo pleme-io/pangea-operator --workflow release.yml
+          --loop-for-secs 270 --poll-interval-secs 60
+          --dry-run=true
