@@ -343,15 +343,13 @@ jobs:
   #
   # x86_64-unknown-linux-gnu now runs on camelot-builder-pleme-eks (the same
   # amd64 pool image-fallback already targets) via resolve-runner's shared
-  # output -- one resolution, reused. UNVERIFIED ASSUMPTION, watch the first
-  # live run: this leg keeps embedded_ruby (no-default-features: "false"),
-  # which needs rb-sys to find a HOST system Ruby via RbConfig at build time.
-  # GitHub-hosted ubuntu-latest ships one in its toolcache; the stock ARC
-  # runner image (ghcr.io/actions/actions-runner:latest) may not. If this leg
-  # starts failing on a missing Ruby, drop embedded_ruby here too (matching
-  # the two already-degraded legs below -- a documented graceful fallback to
-  # the pangea-compiler HTTP sidecar, not a regression) rather than reverting
-  # to a billed runner.
+  # output -- one resolution, reused. CONFIRMED live 2026-07-23 (run
+  # 30033870582): rb-sys's build script panicked "ruby not found" -- the
+  # stock ARC runner image (ghcr.io/actions/actions-runner:latest) ships no
+  # system Ruby, unlike GitHub-hosted ubuntu-latest's preloaded toolcache.
+  # Dropped embedded_ruby here too (matching the two already-degraded legs
+  # below -- a documented graceful fallback to the pangea-compiler HTTP
+  # sidecar, not a regression) rather than reverting to a billed runner.
   #
   # aarch64-unknown-linux-gnu now runs NATIVELY on camelot-builder-pleme-eks-
   # arm64 instead of cross-compiling from an amd64 host -- strictly simpler
@@ -375,7 +373,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: "${{ needs.resolve-runner.outputs.runner }}", target: x86_64-unknown-linux-gnu, suffix: linux-x86_64, no-default-features: "false", features: "" }
+          # embedded_ruby dropped -- no system Ruby on the stock ARC runner image, see header above
+          - { os: "${{ needs.resolve-runner.outputs.runner }}", target: x86_64-unknown-linux-gnu, suffix: linux-x86_64, no-default-features: "true", features: "graphql grpc executor_magma" }
           # native arm64 leg -- no cross-compiler needed; embedded_ruby still dropped, see header above
           - { os: camelot-builder-pleme-eks-arm64, target: aarch64-unknown-linux-gnu, suffix: linux-aarch64, no-default-features: "true", features: "graphql grpc executor_magma" }
           # cross leg -- macos-latest is arm64 native, no x86_64 libruby available; drop embedded_ruby
