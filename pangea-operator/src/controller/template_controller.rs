@@ -1403,27 +1403,40 @@ enum FreshnessGate {
     Bounce(ReconcileAction),
 }
 
-/// The source-freshness gate (operational projection of the pure
-/// `freshness::ready_drift_decision` law — its `RecompileStale` arm,
-/// applied BEFORE any plan runs so neither "no changes" nor a drift
-/// correction can ever be derived from a stale compile). Observes the
-/// remote HEAD via `ls-remote` (1 RTT, no clone), records the
-/// observation on status, and on `Stale` bounces to Compiling — the
-/// exact shape of the missing-main-tf.json restart guards.
+/// The source-freshness OBSERVATION (no bounce): `ls-remote`s the
+/// remote HEAD (1 RTT, no clone), records the observation on status,
+/// and returns the verdict — never mutates `status.phase` itself.
 ///
-/// `Unknown` (ls-remote unreachable) does NOT wedge the drift loop:
-/// the handler proceeds, the
-/// `pangea_source_freshness_check_failures_total` counter ticks, and
-/// the Settled message says "HEAD: unverified". Tier-honest: a C2
-/// external-world observation, renewed per check.
-async fn source_freshness_gate(
+/// This is the primitive the two freshness policies compose over:
+/// [`source_freshness_gate`] (eager bounce, for phases with nothing
+/// expensive already in flight — `Ready`/`Drifted` periodic re-checks)
+/// and `handle_planning`'s own DEFERRED gate (apply the verdict via
+/// `freshness::ready_drift_decision` AFTER `runner.plan()` completes,
+/// never before). Gating the expensive step itself on an
+/// always-moving live HEAD is what created the 2026-07-23
+/// pleme-io-opensource livelock: with `handle_planning` calling the
+/// eager form, `runner.plan()` never ran even once for five days,
+/// because `org.yaml` (2,542 resources, hundreds of repos) receives
+/// commits often enough that a newer one had almost always landed by
+/// the time each reconcile tick re-checked `ls-remote` — the compile
+/// step itself only takes seconds, so the gate re-fired before
+/// planning could ever start. `runner.plan()` is read-only; there is
+/// no correctness reason to block it on a live-HEAD race. The
+/// correctness law — "no-changes/drift can never be derived from a
+/// stale compile" — belongs at the DECISION point, not the read.
+///
+/// `Unknown` (ls-remote unreachable, or no git source configured) does
+/// NOT wedge the drift loop: the `pangea_source_freshness_check_failures_total`
+/// counter ticks (git-source case only) and downstream messages say
+/// "HEAD: unverified". Tier-honest: a C2 external-world observation,
+/// renewed per check.
+async fn observe_source_freshness(
     template: &InfrastructureTemplate,
     state: &ControllerState,
     workspace: &crate::executor::Workspace,
-    phase_label: &'static str,
-) -> Result<FreshnessGate> {
+) -> Result<Freshness> {
     let Some(git_ref) = &template.spec.source.git_repository else {
-        return Ok(FreshnessGate::Proceed(None));
+        return Ok(Freshness::Unknown);
     };
     let env = git_auth_env(template, state, workspace).await?;
     match observe_head(&git_ref.url, &git_ref.r#ref, &env).await {
@@ -1434,22 +1447,7 @@ async fn source_freshness_gate(
                 .status
                 .as_ref()
                 .and_then(|s| s.compiled_revision.as_deref());
-            match evaluate_source_freshness(compiled, &head) {
-                Freshness::Stale { compiled, head } => {
-                    let msg = format!(
-                        "Source HEAD {} is ahead of compiled revision {} — recompiling",
-                        head,
-                        compiled.as_deref().unwrap_or("(none recorded)"),
-                    );
-                    warn!(phase = phase_label, %msg, "source stale; bouncing to Compiling");
-                    record_event(template, state, EventType::Warning, "SourceStale", &msg).await;
-                    update_phase(template, Phase::Compiling, state).await?;
-                    Ok(FreshnessGate::Bounce(ReconcileAction::Requeue(
-                        SHORT_REQUEUE_INTERVAL,
-                    )))
-                }
-                fresh => Ok(FreshnessGate::Proceed(Some(fresh))),
-            }
+            Ok(evaluate_source_freshness(compiled, &head))
         }
         Err(e) => {
             state.metrics.source_freshness_check_failures_total.inc();
@@ -1466,10 +1464,44 @@ async fn source_freshness_gate(
                 "Source git HEAD could not be observed (ls-remote failed: {e}) — HEAD \
                  unverified; reconciling against the last-observed revision"
             );
-            warn!(phase = phase_label, error = %e, "freshness probe failed — {msg}");
+            warn!(error = %e, "freshness probe failed — {msg}");
             record_event(template, state, EventType::Warning, "SourceUnobservable", &msg).await;
-            Ok(FreshnessGate::Proceed(Some(Freshness::Unknown)))
+            Ok(Freshness::Unknown)
         }
+    }
+}
+
+/// The EAGER source-freshness gate: [`observe_source_freshness`] plus an
+/// immediate bounce to Compiling on `Stale`. Correct for phases where
+/// nothing expensive is already in flight — `handle_ready`/`handle_drifted`
+/// re-checking whether a settled/drifted verdict is still trustworthy.
+/// `handle_planning` deliberately does NOT use this — see
+/// [`observe_source_freshness`]'s doc comment for why an eager pre-plan
+/// bounce livelocks a fast-moving source.
+async fn source_freshness_gate(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+    workspace: &crate::executor::Workspace,
+    phase_label: &'static str,
+) -> Result<FreshnessGate> {
+    if template.spec.source.git_repository.is_none() {
+        return Ok(FreshnessGate::Proceed(None));
+    }
+    match observe_source_freshness(template, state, workspace).await? {
+        Freshness::Stale { compiled, head } => {
+            let msg = format!(
+                "Source HEAD {} is ahead of compiled revision {} — recompiling",
+                head,
+                compiled.as_deref().unwrap_or("(none recorded)"),
+            );
+            warn!(phase = phase_label, %msg, "source stale; bouncing to Compiling");
+            record_event(template, state, EventType::Warning, "SourceStale", &msg).await;
+            update_phase(template, Phase::Compiling, state).await?;
+            Ok(FreshnessGate::Bounce(ReconcileAction::Requeue(
+                SHORT_REQUEUE_INTERVAL,
+            )))
+        }
+        fresh => Ok(FreshnessGate::Proceed(Some(fresh))),
     }
 }
 
@@ -2359,13 +2391,15 @@ async fn handle_planning(
         return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
     }
 
-    // Freshness gate — the no-changes→Ready edge below must never be
-    // taken against a compile the remote has already moved past.
-    if let FreshnessGate::Bounce(action) =
-        source_freshness_gate(template, state, &workspace, "planning").await?
-    {
-        return Ok(action);
-    }
+    // Freshness OBSERVATION — deliberately non-bouncing here. See
+    // `observe_source_freshness`'s doc comment: gating `runner.plan()`
+    // itself (a read-only step) on a live, always-moving git HEAD is
+    // what livelocked this exact template for five days. The verdict is
+    // applied by `ready_drift_decision` below, AFTER the plan completes,
+    // at the actual correctness-sensitive decision point (no-changes/
+    // drift can never be derived from a stale compile — but computing
+    // the plan itself carries no such risk).
+    let freshness = observe_source_freshness(template, state, &workspace).await?;
 
     let plan_result = runner.plan(&workspace).await?;
 
@@ -2469,6 +2503,28 @@ async fn handle_planning(
     };
 
     let has_changes = plan_result.has_changes;
+
+    // THE correctness gate (the tested law, `freshness::ready_drift_decision`
+    // — "a stale compile can never produce Settled or a trusted drift
+    // verdict"), applied HERE: after the plan ran, immediately before the
+    // no-changes/drift decision that law actually protects. A `Stale`
+    // freshness bounces to Compiling — the plan we just computed is
+    // against a since-superseded revision, so its `has_changes`/drift
+    // conclusion is not trustworthy — but we still got a real plan run
+    // out of this cycle (status/metrics reflect real, if slightly-lagged,
+    // truth) instead of the old eager gate's zero-progress bounce.
+    if matches!(
+        crate::controller::template::freshness::ready_drift_decision(&freshness, has_changes),
+        crate::controller::template::freshness::ReadyAction::RecompileStale
+    ) {
+        let msg = "Plan computed against a compile the source has since moved past — \
+                    recompiling before trusting its no-changes/drift verdict"
+            .to_string();
+        warn!(%msg, "plan stale relative to source HEAD; bouncing to Compiling");
+        record_event(template, state, EventType::Warning, "SourceStale", &msg).await;
+        update_phase(template, Phase::Compiling, state).await?;
+        return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
+    }
 
     // Resolve the cascade root: if the template has its own
     // `defaultDecision` set, it wins; otherwise inherit the parent
