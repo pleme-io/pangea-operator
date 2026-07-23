@@ -408,6 +408,21 @@ jobs:
           git config --global url."https://x-access-token:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"
           git config --unset-all http.https://github.com/.extraheader || true
 
+      # ── C toolchain (fixed here, 2026-07-23) ────────────────────────────
+      # GitHub-hosted ubuntu-latest ships build-essential preinstalled in its
+      # toolcache; the stock self-hosted ARC runner image (ghcr.io/actions/
+      # actions-runner:latest, used by both camelot-builder-pleme-eks and
+      # -arm64) does not. Caught live on the arm64 leg: "error: linker `cc`
+      # not found" compiling proc-macro2's build script -- the first crate in
+      # the dependency graph needing a C compiler at all, not anything
+      # target-specific. Gated on runner.os (the actual OS the agent
+      # reports), not a label string, so it covers both self-hosted Linux
+      # pools plus stays a harmless already-satisfied no-op on ubuntu-latest
+      # if a manual dispatch overrides back to it.
+      - name: Install build toolchain (Linux runners only)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
