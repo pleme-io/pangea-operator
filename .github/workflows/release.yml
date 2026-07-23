@@ -385,6 +385,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ── Private git-dependency credential (fixed here, 2026-07-23) ──────
+      # Same failure class as image-push.yml's own incident (see that file's
+      # "Configure git credentials" step) -- this job's Cargo.toml pulls
+      # several private pleme-io git deps (tsunagu, magma, shigoto, shikumi,
+      # gen) directly via `cargo build`, with ZERO git-credential wiring
+      # anywhere in this job. Caught live on the newly-added arm64 leg
+      # (camelot-builder-pleme-eks-arm64): "failed to authenticate when
+      # downloading repository ... tsunagu" -- this job likely never
+      # actually succeeded with tsunagu in the dependency graph before, on
+      # ANY runner (hosted or self-hosted); surfaced, not caused, by the
+      # runner-routing change above (the credential gap was always here).
+      # actions/checkout@v4 also leaves its own ephemeral, THIS-repo-scoped
+      # GITHUB_TOKEN in local git config (http.https://github.com/.
+      # extraheader), matched by URL PREFIX against ANY git operation from
+      # this checkout -- unset it before configuring BOT_PAT or it silently
+      # wins instead (the exact bug image-push.yml's ccfd349 fixed).
+      - name: Configure git credentials for private git dependencies (cargo)
+        env:
+          GIT_AUTH_TOKEN: ${{ secrets.BOT_PAT }}
+        run: |
+          git config --global url."https://x-access-token:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"
+          git config --unset-all http.https://github.com/.extraheader || true
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -411,6 +434,12 @@ jobs:
           suffix: ${{ matrix.suffix }}
           features: ${{ matrix.features }}
           no-default-features: ${{ matrix.no-default-features }}
+        env:
+          # Forces cargo to shell out to the real git binary (which honors
+          # the url.insteadOf rewrite above) instead of its bundled libgit2
+          # backend (which does not) -- same fix as image-push.yml's own
+          # CARGO_NET_GIT_FETCH_WITH_CLI wiring.
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
 
       - name: Attach binaries to GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
