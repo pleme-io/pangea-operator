@@ -291,3 +291,22 @@ CVE-2026-35469
 # -rabbitmq entries above). Re-check whenever any of these seven cuts a
 # new release.
 GHSA-hrxh-6v49-42gf
+
+# ── Round 4 (2026-07-24, GHSA-r277-6w6q-xmqw kin-openapi fail-open auth
+# bypass) ─────────────────────────────────────────────────────────────
+# The FIRST completed Trivy scan of this image (this build finally cleared
+# the Round 3 hash-mismatch + stale-substrate-pin blockers) surfaced a new,
+# unrelated CRITICAL finding: github.com/getkin/kin-openapi v0.111.0 (fixed
+# v0.144.0) inside terraform-provider-kubernetes 3.2.1's own vendored
+# dependency tree -- ValidationHandler.Load()'s NoopAuthenticationFunc
+# default silently no-ops OpenAPI security-scheme validation. terraform-
+# provider-kubernetes 3.2.1 is already confirmed (Round 3, above) as the
+# latest upstream release with no newer tag to bump to; kin-openapi is
+# still pre-1.0 (no semver guarantee) and the 0.111.0 -> 0.144.0 jump spans
+# 33 minor releases -- a bare `go.mod replace` is the same "materially
+# riskier than a version bump, out of scope" shape already accepted for
+# this exact provider's grpc-go finding in Round 3, not a lower-risk case
+# just because the vulnerable package is smaller. Re-check when
+# terraform-provider-kubernetes cuts a release that bumps its own
+# kin-openapi pin.
+GHSA-r277-6w6q-xmqw
