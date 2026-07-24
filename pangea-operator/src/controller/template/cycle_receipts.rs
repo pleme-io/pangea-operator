@@ -20,8 +20,8 @@ use tracing::{debug, info};
 
 use crate::controller::ControllerState;
 use crate::crd::{
-    CycleSummary, DriftDetail, InfrastructureTemplate, Outcome, PolicyDecision, ReconcileCycle,
-    ResourceOutcome,
+    CycleSummary, DriftDetail, InfrastructureTemplate, Outcome, Phase, PolicyDecision,
+    ReconcileCycle, ResourceOutcome,
 };
 use crate::error::Result;
 use crate::executor::cycle_artifact::CycleArtifact;
@@ -245,6 +245,49 @@ pub fn cycle_is_clean(result: &CycleResult) -> bool {
     )
 }
 
+/// Should THIS cycle's status patch clear a stale `lastError`?
+///
+/// Extends `cycle_is_clean`'s per-cycle-summary verdict with an explicit
+/// check against `resulting_phase` — the phase this reconcile tick is
+/// establishing (via a sibling `update_phase`/`update_phase_with_error`
+/// call earlier in the SAME tick) or leaving unchanged for the template.
+///
+/// `record_reconcile_cycle` issues its own SEPARATE, sequential status
+/// PATCH from `update_phase`/`update_phase_with_error` (see that pair's
+/// doc comments in `template/status.rs`). Before this guard, the
+/// clear-stale-error decision was derived *only* from `CycleResult` —
+/// blind to the phase decision a sibling call in the same reconcile tick
+/// just made. A caller that calls `update_phase_with_error(Failed, …)`
+/// and then `record_reconcile_cycle(…)` with a `CycleResult` this
+/// module's narrow per-cycle-summary judged "clean" (`cycle_clean` +
+/// zero `failed`) would have this function's `record_reconcile_cycle`
+/// PATCH emit an explicit `"lastError": null` — nulling the error the
+/// sibling call just wrote — while `phase` stays `Failed` (the PATCH
+/// never touches `phase`). That produces an observable
+/// `phase: Failed` + `lastError: null` state that persists until a
+/// LATER reconcile finally moves the phase off `Failed` (confirmed
+/// live, 2026-07: `17:45:23 Failed+content → 17:45:29 Failed+empty →
+/// 17:45:34 Pending`). Gating on `resulting_phase != Phase::Failed`
+/// closes this by construction: whenever this tick is establishing or
+/// holding the template at `Failed`, the clear never fires — no matter
+/// how "clean" the accompanying cycle summary looks in isolation.
+///
+/// Callers pass the exact phase they just transitioned to (when they
+/// called `update_phase`/`update_phase_with_error` earlier this tick),
+/// or the template's current unchanged phase (when this tick made no
+/// phase transition at all, e.g. the RequireApproval arm of
+/// `route_through_approval_gate`) — always a concrete, known value, so
+/// there is no ambiguous "phase unknown" case to reason about.
+#[must_use]
+pub fn should_clear_stale_error(
+    cycle_clean: bool,
+    failed: u32,
+    prior_last_error: Option<&str>,
+    resulting_phase: Phase,
+) -> bool {
+    cycle_clean && failed == 0 && prior_last_error.is_some() && resulting_phase != Phase::Failed
+}
+
 /// Trim a string to 256 characters with an ellipsis suffix when
 /// truncated. Used to keep status fields under the etcd value-size
 /// budget when stuffing terraform error output into a status patch.
@@ -287,6 +330,13 @@ pub fn truncate_for_status(s: &str) -> String {
 /// `work_dir` is optional: pass `Some(&workspace.path)` when the
 /// reconcile path has the workspace in hand; `None` is acceptable
 /// but means the bundle fallback skips (artifact-only mode).
+///
+/// `resulting_phase` is the phase this reconcile tick is establishing
+/// (or leaving unchanged) for the template — see
+/// [`should_clear_stale_error`]'s doc comment for the race this closes.
+/// Pass the exact `Phase` given to a preceding `update_phase`/
+/// `update_phase_with_error` call this tick, or the template's current
+/// `status.phase` when this tick made no phase transition.
 pub async fn record_reconcile_cycle(
     template: &InfrastructureTemplate,
     state: &ControllerState,
@@ -295,6 +345,7 @@ pub async fn record_reconcile_cycle(
     drifts: &[DriftDetail],
     plan_summary: Option<String>,
     result: CycleResult,
+    resulting_phase: Phase,
 ) -> Result<()> {
     let name = template.name_any();
 
@@ -442,9 +493,19 @@ pub async fn record_reconcile_cycle(
     // actually cleared (the exact 19h-stale "tofu apply failed" on the
     // pleme-io-opensource template, which was simultaneously reporting
     // failed:0). We must emit an explicit `null` to clear it. A cycle
-    // that DID fail keeps its lastError (the `cycle_clean` guard).
-    let clears_stale_error =
-        cycle_clean && new_cycle.summary.failed == 0 && prior_status.last_error.is_some();
+    // that DID fail keeps its lastError (the `cycle_clean` guard) — and
+    // `should_clear_stale_error` additionally refuses to clear whenever
+    // `resulting_phase` is `Failed`, closing the race where a sibling
+    // `update_phase_with_error(Failed, …)` call earlier THIS tick just
+    // wrote (or is holding) the error this cycle's own narrow summary
+    // would otherwise judge "clean" enough to null (see that function's
+    // doc comment for the confirmed live incident this closes).
+    let clears_stale_error = should_clear_stale_error(
+        cycle_clean,
+        new_cycle.summary.failed,
+        prior_status.last_error.as_deref(),
+        resulting_phase,
+    );
 
     // Content-equality guard: skip the patch when the new cycle's
     // observable content matches the prior cycle AND the top-level
@@ -987,5 +1048,86 @@ mod tests {
             CycleResult::AppliedFailure("boom".into()),
         );
         assert_eq!(cycle.plan_summary.as_deref(), Some("+6 ~0 -0"));
+    }
+
+    // ── should_clear_stale_error — the Failed+error→Failed+null race ────
+    //
+    // The confirmed live incident this guard closes: a reconcile calls
+    // `update_phase_with_error(Failed, err_msg)` (setting phase=Failed +
+    // lastError=Some(err_msg)) and then, in the SAME tick, calls
+    // `record_reconcile_cycle(...)` with a `CycleResult` this module's
+    // narrow, per-cycle-summary `cycle_is_clean` judges "clean" (zero
+    // `failed` resources). Before this guard, `record_reconcile_cycle`'s
+    // separate status PATCH would emit an explicit `"lastError": null`
+    // for that cycle — nulling the error the sibling call just wrote —
+    // while `phase` stayed `Failed` (the cycle PATCH never touches
+    // `phase`). Live-captured sequence: `17:45:23 Failed+content →
+    // 17:45:29 Failed+empty → 17:45:34 Pending`.
+    use super::should_clear_stale_error;
+
+    #[test]
+    fn should_clear_stale_error_refuses_while_resulting_phase_is_failed() {
+        // Reproduces the exact race: cycle_clean=true (a "clean" cycle
+        // summary, e.g. NoChanges/AppliedSuccess/PolicyGated with zero
+        // failures), a stale lastError present from the sibling
+        // update_phase_with_error(Failed, ...) call this same tick, but
+        // resulting_phase is Failed — the clear MUST be refused.
+        assert!(
+            !should_clear_stale_error(
+                /* cycle_clean */ true,
+                /* failed */ 0,
+                /* prior_last_error */ Some("apply failed: boom"),
+                /* resulting_phase */ Phase::Failed,
+            ),
+            "a clean cycle summary must NEVER clear lastError while this \
+             tick is leaving/establishing the template at Phase::Failed — \
+             doing so is the confirmed Failed+content -> Failed+empty race"
+        );
+    }
+
+    #[test]
+    fn should_clear_stale_error_clears_on_a_genuine_transition_away_from_failed() {
+        // The legitimate case this guard must NOT break: a clean cycle
+        // whose sibling call transitioned the template OFF Failed (e.g.
+        // update_phase(Ready) before record_reconcile_cycle) must still
+        // clear the stale error — that's the whole point of the
+        // clear-on-clean-cycle mechanism (the 19h-stale-error incident
+        // `record_reconcile_cycle`'s doc comment names).
+        assert!(
+            should_clear_stale_error(true, 0, Some("stale error"), Phase::Ready),
+            "a clean cycle transitioning to Ready must still clear a stale lastError"
+        );
+    }
+
+    #[test]
+    fn should_clear_stale_error_false_when_cycle_itself_is_not_clean() {
+        // cycle_clean=false (e.g. this cycle's own CycleResult is
+        // AppliedFailure/PolicyGated(Refuse)) must refuse regardless of
+        // resulting_phase — cycle_is_clean's existing guard, preserved.
+        assert!(!should_clear_stale_error(false, 0, Some("err"), Phase::Ready));
+    }
+
+    #[test]
+    fn should_clear_stale_error_false_when_this_cycle_has_per_resource_failures() {
+        // failed > 0 must refuse regardless of resulting_phase — the
+        // per-resource second condition the original directive names.
+        assert!(!should_clear_stale_error(true, 3, Some("err"), Phase::Ready));
+    }
+
+    #[test]
+    fn should_clear_stale_error_false_when_there_is_no_stale_error_to_clear() {
+        // Nothing to clear — must be a no-op (also avoids an unnecessary
+        // PATCH when lastError was already None).
+        assert!(!should_clear_stale_error(true, 0, None, Phase::Ready));
+    }
+
+    #[test]
+    fn should_clear_stale_error_refuses_while_holding_at_failed_unchanged() {
+        // The "holding" (not just "transitioning to") case: a tick that
+        // makes NO phase transition at all but the template's current,
+        // unchanged phase is already Failed (e.g. a hypothetical future
+        // caller that reads `template.status.phase` directly, mirroring
+        // the RequireApproval call site's pattern) must also refuse.
+        assert!(!should_clear_stale_error(true, 0, Some("err"), Phase::Failed));
     }
 }

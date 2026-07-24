@@ -2622,6 +2622,7 @@ async fn handle_planning(
             &[],
             plan_text.clone(),
             CycleResult::NoChanges,
+            Phase::Ready, // just set by update_phase() above
         )
         .await?;
         return Ok(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL));
@@ -2648,6 +2649,7 @@ async fn handle_planning(
                 &policy_outcome.annotated_drifts,
                 plan_text.clone(),
                 CycleResult::PolicyGated(PolicyDecision::Refuse),
+                Phase::Failed, // just set by update_phase_with_error() above
             )
             .await?;
             record_event(template, state, EventType::Warning, "PolicyRefused", &err_msg).await;
@@ -3158,6 +3160,9 @@ async fn route_through_approval_gate(
             &policy_outcome.annotated_drifts,
             plan_text,
             CycleResult::PolicyGated(PolicyDecision::RequireApproval),
+            // No phase transition this tick — pass the template's current,
+            // unchanged phase (Planning, per this function's caller).
+            template.status.as_ref().and_then(|s| s.phase).unwrap_or_default(),
         )
         .await?;
         record_event(
@@ -3631,6 +3636,7 @@ async fn handle_applying(
             &prior_drifts,
             prior_plan_summary,
             CycleResult::AppliedSuccess { imported_addresses: imported_addresses.clone() },
+            Phase::Ready, // just set by update_phase() above
         )
         .await?;
         record_event(template, state, EventType::Normal, "Applied", "Infrastructure applied successfully").await;
@@ -3764,6 +3770,7 @@ async fn handle_applying(
             &prior_drifts,
             prior_plan_summary,
             CycleResult::AppliedFailure(err_msg.clone()),
+            Phase::Failed, // just set by update_phase_with_error() above
         )
         .await?;
         // K8s Events have a 1024-char message limit; the combined stdout+stderr
@@ -3941,6 +3948,7 @@ async fn react_to_apply_anomaly(
                 prior_drifts,
                 prior_plan_summary,
                 CycleResult::AppliedFailure(err_msg.to_string()),
+                Phase::Applying, // just set by update_phase_with_error() above
             )
             .await?;
             record_event(
