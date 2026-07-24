@@ -1264,7 +1264,8 @@
         "pangea-splunk": "pangea-splunk",
         "pangea-spot": "pangea-spot",
         "ruby-nix": "ruby-nix",
-        "substrate": "substrate"
+        "substrate": "substrate",
+        "tsunagu": "tsunagu"
       }
     },
     "ruby-nix": {
@@ -1400,6 +1401,23 @@
       "original": {
         "owner": "numtide",
         "repo": "treefmt-nix",
+        "type": "github"
+      }
+    },
+    "tsunagu": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1780013573,
+        "narHash": "sha256-o4tFsK8XDHB1EKfiNDtwpsisH+Qz84VU/nUNa/hyg+0=",
+        "owner": "pleme-io",
+        "repo": "tsunagu",
+        "rev": "242a5b56f3f83fd59b4a2312716c578be720ef12",
+        "type": "github"
+      },
+      "original": {
+        "owner": "pleme-io",
+        "repo": "tsunagu",
+        "rev": "242a5b56f3f83fd59b4a2312716c578be720ef12",
         "type": "github"
       }
     },

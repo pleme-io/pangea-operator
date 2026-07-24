@@ -76,6 +76,36 @@
       url = "github:pleme-io/pangea-spot";
       flake = false;
     };
+
+    # ── tsunagu source-fetch workaround (narrow, repo-local, temporary) ──
+    # Cargo.lock pins tsunagu to a git rev
+    # (git+https://github.com/pleme-io/tsunagu#242a5b56…), so substrate's
+    # gen-based lockfile-builder normally fetches it via `pkgs.fetchgit`
+    # as a fixed-output derivation inside the Nix build sandbox. On a
+    # cold cache that FOD has to actually run `git clone` against a
+    # PRIVATE repo, and the sandboxed builder has no git credentials —
+    # "fatal: could not read Username for https://github.com". A shared
+    # fix for that class (authenticating Nix's OWN fetchgit sandbox, not
+    # just cargo's) is in flight in pleme-io/substrate's image-push.yml
+    # (see its git log) but has not landed working yet as of 2026-07-24.
+    #
+    # This input routes tsunagu through Nix's FLAKE input fetcher
+    # instead (`fetchTree`), which already authenticates successfully in
+    # this exact CI via the daemon's `access-tokens` nix.conf entry —
+    # proven by the 13 pangea-* path-gem inputs above building fine on
+    # every push. `crateOverrides.tsunagu` below points the crate's
+    # `src` at this input, bypassing `pkgs.fetchgit` for this one crate
+    # entirely. Pinned to the SAME rev Cargo.lock names — bump this pin
+    # in lockstep if `cargo update -p tsunagu` ever moves it.
+    #
+    # Remove this input + its two crateOverrides entries once the shared
+    # image-push.yml fix lands and is confirmed working end-to-end —
+    # this is a stopgap for THIS repo, not a replacement for the real
+    # fix upstream.
+    tsunagu = {
+      url = "github:pleme-io/tsunagu/242a5b56f3f83fd59b4a2312716c578be720ef12";
+      flake = false;
+    };
   };
 
   outputs = inputs @ { self, nixpkgs, nixpkgs-security, substrate, ruby-nix, ... }:
@@ -94,6 +124,13 @@
       base = substrate.rust.workspace {
         src = ./.;
         member = "pangea-operator";
+        # See the `tsunagu` flake-input comment above — routes this one
+        # crate's source through the flake-input fetcher instead of
+        # `pkgs.fetchgit`, sidestepping the sandboxed-fetchgit private-repo
+        # credential gap. Stopgap; remove once the shared fix lands.
+        crateOverrides = {
+          tsunagu = _oldAttrs: { src = inputs.tsunagu; };
+        };
       };
 
       pangeaInputs = {
@@ -392,6 +429,13 @@
               extraRustcOpts = (oldAttrs.extraRustcOpts or [ ])
                 ++ [ "-Ccodegen-units=16" "-Copt-level=2" "-Clto=off" ];
             };
+            # See the `tsunagu` flake-input comment near the top of this
+            # file — this is the load-bearing half for the embedded
+            # image build (release.yml's "Build image with Nix" step,
+            # the one confirmed failing on the sandboxed-fetchgit
+            # private-repo credential gap). Stopgap; remove once the
+            # shared image-push.yml fix lands.
+            tsunagu = _oldAttrs: { src = inputs.tsunagu; };
           };
         };
 
