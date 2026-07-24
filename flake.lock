@@ -1337,11 +1337,11 @@
         "nixpkgs": "nixpkgs_7"
       },
       "locked": {
-        "lastModified": 1784928065,
-        "narHash": "sha256-6Ky2xRE9qlrPfkLzbLcD11loU9UFgJhoQe5QSaVvSTU=",
+        "lastModified": 1784929443,
+        "narHash": "sha256-hv7Q+9omfPqvkQoMrAioPoUFV+shpTb78Q/rszq381s=",
         "owner": "pleme-io",
         "repo": "substrate",
-        "rev": "07d6de48dbc5fb65579980e4fae440ff7ff22804",
+        "rev": "d017da3066541c84cfca923c970e7d162ae3cb6c",
         "type": "github"
       },
       "original": {
