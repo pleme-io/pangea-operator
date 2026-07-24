@@ -221,6 +221,29 @@
           # cannot help these three; see .trivyignore for the residual CVE
           # citations.
           securityPkgs = import nixpkgs-security { system = imageSystem; config.allowUnfree = true; };
+          # ── Round 3 (2026-07-24, GHSA-hrxh-6v49-42gf grpc-go < 1.82.1) ──
+          # The fix line moved past every one of Round 1's bumps (all sat
+          # at v1.79.3). Bumping nixpkgs-security's OWN pin again (checked
+          # through nixos-unstable rev e2587ca, 2026-07-23 -- the tip of
+          # the branch) does NOT help: none of the six escape-hatch
+          # packages moved version at all between the two pins, so their
+          # vendored grpc-go is unchanged. Two of the nine findings DO have
+          # a real, fresh upstream fix (terraform-provider-aws 6.56.0,
+          # packer 1.16.0 -- both confirmed via go.mod at the tag: grpc
+          # v1.82.1) that nixpkgs-security simply hasn't packaged yet;
+          # `hardenedSecurityPkgs` below sources those two directly via the
+          # substrate cve-mitigations catalog (the SAME "version+hash bump
+          # now, don't wait for the channel" shape as the nixpkgs-security
+          # escape hatch itself, applied one layer further). The remaining
+          # seven (github/cloudflare/kubernetes/random/porkbun/rabbitmq/
+          # opentofu) have NO newer upstream release anywhere that picks up
+          # grpc >= 1.82.1 (re-verified 2026-07-24 against each repo's full
+          # release list, not just `/latest`) -- see .trivyignore's Round 3
+          # section for the residual GHSA-hrxh-6v49-42gf citation.
+          hardenedSecurityPkgs = (import "${substrate}/lib/security/mk-hardened-pkgs.nix" { inherit lib; }) {
+            pkgs = securityPkgs;
+            mitigations = [ "terraform-provider-aws-grpc-bump" "packer-grpc-bump" ];
+          };
           ruby = imagePkgs.ruby_3_3;
           libclang = imagePkgs.llvmPackages.libclang;
           # bindgen needs libc headers (stdio.h, stddef.h, …) on its
@@ -306,14 +329,21 @@
           magmaProviderMirror = imagePkgs.buildEnv {
             name = "magma-provider-mirror";
             paths = (with securityPkgs.terraform-providers; [
+              # cloudflare/github/kubernetes: no newer upstream release
+              # picks up grpc >= 1.82.1 (Round 3, .trivyignore) — stay on
+              # the nixpkgs-security escape hatch, unchanged since Round 1.
               cloudflare_cloudflare
               integrations_github
-              hashicorp_aws
               hashicorp_kubernetes
-            ]) ++ (with imagePkgs.terraform-providers; [
+            ]) ++ [
+              # aws: Round 3's real fix — sourced via hardenedSecurityPkgs
+              # (the cve-mitigations catalog), not the bare escape hatch.
+              hardenedSecurityPkgs.terraform-providers.hashicorp_aws
+            ] ++ (with imagePkgs.terraform-providers; [
               # No newer upstream release exists for these three on ANY
-              # channel (verified 2026-07-19) — stays on the primary pin.
-              # See .trivyignore for the residual CVE citations.
+              # channel (verified 2026-07-19, re-verified 2026-07-24) —
+              # stays on the primary pin. See .trivyignore for the
+              # residual CVE citations.
               hashicorp_random
               porkbun
               cyrilgdn_rabbitmq
@@ -356,17 +386,23 @@
             # the primary pin's versions (opentofu: grpc-go CVE-2026-33186;
             # packer: stale containerd/go-git/mongo-driver/x-pkgs), fixed
             # by the newer upstream releases nixpkgs-security packages.
+            # opentofu stays on the BARE escape hatch — its newest tag
+            # (v1.12.5) doesn't bump grpc past v1.79.3 either (Round 3,
+            # .trivyignore); no fix to layer on yet.
             securityPkgs.opentofu # TofuExecutor: unconditionally
             # constructed at controller startup, resolved whenever
             # spec.executor / PANGEA_EXECUTOR names tofu (PANGEA_FORBID_TOFU
             # is the explicit kill-switch) — a real, tested,
             # config-selectable fallback per MAGMA-NATIVE EXECUTION, not
             # dead weight.
-            securityPkgs.packer
-            # PackerExecutor: unconditionally built, driven by the
-            # unconditionally-spawned PackerBuildController + sibling
-            # AmiTestController reconciling AMI builds — a separate,
-            # equally real concern from the tofu/magma question.
+            # packer: Round 3's real fix — 1.16.0 via hardenedSecurityPkgs
+            # (the cve-mitigations catalog; the bare nixpkgs-security escape
+            # hatch still only has 1.15.4).
+            hardenedSecurityPkgs.packer # PackerExecutor: unconditionally
+            # built, driven by the unconditionally-spawned
+            # PackerBuildController + sibling AmiTestController reconciling
+            # AMI builds — a separate, equally real concern from the
+            # tofu/magma question.
             pathGemAnchor
             magmaProviderMirror
           ];

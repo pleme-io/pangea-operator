@@ -250,3 +250,44 @@ CVE-2026-2303
 # reachable x86_64-linux builder from this workstation to verify it.
 CVE-2025-30153
 CVE-2026-35469
+
+# ── Round 3 (2026-07-24, GHSA-hrxh-6v49-42gf grpc-go < 1.82.1) ───────────
+# Ground truth: a real trivy scan of the embedded image (CI run
+# 30114848086) found the SAME advisory (GHSA-hrxh-6v49-42gf, published
+# 2026-07-15, no CVE assigned yet, CVSS v4 8.8 HIGH -- an xDS RBAC
+# authorization bypass via unsupported `Metadata`/`RequestedServerName`
+# fields being silently ignored, an HTTP/2 Rapid Reset DoS mitigation
+# bypass, and an xDS RBAC engine panic on malformed `NOT` rules; fixed
+# upstream at grpc-go v1.82.1) across all 9 of the same opentofu/packer/
+# terraform-provider binaries Round 1 (39c76c3) and Round 2 already
+# bumped/verified. The fix line simply moved past every one of their
+# vendored grpc-go versions: all six nixpkgs-security-escape-hatch
+# binaries sat at v1.79.3 (one rung above the Round-1 CVE-2026-33186 fix
+# line, one rung below this new one); porkbun/rabbitmq were already below
+# even v1.79.3 (v1.67.1/v1.72.1).
+#
+# terraform-provider-aws and packer had real, fresh upstream fixes
+# (v6.56.0 published 2026-07-22, v1.16.0 published 2026-07-24 -- both
+# confirmed via `gh api repos/<owner>/<repo>/releases/latest` +
+# `contents/go.mod?ref=<tag>`: both pin grpc v1.82.1) and are now sourced
+# via the substrate cve-mitigations catalog
+# (terraform-provider-aws-grpc-bump.nix, packer-grpc-bump.nix) rather than
+# waiting on nixpkgs-security's channel to notice a release that was
+# hours old -- closed for real, verified via `go version -m` on the built
+# binary (grpc v1.82.1), NOT listed below.
+#
+# The remaining 7 -- terraform-provider-github (6.13.0), -cloudflare
+# (5.22.0), -kubernetes (3.2.1), -random (3.9.0), -porkbun (0.3.0),
+# -rabbitmq (1.10.1), and opentofu (1.12.4; the newer tag v1.12.5,
+# published 2026-07-21, was checked too) -- each re-verified 2026-07-24
+# via `gh api repos/<owner>/<repo>/releases` (the FULL list, not just
+# `/latest`, to rule out an overlooked point release) AND a direct
+# `contents/go.mod?ref=<tag>` fetch at each repo's newest tag: NONE has
+# picked up grpc-go >= 1.82.1 yet (opentofu's v1.12.5 still pins v1.79.3
+# -- the point release didn't touch grpc). Same "no upstream release
+# exists to bump to; hand-patching go.mod/go.sum + a vendorHash recompute
+# is materially riskier than a version bump and out of scope" reasoning as
+# the prior two rounds (see the terraform-provider-random/-porkbun/
+# -rabbitmq entries above). Re-check whenever any of these seven cuts a
+# new release.
+GHSA-hrxh-6v49-42gf
