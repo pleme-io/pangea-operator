@@ -5453,6 +5453,11 @@ fn content_hash(input: &str) -> u64 {
 /// identically to the plan a human had approved against the PRIOR,
 /// genuinely-different state — silently reusing a stale approval for
 /// an apply the human never actually reviewed.
+///
+/// `state_bytes` is run through [`canonicalize_state_bytes`] before
+/// hashing — see that function's doc comment for why raw bytes are
+/// unsafe to hash directly (task #91, 2026-07-25 incident on
+/// `camelot-breathe-controller-iam`).
 fn plan_approval_hash(plan_text: &str, state_bytes: Option<&[u8]>) -> String {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -5460,11 +5465,75 @@ fn plan_approval_hash(plan_text: &str, state_bytes: Option<&[u8]>) -> String {
     match state_bytes {
         Some(bytes) => {
             1u8.hash(&mut hasher);
-            bytes.hash(&mut hasher);
+            canonicalize_state_bytes(bytes).hash(&mut hasher);
         }
         None => 0u8.hash(&mut hasher),
     }
     format!("{:016x}", hasher.finish())
+}
+
+/// Canonicalize state bytes before folding them into the approval hash
+/// so a JSON object key-order permutation can never change
+/// `status.pendingPlanHash` for a state that is otherwise
+/// byte-for-byte identical in content.
+///
+/// ROOT CAUSE (task #91, confirmed live on `camelot-breathe-controller-iam`,
+/// 2026-07-25): magma's plan-time refresh (`MagmaExecutor::plan`,
+/// `magma.rs`'s "Terraform-parity plan-time refresh") re-persists the
+/// FULL state to Postgres on every single Planning-phase cycle — even
+/// when nothing was applied (`refresh_report.is_some() =>
+/// magma_backend::Backend::write_state(...)`). For the fleet's default
+/// `BackendShape::Magma`, that write serializes `magma_types::State`
+/// directly via `serde_json::to_vec_pretty` — and `State::outputs` is
+/// typed `std::collections::HashMap<String, OutputValue>`
+/// (`magma-types/src/lib.rs`), NOT a `BTreeMap`/`IndexMap`. A `HashMap`
+/// rebuilt fresh on every decode (`tfstate_v4::wire_to_typed`'s
+/// `HashMap::with_capacity`, or an equivalent Deserialize impl) gets a
+/// new per-construction hash seed (`std::collections::hash_map::RandomState`
+/// increments its seed per new instance within a thread), so its
+/// iteration order — and therefore the JSON key order
+/// `serde_json::to_vec_pretty` emits for the `outputs` object — varies
+/// from write to write even when the exact same output names/values
+/// are present. A template needs ≥ 2 declared `output {}` blocks for
+/// this to be observable (a single-key object has only one possible
+/// serialization); `camelot-breathe-controller-iam` declares two
+/// (`role_arn`, `policy_arn`), which is exactly why it — and not every
+/// template — exhibited the symptom (identical `status.driftDetails`,
+/// different `status.pendingPlanHash`, across repeated Planning-phase
+/// cycles with no apply in between).
+///
+/// This is fixed HERE rather than in `magma`'s state encoding (the
+/// actual source of the non-determinism) deliberately: the encoding
+/// bug lives in the `magma-operator-backend` crate (a separate repo,
+/// `pleme-io/magma`), out of scope for this change, and — independent
+/// of whether/how that gets fixed upstream — the approval-hash
+/// computation is the one place a byte-level difference in ANY
+/// upstream artifact (not just this specific `HashMap`) must never
+/// leak into a human-facing approval identifier unless it reflects a
+/// REAL semantic difference. Canonicalizing here closes the whole
+/// class, not just this one field.
+///
+/// Round-trips the bytes through `serde_json::Value` and re-serializes.
+/// This crate does not enable serde_json's `preserve_order` feature
+/// (verified against `Cargo.lock`: no `indexmap` dependency edge on
+/// `serde_json`), so `serde_json::Value::Object` is `BTreeMap`-backed
+/// and re-serializing ALWAYS emits object keys in sorted order
+/// regardless of the order they were inserted or iterated in upstream
+/// — for every object in the tree, not just `outputs`.
+///
+/// Falls back to the raw bytes on parse failure. State bytes are
+/// always well-formed JSON in practice (both `tfstate_v4::encode` and
+/// the magma-shape `serde_json::to_vec_pretty` emit JSON), so this is
+/// a defensive fallback, not the expected path — and choosing to hash
+/// the raw bytes rather than treat a parse failure as
+/// `CurrentStateFingerprint::Unreadable` keeps this function's
+/// contract simple (infallible) while still never PANICKING on
+/// unexpected input.
+fn canonicalize_state_bytes(bytes: &[u8]) -> Vec<u8> {
+    match serde_json::from_slice::<serde_json::Value>(bytes) {
+        Ok(value) => serde_json::to_vec(&value).unwrap_or_else(|_| bytes.to_vec()),
+        Err(_) => bytes.to_vec(),
+    }
 }
 
 /// Canonical, order-independent fingerprint of a plan's per-resource
@@ -6138,6 +6207,88 @@ mod plan_approval_hash_tests {
             second_plan_hash, approved_plan_hash,
             "a plan replanned against wiped state must require fresh approval, \
              never silently inherit the prior state's approval"
+        );
+    }
+
+    // ── Task #91 regression: a JSON key-order permutation must never
+    //    change the approval hash ───────────────────────────────────
+    //
+    // Reproduces the exact incident shape confirmed live on
+    // `camelot-breathe-controller-iam` 2026-07-25: the state's
+    // `outputs` object (`role_arn`, `policy_arn`) gets re-persisted by
+    // magma on every Planning-phase refresh via a `HashMap` whose
+    // serialized key order varies run-to-run even though the logical
+    // content never changes. Before `canonicalize_state_bytes`, this
+    // byte-level permutation alone changed `status.pendingPlanHash`
+    // for an otherwise-identical plan, which invalidated a human's
+    // `spec.approvedPlanHash` for no semantic reason.
+
+    #[test]
+    fn state_bytes_key_order_permutation_produces_the_same_hash() {
+        let plan_text = "Plan: +0 ~1 -0";
+        // Same logical state as the two-output camelot-breathe-controller-iam
+        // template ("role_arn", "policy_arn"), serialized with the two
+        // top-level keys in different orders -- exactly what two
+        // `serde_json::to_vec_pretty` passes over a `HashMap`-backed
+        // `State::outputs` can legitimately produce for the SAME content.
+        let state_order_a = br#"{
+            "serial": 4,
+            "outputs": {
+                "role_arn": {"value": "arn:aws:iam::376129857990:role/x", "sensitive": false},
+                "policy_arn": {"value": "arn:aws:iam::376129857990:policy/y", "sensitive": false}
+            }
+        }"#;
+        let state_order_b = br#"{
+            "outputs": {
+                "policy_arn": {"value": "arn:aws:iam::376129857990:policy/y", "sensitive": false},
+                "role_arn": {"value": "arn:aws:iam::376129857990:role/x", "sensitive": false}
+            },
+            "serial": 4
+        }"#;
+
+        assert_eq!(
+            plan_approval_hash(plan_text, Some(state_order_a)),
+            plan_approval_hash(plan_text, Some(state_order_b)),
+            "a JSON key-order permutation of byte-for-byte-identical state \
+             content must not change the approval hash"
+        );
+    }
+
+    #[test]
+    fn state_bytes_with_a_real_value_change_still_produces_a_different_hash() {
+        // The safety property `CurrentStateFingerprint` exists for must
+        // survive canonicalization: canonicalizing key ORDER must never
+        // canonicalize away a genuine VALUE difference.
+        let plan_text = "Plan: +0 ~1 -0";
+        let state_before =
+            br#"{"outputs":{"role_arn":{"value":"arn:aws:iam::376129857990:role/x"}}}"#;
+        let state_after =
+            br#"{"outputs":{"role_arn":{"value":"arn:aws:iam::376129857990:role/DIFFERENT"}}}"#;
+
+        assert_ne!(
+            plan_approval_hash(plan_text, Some(state_before)),
+            plan_approval_hash(plan_text, Some(state_after)),
+            "a real change in state content must still change the approval hash"
+        );
+    }
+
+    #[test]
+    fn non_json_state_bytes_fall_back_to_raw_hashing_unchanged() {
+        // Every pre-existing test in this module hashes plain
+        // non-JSON byte strings as `state_bytes` -- confirms
+        // `canonicalize_state_bytes`'s parse-failure fallback keeps
+        // that exact prior behavior (same input -> same hash;
+        // different input -> different hash), so this fix is
+        // purely additive for the JSON case and changes nothing for
+        // the non-JSON one.
+        let plan_text = "Plan: 1 to add.";
+        assert_eq!(
+            plan_approval_hash(plan_text, Some(b"not-json-state-bytes")),
+            plan_approval_hash(plan_text, Some(b"not-json-state-bytes")),
+        );
+        assert_ne!(
+            plan_approval_hash(plan_text, Some(b"not-json-state-bytes-a")),
+            plan_approval_hash(plan_text, Some(b"not-json-state-bytes-b")),
         );
     }
 }
