@@ -92,8 +92,18 @@ jobs:
     # nix devShell every local dev + CRD-regen invocation already uses
     # (pangea-operator/CLAUDE.md §Generating CRDs), so CI and local dev
     # agree on the exact Ruby/libclang environment, not by luck.
+    # runner override (2026-07-25): the reusable's own `runner` input
+    # defaults to the metered `ubuntu-24.04` -- this job never overrode it,
+    # so every run has been dying before it even starts ("recent account
+    # payments have failed or your spending limit needs to be increased"),
+    # the exact billing gate every OTHER job in this file already routes
+    # around. Confirmed via the check-run's own annotation (the run log
+    # itself is unfetchable for a called-reusable-workflow job -- GitHub
+    # excludes it from both the per-job log API and the run-level log
+    # archive; the annotations API is the only surface that surfaced this).
     uses: pleme-io/substrate/.github/workflows/nix-devshell-cargo-test.yml@main
     with:
+      runner: camelot-builder-pleme-eks
       devshell: ruby-eval
       test-args: "--workspace --no-fail-fast"
     secrets: inherit
@@ -124,6 +134,25 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # ── C linker (2026-07-25) ────────────────────────────────────────────
+      # This bare dtolnay/rust-toolchain job has no C compiler on PATH --
+      # the camelot-builder-pleme-eks runner image carries none -- so every
+      # run has been dying at the FIRST crate compiled (even pure-Rust
+      # proc-macro2/quote/serde, since rustc still shells out to a system
+      # linker for the final link step): "error: linker `cc` not found".
+      # Nix already installs cleanly on this same runner (flake-check's own
+      # `nix build` above proves it); rather than assume an ambient package
+      # manager (apt/dnf — this image's actual base isn't guaranteed), pull
+      # JUST a C toolchain via Nix and put it on PATH for the rest of this
+      # job. Deliberately NOT routed through the `.#ruby-eval` devShell like
+      # cargo-test's sibling job — this leg's whole point (per the comment
+      # above) is a cheap, no-libruby-anywhere build; a minimal `gcc` shell
+      # keeps that intent intact instead of pulling in ruby/libclang unused.
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          github-token: ${{ secrets.BOT_PAT }}
+      - name: Put a Nix-provided C toolchain on PATH
+        run: echo "$(nix build --no-link --print-out-paths 'nixpkgs#gcc')/bin" >> "$GITHUB_PATH"
       # ── Private git-dependency credential (2026-07-25) ──────────────────
       # A bare dtolnay/rust-toolchain + `cargo test` job has zero git-
       # credential wiring for Cargo.toml's private git dep on tsunagu, so
