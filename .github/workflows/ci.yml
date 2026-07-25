@@ -124,7 +124,24 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # ── Private git-dependency credential (2026-07-25) ──────────────────
+      # A bare dtolnay/rust-toolchain + `cargo test` job has zero git-
+      # credential wiring for Cargo.toml's private git dep on tsunagu, so
+      # every run has been dying with "failed to authenticate when
+      # downloading repository ... tsunagu" — same failure class already
+      # fixed in release.yml's binaries job (32b16bd) and in the shared
+      # nix-devshell-cargo-test.yml reusable, never applied here. Unset
+      # actions/checkout's THIS-repo-scoped extraheader first (it silently
+      # wins over url.insteadOf by prefix match if left in place).
+      - name: Configure git credentials for private git dependencies (cargo)
+        env:
+          GIT_AUTH_TOKEN: ${{ secrets.BOT_PAT || secrets.GITHUB_TOKEN }}
+        run: |
+          git config --global url."https://x-access-token:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"
+          git config --unset-all http.https://github.com/.extraheader || true
       - name: cargo test -p pangea-operator --no-default-features (no libruby, no magma)
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
         run: cargo test -p pangea-operator --no-default-features --lib --no-fail-fast
 
   coverage:
