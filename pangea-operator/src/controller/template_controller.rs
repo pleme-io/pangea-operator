@@ -3061,7 +3061,12 @@ async fn current_state_fingerprint(
 /// Extracted as a pure function (no I/O, no `ControllerState`) so this
 /// two-source OR is directly unit-testable without the full async
 /// `route_through_approval_gate` plumbing.
-fn is_plan_approved(
+///
+/// `pub(crate)`: also consumed by `template::reactive_policy`'s
+/// `PhaseTimeout` force-reset guard, so it can tell a template
+/// legitimately parked awaiting plan approval (per this exact gate)
+/// apart from one genuinely wedged in `Planning`.
+pub(crate) fn is_plan_approved(
     status: &Option<InfrastructureTemplateStatus>,
     spec: &InfrastructureTemplateSpec,
     plan_hash: &str,

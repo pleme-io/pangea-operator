@@ -241,57 +241,111 @@ async fn apply_reactive_policy(
     // becomes the same value across reconciles and the gate stops it
     // re-firing. Failing-the-failed (template already Failed) is also
     // a no-op since Phase::Failed isn't in the timeout-eligible set.
+    //
+    // Approval-aware exception (2026-07-25): a `Planning`-phase
+    // template parked on `status.pendingPlanHash` awaiting a human's
+    // `spec.approvedPlanHash`/`status.approvedPlanHash` is NOT stuck —
+    // it is doing exactly what `PolicyDecision::RequireApproval` asked
+    // it to do (see `route_through_approval_gate`'s `PlanPending`
+    // event). Recompiling the identical spec against unchanged AWS
+    // state reliably reproduces the identical plan hash, so a force-
+    // reset here can never unstick this case — it only bounces
+    // Planning → Failed → Retry → Pending → back to the same
+    // unapproved `Planning` hold, forever (confirmed live: camelot's
+    // `camelot-breathe-controller-iam` CR looped this way for 81
+    // cycles). Before punting, check whether the template is in
+    // exactly that hold; if so, leave phase alone — the normal
+    // Planning cycle already re-emits the `PlanPending` reminder event
+    // every reconcile, so the human is not left without a signal.
     if let Escalation::Triggered { reason, .. } = &escalation {
         let is_new_phase_timeout = prior_reason.as_deref() != Some(reason.as_str())
             && reason.starts_with("PhaseTimeout:");
         if is_new_phase_timeout {
             if let Some(current_phase) = template.status.as_ref().and_then(|s| s.phase) {
                 if phase_is_force_resettable(current_phase) {
-                    let err = format!(
-                        "ReactivePolicy: {reason} — forcing phase to Failed so handle_failed can recover (workspace clean + reset to Pending). Triggered after phase stuck past timeout threshold."
-                    );
-                    let force_patch = serde_json::json!({
-                        "status": {
-                            "phase": "Failed",
-                            "lastError": err,
-                            "failureCount": template
-                                .status
-                                .as_ref()
-                                .map(|s| s.failure_count.saturating_add(1))
-                                .unwrap_or(1),
-                        }
-                    });
-                    if let Err(e) = crate::controller::status_patch::patch_status(
-                        template,
-                        &state.client,
-                        force_patch,
-                    )
-                    .await
-                    {
-                        tracing::warn!(
-                            error = %e,
-                            "PhaseTimeout force-reset patch failed (non-fatal); next reconcile will retry"
-                        );
-                    } else {
-                        tracing::warn!(
+                    if is_awaiting_plan_approval(template) {
+                        tracing::info!(
                             %reason,
                             current_phase = %current_phase,
-                            "PhaseTimeout escalation: forced phase → Failed for self-heal recovery"
+                            "PhaseTimeout escalation: NOT forcing phase reset -- template is \
+                             legitimately parked awaiting plan approval (pendingPlanHash has no \
+                             matching approvedPlanHash), not stuck. Recompiling would only \
+                             reproduce the same unapproved plan hash. The PlanPending reminder \
+                             event continues to fire on the normal Planning cycle."
                         );
-                        record_event(
+                    } else {
+                        let err = format!(
+                            "ReactivePolicy: {reason} — forcing phase to Failed so handle_failed can recover (workspace clean + reset to Pending). Triggered after phase stuck past timeout threshold."
+                        );
+                        let force_patch = serde_json::json!({
+                            "status": {
+                                "phase": "Failed",
+                                "lastError": err,
+                                "failureCount": template
+                                    .status
+                                    .as_ref()
+                                    .map(|s| s.failure_count.saturating_add(1))
+                                    .unwrap_or(1),
+                            }
+                        });
+                        if let Err(e) = crate::controller::status_patch::patch_status(
                             template,
-                            state,
-                            EventType::Warning,
-                            "PhaseTimeoutForceReset",
-                            &err,
+                            &state.client,
+                            force_patch,
                         )
-                        .await;
+                        .await
+                        {
+                            tracing::warn!(
+                                error = %e,
+                                "PhaseTimeout force-reset patch failed (non-fatal); next reconcile will retry"
+                            );
+                        } else {
+                            tracing::warn!(
+                                %reason,
+                                current_phase = %current_phase,
+                                "PhaseTimeout escalation: forced phase → Failed for self-heal recovery"
+                            );
+                            record_event(
+                                template,
+                                state,
+                                EventType::Warning,
+                                "PhaseTimeoutForceReset",
+                                &err,
+                            )
+                            .await;
+                        }
                     }
                 }
             }
         }
     }
     Ok(())
+}
+
+/// Whether `template` is legitimately parked awaiting plan approval:
+/// `status.pendingPlanHash` is set (a plan has been computed and is
+/// on hold per `PolicyDecision::RequireApproval`) and that exact hash
+/// does not yet match either approval source
+/// (`status.approvedPlanHash` or `spec.approvedPlanHash`) per
+/// `is_plan_approved`'s two-source OR. This is the same gate
+/// `route_through_approval_gate` itself evaluates every Planning
+/// reconcile — reusing it here (rather than re-deriving an
+/// approximation from `driftDetails`/`policyEvaluation`) means this
+/// guard can never drift out of sync with what actually holds the
+/// template at `Planning`.
+fn is_awaiting_plan_approval(template: &InfrastructureTemplate) -> bool {
+    let Some(pending_hash) = template
+        .status
+        .as_ref()
+        .and_then(|s| s.pending_plan_hash.as_deref())
+    else {
+        return false;
+    };
+    !crate::controller::template_controller::is_plan_approved(
+        &template.status,
+        &template.spec,
+        pending_hash,
+    )
 }
 
 /// The self-clearing auto-suspend breaker decision.
@@ -355,6 +409,107 @@ mod force_reset_tests {
         assert!(!phase_is_force_resettable(Phase::Ready));
         assert!(!phase_is_force_resettable(Phase::Failed));
         assert!(!phase_is_force_resettable(Phase::Destroying));
+    }
+}
+
+/// Regression tests for the 2026-07-25 fix: `camelot-breathe-controller-iam`
+/// looped Planning → (PhaseTimeout force-reset) → Failed → Retry → Pending →
+/// Planning for 81 cycles because the force-reset guard could not tell "a
+/// human hasn't approved this plan yet" apart from "genuinely wedged".
+/// `is_awaiting_plan_approval` is the guard that closes that gap; these
+/// tests pin its three truth-table cells directly against the live CR's own
+/// field shape (`pendingPlanHash` set, `approvedPlanHash` absent/stale/
+/// matching on either the status or spec side).
+#[cfg(test)]
+mod is_awaiting_plan_approval_tests {
+    use super::is_awaiting_plan_approval;
+    use crate::crd::InfrastructureTemplate;
+
+    /// Builds a minimal `InfrastructureTemplate` the way
+    /// `controller::reactive`'s own tests do (`serde_json::from_value` +
+    /// direct `status` assignment), then layers on the two plan-approval
+    /// fields under test via a JSON merge so field-name/camelCase drift
+    /// would be caught by a deserialize failure, not silently ignored.
+    fn template_with(
+        pending_plan_hash: Option<&str>,
+        status_approved_plan_hash: Option<&str>,
+        spec_approved_plan_hash: Option<&str>,
+    ) -> InfrastructureTemplate {
+        let mut spec = serde_json::json!({
+            "source": { "inline": "ignored" },
+            "pangeaNamespace": "test",
+        });
+        if let Some(h) = spec_approved_plan_hash {
+            spec["approvedPlanHash"] = serde_json::json!(h);
+        }
+        let mut status = serde_json::json!({});
+        if let Some(h) = pending_plan_hash {
+            status["pendingPlanHash"] = serde_json::json!(h);
+        }
+        if let Some(h) = status_approved_plan_hash {
+            status["approvedPlanHash"] = serde_json::json!(h);
+        }
+        let mut t: InfrastructureTemplate = serde_json::from_value(serde_json::json!({
+            "apiVersion": "pangea.pleme.io/v1alpha1",
+            "kind": "InfrastructureTemplate",
+            "metadata": { "name": "camelot-breathe-controller-iam", "namespace": "camelot" },
+            "spec": spec,
+        }))
+        .unwrap();
+        t.status = Some(serde_json::from_value(status).unwrap());
+        t
+    }
+
+    #[test]
+    fn no_pending_hash_is_not_awaiting_approval() {
+        // Nothing has been planned/held yet -- a PhaseTimeout here is a
+        // real stall (e.g. Compiling), so the force-reset must proceed.
+        assert!(!is_awaiting_plan_approval(&template_with(None, None, None)));
+    }
+
+    #[test]
+    fn pending_hash_with_no_approval_anywhere_is_awaiting_approval() {
+        // The exact live shape of `camelot-breathe-controller-iam`:
+        // pendingPlanHash set, neither approval source matching it.
+        // This must NOT be force-reset -- recompiling reproduces the
+        // identical hash and the hold recurs forever.
+        assert!(is_awaiting_plan_approval(&template_with(
+            Some("4ec76495f83303e7"),
+            None,
+            None,
+        )));
+    }
+
+    #[test]
+    fn pending_hash_with_stale_approvals_is_still_awaiting_approval() {
+        // Both approval sources present but stale (pre-existing --
+        // recompile changed the plan hash since the last approval).
+        assert!(is_awaiting_plan_approval(&template_with(
+            Some("4ec76495f83303e7"),
+            Some("a5a235f7440a0895"),
+            Some("a5a235f7440a0895"),
+        )));
+    }
+
+    #[test]
+    fn pending_hash_matched_by_status_approval_is_not_awaiting_approval() {
+        assert!(!is_awaiting_plan_approval(&template_with(
+            Some("4ec76495f83303e7"),
+            Some("4ec76495f83303e7"),
+            None,
+        )));
+    }
+
+    #[test]
+    fn pending_hash_matched_by_spec_approval_is_not_awaiting_approval() {
+        // The GitOps-native approval path: commit spec.approvedPlanHash
+        // matching status.pendingPlanHash -- exactly the immediate unblock
+        // this fix's diagnosis prescribes for the live CR.
+        assert!(!is_awaiting_plan_approval(&template_with(
+            Some("4ec76495f83303e7"),
+            None,
+            Some("4ec76495f83303e7"),
+        )));
     }
 }
 
