@@ -556,6 +556,21 @@ pub struct ProviderCredentials {
     /// baked into the workspace's own compiled/git-committed output.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub porkbun: Option<PorkbunCredentials>,
+
+    /// Akeyless credentials configuration. Used by templates whose Ruby
+    /// workspace declares an inline `provider :akeyless do api_key_login(
+    /// access_id:, access_key:) end` block (e.g.
+    /// workspaces/akeyless-dev-shaar-concentrator, added 2026-07-21 for
+    /// Pangea::Architectures::ShaarAkeyless — Step 0 of
+    /// theory/SHAAR-CAMELOT-BINDING.md §4). Ruby-side authority model, same
+    /// as GitHub: the referenced Secret's data keys (typically
+    /// `AKEYLESS_ACCESS_ID` / `AKEYLESS_ACCESS_KEY` / optionally
+    /// `AKEYLESS_API_GATEWAY`) are installed verbatim as env vars by the
+    /// generic `iter_secret_refs` injection loop; the Ruby workspace reads
+    /// them via `ENV.fetch(...)`. The operator never renders its own
+    /// `provider "akeyless" { ... }` block.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub akeyless: Option<AkeylessCredentials>,
 }
 
 /// Typed identifier for each provider known to the operator.
@@ -576,6 +591,7 @@ pub enum ProviderKind {
     Cloudflare,
     GitHub,
     Porkbun,
+    Akeyless,
 }
 
 impl ProviderKind {
@@ -588,6 +604,7 @@ impl ProviderKind {
             ProviderKind::Cloudflare => "cloudflare",
             ProviderKind::GitHub => "github",
             ProviderKind::Porkbun => "porkbun",
+            ProviderKind::Akeyless => "akeyless",
         }
     }
 
@@ -635,6 +652,11 @@ impl ProviderKind {
             // pod-local `providers.tf.json` — the load-bearing fix for the
             // Pangea::Secrets.resolve-at-synth-time leak this type closes.
             ProviderKind::Porkbun => true,
+            // Akeyless: Ruby-side, same model as GitHub — the workspace's
+            // own `provider :akeyless do api_key_login(...) end` block
+            // inlines credentials via ENV.fetch. Operator emits only the
+            // env-var injection, no providers.tf.json block.
+            ProviderKind::Akeyless => false,
         }
     }
 }
@@ -660,6 +682,7 @@ impl ProviderCredentials {
             cloudflare,
             github,
             porkbun,
+            akeyless,
         } = self;
 
         let mut out = Vec::new();
@@ -675,8 +698,23 @@ impl ProviderCredentials {
         if let Some(c) = porkbun {
             out.push((ProviderKind::Porkbun, &c.secret_ref));
         }
+        if let Some(c) = akeyless {
+            out.push((ProviderKind::Akeyless, &c.secret_ref));
+        }
         out
     }
+}
+
+/// Akeyless credentials configuration. The referenced Secret's data keys
+/// (typically `AKEYLESS_ACCESS_ID` / `AKEYLESS_ACCESS_KEY` / optionally
+/// `AKEYLESS_API_GATEWAY`) are installed verbatim as env vars by the
+/// generic injection loop — see `ProviderKind::Akeyless`'s doc comment on
+/// `operator_emits_provider_block` for the Ruby-side authority model.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AkeylessCredentials {
+    /// Secret containing the Akeyless access-id/access-key pair.
+    pub secret_ref: SecretRef,
 }
 
 /// AWS credentials configuration.
@@ -1952,6 +1990,7 @@ mod tests {
         assert_eq!(ProviderKind::Cloudflare.name(), "cloudflare");
         assert_eq!(ProviderKind::GitHub.name(), "github");
         assert_eq!(ProviderKind::Porkbun.name(), "porkbun");
+        assert_eq!(ProviderKind::Akeyless.name(), "akeyless");
     }
 
     fn empty_secret_ref(name: &str) -> SecretRef {
@@ -1968,6 +2007,7 @@ mod tests {
             cloudflare: None,
             github: None,
             porkbun: None,
+            akeyless: None,
         };
         assert!(creds.iter_secret_refs().is_empty());
     }
@@ -1983,6 +2023,7 @@ mod tests {
                 secret_ref: empty_secret_ref("gh"),
             }),
             porkbun: None,
+            akeyless: None,
         };
         let refs = creds.iter_secret_refs();
         assert_eq!(refs.len(), 2);
@@ -1991,6 +2032,7 @@ mod tests {
         assert!(kinds.contains(&ProviderKind::GitHub));
         assert!(!kinds.contains(&ProviderKind::Aws));
         assert!(!kinds.contains(&ProviderKind::Porkbun));
+        assert!(!kinds.contains(&ProviderKind::Akeyless));
     }
 
     #[test]
@@ -2010,14 +2052,17 @@ mod tests {
             porkbun: Some(PorkbunCredentials {
                 secret_ref: empty_secret_ref("pb"),
             }),
+            akeyless: Some(AkeylessCredentials {
+                secret_ref: empty_secret_ref("ak"),
+            }),
         };
         let refs = creds.iter_secret_refs();
-        assert_eq!(refs.len(), 4);
+        assert_eq!(refs.len(), 5);
 
         // The exhaustiveness contract: count must equal the number
         // of fields on ProviderCredentials. If a future commit adds
-        // a fifth provider field but forgets the iter_secret_refs
-        // case, this test still expects 4 — but the destructuring
+        // a sixth provider field but forgets the iter_secret_refs
+        // case, this test still expects 5 — but the destructuring
         // pattern in iter_secret_refs would have broken at compile
         // time first. This test is the runtime backstop.
         let aws_ref = refs
@@ -2031,6 +2076,12 @@ mod tests {
             .find(|(k, _)| *k == ProviderKind::Porkbun)
             .map(|(_, sref)| sref.name.as_str());
         assert_eq!(porkbun_ref, Some("pb"));
+
+        let akeyless_ref = refs
+            .iter()
+            .find(|(k, _)| *k == ProviderKind::Akeyless)
+            .map(|(_, sref)| sref.name.as_str());
+        assert_eq!(akeyless_ref, Some("ak"));
     }
 
     #[test]

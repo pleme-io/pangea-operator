@@ -278,6 +278,44 @@ fn provider_config_object(
             );
             Some(serde_json::Value::Object(obj))
         }
+        // Akeyless (2026-07-25): same shape as GitHub -- `operator_emits_
+        // provider_block() == false` governs only the TOFU text-render path
+        // (resolve_provider_config); it says nothing about this, the MAGMA
+        // live-RPC-config path. Confirmed against
+        // pleme-io/terraform-provider-akeyless/akeyless/provider.go: the
+        // provider's real schema is a top-level `api_gateway_address`
+        // string plus a NESTED `api_key_login` block (`access_id`/
+        // `access_key`) -- both attrs already carry their own
+        // `EnvDefaultFunc` fallback in the provider binary itself, but that
+        // only helps if the magma-hosted process happens to inherit those
+        // exact env vars; `with_provider_config` is the explicit, load-
+        // bearing path this module's own doc comment already warns is
+        // required (a null config here fails every real RPC). Per this
+        // org's documented cty-typed encoding rule (a `max_items=1` nested
+        // block serializes as a 1-element list of objects, theory/MAGMA.md
+        // § ApplyRpcContract), `api_key_login` is wrapped in an array.
+        ProviderKind::Akeyless => {
+            let access_id = first_present(data, &["access_id", "AKEYLESS_ACCESS_ID"])?;
+            let access_key = first_present(data, &["access_key", "AKEYLESS_ACCESS_KEY"])?;
+            let mut login_obj = serde_json::Map::new();
+            login_obj.insert("access_id".to_string(), serde_json::Value::String(access_id));
+            login_obj.insert("access_key".to_string(), serde_json::Value::String(access_key));
+            let mut obj = serde_json::Map::new();
+            obj.insert(
+                "api_key_login".to_string(),
+                serde_json::Value::Array(vec![serde_json::Value::Object(login_obj)]),
+            );
+            // Real provider env fallback is `AKEYLESS_GATEWAY`; also accept
+            // `AKEYLESS_API_GATEWAY` (this CRD's own doc-comment convention)
+            // and the bare terraform attr name, tolerant-key style.
+            if let Some(gw) = first_present(
+                data,
+                &["api_gateway_address", "AKEYLESS_GATEWAY", "AKEYLESS_API_GATEWAY"],
+            ) {
+                obj.insert("api_gateway_address".to_string(), serde_json::Value::String(gw));
+            }
+            Some(serde_json::Value::Object(obj))
+        }
     }
 }
 
@@ -522,6 +560,63 @@ mod tests {
         let obj = provider_config_object(ProviderKind::Cloudflare, &d, None).unwrap();
         let expected = serde_json::json!({ "api_token": "live-token" });
         assert_eq!(obj, expected);
+    }
+
+    #[test]
+    fn akeyless_resolves_access_id_and_key_into_a_nested_api_key_login_block() {
+        let d = data(&[("access_id", "p-abc123"), ("access_key", "sekret")]);
+        let obj = provider_config_object(ProviderKind::Akeyless, &d, None)
+            .expect("akeyless creds present → config object");
+        // Nested-block encoding per this org's cty max_items=1 rule: a
+        // 1-element list of objects, not a bare object.
+        let expected = serde_json::json!({
+            "api_key_login": [{ "access_id": "p-abc123", "access_key": "sekret" }],
+        });
+        assert_eq!(obj, expected);
+    }
+
+    #[test]
+    fn akeyless_tolerant_env_var_key_fallbacks() {
+        let d = data(&[
+            ("AKEYLESS_ACCESS_ID", "p-env"),
+            ("AKEYLESS_ACCESS_KEY", "sekret-env"),
+        ]);
+        let obj = provider_config_object(ProviderKind::Akeyless, &d, None)
+            .expect("akeyless creds present via env-var-shaped keys → config object");
+        assert_eq!(obj["api_key_login"][0]["access_id"], "p-env");
+        assert_eq!(obj["api_key_login"][0]["access_key"], "sekret-env");
+    }
+
+    #[test]
+    fn akeyless_optional_gateway_address_is_included_when_present() {
+        let d = data(&[
+            ("access_id", "p-1"),
+            ("access_key", "k-1"),
+            ("AKEYLESS_GATEWAY", "https://gw.internal:8080"),
+        ]);
+        let obj = provider_config_object(ProviderKind::Akeyless, &d, None).unwrap();
+        assert_eq!(obj["api_gateway_address"], "https://gw.internal:8080");
+    }
+
+    #[test]
+    fn akeyless_gateway_address_absent_when_not_present() {
+        let d = data(&[("access_id", "p-1"), ("access_key", "k-1")]);
+        let obj = provider_config_object(ProviderKind::Akeyless, &d, None).unwrap();
+        assert!(obj.get("api_gateway_address").is_none());
+    }
+
+    #[test]
+    fn akeyless_missing_access_key_yields_none() {
+        // Both attrs are required by the provider schema — a partial
+        // secret must not produce a half-populated login block.
+        let d = data(&[("access_id", "p-1")]);
+        assert!(provider_config_object(ProviderKind::Akeyless, &d, None).is_none());
+    }
+
+    #[test]
+    fn akeyless_empty_yields_none() {
+        let d = data(&[]);
+        assert!(provider_config_object(ProviderKind::Akeyless, &d, None).is_none());
     }
 
     #[test]
