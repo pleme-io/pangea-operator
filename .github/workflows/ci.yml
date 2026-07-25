@@ -31,11 +31,23 @@ jobs:
       # its own daemon config, so extra-substituters would silently no-op
       # under it -- install upstream Nix instead, where extra-conf is
       # honored by the trusted daemon regardless of trusted-user status.
+      # ADDED 2026-07-25 (real, load-bearing fix, task #80): the cache
+      # wiring above surfaced this job's ACTUAL standing failure -- every
+      # run for days (confirmed via `gh run list`, predates this commit)
+      # dies with `unable to download
+      # '.../repos/pleme-io/tsunagu/tarball/...': HTTP error 404`. tsunagu
+      # is a private flake input; an anonymous api.github.com tarball fetch
+      # 404s a private repo the same way it would a nonexistent one (GitHub
+      # never distinguishes the two for an unauthenticated caller). This
+      # job carried zero git credentials at the Nix level. Same fix,
+      # same line, as image-push.yml's own `access-tokens` addition
+      # (2026-07-23) for the identical class of gap.
       - uses: DeterminateSystems/nix-installer-action@main
         with:
           determinate: false
           extra-conf: |
             sandbox = relaxed
+            access-tokens = github.com=${{ secrets.BOT_PAT || secrets.GITHUB_TOKEN }}
             extra-substituters = ${{ vars.CAMELOT_SUI_SUBSTITUTER }}
             require-sigs = ${{ vars.CAMELOT_SUI_REQUIRE_SIGS }}
       # `nix flake check` builds EVERY packages.x86_64-linux.* + apps.x86_64-linux.*
