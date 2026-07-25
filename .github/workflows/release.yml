@@ -253,6 +253,13 @@ jobs:
       # rest of #20 (broader fleet-wide cache coverage) remains open.
       extraSubstituters: ${{ vars.CAMELOT_SUI_SUBSTITUTER }}
       requireSigs: ${{ vars.CAMELOT_SUI_REQUIRE_SIGS }}
+      # ADDED 2026-07-25: the write half of the pair above -- image-push.yml
+      # didn't support this until now (substrate cf24f2c added it, this
+      # repo's own gap was what surfaced the missing input). Without it
+      # every build here pulled from sui but never pushed back, so a
+      # from-source overlay recompiled fully on every run even after a
+      # successful build. Best-effort, same endpoint as the pull side.
+      superCacheSaveEndpoint: ${{ vars.CAMELOT_SUI_SUBSTITUTER }}
       # Pre-publish CVE gate -- same rationale as image-rio above. This is
       # the variant every real push-triggered merge actually takes (the
       # default runner), so this is the load-bearing half of the fix.

@@ -12,13 +12,32 @@ jobs:
     runs-on: camelot-builder-pleme-eks
     steps:
       - uses: actions/checkout@v4
-      - uses: DeterminateSystems/nix-installer-action@main
       # magic-nix-cache-action is EOL'd upstream (repo-scoped, can't carry a
       # fleet closure -- purify skill's own standing guidance) and outright
       # broken on this runner (`xz: not found` unpacking its own cache
       # blob), failing this job's first step on every push. Dropped rather
-      # than patched; real cache coverage for this pool is task #20
-      # (Camelot Nix cache coverage), not a per-repo action swap.
+      # than patched.
+      #
+      # ADDED 2026-07-25 (closes task #20's opening symptom for this job):
+      # this step previously carried ZERO substituter config, so every
+      # `flake-check` run -- including a bare `.trivyignore`-only change --
+      # paid a full cold rebuild of the native amd64 embedded operator
+      # image. camelot-builder-pleme-eks pods sit inside camelot-eks's own
+      # network where sui's in-cluster super-cache (theory/ATATAME.md's L1
+      # origin) is reachable, the same wiring release.yml's image-fallback
+      # job already proved live (vars.CAMELOT_SUI_SUBSTITUTER, set
+      # 2026-07-19). `determinate: false` matches image-push.yml's own
+      # documented reason: Determinate Nix ignores `extra-conf` and manages
+      # its own daemon config, so extra-substituters would silently no-op
+      # under it -- install upstream Nix instead, where extra-conf is
+      # honored by the trusted daemon regardless of trusted-user status.
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          determinate: false
+          extra-conf: |
+            sandbox = relaxed
+            extra-substituters = ${{ vars.CAMELOT_SUI_SUBSTITUTER }}
+            require-sigs = ${{ vars.CAMELOT_SUI_REQUIRE_SIGS }}
       # `nix flake check` builds EVERY packages.x86_64-linux.* + apps.x86_64-linux.*
       # output for the current system — including dockerImage-operator-embedded-arm64
       # / push-image-operator-embedded-arm64, which mkEmbeddedOperatorImage builds
@@ -33,7 +52,23 @@ jobs:
       # same x86_64-linux architecture as this runner, so it's a real build, not
       # just an eval.
       - name: nix build — native amd64 embedded operator image (the real shipped artifact)
-        run: nix build .#dockerImage-operator-embedded-amd64 --no-link --print-build-logs
+        id: build
+        run: |
+          OUT=$(nix build .#dockerImage-operator-embedded-amd64 --no-link --print-build-logs --print-out-paths)
+          echo "out-path=${OUT}" >> "$GITHUB_OUTPUT"
+      # Write half of the substituter config above -- without this, the
+      # store path this job just built (or substituted) is never pushed
+      # back, so sui only ever helps a run that happens to follow one that
+      # ALSO paid to build the same derivation from source. Same action,
+      # same shape as nix-image-auto-release.yml's own "Push built image to
+      # super-cache" step. Best-effort by construction (super-cache-save
+      # never fails its caller on a push error) -- never gates this job.
+      - name: Push built image to super-cache (sui)
+        uses: pleme-io/actions/super-cache-save@main
+        with:
+          endpoint: ${{ vars.CAMELOT_SUI_SUBSTITUTER }}
+          outputs: ${{ steps.build.outputs.out-path }}
+          key: dockerImage-operator-embedded-amd64
 
   cargo-test:
     # Runs inside `.#ruby-eval` via the shared substrate reusable workflow
