@@ -12,8 +12,31 @@
       url = "github:ipetkov/crane";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    # Reference nexus flake for nexus-deploy and nix-lib
-    nexus.url = "path:../../../..";
+    # Reference nexus flake for nexus-deploy and nix-lib. Corrected 2026-07-21:
+    # was "path:../../../.." (4 levels up from this file's directory,
+    # resolving to ~/code — no flake.nix there, `path '/flake.nix' does not
+    # exist`). A same-level-count fix ("path:../../nexus") still fails
+    # differently: `nix develop` addresses a dirty git tree as
+    # `git+file://<repo-root>`, and a git-tree flake reference cannot resolve
+    # a relative `path:` input past its OWN repository root to a sibling repo
+    # outside it ("'nexus' is too short to be a valid store path") — this
+    # isn't a `../` counting bug, `path:` to a separate sibling git repo is
+    # structurally unsupported here. A real remote reference is the durable
+    # fix (also removes the checkout-layout fragility that caused the
+    # original break — this input no longer depends on where `nexus` happens
+    # to be checked out locally).
+    nexus.url = "github:pleme-io/nexus";
+    # Local dev against an uncommitted nexus checkout: DO NOT change this URL
+    # back to a path: input (see the fragility above). Instead override at
+    # the CLI, per-invocation, never committed:
+    #   nix develop --impure \
+    #     --override-input nexus /absolute/path/to/nexus \
+    #     --no-write-lock-file
+    # Absolute path (not relative) avoids both bugs above: no `../` count to
+    # get wrong, and — resolved as its own top-level flake ref rather than a
+    # relative traversal inside this flake's git-tree addressing — it
+    # doesn't hit the git-tree-boundary restriction either. `--no-write-
+    # lock-file` keeps the override out of the committed flake.lock.
     # Hardened OCI base images (distroless-glibc, no shell, nonroot-by-
     # default) — the SAME fleet-wide primitive breathe + tool-image.nix
     # build against (org CLAUDE.md Pillar 8 + hardened-images-by-default).
