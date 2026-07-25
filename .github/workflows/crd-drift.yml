@@ -22,10 +22,31 @@ jobs:
       - name: Checkout operator
         uses: actions/checkout@v4
 
+      # ── Private git-dependency credential (same fix as release.yml's
+      # 32b16bd / image-push.yml's ccfd349) ── this job's Cargo.toml pulls
+      # several private pleme-io git deps (tsunagu, magma, shigoto, shikumi,
+      # gen) directly via `cargo run`, with zero git-credential wiring --
+      # "failed to get `tsunagu` as a dependency". actions/checkout@v4 also
+      # leaves its own ephemeral, THIS-repo-scoped GITHUB_TOKEN in local git
+      # config (http.https://github.com/.extraheader), matched by URL PREFIX
+      # against ANY git operation from this checkout -- unset it before
+      # configuring BOT_PAT or it silently wins instead.
+      - name: Configure git credentials for private git dependencies (cargo)
+        env:
+          GIT_AUTH_TOKEN: ${{ secrets.BOT_PAT }}
+        run: |
+          git config --global url."https://x-access-token:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"
+          git config --unset-all http.https://github.com/.extraheader || true
+
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
       - name: Regenerate CRDs from the Rust structs (no libruby)
+        env:
+          # Forces cargo to shell out to the real git binary (which honors
+          # the url.insteadOf rewrite above) instead of its bundled libgit2
+          # backend (which does not).
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
         run: |
           cargo run -p pangea-operator --bin pangea-operator \
             --no-default-features -- --generate-crds > /tmp/all-crds.yaml

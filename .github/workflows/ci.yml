@@ -13,7 +13,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main
-      - uses: DeterminateSystems/magic-nix-cache-action@main
+      # magic-nix-cache-action is EOL'd upstream (repo-scoped, can't carry a
+      # fleet closure -- purify skill's own standing guidance) and outright
+      # broken on this runner (`xz: not found` unpacking its own cache
+      # blob), failing this job's first step on every push. Dropped rather
+      # than patched; real cache coverage for this pool is task #20
+      # (Camelot Nix cache coverage), not a per-repo action swap.
       # `nix flake check` builds EVERY packages.x86_64-linux.* + apps.x86_64-linux.*
       # output for the current system — including dockerImage-operator-embedded-arm64
       # / push-image-operator-embedded-arm64, which mkEmbeddedOperatorImage builds
