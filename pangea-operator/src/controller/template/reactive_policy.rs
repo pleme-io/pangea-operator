@@ -263,7 +263,7 @@ async fn apply_reactive_policy(
         if is_new_phase_timeout {
             if let Some(current_phase) = template.status.as_ref().and_then(|s| s.phase) {
                 if phase_is_force_resettable(current_phase) {
-                    if is_awaiting_plan_approval(template) {
+                    if is_awaiting_plan_approval(template, current_phase) {
                         tracing::info!(
                             %reason,
                             current_phase = %current_phase,
@@ -323,9 +323,9 @@ async fn apply_reactive_policy(
 }
 
 /// Whether `template` is legitimately parked awaiting plan approval:
-/// `status.pendingPlanHash` is set (a plan has been computed and is
-/// on hold per `PolicyDecision::RequireApproval`) and that exact hash
-/// does not yet match either approval source
+/// `current_phase == Planning`, `status.pendingPlanHash` is set (a plan
+/// has been computed and is on hold per `PolicyDecision::RequireApproval`),
+/// and that exact hash does not yet match either approval source
 /// (`status.approvedPlanHash` or `spec.approvedPlanHash`) per
 /// `is_plan_approved`'s two-source OR. This is the same gate
 /// `route_through_approval_gate` itself evaluates every Planning
@@ -333,7 +333,27 @@ async fn apply_reactive_policy(
 /// approximation from `driftDetails`/`policyEvaluation`) means this
 /// guard can never drift out of sync with what actually holds the
 /// template at `Planning`.
-fn is_awaiting_plan_approval(template: &InfrastructureTemplate) -> bool {
+///
+/// The `current_phase == Planning` check is load-bearing, not a
+/// convenience filter: `status.pendingPlanHash` is only ever cleared on
+/// a successful apply (`build_apply_status`) — never on `Failed→Pending`,
+/// `Pending→Compiling`, or any other phase transition. So a template
+/// that legitimately parked at `Planning` on an unapproved hash, then
+/// later re-enters `Compiling`/`Initializing`/`Applying` for a wholly
+/// unrelated reason (e.g. a workspace-restart bounce, a git-fetch hang)
+/// while that stale hash is still sitting in `status`, must NOT have
+/// this guard suppress the force-reset there — that phase is not
+/// "awaiting approval," it genuinely may be wedged, and this guard's
+/// only mandate is the Planning-specific hold. Gating inside the
+/// function (not just at the one current call site) keeps this
+/// invariant enforced regardless of any future caller.
+fn is_awaiting_plan_approval(
+    template: &InfrastructureTemplate,
+    current_phase: crate::crd::Phase,
+) -> bool {
+    if current_phase != crate::crd::Phase::Planning {
+        return false;
+    }
     let Some(pending_hash) = template
         .status
         .as_ref()
@@ -423,7 +443,7 @@ mod force_reset_tests {
 #[cfg(test)]
 mod is_awaiting_plan_approval_tests {
     use super::is_awaiting_plan_approval;
-    use crate::crd::InfrastructureTemplate;
+    use crate::crd::{InfrastructureTemplate, Phase};
 
     /// Builds a minimal `InfrastructureTemplate` the way
     /// `controller::reactive`'s own tests do (`serde_json::from_value` +
@@ -464,7 +484,10 @@ mod is_awaiting_plan_approval_tests {
     fn no_pending_hash_is_not_awaiting_approval() {
         // Nothing has been planned/held yet -- a PhaseTimeout here is a
         // real stall (e.g. Compiling), so the force-reset must proceed.
-        assert!(!is_awaiting_plan_approval(&template_with(None, None, None)));
+        assert!(!is_awaiting_plan_approval(
+            &template_with(None, None, None),
+            Phase::Planning,
+        ));
     }
 
     #[test]
@@ -473,31 +496,32 @@ mod is_awaiting_plan_approval_tests {
         // pendingPlanHash set, neither approval source matching it.
         // This must NOT be force-reset -- recompiling reproduces the
         // identical hash and the hold recurs forever.
-        assert!(is_awaiting_plan_approval(&template_with(
-            Some("4ec76495f83303e7"),
-            None,
-            None,
-        )));
+        assert!(is_awaiting_plan_approval(
+            &template_with(Some("4ec76495f83303e7"), None, None),
+            Phase::Planning,
+        ));
     }
 
     #[test]
     fn pending_hash_with_stale_approvals_is_still_awaiting_approval() {
         // Both approval sources present but stale (pre-existing --
         // recompile changed the plan hash since the last approval).
-        assert!(is_awaiting_plan_approval(&template_with(
-            Some("4ec76495f83303e7"),
-            Some("a5a235f7440a0895"),
-            Some("a5a235f7440a0895"),
-        )));
+        assert!(is_awaiting_plan_approval(
+            &template_with(
+                Some("4ec76495f83303e7"),
+                Some("a5a235f7440a0895"),
+                Some("a5a235f7440a0895"),
+            ),
+            Phase::Planning,
+        ));
     }
 
     #[test]
     fn pending_hash_matched_by_status_approval_is_not_awaiting_approval() {
-        assert!(!is_awaiting_plan_approval(&template_with(
-            Some("4ec76495f83303e7"),
-            Some("4ec76495f83303e7"),
-            None,
-        )));
+        assert!(!is_awaiting_plan_approval(
+            &template_with(Some("4ec76495f83303e7"), Some("4ec76495f83303e7"), None),
+            Phase::Planning,
+        ));
     }
 
     #[test]
@@ -505,11 +529,34 @@ mod is_awaiting_plan_approval_tests {
         // The GitOps-native approval path: commit spec.approvedPlanHash
         // matching status.pendingPlanHash -- exactly the immediate unblock
         // this fix's diagnosis prescribes for the live CR.
-        assert!(!is_awaiting_plan_approval(&template_with(
-            Some("4ec76495f83303e7"),
-            None,
-            Some("4ec76495f83303e7"),
-        )));
+        assert!(!is_awaiting_plan_approval(
+            &template_with(Some("4ec76495f83303e7"), None, Some("4ec76495f83303e7")),
+            Phase::Planning,
+        ));
+    }
+
+    #[test]
+    fn stale_pending_hash_in_a_non_planning_phase_is_not_awaiting_approval() {
+        // The regression two independent adversarial verify passes caught:
+        // `status.pendingPlanHash` is only ever cleared on a successful
+        // apply, so a template that legitimately parked at Planning on an
+        // unapproved hash, then later bounces to Compiling/Initializing/
+        // Applying for a WHOLLY UNRELATED reason (a workspace-restart, a
+        // git-fetch hang) while that stale hash is still sitting in
+        // status, must NOT have this guard suppress the force-reset there.
+        // Only Planning's own hold is legitimate; every other phase with
+        // the same stale hash present is exactly the "genuinely wedged"
+        // case this guard must never mask.
+        for phase in [Phase::Compiling, Phase::Initializing, Phase::Applying] {
+            assert!(
+                !is_awaiting_plan_approval(
+                    &template_with(Some("4ec76495f83303e7"), None, None),
+                    phase,
+                ),
+                "phase {phase:?} with a stale unapproved pendingPlanHash must not be \
+                 treated as a legitimate approval hold"
+            );
+        }
     }
 }
 
