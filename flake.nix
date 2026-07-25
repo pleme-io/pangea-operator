@@ -242,7 +242,14 @@
           # section for the residual GHSA-hrxh-6v49-42gf citation.
           hardenedSecurityPkgs = (import "${substrate}/lib/security/mk-hardened-pkgs.nix" { inherit lib; }) {
             pkgs = securityPkgs;
-            mitigations = [ "terraform-provider-aws-grpc-bump" "packer-grpc-bump" "terraform-provider-kubernetes-kin-openapi-bump" ];
+            mitigations = [ "terraform-provider-aws-grpc-bump" "packer-grpc-bump" ];
+            # terraform-provider-kubernetes-kin-openapi-bump is authored in
+            # substrate's catalog but deliberately NOT referenced here — a
+            # real CI build confirmed it breaks the provider's own source
+            # (see the magmaProviderMirror comment below). Left unwired as
+            # a record; a real fix needs a source patch to
+            # terraform-provider-kubernetes's manifest/openapi package, not
+            # just a vendored dependency bump.
           };
           ruby = imagePkgs.ruby_3_3;
           libclang = imagePkgs.llvmPackages.libclang;
@@ -329,20 +336,34 @@
           magmaProviderMirror = imagePkgs.buildEnv {
             name = "magma-provider-mirror";
             paths = (with securityPkgs.terraform-providers; [
-              # cloudflare/github: no newer upstream release picks up
-              # grpc >= 1.82.1 (Round 3, .trivyignore) — stay on the
-              # nixpkgs-security escape hatch, unchanged since Round 1.
+              # cloudflare/github/kubernetes: no newer upstream release
+              # picks up grpc >= 1.82.1 (Round 3, .trivyignore) — stay on
+              # the nixpkgs-security escape hatch, unchanged since Round 1.
+              #
+              # kubernetes ALSO carries the GHSA-jpcw-4wr7-c3vq /
+              # GHSA-r277-6w6q-xmqw kin-openapi findings (.trivyignore
+              # Round 4 + Round 5) — a vendored go.mod patch bumping
+              # kin-openapi 0.111.0 -> 0.144.0 was attempted
+              # (substrate's terraform-provider-kubernetes-kin-openapi-bump
+              # cve-mitigation, left in the catalog unwired as a record) and
+              # CONFIRMED, via a real CI build, to break the provider's own
+              # source: kin-openapi 0.144.0 changed `Schema.Type` from a
+              # plain string to `*openapi3.Types` and diverged the
+              # openapi2/openapi3 SchemaRef split, and
+              # terraform-provider-kubernetes's manifest/openapi/*.go still
+              # uses the pre-change shape (confirmed compile failure, CI run
+              # 30178928379: "cannot use ... as *openapi3.Types value").
+              # This is the empirical version of Round 4's own risk
+              # assessment ("a bare go.mod replace is materially riskier
+              # than a version bump") — not a lower-risk case, a confirmed
+              # one.
               cloudflare_cloudflare
               integrations_github
+              hashicorp_kubernetes
             ]) ++ [
               # aws: Round 3's real fix — sourced via hardenedSecurityPkgs
               # (the cve-mitigations catalog), not the bare escape hatch.
               hardenedSecurityPkgs.terraform-providers.hashicorp_aws
-              # kubernetes: GHSA-jpcw-4wr7-c3vq's real fix (kin-openapi
-              # 0.111.0 -> 0.144.0, a vendored go.mod patch since no newer
-              # provider release exists) — sourced via hardenedSecurityPkgs,
-              # same shape as aws above.
-              hardenedSecurityPkgs.terraform-providers.hashicorp_kubernetes
             ] ++ (with imagePkgs.terraform-providers; [
               # No newer upstream release exists for these three on ANY
               # channel (verified 2026-07-19, re-verified 2026-07-24) —

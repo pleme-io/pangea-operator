@@ -310,3 +310,34 @@ GHSA-hrxh-6v49-42gf
 # terraform-provider-kubernetes cuts a release that bumps its own
 # kin-openapi pin.
 GHSA-r277-6w6q-xmqw
+
+# Round 5 (2026-07-25, GHSA-jpcw-4wr7-c3vq kin-openapi nil-pointer panic in
+# openapi3filter) -- same package, same 0.111.0 -> 0.144.0 gap as Round 4's
+# GHSA-r277-6w6q-xmqw above -- a MEDIUM finding this time (an
+# unauthenticated nil-pointer panic when openapi3filter validates a request
+# against a `content` parameter whose media type has no schema).
+#
+# Unlike Round 4, this one was actually attempted, not just risk-assessed: a
+# vendored go.mod patch (substrate's terraform-provider-kubernetes-kin-
+# openapi-bump cve-mitigation, left in the catalog unwired as a record)
+# bumped kin-openapi to v0.144.0 inside terraform-provider-kubernetes
+# 3.2.1's own vendor tree. `go mod tidy` resolved the graph fine, but the
+# provider's OWN source fails to compile against it (CI run 30178928379):
+# `Schema.Type` changed from a plain string to `*openapi3.Types`, and the
+# openapi2/openapi3 SchemaRef split changed shape -- manifest/openapi/
+# foundry_v2.go and schema.go (both pre-existing, unrelated to this scan)
+# still assume the old API. This CONFIRMS Round 4's risk assessment
+# empirically rather than just asserting it.
+#
+# Separately, and more load-bearing than the compile failure alone: this
+# specific CVE's vulnerable function (openapi3filter.ValidateRequest) is
+# never called anywhere in terraform-provider-kubernetes's source tree
+# (confirmed via a full recursive grep of the v3.2.1 tree, zero matches for
+# "openapi3filter") -- the provider only uses kin-openapi for OpenAPI
+# schema TYPE modeling (resolving CRD manifest schemas), never for HTTP
+# request validation. The vulnerable code path is unreachable in this
+# binary's actual usage, independent of whether the version gets bumped.
+# Re-check when terraform-provider-kubernetes cuts a release that bumps its
+# own kin-openapi pin past 0.144.0 while staying source-compatible with
+# this provider's manifest/openapi package.
+GHSA-jpcw-4wr7-c3vq
