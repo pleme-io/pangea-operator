@@ -242,7 +242,7 @@
           # section for the residual GHSA-hrxh-6v49-42gf citation.
           hardenedSecurityPkgs = (import "${substrate}/lib/security/mk-hardened-pkgs.nix" { inherit lib; }) {
             pkgs = securityPkgs;
-            mitigations = [ "terraform-provider-aws-grpc-bump" "packer-grpc-bump" ];
+            mitigations = [ "terraform-provider-aws-grpc-bump" "packer-grpc-bump" "terraform-provider-kubernetes-kin-openapi-bump" ];
           };
           ruby = imagePkgs.ruby_3_3;
           libclang = imagePkgs.llvmPackages.libclang;
@@ -329,16 +329,20 @@
           magmaProviderMirror = imagePkgs.buildEnv {
             name = "magma-provider-mirror";
             paths = (with securityPkgs.terraform-providers; [
-              # cloudflare/github/kubernetes: no newer upstream release
-              # picks up grpc >= 1.82.1 (Round 3, .trivyignore) — stay on
-              # the nixpkgs-security escape hatch, unchanged since Round 1.
+              # cloudflare/github: no newer upstream release picks up
+              # grpc >= 1.82.1 (Round 3, .trivyignore) — stay on the
+              # nixpkgs-security escape hatch, unchanged since Round 1.
               cloudflare_cloudflare
               integrations_github
-              hashicorp_kubernetes
             ]) ++ [
               # aws: Round 3's real fix — sourced via hardenedSecurityPkgs
               # (the cve-mitigations catalog), not the bare escape hatch.
               hardenedSecurityPkgs.terraform-providers.hashicorp_aws
+              # kubernetes: GHSA-jpcw-4wr7-c3vq's real fix (kin-openapi
+              # 0.111.0 -> 0.144.0, a vendored go.mod patch since no newer
+              # provider release exists) — sourced via hardenedSecurityPkgs,
+              # same shape as aws above.
+              hardenedSecurityPkgs.terraform-providers.hashicorp_kubernetes
             ] ++ (with imagePkgs.terraform-providers; [
               # No newer upstream release exists for these three on ANY
               # channel (verified 2026-07-19, re-verified 2026-07-24) —
