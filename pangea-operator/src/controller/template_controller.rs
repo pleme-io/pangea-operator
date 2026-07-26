@@ -3141,7 +3141,26 @@ async fn route_through_approval_gate(
             return Ok(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL));
         }
     };
-    let plan_hash = plan_approval_hash(&plan_content, state_bytes);
+    // spawn_blocking: `plan_approval_hash` runs `canonicalize_state_bytes`,
+    // a full-state serde_json round-trip (potentially the entire magma
+    // Terraform state for a large stack) on every reconcile that reaches
+    // this gate. Left inline, that CPU-bound work runs on the same tokio
+    // worker-thread pool the /healthz and /readyz axum handlers share
+    // (see observability/mod.rs::run_health_server) -- under concurrent
+    // reconcile bursts across this operator's ~15 controllers, enough
+    // worker-thread occupation can starve health-check scheduling past
+    // the probe timeout regardless of the pod's CPU limit. Moving it to
+    // the blocking-thread pool is a pure relocation: same owned inputs,
+    // same deterministic output, computed off the shared runtime.
+    let plan_hash = {
+        let plan_content_owned = plan_content;
+        let state_bytes_owned = state_bytes.map(<[u8]>::to_vec);
+        tokio::task::spawn_blocking(move || {
+            plan_approval_hash(&plan_content_owned, state_bytes_owned.as_deref())
+        })
+        .await
+        .expect("plan_approval_hash blocking task panicked")
+    };
 
     let is_approved = is_plan_approved(&template.status, &template.spec, &plan_hash);
 
