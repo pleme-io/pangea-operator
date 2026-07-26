@@ -522,6 +522,20 @@ impl ControllerState {
             // tofu-format bytes so magma + tofu read the same state.
             backend_shape:   BackendShape::Tofu,
             plan_checkpoint: true,
+            // Bounded work per apply cycle (MAGMA-OPERATOR-BACKEND.md
+            // §II-ter / M0.16). A cycle that spends its quantum yields and
+            // durably records its frontier, so the next one resumes instead
+            // of re-running the plan from the beginning and re-spending the
+            // provider's rate-limit budget on work already applied.
+            //
+            // `PANGEA_MAGMA_APPLY_QUANTUM_SECS=0` opts out (run-to-completion,
+            // the pre-M0.16 behaviour); an unparseable value falls back to the
+            // default rather than failing the reconcile, because a malformed
+            // env var must not be able to stop a cluster converging.
+            apply_quantum_secs: std::env::var("PANGEA_MAGMA_APPLY_QUANTUM_SECS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .or(Some(120)),
             preflight_laws:  true,
             drift_policy:    magma_drift::DriftPolicy::conservative_default(),
             audit_log_path:  None,

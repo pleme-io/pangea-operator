@@ -43,12 +43,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use sqlx::{PgPool, Postgres, Transaction};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::backend::schema::is_valid_identifier;
 use crate::error::{Error, Result};
 
-/// Artifact kind discriminator stored in the `kind` column. Three
+/// Artifact kind discriminator stored in the `kind` column. Four
 /// durable artifacts the magma reconcile path produces.
 pub mod kind {
     /// The compile→plan rendered terraform JSON (was `main.tf.json`).
@@ -57,6 +57,23 @@ pub mod kind {
     pub const PLAN: &str = "plan";
     /// The typed magma compliance bundle (was `magma-bundle.json`).
     pub const BUNDLE: &str = "bundle";
+    /// The resumable apply position (`magma_apply::cursor::ApplyCursor`),
+    /// per MAGMA-OPERATOR-BACKEND.md §II-ter / M0.16.
+    ///
+    /// This row is what makes apply progress **monotonic across reconciles**:
+    /// a cycle that runs out of quantum (or a pod that dies mid-apply) leaves
+    /// the frontier here, and the next cycle resumes from it instead of
+    /// re-running the plan from the beginning and re-spending the provider's
+    /// rate-limit budget on work already done.
+    ///
+    /// **No delete verb is needed, by construction.** An `ApplyCursor` is
+    /// bound to its plan's BLAKE3 `PlanId`, and `ApplyCursor::resume` returns
+    /// `None` on mismatch — so a cursor left behind by a finished plan is
+    /// self-invalidating against the *next* plan, and against a re-apply of
+    /// the *same* plan it correctly reports everything already done. A stale
+    /// row is inert rather than dangerous, so we do not add a delete path
+    /// whose failure modes would be worse than the state it removes.
+    pub const APPLY_CURSOR: &str = "apply_cursor";
 }
 
 /// Postgres-backed store for the operator's durable reconcile
@@ -608,6 +625,62 @@ impl ArtifactStore {
                 let plan = serde_json::from_slice(&bytes).map_err(Error::Serialization)?;
                 Ok(Some(plan))
             }
+        }
+    }
+
+    /// Persist the resumable apply position. Idempotent upsert — the engine
+    /// may checkpoint the same cursor twice if a cycle ends immediately after
+    /// a node, which `put`'s `ON CONFLICT DO UPDATE` already absorbs.
+    ///
+    /// `ApplyCursor` carries `#[serde(try_from/into = "ApplyCursorWire")]`, so
+    /// the wire form is validated on the way back in: a duplicate entry is a
+    /// `CursorError` at parse time rather than a cursor that silently
+    /// double-counts. That is the *parse-time-rejected* half of the tier
+    /// stated in MAGMA-OPERATOR-BACKEND.md §II-ter — worth naming, because the
+    /// in-crate half (additive-only mutators) does not survive a DB roundtrip
+    /// on its own.
+    pub async fn put_apply_cursor(
+        &self,
+        schema: &str,
+        template: &str,
+        cursor: &magma_apply::cursor::ApplyCursor,
+    ) -> Result<String> {
+        let bytes = serde_json::to_vec(cursor).map_err(Error::Serialization)?;
+        self.put(schema, template, kind::APPLY_CURSOR, &bytes, None)
+            .await
+    }
+
+    /// Read the resumable apply position. `Ok(None)` when no apply has
+    /// yielded yet.
+    ///
+    /// A decode failure is deliberately **not** fatal here: the caller treats
+    /// `Ok(None)` and a torn cursor the same way — start the plan from the
+    /// beginning. That is safe precisely because re-application is
+    /// idempotent and the cursor's skip predicate is safety-monotone (it can
+    /// only cause more re-application, never less), so the worst outcome of
+    /// losing a cursor is repeated work, never skipped work. Refusing to
+    /// apply at all because a *cache* row was corrupt would be the strictly
+    /// worse failure.
+    pub async fn get_apply_cursor(
+        &self,
+        schema: &str,
+        template: &str,
+    ) -> Result<Option<magma_apply::cursor::ApplyCursor>> {
+        match self.get(schema, template, kind::APPLY_CURSOR).await? {
+            None => Ok(None),
+            Some(bytes) => match serde_json::from_slice(&bytes) {
+                Ok(cursor) => Ok(Some(cursor)),
+                Err(e) => {
+                    warn!(
+                        schema, template,
+                        error = %e,
+                        "apply cursor undecodable; starting this plan from the beginning \
+                         (safe: re-application is idempotent and the skip predicate is \
+                         safety-monotone)"
+                    );
+                    Ok(None)
+                }
+            },
         }
     }
 

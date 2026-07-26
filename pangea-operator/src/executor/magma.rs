@@ -285,6 +285,24 @@ pub struct MagmaExecutorConfig<S: StateBackend + ?Sized> {
     /// Whether to write a typed plan checkpoint to the workspace
     /// dir between plan + apply for restart safety. Default true.
     pub plan_checkpoint: bool,
+    /// Bounded work per apply cycle — MAGMA-OPERATOR-BACKEND.md §II-ter /
+    /// M0.16. `Some(secs)` runs apply through the resumable engine, yielding
+    /// an `ApplyCursor` when the quantum is spent; `None` runs to completion
+    /// exactly as before.
+    ///
+    /// **This is a scheduling quantum, not a deadline.** Running out of it is
+    /// `CycleOutcome::Yielded` — a modelled transition, not an error — so
+    /// there is no such thing as a quantum too small to be feasible; a small
+    /// one simply does less work per cycle. That is the whole difference from
+    /// `PANGEA_TIMEOUT`, which destroys the cycle's work when it fires.
+    ///
+    /// Default `Some(120)`. Chosen well below the operator's own
+    /// `PANGEA_TIMEOUT` (600s) so a cycle yields and *persists its frontier*
+    /// long before the deadline can discard it — which is what makes progress
+    /// monotonic across reconciles even while that deadline still exists.
+    /// Override with `PANGEA_MAGMA_APPLY_QUANTUM_SECS`; `0` disables
+    /// resumption (run-to-completion, the pre-M0.16 behaviour).
+    pub apply_quantum_secs: Option<u64>,
     /// Whether to run the universal substrate law battery on the
     /// rendered Config before plan/apply. Catches malformed
     /// workspaces (dangling refs, missing providers, duplicate
@@ -368,6 +386,7 @@ where
             state_name:      "default".into(),
             backend_shape:   BackendShape::Magma,
             plan_checkpoint: true,
+            apply_quantum_secs: Some(120),
             preflight_laws:  true,
             drift_policy:    magma_drift::DriftPolicy::conservative_default(),
             audit_log_path:  None,
@@ -387,6 +406,7 @@ impl<S: StateBackend + ?Sized> Clone for MagmaExecutorConfig<S> {
             state_name:      self.state_name.clone(),
             backend_shape:   self.backend_shape,
             plan_checkpoint: self.plan_checkpoint,
+            apply_quantum_secs: self.apply_quantum_secs,
             preflight_laws:  self.preflight_laws,
             drift_policy:    self.drift_policy.clone(),
             audit_log_path:  self.audit_log_path.clone(),
@@ -402,6 +422,140 @@ impl<S: StateBackend + ?Sized> Clone for MagmaExecutorConfig<S> {
 /// apply) in-process. No subprocess.
 pub struct MagmaExecutor<S: StateBackend + ?Sized> {
     cfg: MagmaExecutorConfig<S>,
+}
+
+/// Durable sink for apply progress, backed by the operator's Postgres
+/// artifact store. MAGMA-OPERATOR-BACKEND.md §II-ter / M0.16.
+///
+/// # Why this is debounced, and why that is safe
+///
+/// `CheckpointSink::checkpoint` is called **after every applied node and
+/// every newly-cached data-source read**. Writing on each call would be
+/// O(N) writes — and because a checkpoint carries the whole `State`, each
+/// write is O(N) bytes, so the total is **O(N²)**. For the 2,478-resource
+/// workspace that motivated §II-ter that is on the order of a hundred
+/// gigabytes of Postgres traffic to protect a four-hour apply: a "safety"
+/// mechanism that would itself be the bottleneck.
+///
+/// So writes are throttled to at most one per [`Self::MIN_INTERVAL`]. The
+/// cost becomes O(duration / interval) writes — bounded by *time*, not by
+/// resource count, which is the property that has to hold for this to scale.
+///
+/// Skipping a write is safe in a way that skipping is usually not, and the
+/// reason is specific rather than hand-waved: an interruption between two
+/// persisted checkpoints loses the *cursor entries* for the nodes applied in
+/// between, so those nodes are re-applied on resume. magma's cursor states
+/// that its skip predicate is **safety-monotone** — losing entries can only
+/// cause *more* re-application, never *less*. Re-applying an already-applied
+/// change is the idempotent case the provider protocol already handles;
+/// *skipping* an unapplied one would not be. The debounce can therefore only
+/// cost work, never correctness.
+///
+/// The debounce sets *granularity*, not durability of the final answer: the
+/// apply loop writes the cursor exactly at each yield boundary regardless of
+/// this throttle, so a cycle that ends always records its true frontier.
+struct StoreCheckpointSink {
+    store:    Arc<crate::backend::ArtifactStore>,
+    schema:   String,
+    template: String,
+    debounce: Debounce,
+}
+
+/// Rate-limits an event to at most one per interval.
+///
+/// Split out from [`StoreCheckpointSink`] so the decision logic is testable
+/// without a live Postgres — the sink itself needs an `ArtifactStore`, which
+/// needs a `PgPool`, which a unit test has no business standing up. The
+/// property under test (never two writes inside one interval, always a write
+/// once the interval has passed) is exactly what bounds checkpoint traffic to
+/// O(duration/interval) instead of O(resource-count).
+struct Debounce {
+    /// Instant of the last permitted event. `Mutex` rather than atomics
+    /// because the pair (decide, stamp) must be one critical section — two
+    /// concurrent checkpoints must not both observe a stale instant and both
+    /// write. `std::sync::Mutex` is correct here: the guard is dropped before
+    /// any `.await`.
+    last: StdMutex<Option<Instant>>,
+    min:  std::time::Duration,
+}
+
+impl Debounce {
+    fn new(min: std::time::Duration) -> Self {
+        Self {
+            last: StdMutex::new(None),
+            min,
+        }
+    }
+
+    /// Whether enough time has passed to permit the event, stamping the clock
+    /// if so. One critical section; the guard is dropped before returning.
+    fn allow(&self) -> bool {
+        let now = Instant::now();
+        let mut last = match self.last.lock() {
+            Ok(g) => g,
+            // A poisoned mutex means another checkpoint panicked. Permit
+            // rather than skip: erring toward durability is the safe
+            // direction, and the debounce is an optimization, not a
+            // correctness mechanism.
+            Err(p) => p.into_inner(),
+        };
+        match *last {
+            Some(prev) if now.duration_since(prev) < self.min => false,
+            _ => {
+                *last = Some(now);
+                true
+            }
+        }
+    }
+}
+
+impl StoreCheckpointSink {
+    /// Minimum wall-clock gap between persisted checkpoints.
+    ///
+    /// The quantity this trades is "how much work an interruption re-does":
+    /// at most one interval's worth. Five seconds keeps that re-do small
+    /// while bounding writes to ~12/minute regardless of whether the
+    /// workspace holds 10 resources or 10,000.
+    const MIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+
+    fn new(
+        store: Arc<crate::backend::ArtifactStore>,
+        schema: String,
+        template: String,
+    ) -> Self {
+        Self {
+            store,
+            schema,
+            template,
+            debounce: Debounce::new(Self::MIN_INTERVAL),
+        }
+    }
+}
+
+#[async_trait]
+impl magma_apply::checkpoint::CheckpointSink for StoreCheckpointSink {
+    async fn checkpoint(
+        &self,
+        _state: &magma_types::State,
+        cursor: &magma_apply::cursor::ApplyCursor,
+    ) -> std::result::Result<(), magma_apply::checkpoint::CheckpointError> {
+        if !self.debounce.allow() {
+            return Ok(());
+        }
+        self.store
+            .put_apply_cursor(&self.schema, &self.template, cursor)
+            .await
+            .map(|_| ())
+            // A failed checkpoint stops the apply by contract — the engine
+            // will not continue growing the set of undurable work. Surface
+            // the cause; do not swallow it into a skip.
+            .map_err(|e| {
+                magma_apply::checkpoint::CheckpointError::new(format!(
+                    "persist apply cursor ({}/{}): {e}",
+                    self.schema, self.template
+                ))
+            })
+    }
 }
 
 impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
@@ -517,6 +671,171 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
                 }
             }
             None => Ok(DbPlanRead::NotDbBacked),
+        }
+    }
+
+    /// Run the plan through magma's **resumable** apply engine, resuming from
+    /// any durably-recorded frontier and persisting a new one each time a
+    /// cycle yields. MAGMA-OPERATOR-BACKEND.md §II-ter / M0.16.
+    ///
+    /// # Why this exists
+    ///
+    /// The pre-M0.16 call was
+    /// `run_plan_with_providers(&plan, &mut state, &ctx)`, whose own comment
+    /// reads *"No quantum ⇒ no yield point ⇒ `Completed` is the only
+    /// reachable arm."* — i.e. it is the resumable engine with resumption
+    /// switched off. With it off, a cycle killed by `PANGEA_TIMEOUT` (or a
+    /// pod roll) threw away everything it had done and the next reconcile
+    /// re-ran the plan from the beginning, **re-spending the provider's
+    /// rate-limit budget on work already applied**. That re-spend is why a
+    /// sufficiently large workspace could never converge: each attempt
+    /// restarts the same prefix and never reaches the tail.
+    ///
+    /// With resumption on, progress is **monotonic across reconciles** — each
+    /// cycle starts from the frontier the last one left, so N cycles converge
+    /// for any N. Note this holds *even while `PANGEA_TIMEOUT` still exists*:
+    /// the deadline can still end a cycle, but it can no longer destroy the
+    /// work that cycle completed. Removing the deadline outright, and
+    /// yielding at the *reconcile* level so other workspaces get a turn, is
+    /// M0.16b — deliberately not in this increment, because it edits the
+    /// CI-guarded `lifecycle::TRANSITIONS` table.
+    ///
+    /// # Loop, not one shot
+    ///
+    /// This keeps looping while the engine yields, so the observable contract
+    /// of `apply()` is unchanged (it still returns a completed `ApplyOutcome`
+    /// or errors). What changes is that the frontier is durable *between*
+    /// iterations, so an interruption at any point resumes rather than
+    /// restarts.
+    ///
+    /// `Stalled` is a hard error on purpose: it means the quantum cannot
+    /// cover the cycle's fixed prologue, so retrying unchanged cannot
+    /// converge. Silently looping on it is the exact naive-chunking failure
+    /// magma's `CycleOutcome` split it out to make impossible.
+    async fn run_apply_resumable(
+        &self,
+        plan: &magma_types::Plan,
+        state: &mut magma_types::State,
+        ctx: &magma_apply::engine::ApplyContext,
+    ) -> Result<magma_apply::ApplyOutcome> {
+        use magma_apply::cursor::{CycleOutcome, Quantum};
+
+        // `None`/0 ⇒ no quantum ⇒ no yield point ⇒ exactly the pre-M0.16
+        // run-to-completion path, byte-for-byte. Resumption is opt-out.
+        let quantum = self.cfg.apply_quantum_secs.and_then(Quantum::from_secs);
+        let Some(quantum) = quantum else {
+            return Ok(
+                magma_apply::engine::run_plan_with_providers(plan, state, ctx).await
+            );
+        };
+
+        // Only the DB-backed path can persist a frontier. Without a store
+        // there is nowhere durable to put a cursor, so resumption would be a
+        // lie — fall back to run-to-completion rather than pretend.
+        let Some(store) = self.cfg.artifact_store.clone() else {
+            return Ok(
+                magma_apply::engine::run_plan_with_providers(plan, state, ctx).await
+            );
+        };
+
+        let sink = StoreCheckpointSink::new(
+            store.clone(),
+            self.cfg.schema_name.clone(),
+            self.cfg.template_name.clone(),
+        );
+
+        // Resume from a durable frontier if one exists AND belongs to THIS
+        // plan. `ApplyCursor::resume` compares the cursor's BLAKE3 `PlanId`
+        // against this plan's, so a cursor left by a different plan is
+        // rejected here rather than silently skipping the wrong changes.
+        let mut carried = store
+            .get_apply_cursor(&self.cfg.schema_name, &self.cfg.template_name)
+            .await?;
+
+        let mut cycles: u32 = 0;
+        loop {
+            cycles += 1;
+            let resume = carried.as_ref().and_then(|c| c.resume(plan));
+            if cycles == 1 {
+                tracing::info!(
+                    schema = %self.cfg.schema_name,
+                    template = %self.cfg.template_name,
+                    quantum_secs = quantum.as_duration().as_secs(),
+                    resuming = resume.is_some(),
+                    "magma apply: resumable engine"
+                );
+            }
+
+            let outcome = magma_apply::engine::run_plan_with_providers_resumable(
+                plan,
+                state,
+                ctx,
+                resume,
+                Some(quantum),
+                Some(&sink),
+            )
+            .await;
+
+            match outcome {
+                CycleOutcome::Completed { outcome, stats } => {
+                    tracing::info!(
+                        schema = %self.cfg.schema_name,
+                        template = %self.cfg.template_name,
+                        cycles,
+                        ?stats,
+                        "magma apply: completed"
+                    );
+                    return Ok(outcome);
+                }
+                CycleOutcome::Yielded {
+                    cursor,
+                    progress,
+                    stats,
+                    ..
+                } => {
+                    // Persist the frontier before continuing. The sink has
+                    // already been writing it mid-cycle (debounced); this is
+                    // the exact-at-the-boundary write, so an interruption
+                    // between cycles resumes from the true frontier rather
+                    // than the last debounced one.
+                    store
+                        .put_apply_cursor(
+                            &self.cfg.schema_name,
+                            &self.cfg.template_name,
+                            &cursor,
+                        )
+                        .await?;
+                    tracing::info!(
+                        schema = %self.cfg.schema_name,
+                        template = %self.cfg.template_name,
+                        cycles,
+                        ?progress,
+                        ?stats,
+                        "magma apply: yielded — frontier persisted, continuing"
+                    );
+                    carried = Some(cursor);
+                }
+                CycleOutcome::Stalled { cursor, stats, .. } => {
+                    // Persist even here: the frontier is real work, and the
+                    // operator should resume from it once the prologue or the
+                    // quantum changes.
+                    store
+                        .put_apply_cursor(
+                            &self.cfg.schema_name,
+                            &self.cfg.template_name,
+                            &cursor,
+                        )
+                        .await?;
+                    return Err(Error::MagmaExecution(format!(
+                        "apply stalled after {cycles} cycle(s): the quantum \
+                         ({}s) cannot cover this cycle's fixed prologue, so \
+                         retrying unchanged cannot converge. Raise \
+                         PANGEA_MAGMA_APPLY_QUANTUM_SECS or reduce the \
+                         prologue. stats={stats:?}",
+                        quantum.as_duration().as_secs()
+                    )));
+                }
+            }
         }
     }
 
@@ -1388,7 +1707,7 @@ where
             magma_apply::run_plan(&plan, &mut state)
                 .map_err(|e| Error::MagmaExecution(format!("structural apply: {e}")))?
         } else {
-            magma_apply::engine::run_plan_with_providers(&plan, &mut state, &ctx).await
+            self.run_apply_resumable(&plan, &mut state, &ctx).await?
         };
         // DB-backed path: DO NOT write state here. The state write is
         // deferred into the atomic `put_apply_result` op below so the
@@ -1847,6 +2166,100 @@ mod tests {
     use crate::backend::state_backend::InMemoryStateBackend;
     use serde_json::json;
 
+    // ── M0.16: bounded, resumable apply (MAGMA-OPERATOR-BACKEND.md §II-ter) ──
+
+    /// The debounce must not permit two writes inside one interval.
+    ///
+    /// This is the property that keeps checkpointing from being O(N²): the
+    /// sink is invoked after *every* applied node, and each write carries the
+    /// whole state, so an undebounced sink on the 2,478-resource workspace
+    /// that motivated §II-ter would issue thousands of whole-state writes.
+    #[test]
+    fn debounce_permits_one_event_per_interval() {
+        let d = Debounce::new(std::time::Duration::from_secs(60));
+        assert!(d.allow(), "first event must always be permitted");
+        for i in 0..1_000 {
+            assert!(
+                !d.allow(),
+                "event {i} inside the interval must be suppressed — an \
+                 undebounced sink is O(N) whole-state writes"
+            );
+        }
+    }
+
+    /// …and it must not suppress forever: once the interval passes, the next
+    /// event is permitted. A debounce that only ever allowed the first write
+    /// would satisfy the test above while making checkpointing useless.
+    #[test]
+    fn debounce_permits_again_after_the_interval() {
+        // Zero interval ⇒ every event is outside it ⇒ always permitted.
+        let d = Debounce::new(std::time::Duration::ZERO);
+        for i in 0..100 {
+            assert!(d.allow(), "event {i} must be permitted at a zero interval");
+        }
+    }
+
+    /// The quantum is opt-out, and `0` is the documented way to opt out.
+    ///
+    /// `Quantum::new` returns `None` for a zero duration by construction, so
+    /// "run-to-completion" is reachable through the same field rather than
+    /// needing a second flag. Pins the mapping the executor relies on:
+    /// `Some(0)` and `None` must both mean run-to-completion.
+    #[test]
+    fn zero_quantum_means_run_to_completion() {
+        use magma_apply::cursor::Quantum;
+        assert!(
+            Quantum::from_secs(0).is_none(),
+            "0 must disable resumption, not create a zero-length quantum"
+        );
+        assert!(Quantum::from_secs(120).is_some());
+
+        // The executor's resolution: cfg field → Option<Quantum>.
+        let resolve = |secs: Option<u64>| secs.and_then(Quantum::from_secs);
+        assert!(resolve(None).is_none(), "unset ⇒ run-to-completion");
+        assert!(resolve(Some(0)).is_none(), "0 ⇒ run-to-completion");
+        assert!(resolve(Some(120)).is_some(), "120 ⇒ resumable");
+    }
+
+    /// A cursor only resumes into the plan it was built for.
+    ///
+    /// This is the invariant that makes persisting a cursor across reconciles
+    /// safe: a cursor left behind by a *different* plan must be rejected
+    /// rather than silently skipping changes it never applied. It is also why
+    /// the store needs no delete verb — a stale row is self-invalidating.
+    #[test]
+    fn cursor_refuses_to_resume_into_a_different_plan() {
+        use magma_apply::cursor::ApplyCursor;
+        use magma_types::{Plan, PlanId};
+
+        let plan_with = |id: u8| Plan {
+            id: PlanId([id; 32]),
+            created_at: chrono::Utc::now(),
+            config_root: std::path::PathBuf::new(),
+            variables: std::collections::HashMap::new(),
+            resource_changes: Vec::new(),
+            output_changes: Vec::new(),
+        };
+
+        let plan_a = plan_with(7);
+        let plan_b = plan_with(9);
+        assert_ne!(
+            plan_a.id, plan_b.id,
+            "fixture precondition: the two plans must have different ids"
+        );
+
+        let cursor = ApplyCursor::empty(plan_a.id.clone());
+        assert!(
+            cursor.resume(&plan_a).is_some(),
+            "a cursor must resume into its own plan"
+        );
+        assert!(
+            cursor.resume(&plan_b).is_none(),
+            "a cursor must REFUSE a different plan — otherwise a stale row \
+             would skip changes that were never applied"
+        );
+    }
+
     fn fixture_config() -> MagmaExecutorConfig<InMemoryStateBackend> {
         MagmaExecutorConfig {
             // Unit tests have no provider binaries — structural apply.
@@ -1857,6 +2270,7 @@ mod tests {
             state_name:      "default".into(),
             backend_shape:   BackendShape::Magma,
             plan_checkpoint: true,
+            apply_quantum_secs: None,
             // Test fixtures use minimal Pangea shapes that omit
             // `terraform.required_providers`; preflight would
             // reject them. Production code paths use the
@@ -2703,6 +3117,7 @@ mod tests {
             state_name:      "default".into(),
             backend_shape:   BackendShape::Magma,
             plan_checkpoint: true,
+            apply_quantum_secs: None,
             preflight_laws:  false,
             drift_policy:    magma_drift::DriftPolicy::conservative_default(),
             audit_log_path:  None,
@@ -2760,6 +3175,7 @@ mod tests {
             state_name:      state_name.into(),
             backend_shape:   BackendShape::Magma,
             plan_checkpoint: true,
+            apply_quantum_secs: None,
             preflight_laws:  false,
             drift_policy:    magma_drift::DriftPolicy::conservative_default(),
             audit_log_path:  None,
@@ -2863,6 +3279,7 @@ mod tests {
             state_name:      "default".into(),
             backend_shape:   BackendShape::Tofu,
             plan_checkpoint: true,
+            apply_quantum_secs: None,
             preflight_laws:  false,
             drift_policy:    magma_drift::DriftPolicy::conservative_default(),
             audit_log_path:  None,
@@ -2921,6 +3338,7 @@ mod tests {
             state_name:      "default".into(),
             backend_shape:   BackendShape::Magma,
             plan_checkpoint: true,
+            apply_quantum_secs: None,
             preflight_laws:  true, // production default
             drift_policy:    magma_drift::DriftPolicy::conservative_default(),
             audit_log_path:  None,
