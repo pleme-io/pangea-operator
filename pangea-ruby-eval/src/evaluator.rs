@@ -20,15 +20,13 @@
 //! `CompileContext` is the structured fix. Each compile declares
 //! UPFRONT what state it needs:
 //!
-//!   * `load_paths`             — `$LOAD_PATH` entries (priority head).
-//!   * `env`                    — ENV overrides.
-//!   * `purge_modules`          — module constants to remove before
-//!                                 compile so workspace's loads define
-//!                                 fresh (no Dry::Struct redefine
-//!                                 errors). NOT restored.
+//!   * `load_paths` — `$LOAD_PATH` entries (priority head).
+//!   * `env` — ENV overrides.
+//!   * `purge_modules` — module constants to remove before compile so
+//!     workspace's loads define fresh (no Dry::Struct redefine errors).
+//!     NOT restored.
 //!   * `purge_feature_prefixes` — `$LOADED_FEATURES` path prefixes to
-//!                                 drop so workspace's require can
-//!                                 reload from its own lib.
+//!     drop so workspace's require can reload from its own lib.
 //!
 //! The primitive `compile_in_context` applies the manifest in one
 //! transaction: snapshot $LOAD_PATH + ENV, purge modules + features,

@@ -41,6 +41,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
+      # ── C linker (2026-07-26) ────────────────────────────────────────────
+      # Same gap as ci.yml's cargo-test-no-default-features job: the
+      # camelot-builder-pleme-eks runner image carries no C compiler, so a
+      # bare dtolnay/rust-toolchain job dies at the first crate compiled
+      # ("error: linker `cc` not found") — this job has been red on every
+      # single run since moving onto this runner, silently defeating the
+      # forcing-function the header comment above describes. Nix already
+      # installs cleanly on this runner (proved by ci.yml's flake-check);
+      # pull just a C toolchain via Nix rather than assume an ambient
+      # package manager.
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          github-token: ${{ secrets.BOT_PAT }}
+      - name: Put a Nix-provided C toolchain on PATH
+        run: echo "$(nix build --no-link --print-out-paths 'nixpkgs#gcc')/bin" >> "$GITHUB_PATH"
+
       - name: Regenerate CRDs from the Rust structs (no libruby)
         env:
           # Forces cargo to shell out to the real git binary (which honors

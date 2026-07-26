@@ -1,10 +1,15 @@
 name: arc-smoke
 # Direct runs-on (no reusable workflow) to isolate ARC scale-set dispatch.
+#
+# runner ADDED 2026-07-26: previously targeted `rio-build-01` -- rio is
+# permanently retired (2026-07-20 operator decision, not coming back), so
+# that runner was dead and this smoke test could never pass. Repointed at
+# the live self-hosted pool this repo's other workflows already use.
 on:
   workflow_dispatch: {}
 jobs:
   smoke:
-    runs-on: rio-build-01
+    runs-on: camelot-builder-pleme-eks
     steps:
       - run: |
           echo "hello from the rio ARC self-hosted runner"
