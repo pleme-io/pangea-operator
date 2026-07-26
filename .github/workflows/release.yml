@@ -458,7 +458,7 @@ jobs:
         run: echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
 
       - name: Build + stage
-        uses: pleme-io/actions/rust-cross-build@v1
+        uses: pleme-io/actions/rust-cross-build@main
         with:
           binary-name: pangea-operator
           target: ${{ matrix.target }}
@@ -538,7 +538,7 @@ jobs:
 
       - name: Derive chart version from tag
         id: derive
-        uses: pleme-io/actions/derive-version-from-tag@v1
+        uses: pleme-io/actions/derive-version-from-tag@main
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
@@ -564,7 +564,7 @@ jobs:
       # via tatara-script on the host, instead of through the broken
       # docker action.
       - name: Lint, package & push chart
-        uses: pleme-io/actions/tatara-script@v1
+        uses: pleme-io/actions/tatara-script@main
         with:
           script: |
             ;; helm-oci-publish/run.tlisp — lint + package + push a Helm chart.
