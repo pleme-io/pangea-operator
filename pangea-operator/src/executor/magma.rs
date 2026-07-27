@@ -84,7 +84,7 @@ use crate::executor::tofu::TofuResult;
 //
 // `template_controller::run_import_prepass` dispatches every resolved
 // import target CONCURRENTLY (`buffer_unordered(10)` — see
-// `try_tofu_import`'s doc comment: "the pg backend's advisory lock
+// `try_import`'s doc comment: "the pg backend's advisory lock
 // naturally serializes the state-write step"). That comment is
 // tofu-specific: a `tofu import` subprocess's OWN pg backend takes a
 // per-command advisory lock around its read-modify-write, so N
@@ -96,7 +96,7 @@ use crate::executor::tofu::TofuResult;
 // writes the whole row back — and `StateBackend::save_state` is a
 // plain last-write-wins upsert (no compare-and-swap, no advisory
 // lock). Worse, `ControllerState::magma_executor_with_provider_configs`
-// constructs a FRESH `MagmaExecutor` per call site (`try_tofu_import`'s
+// constructs a FRESH `MagmaExecutor` per call site (`try_import`'s
 // concurrent dispatch shares ONE credential-aware instance across its
 // own `buffer_unordered` fan-out via `Arc::clone`, but `conflict.rs`'s
 // `resolve_conflicts_post_apply` builds its own separate instance), so
@@ -2449,7 +2449,7 @@ mod tests {
     }
 
     /// Mechanism pin for the credential-drop class closed in
-    /// `controller::template_controller::try_tofu_import` and
+    /// `controller::template_controller::try_import` and
     /// `controller::conflict::resolve_conflicts_post_apply` (both used to
     /// build their `IacExecutor` via the sync, credential-blind
     /// `ControllerState::executor_for`, whose magma arm always
@@ -2492,7 +2492,7 @@ mod tests {
             .unwrap();
 
         // Credential-BLIND construction — what the pre-fix
-        // `state.executor_for()` built for `try_tofu_import` /
+        // `state.executor_for()` built for `try_import` /
         // `resolve_conflicts_post_apply` (`provider_configs` empty, the
         // same shape `magma_executor_for` produces).
         let blind = MagmaExecutor::new(fixture_config());

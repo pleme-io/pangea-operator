@@ -1916,7 +1916,7 @@ async fn handle_initializing(
     let result = executor.init(&workspace.path, &[]).await?;
 
     if result.success {
-        info!("tofu init completed successfully");
+        info!("executor init completed successfully");
         update_phase(template, Phase::Planning, state).await?;
         record_event(template, state, EventType::Normal, "Initialized", "Backend initialized successfully").await;
     } else {
@@ -3562,7 +3562,7 @@ async fn handle_applying(
     }
 
     if result.success {
-        info!(duration_secs = result.duration.as_secs_f64(), "tofu apply completed successfully");
+        info!(duration_secs = result.duration.as_secs_f64(), "executor apply completed successfully");
 
         // Fetch outputs
         let outputs = match executor.output(&workspace.path).await {
@@ -4561,7 +4561,7 @@ async fn run_import_prepass(
     // above (built via the sync, credential-blind `state.executor_for`)
     // is fine for DISCOVERY — `planned_changes()` / `show_plan()` only
     // read an already-computed plan (Postgres row or local checkpoint),
-    // never a live provider RPC. `try_tofu_import` below is different:
+    // never a live provider RPC. `try_import` below is different:
     // it calls `executor.import()`, which on the magma path DOES issue
     // a real provider Read/Import RPC. Magma carries provider
     // credentials IN the executor instance (threaded into `ApplyContext`
@@ -4598,7 +4598,7 @@ async fn run_import_prepass(
         .map(|t| {
             let import_executor = Arc::clone(&import_executor);
             async move {
-                let ok = try_tofu_import(
+                let ok = try_import(
                     template,
                     state,
                     &import_executor,
@@ -4624,7 +4624,9 @@ async fn run_import_prepass(
     imported
 }
 
-/// Try a single `tofu import`. Returns true if the import succeeded.
+/// Try a single import via the resolved executor (magma import RPC on
+/// the magma path; `tofu import` only on the legacy tofu executor).
+/// Returns true if the import succeeded.
 /// Failures are non-fatal — we log + emit a Warning event and let the
 /// apply path handle the resource (where it'll fail visibly with a
 /// real error message instead of a silently-skipped import).
@@ -4635,7 +4637,7 @@ async fn run_import_prepass(
 /// `state.executor_for`, or the real provider Read/Import RPC below
 /// silently runs under ambient credentials instead of
 /// `spec.providerCredentials`.
-async fn try_tofu_import(
+async fn try_import(
     template: &InfrastructureTemplate,
     state: &ControllerState,
     executor: &Arc<dyn crate::executor::IacExecutor>,
@@ -4648,7 +4650,7 @@ async fn try_tofu_import(
         address = %addr,
         import_id = %import_id,
         source = %source_label,
-        "Running tofu import for create-action"
+        "Running import for create-action"
     );
     match executor.import(workspace_path, addr, import_id).await {
         Ok(r) if r.success => {

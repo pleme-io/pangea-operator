@@ -24,7 +24,7 @@ use crate::executor::plan_change::{PlanAction, PlannedChange, ResourceKindClass}
 /// A resolved import target: an address to adopt via `import`, the
 /// substituted import id, and the resolution source (`"hint"` for a
 /// per-address `importHints` entry, `"auto"` for a `naturalIds` / bundled
-/// default). Consumed by the prepass to dispatch `try_tofu_import`.
+/// default). Consumed by the prepass to dispatch `try_import`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportTarget {
     pub address: String,
