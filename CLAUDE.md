@@ -86,11 +86,21 @@ for reactive cascade.
 
 Every level of the cascade can declare a `ReactivePolicy`:
 
+> **The three action values are LOWERCASE** — `alert` | `suspend` | `page`
+> (verified 2026-07-27 against the live CRD enum on camelot-eks for all of
+> `failureEscalation.onExhaustion`, `phaseTimeout.onTimeout` and
+> `verifiedBlocked.onBlocked`; each defaults to `alert`). This example
+> previously showed them capitalized, which the API server rejects:
+> `Unsupported value: "Alert": supported values: "alert", "suspend", "page"`.
+> That is not a cosmetic error — Flux dry-runs an entire Kustomization, so a
+> single capitalized value in one CR fails **every** resource in that tree.
+> It blocked the whole `camelot-eks` apps tree on 2026-07-27.
+
 ```yaml
 reactivePolicy:
   failureEscalation:
     maxConsecutiveFailures: 5     # default 5
-    onExhaustion: Alert            # Alert | Suspend | Page
+    onExhaustion: alert            # alert | suspend | page (default alert)
     routing:
       ntfyTopic: rio-critical
       slackChannel: "#oncall"      # stub today
@@ -99,11 +109,26 @@ reactivePolicy:
     compiling: 5m                  # default 5m
     planning: 10m                  # default 10m
     applying: 30m                  # default 30m
-    onTimeout: Alert
+    onTimeout: alert               # alert | suspend | page (default alert)
   verifiedBlocked:
     timeout: 10m                   # default 10m
-    onBlocked: Alert
+    onBlocked: alert               # alert | suspend | page (default alert)
 ```
+
+**These defaults are a sizing assumption, and a big workspace outgrows
+them.** `planning: 10m` / `applying: 30m` bound the *phase*, while
+`PANGEA_TIMEOUT` (`.Values.executor.tofu.timeout`, default **600s** — and
+despite the `tofu` key name it bounds **both** executors, magma included,
+see `deployment.yaml:32`) bounds a *single executor command*. Both govern
+the same work, so raising one without the other still wedges. Measured on
+camelot-eks 2026-07-27, the 846-repo / 2777-resource `pleme-io-opensource`
+workspace ran `plan` in 651s and `apply` in 645s — over both the 600s
+command budget and the 600s planning-phase budget — so every cycle was
+killed just short of completing and force-reset, freezing `cycleCount` and
+the state serial at 35 and losing the import pre-pass's adopted resources
+every pass. If a workspace's phase durations approach these numbers, raise
+both together (and prefer sharding the workspace — one state boundary per
+template — over ever-growing static bounds).
 
 **Actions** (worst-action-wins on multi-trigger: Suspend > Page > Alert):
 - `Alert` — Warning event + `Healthy=False` condition + ntfy at
