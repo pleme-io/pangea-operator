@@ -1325,6 +1325,26 @@
         "type": "github"
       }
     },
+    "skill-lint": {
+      "inputs": {
+        "substrate": [
+          "substrate"
+        ]
+      },
+      "locked": {
+        "lastModified": 1785202027,
+        "narHash": "sha256-juluOQ9dKQL3suDI1wyyPSSEUP5NujzLOUe7ggdKU2I=",
+        "owner": "pleme-io",
+        "repo": "skill-lint",
+        "rev": "ff1a092ffb3ba97398a39027277d72fe7176d6b8",
+        "type": "github"
+      },
+      "original": {
+        "owner": "pleme-io",
+        "repo": "skill-lint",
+        "type": "github"
+      }
+    },
     "substrate": {
       "inputs": {
         "crate2nix": "crate2nix",
@@ -1334,14 +1354,15 @@
         "flake-utils": "flake-utils",
         "home-manager": "home-manager_2",
         "nix-darwin": "nix-darwin",
-        "nixpkgs": "nixpkgs_7"
+        "nixpkgs": "nixpkgs_7",
+        "skill-lint": "skill-lint"
       },
       "locked": {
-        "lastModified": 1785022256,
-        "narHash": "sha256-SfodkSqL7xcq6kSzFYfi05MA6kFuVs8t/62QAodkuRo=",
+        "lastModified": 1785206731,
+        "narHash": "sha256-5EAQhiZ3e2fHebuoU1GkBmwKnN/uc/upZ1LTTIVqnks=",
         "owner": "pleme-io",
         "repo": "substrate",
-        "rev": "5f10224b70c774a1f3b8766980260607f1bc45ea",
+        "rev": "925c4d74cd19378b006c2aadd0be9f5930960a51",
         "type": "github"
       },
       "original": {
