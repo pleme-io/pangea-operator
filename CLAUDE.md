@@ -363,6 +363,46 @@ for d in docs:
 \""
 ```
 
+## Two Postgres credential routes — probe the one that executes
+
+The operator reaches Postgres by **two independent routes**, and they
+resolve credentials from completely different places. Conflating them
+produced a permanent false negative on `PangeaNamespace.status.backendReady`
+(fixed 2026-07-28; `controller/namespace_controller.rs`).
+
+| Route | Credentials from | Who uses it |
+|---|---|---|
+| **Operator pool** | process env `PGHOST`/`PGPORT`/`PGUSER`/`PGDATABASE`/`PGPASSWORD`, wired at startup in `main.rs` (`PGPASSWORD` is the gate) | **magma** — every plan, apply, state row and `pangea_meta.artifacts` row, via `ControllerState`'s `state_backend` / `artifact_store` / `state_lock` |
+| **secretRef** | a Kubernetes Secret named by `PangeaNamespace.spec.backend.pg.secretRef` | the legacy **tofu** executor, which renders those coordinates into `backend.tf.json` |
+
+**On the magma path the CR's `secretRef` is never used to connect.** So a
+readiness probe that resolves `secretRef` is asking about a connection
+nothing exercises. `verify_postgres_backend_with` therefore picks its
+route by comparing `PgCoordinates` (host/port/database) — the operator's
+pool when it addresses the same database the CR declares, `secretRef`
+otherwise — and liveness-probes whichever one it picked.
+
+**Why the `secretRef` fallback namespace cannot be repaired instead.**
+`PangeaNamespace` is cluster-scoped, so a `secretRef` with no `namespace`
+has no defensible default. `resolve_secret_namespace` falls back
+`secretRef.namespace` → `POD_NAMESPACE` → `"pangea-system"`, and
+`POD_NAMESPACE` is not in the deployment env, so every lookup landed in
+`pangea-system` — which holds no Secrets at all. Setting `POD_NAMESPACE`
+would *not* have fixed it: on camelot-eks the two CRs' Secrets live in
+two different namespaces (`pangea-database-superuser` in `camelot`,
+`pangea-db-creds` in `pleme-io-opensource`), so any single fallback is
+wrong for at least one of them. Following the executor is the only fix
+that works for both.
+
+**A readiness probe must be able to say both things.** Never make one
+unconditionally true to clear a false negative — that trades it for a
+false positive, which is strictly worse for a health signal. `backendReady`
+feeds `fleet_status_controller::aggregate_pangea_namespaces`, so a probe
+stuck on one answer silently mis-reports fleet-wide backend health. Both
+directions are pinned in `namespace_controller::backend_probe_tests` via
+the `NamespaceBackendEnv` seam, including the case where a healthy but
+unrelated operator pool must NOT be borrowed as proof.
+
 ## Status-write loops — the canonical pattern
 
 Every kube-rs controller in this operator MUST follow this two-layer
