@@ -268,6 +268,24 @@ jobs:
       scanIgnoreFile: ".trivyignore"
     secrets:
       GHCR_TOKEN: ${{ secrets.BOT_PAT }}
+      # BOT_PAT must be passed SEPARATELY even though GHCR_TOKEN carries the
+      # same value. An explicit `secrets:` block does NOT inherit, so every
+      # secret the reusable reads must be mapped by the NAME IT READS — and
+      # image-push.yml reads BOTH: `GHCR_TOKEN` for the ghcr push, and
+      # `BOT_PAT` for the Nix git-fetch netrc (image-push.yml, "Prepare Nix
+      # netrc for private git fetches").
+      #
+      # Mapping only GHCR_TOKEN left BOT_PAT empty inside the reusable, so the
+      # netrc was written with a BLANK password and every private git fetch in
+      # the Nix sandbox failed with:
+      #   fatal: could not read Username for 'https://github.com'
+      #   Unable to checkout <rev> from https://github.com/pleme-io/magma
+      # The image build never produced a tag, so nothing could autobump and a
+      # committed magma fix could not deploy.
+      #
+      # It fails SILENTLY because image-push declares BOT_PAT `required: false`
+      # — an unmapped secret is absent, not an error.
+      BOT_PAT: ${{ secrets.BOT_PAT }}
 
   # ── The standalone post-publish cve-scan job that used to live here is
   # REMOVED (2026-07-19) — root cause + fix history below.
