@@ -4422,18 +4422,24 @@ async fn run_import_prepass(
     // (never a silent empty — that silent empty is the exact ~17-day
     // pleme-io-opensource wedge shape). Per the org ★★ MAGMA-NATIVE
     // EXECUTION directive (disk-free by default) + ★★ TYPED-SPEC border.
-    let (create_addresses_owned, planned_by_addr): (
+    let (create_addresses_owned, planned_by_addr, derived_by_addr): (
         Vec<String>,
         std::collections::BTreeMap<String, serde_json::Value>,
+        std::collections::BTreeMap<
+            String,
+            crate::executor::plan_change::DerivedImportId,
+        >,
     ) = match executor.planned_changes().await {
         Ok(Some(changes)) => {
-            let (creates, planned) = discovery_from_planned_changes(&changes);
+            let (creates, planned, derived) = discovery_from_planned_changes(&changes);
             info!(
                 total_create_addresses = creates.len(),
+                derived_import_ids = derived.len(),
+                exact_import_ids = derived.values().filter(|d| d.exact).count(),
                 source = "planned_changes",
                 "import prepass: create-action discovery (magma-native typed plan, disk-free)"
             );
-            (creates, planned)
+            (creates, planned, derived)
         }
         Ok(None) => {
             // Legacy tofu / disk-fallback path: read + parse the tofu
@@ -4466,7 +4472,12 @@ async fn run_import_prepass(
             } else {
                 std::collections::BTreeMap::new()
             };
-            (creates, planned)
+            // The legacy tofu path has no typed plan and no state read, so
+            // it derives no import ids at all. It keeps exactly the two
+            // DECLARED layers (importHints / naturalIds) it always had —
+            // what it loses is the operator-bundled table, which for every
+            // parent-keyed type only ever produced an un-importable id.
+            (creates, planned, std::collections::BTreeMap::new())
         }
         Err(e) => {
             // LOUD, non-fatal: a DB-backed magma with no persisted plan
@@ -4490,11 +4501,12 @@ async fn run_import_prepass(
     }
 
     // Resolve every create-action to an import target via the three-layer
-    // cascade (importHints → naturalIds → bundled). Pure, ControllerState-
-    // free core — no I/O, no tofu-format parse.
+    // cascade (importHints → naturalIds → the executor's catalog-derived
+    // id). Pure, ControllerState-free core — no I/O, no tofu-format parse.
     let (targets, skips) = resolve_import_targets(
         &create_addresses_owned,
         &planned_by_addr,
+        &derived_by_addr,
         &template.spec.import_hints,
         template.spec.import_policy.as_ref(),
         &variables,
@@ -4520,6 +4532,21 @@ async fn run_import_prepass(
                     ),
                 )
                 .await;
+            }
+            ImportSkip::Inexact { address, id } => {
+                // NOT an error and NOT actionable by config: the executor
+                // derived an id it could not stand behind (a parent absent
+                // from state, or a type with no catalog rule and no `name`).
+                // Dispatching it could adopt a DIFFERENT real resource under
+                // this address. Refusing costs one create-failure; magma's
+                // reactive adopt still gets a chance at apply time with the
+                // resolution map fully populated.
+                warn!(
+                    address = %address,
+                    inexact_id = %id,
+                    "auto-import: refusing an import id the executor does not stand behind \
+                     (parent unresolved or no catalog rule); not dispatching"
+                );
             }
             ImportSkip::Auto {
                 address,
@@ -6991,6 +7018,7 @@ mod destroy_protection_gate_tests {
             action,
             after: None,
             kind: ResourceKindClass::Managed,
+            import_id: None,
         }
     }
 

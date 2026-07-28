@@ -1273,8 +1273,18 @@ fn advance_lifecycle_through_apply(
 /// Tier-honest: the address drops `module` / `key` (as the whole magma
 /// path already does); keyed / nested resources are a named pre-existing
 /// gap (the pleme-io-opensource `github_repository` fleet is flat).
-fn planned_changes_from_magma_plan(plan: &magma_types::Plan) -> Vec<PlannedChange> {
+///
+/// `state` is the workspace's CURRENT state, and it is the whole reason
+/// this function can hand the prepass a usable import id: a composite id's
+/// parent component is an unresolved `${github_repository.<n>.attr}`
+/// reference in `after`, and only state says what `<n>` is really NAMED.
+/// See [`state_resolution_map`].
+fn planned_changes_from_magma_plan(
+    plan: &magma_types::Plan,
+    state: &magma_types::State,
+) -> Vec<PlannedChange> {
     use crate::executor::plan_change::{PlanAction, ResourceKindClass};
+    let state_map = state_resolution_map(state);
     plan.resource_changes
         .iter()
         .map(|rc| PlannedChange {
@@ -1282,8 +1292,86 @@ fn planned_changes_from_magma_plan(plan: &magma_types::Plan) -> Vec<PlannedChang
             action: PlanAction::from(&rc.action),
             after: rc.after.clone(),
             kind: ResourceKindClass::from(&rc.address.kind),
+            import_id: derive_import_id(rc, &state_map),
         })
         .collect()
+}
+
+/// An empty state — the fallback when the pre-apply state read fails.
+///
+/// `magma_types::State` has no `Default` (a lineage is a real identity, not
+/// a zero value), so this spells out the one shape that means "I know
+/// nothing": no resources, so every parent-keyed import id downgrades to
+/// inexact and the prepass refuses it. Never used as a state to WRITE.
+fn empty_state() -> magma_types::State {
+    magma_types::State {
+        version: 4,
+        terraform_version: String::new(),
+        serial: 0,
+        lineage: uuid::Uuid::nil(),
+        outputs: Default::default(),
+        resources: Vec::new(),
+    }
+}
+
+/// magma's apply-time resolution map — `type → {resource-name → attributes}`
+/// — rebuilt from state for the PRE-apply prepass.
+///
+/// Shaped to match `magma_apply::engine`'s own seeding of `state_map` from
+/// `state.resources` so `natural_id::derive` behaves identically on the
+/// proactive path and the reactive one. Only the first instance is taken;
+/// magma's own seeding does the same.
+fn state_resolution_map(
+    state: &magma_types::State,
+) -> std::collections::HashMap<String, serde_json::Value> {
+    let mut sm: std::collections::HashMap<String, serde_json::Value> =
+        std::collections::HashMap::new();
+    for r in &state.resources {
+        let Some(inst) = r.instances.first() else {
+            continue;
+        };
+        let entry = sm
+            .entry(r.address.type_id.0.clone())
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+        if let serde_json::Value::Object(map) = entry {
+            map.insert(r.address.name.clone(), inst.attributes.clone());
+        }
+    }
+    sm
+}
+
+/// Derive a create-action's provider-native import id via magma's ONE
+/// import-id catalog (`magma_apply::natural_id::{CATALOG, derive}`).
+///
+/// This is the load-bearing call. It replaces the operator's own
+/// `bundled_natural_ids` template table, which was a second copy of the
+/// same knowledge and — because its `{{ .planned.<attr> }}` substitution
+/// was a raw passthrough over `after` — emitted
+/// `${github_repository.banken.name}:bug` as an import id. Every such id
+/// 404s, so nothing was ever adopted and the colliding creates re-failed
+/// every cycle.
+///
+/// Non-creates get `None`: nothing else can collide, so nothing else needs
+/// an adoption id. An INEXACT derivation is carried through as
+/// `exact: false` rather than dropped, so the prepass can log *why* it
+/// refused instead of silently finding nothing.
+fn derive_import_id(
+    rc: &magma_types::ResourceChange,
+    state_map: &std::collections::HashMap<String, serde_json::Value>,
+) -> Option<crate::executor::plan_change::DerivedImportId> {
+    use crate::executor::plan_change::DerivedImportId;
+    if rc.action != magma_types::Action::Create {
+        return None;
+    }
+    // `after` is passed as BOTH the raw and the "resolved" side on purpose:
+    // the prepass runs before apply, so no reference substitution has
+    // happened and there is no second, resolved view to offer. `derive`
+    // reads the raw side for `ParentName` components either way — that is
+    // the only side that still says WHICH parent a reference points at.
+    magma_apply::natural_id::derive(rc, rc.after.as_ref(), state_map).map(|i| DerivedImportId {
+        id: i.id,
+        exact: i.confidence.is_exact(),
+    })
 }
 
 fn changes_tofu_result(stdout: String, started: Instant) -> TofuResult {
@@ -1922,6 +2010,9 @@ where
             variables:        Default::default(),
             resource_changes,
             output_changes:   vec![],
+            // A synthesized destroy plan performs no refresh, so it carries
+            // the default (unqualified) observation rather than claiming one.
+            observation:      Default::default(),
         };
         // REAL destroy: drive providers over gRPC so each resource's Delete is
         // a real provider DestroyResource RPC (the state-level run_plan only
@@ -2149,7 +2240,28 @@ where
     /// artifact store is always wired.
     async fn planned_changes(&self) -> Result<Option<Vec<PlannedChange>>> {
         match self.read_db_plan().await? {
-            DbPlanRead::Present(plan) => Ok(Some(planned_changes_from_magma_plan(&plan))),
+            DbPlanRead::Present(plan) => {
+                // State is read HERE, alongside the plan, because a composite
+                // import id's parent component is an unresolved reference in
+                // the plan and only state carries the parent's real name. A
+                // state read that fails is NOT fatal to discovery: fall back
+                // to an empty map, in which every parent-keyed derivation
+                // downgrades to inexact and is refused by the prepass — a
+                // missed adoption, never a wrong one.
+                let backend = self.make_backend();
+                let state = match magma_backend::Backend::read_state(&backend).await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "planned_changes: state read failed — import ids will derive \
+                             without parent resolution and inexact ones will be refused"
+                        );
+                        empty_state()
+                    }
+                };
+                Ok(Some(planned_changes_from_magma_plan(&plan, &state)))
+            }
             // Cache-miss OR not-DB-backed → route to the legacy discovery
             // path. The following apply() regenerates the plan on the DB
             // path; degrading discovery here is non-fatal.
@@ -2238,6 +2350,7 @@ mod tests {
             config_root: std::path::PathBuf::new(),
             variables: std::collections::HashMap::new(),
             resource_changes: Vec::new(),
+            observation: Default::default(),
             output_changes: Vec::new(),
         };
 
@@ -3050,9 +3163,12 @@ mod tests {
                 },
             ],
             output_changes: vec![],
+            observation:    Default::default(),
         };
 
-        let changes = planned_changes_from_magma_plan(&plan);
+        // No state: the mapper still must be total, and every derived id it
+        // produces for a create must be honestly labelled.
+        let changes = planned_changes_from_magma_plan(&plan, &empty_state());
         assert_eq!(changes.len(), 2, "mapper is total over resource_changes");
 
         // The managed create renders `{type}.{name}`, carries its planned
@@ -3069,6 +3185,158 @@ mod tests {
         // The data source is Read/Data — discovery excludes it downstream.
         assert_eq!(changes[1].action, PlanAction::Read);
         assert_eq!(changes[1].kind, ResourceKindClass::Data);
+    }
+
+    // ── the pleme-io-opensource wedge: a parent-keyed import id ─────────
+    //
+    // 49 `github_issue_label` creates + 5 `github_branch_protection` creates
+    // failed every cycle against resources that plainly exist on GitHub.
+    // The proactive prepass composed their import ids by substituting the
+    // plan's `after` into a template, and `after.repository` on a label is
+    // an unresolved reference — `"${github_repository.banken.name}"` — so
+    // the id was `${github_repository.banken.name}:bug`. Every GET 404'd,
+    // nothing was adopted, and the creates re-collided forever.
+
+    fn state_with_repo(resource_name: &str, real_name: &str) -> magma_types::State {
+        let mut st = empty_state();
+        st.resources.push(magma_types::StateResource {
+            address:  magma_types::ResourceAddress {
+                module:  magma_types::ModulePath::root(),
+                kind:    magma_types::ResourceKind::Managed,
+                type_id: magma_types::ResourceTypeId("github_repository".into()),
+                name:    resource_name.into(),
+                key:     None,
+            },
+            provider: magma_types::ProviderReference {
+                source: "registry.terraform.io/integrations/github".into(),
+                name:   "github".into(),
+                alias:  None,
+            },
+            instances: vec![magma_types::StateInstance {
+                index_key:                 None,
+                attributes:                json!({ "name": real_name, "node_id": "R_kgDOTdnhyQ" }),
+                schema_version:            0,
+                sensitive_attribute_paths: vec![],
+                private:                   vec![],
+                dependencies:              vec![],
+                status:                    magma_types::InstanceStatus::Ready,
+            }],
+        });
+        st
+    }
+
+    fn create(ty: &str, name: &str, after: serde_json::Value) -> magma_types::ResourceChange {
+        magma_types::ResourceChange {
+            address: magma_types::ResourceAddress {
+                module:  magma_types::ModulePath::root(),
+                kind:    magma_types::ResourceKind::Managed,
+                type_id: magma_types::ResourceTypeId(ty.into()),
+                name:    name.into(),
+                key:     None,
+            },
+            action:  magma_types::Action::Create,
+            before:  None,
+            after:   Some(after),
+            reasons: vec![magma_types::ChangeReason::NewResource],
+        }
+    }
+
+    fn plan_of(changes: Vec<magma_types::ResourceChange>) -> magma_types::Plan {
+        magma_types::Plan {
+            id:               magma_types::PlanId([0u8; 32]),
+            created_at:       chrono::Utc::now(),
+            config_root:      std::path::PathBuf::from("/nonexistent"),
+            variables:        Default::default(),
+            resource_changes: changes,
+            output_changes:   vec![],
+            observation:      Default::default(),
+        }
+    }
+
+    /// The exact live case. `github_issue_label.banken-label-bug` must yield
+    /// `banken:bug` — the format the GitHub provider's importer accepts
+    /// (`repository:name`, integrations/github 6.13.0) — and must carry NO
+    /// trace of the reference it was composed from.
+    #[test]
+    fn a_label_create_derives_the_repo_scoped_import_id_not_the_raw_reference() {
+        let plan = plan_of(vec![create(
+            "github_issue_label",
+            "banken-label-bug",
+            json!({ "repository": "${github_repository.banken.name}", "name": "bug" }),
+        )]);
+        let changes = planned_changes_from_magma_plan(&plan, &state_with_repo("banken", "banken"));
+        let got = changes[0].import_id.clone().expect("an id is derivable");
+        assert_eq!(got.id, "banken:bug");
+        assert!(got.exact, "a fully state-resolved parent is exact");
+        assert!(!got.id.contains("${"), "raw reference leaked into the import id");
+    }
+
+    /// Five of the nine label parents are underscore-sanitized in state
+    /// (`caixa_tlisp_handoff`) while the repository is really named
+    /// `caixa-tlisp-handoff`. Resolving the parent through state's own
+    /// `name` attribute — rather than off the resource address — is what
+    /// makes those 29 labels derivable at all.
+    #[test]
+    fn an_underscored_resource_name_resolves_to_the_real_repo_name() {
+        let plan = plan_of(vec![create(
+            "github_issue_label",
+            "caixa-tlisp-handoff-label-bug",
+            json!({ "repository": "${github_repository.caixa_tlisp_handoff.name}", "name": "bug" }),
+        )]);
+        let changes = planned_changes_from_magma_plan(
+            &plan,
+            &state_with_repo("caixa_tlisp_handoff", "caixa-tlisp-handoff"),
+        );
+        let got = changes[0].import_id.clone().expect("an id is derivable");
+        assert_eq!(got.id, "caixa-tlisp-handoff:bug");
+        assert!(got.exact);
+    }
+
+    /// A branch protection's `repository_id` is a `${…node_id}` reference,
+    /// yet the importer keys on `repository:pattern`. Neither the raw
+    /// reference nor the node id it projects is importable.
+    #[test]
+    fn a_branch_protection_derives_repo_name_colon_pattern() {
+        let plan = plan_of(vec![create(
+            "github_branch_protection",
+            "cse_lint_main",
+            json!({ "repository_id": "${github_repository.cse_lint.node_id}", "pattern": "main" }),
+        )]);
+        let changes =
+            planned_changes_from_magma_plan(&plan, &state_with_repo("cse_lint", "cse-lint"));
+        let got = changes[0].import_id.clone().expect("an id is derivable");
+        assert_eq!(got.id, "cse-lint:main");
+        assert!(got.exact);
+        assert!(!got.id.contains("R_kgDO"), "node id leaked into the import id");
+    }
+
+    /// Never round up. With the parent absent from state the only available
+    /// id is the convention guess, and it must be marked inexact so the
+    /// prepass refuses to dispatch it.
+    #[test]
+    fn an_unresolvable_parent_is_carried_as_inexact_never_as_exact() {
+        let plan = plan_of(vec![create(
+            "github_issue_label",
+            "tag-forge-label-bug",
+            json!({ "repository": "${github_repository.tag_forge.name}", "name": "bug" }),
+        )]);
+        let changes = planned_changes_from_magma_plan(&plan, &empty_state());
+        let got = changes[0].import_id.clone().expect("a guess is still returned");
+        assert_eq!(got.id, "tag_forge:bug");
+        assert!(
+            !got.exact,
+            "a convention-guessed parent must never be labelled exact — \
+             tag_forge is not the repo name, tag-forge is"
+        );
+    }
+
+    /// Only creates can collide, so only creates get an adoption id.
+    #[test]
+    fn a_non_create_never_derives_an_import_id() {
+        let mut ch = create("github_issue_label", "l", json!({ "repository": "r", "name": "bug" }));
+        ch.action = magma_types::Action::Update;
+        let changes = planned_changes_from_magma_plan(&plan_of(vec![ch]), &empty_state());
+        assert_eq!(changes[0].import_id, None);
     }
 
     #[tokio::test]

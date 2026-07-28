@@ -8,8 +8,10 @@
 //!      via `substitute_import_id`).
 //!   2. `spec.importPolicy.naturalIds` — per-resource-type templates
 //!      (handled here via `resolve_natural_id`).
-//!   3. Operator-bundled defaults for common providers (handled here
-//!      via `bundled_natural_ids`).
+//!   3. The EXECUTOR's own catalog-derived id, carried in on
+//!      `PlannedChange::import_id` — magma's single
+//!      `natural_id::CATALOG` evaluated against the workspace state.
+//!      The operator no longer authors an import-id table of its own.
 //!
 //! Substitution uses the same `{{ .var }}` / `{{ var }}` syntax as
 //! `importHints`, with one extension: `{{ .planned.<attr> }}` reads
@@ -19,7 +21,9 @@
 
 use std::collections::BTreeMap;
 
-use crate::executor::plan_change::{PlanAction, PlannedChange, ResourceKindClass};
+use crate::executor::plan_change::{
+    DerivedImportId, PlanAction, PlannedChange, ResourceKindClass,
+};
 
 /// A resolved import target: an address to adopt via `import`, the
 /// substituted import id, and the resolution source (`"hint"` for a
@@ -50,6 +54,15 @@ pub enum ImportSkip {
         missing: String,
         server_assigned: bool,
     },
+    /// The executor derived an import id it does NOT stand behind — a
+    /// convention-guessed parent name, or a last-resort address name for a
+    /// type with no catalog rule and no `name` attribute.
+    ///
+    /// Refused rather than dispatched. A successful import against a wrong
+    /// id does not fail: it adopts a DIFFERENT real resource under the
+    /// planned address, and the next cycle diffs config against it. Losing
+    /// an adoption costs a cycle; a wrong one costs the resource.
+    Inexact { address: String, id: String },
 }
 
 /// Split an executor's typed `planned_changes()` output into the two
@@ -63,11 +76,19 @@ pub enum ImportSkip {
 /// planned `after` maps to `serde_json::Value::Null`, which
 /// [`substitute_with_planned`] treats identically to a missing attribute
 /// (preserving the server-assigned-null semantics).
+/// Also carries out the executor's own per-address [`DerivedImportId`],
+/// which is the ONLY id in this pipeline that can name a parent by its real
+/// name — see [`PlannedChange::import_id`].
 pub fn discovery_from_planned_changes(
     changes: &[PlannedChange],
-) -> (Vec<String>, BTreeMap<String, serde_json::Value>) {
+) -> (
+    Vec<String>,
+    BTreeMap<String, serde_json::Value>,
+    BTreeMap<String, DerivedImportId>,
+) {
     let mut creates = Vec::new();
     let mut planned = BTreeMap::new();
+    let mut derived = BTreeMap::new();
     for c in changes {
         if c.action == PlanAction::Create && c.kind == ResourceKindClass::Managed {
             creates.push(c.address.clone());
@@ -75,9 +96,12 @@ pub fn discovery_from_planned_changes(
                 c.address.clone(),
                 c.after.clone().unwrap_or(serde_json::Value::Null),
             );
+            if let Some(d) = &c.import_id {
+                derived.insert(c.address.clone(), d.clone());
+            }
         }
     }
-    (creates, planned)
+    (creates, planned, derived)
 }
 
 /// The pure core of the import prepass.
@@ -91,15 +115,37 @@ pub fn discovery_from_planned_changes(
 ///
 ///   1. `spec.importHints` — per-address override (highest priority).
 ///   2. `spec.importPolicy.naturalIds` — per-resource-type templates.
-///   3. Operator-bundled defaults ([`bundled_natural_ids`]).
+///   3. The executor's own [`DerivedImportId`] — magma's one import-id
+///      catalog, evaluated against the workspace's state.
 ///
 /// Layers 2/3 only fire when `import_policy.auto_on_conflict` is `true`.
 /// ControllerState-free, executor-free, synchronous — the testable core.
 /// Returns the resolved targets + the unresolved skips (for the caller to
 /// surface as typed events).
+///
+/// # Why layer 3 is a value and not a template
+///
+/// It used to be `bundled_natural_ids()` — an operator-local copy of
+/// magma's import-id table rendered through `{{ .planned.<attr> }}`
+/// substitution over the plan's `after`. Both halves were wrong. The table
+/// was a SECOND authored copy of knowledge magma already owns
+/// (`magma_apply::natural_id::CATALOG`), so the two could and did disagree.
+/// And the substitution was a raw passthrough: `.planned.repository` on a
+/// `github_issue_label` create is the literal string
+/// `"${github_repository.banken.name}"`, so the rendered id was
+/// `${github_repository.banken.name}:bug`, which URL-encodes into a GET
+/// that 404s for every single label. Nothing was ever adopted, so the
+/// creates collided every cycle, forever.
+///
+/// The template layer cannot be fixed in place, because the missing datum
+/// is not in `after` at all — it is in the workspace's STATE, which this
+/// pure function has no access to and should not acquire. So layer 3 now
+/// receives an already-derived id from the one component that holds both
+/// the plan and the state: the executor.
 pub fn resolve_import_targets(
     create_addresses: &[String],
     planned_by_addr: &BTreeMap<String, serde_json::Value>,
+    derived_by_addr: &BTreeMap<String, DerivedImportId>,
     import_hints: &BTreeMap<String, String>,
     import_policy: Option<&crate::crd::ImportPolicy>,
     variables: &BTreeMap<String, serde_json::Value>,
@@ -136,8 +182,13 @@ pub fn resolve_import_targets(
         }
     }
 
-    // Layers 2 + 3: naturalIds / bundled defaults for every create-action
-    // not already covered by an explicit hint. Only when autoOnConflict.
+    // Layers 2 + 3: the user's declared naturalIds, else the executor's
+    // catalog-derived id, for every create-action not already covered by an
+    // explicit hint. Only when autoOnConflict.
+    //
+    // The user layer stays FIRST: an operator who authored a naturalIds
+    // template for a type said something the catalog does not know, and a
+    // derived default must not silently outrank it.
     if auto_import {
         let user_natural_ids = import_policy
             .map(|p| p.natural_ids.clone())
@@ -146,9 +197,22 @@ pub fn resolve_import_targets(
             if covered.contains(addr) {
                 continue;
             }
-            let id_template = match resolve_natural_id(addr, &user_natural_ids) {
-                Some(t) => t,
-                None => continue,
+            let Some(id_template) = resolve_natural_id(addr, &user_natural_ids) else {
+                // Layer 3: no user template — take the executor's derived id,
+                // and take it ONLY if the executor stands behind it.
+                match derived_by_addr.get(addr) {
+                    Some(d) if d.exact => targets.push(ImportTarget {
+                        address: addr.clone(),
+                        id: d.id.clone(),
+                        source: "auto".to_string(),
+                    }),
+                    Some(d) => skips.push(ImportSkip::Inexact {
+                        address: addr.clone(),
+                        id: d.id.clone(),
+                    }),
+                    None => {}
+                }
+                continue;
             };
             let planned_attrs = planned_by_addr
                 .get(addr)
@@ -179,122 +243,24 @@ pub fn resolve_import_targets(
     (targets, skips)
 }
 
-/// Operator-bundled per-resource-type natural-ID templates.
+/// **DELETED — the operator no longer carries an import-id table.**
 ///
-/// Keys are terraform resource types; values are substitution
-/// templates over `{{ .planned.<attr> }}` (and optionally
-/// `{{ var }}` from `spec.variables`).
+/// `bundled_natural_ids()` lived here and was a second authored copy of
+/// `magma_apply::natural_id::CATALOG`. Two copies of one table drift, and
+/// these two did: magma's rule for `github_branch_protection` keys on the
+/// parent repository's NAME, while this copy emitted the raw
+/// `${github_repository.<n>.node_id}` reference. Worse, every rule here was
+/// rendered by `substitute_with_planned`, whose `{{ .planned.<attr> }}`
+/// lookup is a raw passthrough over the plan's `after` — so a rule naming a
+/// parent produced the literal `${…}` text as part of the import id.
 ///
-/// **Contract**: the only attributes available for substitution are
-/// those present in the plan's `change.after` block — i.e. attributes
-/// the user (or workspace DSL) declares. Attributes that are
-/// **server-assigned** by the cloud provider (e.g. cloudflare's
-/// `record.id`, AWS IAM policy `arn`, GCP `self_link`, etc.) are NOT
-/// available on a `create`-action plan because the resource doesn't
-/// exist yet. Templates that reference such attributes are
-/// fundamentally unworkable as bundled defaults; they need explicit
-/// `spec.importHints` per-address with the actually-known ID, OR a
-/// future API-lookup mechanism.
+/// The knowledge now lives in exactly one place (magma's catalog), is
+/// evaluated where the state that completes it lives (the executor), and
+/// arrives here as a value: [`PlannedChange::import_id`].
 ///
-/// What MUST NOT go in this map:
-///   - `{{ .planned.id }}` — server-assigned for most providers
-///   - `{{ .planned.arn }}` — server-assigned for AWS resources
-///   - any attribute the provider creates on POST
-///
-/// What CAN go in this map:
-///   - User-declared natural keys: `name`, `slug`, `bucket`, etc.
-///   - Composite keys built from user-declared attributes:
-///     `{{ .planned.repository }}:{{ .planned.name }}`
-///   - Attributes that are upstream-known via `spec.variables` (e.g.
-///     the user passes a known zone_id; combine via importHints
-///     rather than bundled defaults).
-///
-/// Sources (verified against each provider's `terraform import` docs):
-///   - github: <https://registry.terraform.io/providers/integrations/github/latest/docs>
-///   - aws:    <https://registry.terraform.io/providers/hashicorp/aws/latest/docs>
-///   - cloudflare: <https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs>
-///
-/// This is a starter set covering the use cases pleme-io's
-/// pleme-io-opensource workspace exercises today
-/// (github_repository, github_branch_protection, github_issue_label).
-/// Extend by appending here when a new provider's resources need
-/// auto-import support across multiple templates AND have a
-/// user-declared natural key. One-off cases should use
-/// `spec.importPolicy.naturalIds` per-template, or `spec.importHints`
-/// per-address with the known cloud-side ID.
-pub fn bundled_natural_ids() -> BTreeMap<&'static str, &'static str> {
-    let mut m = BTreeMap::new();
-
-    // GitHub provider — every entry below uses user-declared keys
-    // (name, slug, repository, etc.) that ARE present on the plan's
-    // change.after block.
-    m.insert("github_repository", "{{ .planned.name }}");
-    m.insert(
-        "github_branch_protection",
-        "{{ .planned.repository_id }}:{{ .planned.pattern }}",
-    );
-    m.insert(
-        "github_issue_label",
-        "{{ .planned.repository }}:{{ .planned.name }}",
-    );
-    m.insert(
-        "github_team",
-        "{{ .planned.slug }}",
-    );
-    m.insert(
-        "github_team_membership",
-        "{{ .planned.team_id }}:{{ .planned.username }}",
-    );
-    m.insert(
-        "github_actions_secret",
-        "{{ .planned.repository }}:{{ .planned.secret_name }}",
-    );
-    m.insert(
-        "github_actions_variable",
-        "{{ .planned.repository }}:{{ .planned.variable_name }}",
-    );
-    m.insert(
-        "github_repository_environment",
-        "{{ .planned.repository }}:{{ .planned.environment }}",
-    );
-
-    // AWS provider — name/bucket are user-declared. aws_iam_policy
-    // intentionally omitted: import requires the ARN, which is
-    // server-assigned. Use `spec.importHints` with the known ARN.
-    m.insert("aws_iam_role", "{{ .planned.name }}");
-    m.insert("aws_iam_user", "{{ .planned.name }}");
-    m.insert("aws_s3_bucket", "{{ .planned.bucket }}");
-
-    // Cloudflare provider — intentionally has zero entries today.
-    //
-    // Every cloudflare resource that is import-shaped uses
-    // `<account_id>/<resource_id>` or `<zone_id>/<resource_id>` where
-    // the resource_id is **server-assigned**. There's no way to
-    // recover that ID from the plan's change.after block — the value
-    // is null until the cloud-side resource is created.
-    //
-    // Workaround for cloudflare resources that already exist in the
-    // cloud and need adopting: declare per-address importHints with
-    // the actual ID, e.g.
-    //
-    //   spec:
-    //     importHints:
-    //       cloudflare_dns_record.foo: "{{ zone_id }}/abc123def456"
-    //       cloudflare_zero_trust_tunnel_cloudflared.rio:
-    //         "{{ account_id }}/9876fedcba00"
-    //
-    // where the resource_id portion is looked up via the cloudflare
-    // API or `tofu import` once and recorded.
-    //
-    // This was the source of the cycle-166 fail=20 incident on rio
-    // (2026-05-02): the bundled defaults claimed cloudflare auto-
-    // import worked, but every substitution failed at runtime
-    // because planned.id was always null on create-actions. The
-    // entries are removed; the contract is now honest.
-
-    m
-}
-
+/// A per-resource-type template a consumer authors themselves is unaffected
+/// — that is `spec.importPolicy.naturalIds`, still resolved by
+/// [`resolve_natural_id`].
 /// Resolve a natural-ID template for a given resource address using
 /// the three-layer cascade. Returns `None` if no rule matches.
 ///
@@ -312,10 +278,11 @@ pub fn resolve_natural_id<'a>(
         return Some(template.clone());
     }
 
-    // Layer 3: bundled defaults.
-    bundled_natural_ids()
-        .get(resource_type)
-        .map(|s| s.to_string())
+    // No layer 3 here any more: the catalog-derived default is a VALUE the
+    // executor computes (`PlannedChange::import_id`), not a template this
+    // function can render, because completing it needs the workspace state.
+    let _ = resource_type;
+    None
 }
 
 /// Parse `tofu show -json plan` output into a per-address map of
@@ -412,33 +379,39 @@ pub fn substitute_with_planned(
 mod tests {
     use super::*;
 
+    /// THE structural invariant this module now holds: the operator owns NO
+    /// import-id table. Every type the old `bundled_natural_ids()` covered
+    /// must resolve to nothing here, so the only possible source of a
+    /// catalog-shaped id is the executor's `PlannedChange::import_id`
+    /// (magma's `natural_id::CATALOG`). Re-introducing a local table — for
+    /// any type, however innocuous — re-opens the drift this replaced.
     #[test]
-    fn bundled_includes_github_repository() {
-        let b = bundled_natural_ids();
-        assert_eq!(b.get("github_repository").copied(), Some("{{ .planned.name }}"));
+    fn the_operator_carries_no_import_id_table_of_its_own() {
+        let none = BTreeMap::new();
+        for addr in [
+            "github_repository.x",
+            "github_branch_protection.x",
+            "github_issue_label.x",
+            "github_actions_secret.x",
+            "github_team.x",
+            "aws_iam_role.x",
+            "aws_s3_bucket.x",
+        ] {
+            assert_eq!(
+                resolve_natural_id(addr, &none),
+                None,
+                "{addr} resolved to an operator-local template; the table must live \
+                 only in magma_apply::natural_id::CATALOG"
+            );
+        }
     }
 
     #[test]
-    fn bundled_includes_branch_protection() {
-        let b = bundled_natural_ids();
-        let t = b.get("github_branch_protection").copied().unwrap();
-        assert!(t.contains("repository_id"));
-        assert!(t.contains("pattern"));
-    }
-
-    #[test]
-    fn resolve_user_natural_id_overrides_bundled() {
+    fn resolve_user_natural_id_is_the_only_template_layer() {
         let mut user = BTreeMap::new();
         user.insert("github_repository".to_string(), "custom-{{ .planned.name }}".to_string());
         let r = resolve_natural_id("github_repository.foo", &user);
         assert_eq!(r.as_deref(), Some("custom-{{ .planned.name }}"));
-    }
-
-    #[test]
-    fn resolve_falls_back_to_bundled() {
-        let user = BTreeMap::new();
-        let r = resolve_natural_id("github_repository.foo", &user);
-        assert_eq!(r.as_deref(), Some("{{ .planned.name }}"));
     }
 
     #[test]
@@ -539,66 +512,17 @@ mod tests {
         assert_eq!(out, "42");
     }
 
-    // ── 2026-05 contract tests for the bundled_natural_ids surface ──
+    // ── 2026-05 contract, re-homed ──────────────────────────────────
     //
-    // These assertions encode the rule "no bundled default may
-    // reference a server-assigned attribute". They lock in the fix
-    // for the cycle-166 fail=20 incident on rio (cloudflare entries
-    // referenced planned.id, which is null on create-actions, so
-    // every substitution failed at runtime).
-
-    #[test]
-    fn bundled_excludes_server_assigned_cloudflare_resources() {
-        // Cloudflare resources whose import requires `<scope>/<id>`
-        // where `id` is server-assigned. The ONLY way to import them
-        // is via spec.importHints with the known cloud-side ID.
-        let b = bundled_natural_ids();
-        assert!(
-            !b.contains_key("cloudflare_dns_record"),
-            "cloudflare_dns_record must NOT be in bundled_natural_ids — \
-             planned.id is null on create-actions. Use spec.importHints."
-        );
-        assert!(
-            !b.contains_key("cloudflare_zero_trust_tunnel_cloudflared"),
-            "cloudflare_zero_trust_tunnel_cloudflared must NOT be in \
-             bundled_natural_ids — planned.id is null on create-actions. \
-             Use spec.importHints."
-        );
-    }
-
-    #[test]
-    fn bundled_excludes_server_assigned_aws_resources() {
-        let b = bundled_natural_ids();
-        assert!(
-            !b.contains_key("aws_iam_policy"),
-            "aws_iam_policy must NOT be in bundled_natural_ids — \
-             planned.arn is null on create-actions. Use spec.importHints."
-        );
-    }
-
-    /// No bundled default may textually reference `.planned.id`,
-    /// `.planned.arn`, or `.planned.self_link` — those are the canonical
-    /// server-assigned attributes that are ALWAYS null on create-action
-    /// plans. Adding such a template is a substrate-level error.
-    #[test]
-    fn bundled_natural_ids_have_no_server_assigned_references() {
-        let forbidden_tokens = [".planned.id", ".planned.arn", ".planned.self_link"];
-        for (resource_type, template) in bundled_natural_ids().iter() {
-            for forbidden in &forbidden_tokens {
-                assert!(
-                    !template.contains(forbidden),
-                    "bundled_natural_ids[{}] = {:?} references server-assigned \
-                     attribute {:?}. This is unworkable for auto-import: \
-                     server-assigned attrs are null on create-action plans. \
-                     Either pick a user-declared natural key, or remove the \
-                     entry and document spec.importHints as the workaround.",
-                    resource_type,
-                    template,
-                    forbidden,
-                );
-            }
-        }
-    }
+    // The rule "no bundled default may reference a server-assigned
+    // attribute" (the cycle-166 fail=20 incident on rio: cloudflare rows
+    // referenced `planned.id`, null on every create-action) is no longer
+    // enforceable here, because there is no bundled table here. It moved
+    // WITH the table: `magma_apply::natural_id::derive` returns `None` for
+    // a catalog rule whose components are absent, and `Confidence` marks
+    // anything it had to guess. The operator-side half of that contract is
+    // the refusal below — an id the executor does not stand behind is
+    // never dispatched.
 
     #[test]
     fn substitute_returns_planned_id_marker_for_server_assigned() {
@@ -705,6 +629,18 @@ mod tests {
     use crate::crd::ImportPolicy;
     use crate::executor::plan_change::{PlanAction, PlannedChange, ResourceKindClass};
 
+    /// The magma executor derives this from the catalog + state. In these
+    /// pure-core tests it is supplied directly — the border is a value.
+    fn exact(id: &str) -> DerivedImportId {
+        DerivedImportId { id: id.into(), exact: true }
+    }
+    fn inexact(id: &str) -> DerivedImportId {
+        DerivedImportId { id: id.into(), exact: false }
+    }
+    fn derived(pairs: &[(&str, DerivedImportId)]) -> BTreeMap<String, DerivedImportId> {
+        pairs.iter().map(|(a, d)| ((*a).to_string(), d.clone())).collect()
+    }
+
     fn auto_policy() -> ImportPolicy {
         ImportPolicy {
             auto_on_conflict: true,
@@ -720,6 +656,7 @@ mod tests {
                 action: PlanAction::Create,
                 kind: ResourceKindClass::Managed,
                 after: Some(serde_json::json!({ "name": "breathe" })),
+                import_id: Some(exact("breathe")),
             },
             // A managed NON-create — excluded.
             PlannedChange {
@@ -727,6 +664,7 @@ mod tests {
                 action: PlanAction::NoOp,
                 kind: ResourceKindClass::Managed,
                 after: Some(serde_json::json!({ "name": "existing" })),
+                import_id: None,
             },
             // A data source create-ish read — excluded (not Managed).
             PlannedChange {
@@ -734,10 +672,13 @@ mod tests {
                 action: PlanAction::Read,
                 kind: ResourceKindClass::Data,
                 after: Some(serde_json::json!({ "login": "me" })),
+                import_id: None,
             },
         ];
-        let (creates, planned) = discovery_from_planned_changes(&changes);
+        let (creates, planned, derived) = discovery_from_planned_changes(&changes);
         assert_eq!(creates, vec!["github_repository.breathe".to_string()]);
+        assert_eq!(derived["github_repository.breathe"], exact("breathe"));
+        assert!(!derived.contains_key("github_repository.existing"));
         assert_eq!(
             planned["github_repository.breathe"]["name"].as_str(),
             Some("breathe")
@@ -747,9 +688,11 @@ mod tests {
 
     #[test]
     fn create_that_exists_github_repo_resolves_to_import_target() {
-        // The core assertion: a `github_repository.breathe` Create whose
-        // planned `after.name == "breathe"` resolves to an import target
-        // with id "breathe" (bundled `{{ .planned.name }}`), source "auto".
+        // The core assertion: a `github_repository.breathe` Create resolves
+        // to an import target with id "breathe", source "auto". The id now
+        // arrives as a VALUE the executor derived (magma's catalog: a
+        // name-keyed type imports by its `name`), not as a template this
+        // module renders.
         let creates = vec!["github_repository.breathe".to_string()];
         let mut planned = BTreeMap::new();
         planned.insert(
@@ -760,6 +703,7 @@ mod tests {
         let (targets, skips) = resolve_import_targets(
             &creates,
             &planned,
+            &derived(&[("github_repository.breathe", exact("breathe"))]),
             &BTreeMap::new(),
             Some(&policy),
             &BTreeMap::new(),
@@ -775,6 +719,95 @@ mod tests {
         );
     }
 
+    /// The end-to-end shape of the 49 failing labels, through the pure
+    /// resolver: the executor hands in `banken:bug`, and the prepass
+    /// dispatches exactly that — no template, no `${…}` residue.
+    #[test]
+    fn a_derived_repo_scoped_id_is_dispatched_verbatim() {
+        let addr = "github_issue_label.banken-label-bug";
+        let creates = vec![addr.to_string()];
+        let mut planned = BTreeMap::new();
+        planned.insert(
+            addr.to_string(),
+            serde_json::json!({
+                "repository": "${github_repository.banken.name}",
+                "name": "bug"
+            }),
+        );
+        let policy = auto_policy();
+        let (targets, skips) = resolve_import_targets(
+            &creates,
+            &planned,
+            &derived(&[(addr, exact("banken:bug"))]),
+            &BTreeMap::new(),
+            Some(&policy),
+            &BTreeMap::new(),
+        );
+        assert!(skips.is_empty(), "{skips:?}");
+        assert_eq!(
+            targets,
+            vec![ImportTarget {
+                address: addr.into(),
+                id: "banken:bug".into(),
+                source: "auto".into(),
+            }]
+        );
+    }
+
+    /// THE refusal gate. An id the executor does not stand behind is never
+    /// dispatched — a successful import against a wrong id adopts a
+    /// different real resource under the planned address.
+    #[test]
+    fn an_inexact_derived_id_is_refused_never_dispatched() {
+        let addr = "github_issue_label.tag-forge-label-bug";
+        let creates = vec![addr.to_string()];
+        let policy = auto_policy();
+        let (targets, skips) = resolve_import_targets(
+            &creates,
+            &BTreeMap::new(),
+            // `tag_forge` is the RESOURCE name; the repo is `tag-forge`.
+            &derived(&[(addr, inexact("tag_forge:bug"))]),
+            &BTreeMap::new(),
+            Some(&policy),
+            &BTreeMap::new(),
+        );
+        assert!(
+            targets.is_empty(),
+            "an inexact id must not become an import target: {targets:?}"
+        );
+        assert_eq!(
+            skips,
+            vec![ImportSkip::Inexact {
+                address: addr.into(),
+                id: "tag_forge:bug".into(),
+            }]
+        );
+    }
+
+    /// A user-authored `naturalIds` template still outranks the derived
+    /// default — the operator said something the catalog does not know.
+    #[test]
+    fn a_user_natural_id_template_outranks_the_derived_default() {
+        let addr = "github_repository.breathe";
+        let creates = vec![addr.to_string()];
+        let mut planned = BTreeMap::new();
+        planned.insert(addr.to_string(), serde_json::json!({ "name": "breathe" }));
+        let mut policy = auto_policy();
+        policy.natural_ids.insert(
+            "github_repository".to_string(),
+            "custom-{{ .planned.name }}".to_string(),
+        );
+        let (targets, _) = resolve_import_targets(
+            &creates,
+            &planned,
+            &derived(&[(addr, exact("breathe"))]),
+            &BTreeMap::new(),
+            Some(&policy),
+            &BTreeMap::new(),
+        );
+        assert_eq!(targets[0].id, "custom-breathe");
+    }
+
     #[test]
     fn no_auto_import_resolves_nothing_without_hints() {
         // autoOnConflict=false + no hints → zero targets (today's
@@ -788,6 +821,7 @@ mod tests {
         let (targets, _skips) = resolve_import_targets(
             &creates,
             &planned,
+            &derived(&[("github_repository.breathe", exact("breathe"))]),
             &BTreeMap::new(),
             Some(&ImportPolicy::default()),
             &BTreeMap::new(),
@@ -810,6 +844,7 @@ mod tests {
             action: PlanAction::Create,
             kind: ResourceKindClass::Managed,
             after: Some(serde_json::json!({ "name": "breathe" })),
+            import_id: Some(exact("breathe")),
         }]);
 
         // The prepass's first move: the typed, disk-free readback.
@@ -825,11 +860,12 @@ mod tests {
             "planned_changes must not touch show_plan (disk-free)"
         );
 
-        let (creates, planned) = discovery_from_planned_changes(&changes);
+        let (creates, planned, derived) = discovery_from_planned_changes(&changes);
         let policy = auto_policy();
         let (targets, _skips) = resolve_import_targets(
             &creates,
             &planned,
+            &derived,
             &BTreeMap::new(),
             Some(&policy),
             &BTreeMap::new(),

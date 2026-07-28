@@ -70,6 +70,48 @@ pub struct PlannedChange {
     /// The resource kind class. Import discovery adopts `Managed` resources
     /// only — never a Data source, an Output, or a Local value.
     pub kind: ResourceKindClass,
+
+    /// The provider-native import id the EXECUTOR derived for this change,
+    /// when it could derive one it stands behind.
+    ///
+    /// # Why the executor and not the prepass
+    ///
+    /// A composite import id is very often keyed on a **parent's real name**
+    /// (`github_issue_label` imports by `<repo-name>:<label>`), and [`after`]
+    /// holds that parent as an unresolved reference —
+    /// `"${github_repository.caixa_tlisp_handoff.name}"`. Turning that into
+    /// `caixa-tlisp-handoff` needs the workspace's STATE, which only the
+    /// executor can read. The prepass has no state and no way to get it, so
+    /// any id it composes itself out of `after` alone is either the raw
+    /// `${…}` literal or a resource-name guess — the exact defect that made
+    /// every proactive import 404 and left the creates to collide forever.
+    ///
+    /// `None` means "no id I stand behind" — either no executor-side
+    /// derivation (the tofu / legacy path) or a derivation the executor
+    /// refused to round up. The prepass then falls back to the declared
+    /// `importHints` / `naturalIds` layers.
+    ///
+    /// [`after`]: PlannedChange::after
+    pub import_id: Option<DerivedImportId>,
+}
+
+/// An import id an executor derived, plus whether it is exact.
+///
+/// Deliberately **not** magma's `natural_id::ImportId`: this border must
+/// compile without the `executor_magma` feature, and it must not name a
+/// second executor's types either. `exact` is the projection of magma's
+/// four-way `Confidence` onto the only question the prepass asks — *may I
+/// dispatch an import RPC against this id?*
+///
+/// Never round up: a convention-guessed parent (`tag_forge` where the repo
+/// is really `tag-forge`) and a last-resort address name are both
+/// `exact: false`. An inexact id names a resource that may not be the one
+/// planned, and a wrong adoption is worse than no adoption — so the prepass
+/// refuses it rather than dispatching and hoping.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DerivedImportId {
+    pub id: String,
+    pub exact: bool,
 }
 
 /// The plan action for a [`PlannedChange`]. A total projection of the
