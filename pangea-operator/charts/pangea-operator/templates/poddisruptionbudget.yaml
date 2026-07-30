@@ -1,0 +1,41 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+{{- /*
+  The operator MUST survive node disruption, and the reason is measured, not
+  theoretical.
+
+  A reconcile cycle for a large workspace is minutes long: pleme-io-opensource
+  is 846 repos / ~2777 resources with a measured ~11m plan and ~11m apply. The
+  operator holds that cycle in-process. If the pod is evicted mid-apply it exits
+  cleanly (exit 0, "Shutdown signal received"), restarts, re-enters Planning, and
+  begins again from the top.
+
+  On a cluster with active node consolidation that is not a rare event. Observed
+  2026-07-30 on camelot-eks: 52 restarts in 23h, roughly one every 26 minutes,
+  against cycles that need ~22 minutes of uninterrupted life. The workspace sat
+  in `Applying` for 28 HOURS without ever converging, while every status signal
+  read healthy -- Healthy=True, SourceFresh=True, no escalations -- because the
+  FSM cannot distinguish a long apply from one that never gets to finish.
+
+  Neighbouring stateful workloads on that cluster (the operator's OWN Postgres,
+  mysql, redis) already carry a PDB. The operator did not, so it was the pod the
+  autoscaler could always take.
+
+  Raising phase timeouts does not fix this. The cycle is not timing out; it is
+  being killed. This is the fix.
+*/}}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "pangea-operator.fullname" . }}
+  labels:
+    {{- include "pangea-operator.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- else }}
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "pangea-operator.selectorLabels" . | nindent 6 }}
+{{- end }}

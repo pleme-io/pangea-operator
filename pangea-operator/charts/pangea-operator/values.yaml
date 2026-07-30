@@ -38,8 +38,31 @@ podAnnotations:
   prometheus.io/scrape: "true"
   prometheus.io/port: "9090"
   prometheus.io/path: "/metrics"
+  # A reconcile cycle is minutes long and lives in-process, so an eviction
+  # mid-apply throws the whole cycle away and restarts it from Planning. On a
+  # cluster with active consolidation that repeats indefinitely: observed 52
+  # restarts in 23h against ~22m cycles, leaving a workspace in `Applying` for
+  # 28 hours while every status signal read healthy. Node autoscalers honour
+  # this annotation; the PDB below covers voluntary eviction generally.
+  karpenter.sh/do-not-disrupt: "true"
 
 podLabels: {}
+
+# Voluntary-disruption protection for the operator pod.
+#
+# ON BY DEFAULT, deliberately. The failure it prevents is silent: the operator
+# exits 0 on SIGTERM, so an evicted cycle looks like a clean stop, the CR stays
+# in its phase, and Healthy stays True while nothing converges. A single-replica
+# operator with minAvailable 1 means voluntary eviction is refused rather than
+# merely retried.
+#
+# Set enabled false only where the operator is genuinely disposable, such as a
+# throwaway test cluster.
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+  # Used only when minAvailable is null.
+  maxUnavailable: null
 
 podSecurityContext:
   runAsNonRoot: true
