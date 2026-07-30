@@ -63,7 +63,7 @@ impl SynthesizerFormatController {
     }
 }
 
-#[instrument(skip(state), fields(name = %format.name_any()))]
+#[instrument(skip_all, fields(name = %format.name_any()))]
 async fn reconcile(
     format: Arc<SynthesizerFormat>,
     state: Arc<ControllerState>,

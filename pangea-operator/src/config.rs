@@ -206,6 +206,21 @@ pub struct ReconcileConfig {
     pub budget_per_workspace: usize,
     /// Global admission budget (`PANGEA_BUDGET_GLOBAL`).
     pub budget_global: usize,
+    /// How long shutdown waits for in-flight expensive phases (Compiling /
+    /// Planning / Applying) to finish before controllers are aborted
+    /// (`PANGEA_DRAIN_MAX_WAIT_SECS`).
+    ///
+    /// Lives here rather than in its own section because it bounds exactly
+    /// the work `budget_per_workspace`/`budget_global` admit — the drain
+    /// waits on that same permit count.
+    ///
+    /// The real ceiling is the pod's `terminationGracePeriodSeconds`: past
+    /// that the kubelet sends SIGKILL and the post-drain work (pool close,
+    /// final status write) is lost. The chart renders both from one value so
+    /// they cannot drift; the default here is sized to be safe under the
+    /// Kubernetes default grace period of 30s with reserve to spare, so an
+    /// operator deployed without the chart is still correct, just impatient.
+    pub drain_max_wait_secs: u64,
 }
 
 /// Tracing / OpenTelemetry.
@@ -437,6 +452,8 @@ struct ReconcileOverlay {
     budget_per_workspace: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     budget_global: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    drain_max_wait_secs: Option<u64>,
 }
 
 #[derive(Serialize, Default)]
@@ -517,6 +534,7 @@ impl EnvOverlay {
                 workers: env_parse::<usize>("PANGEA_RECONCILE_WORKERS").map(|n| n.clamp(1, 32)),
                 budget_per_workspace: env_parse::<usize>("PANGEA_BUDGET_PER_WORKSPACE"),
                 budget_global: env_parse::<usize>("PANGEA_BUDGET_GLOBAL"),
+                drain_max_wait_secs: env_parse::<u64>("PANGEA_DRAIN_MAX_WAIT_SECS"),
             },
             observability: ObservabilityOverlay {
                 log_format: env_present("LOG_FORMAT"),
@@ -585,6 +603,7 @@ impl TieredConfig for OperatorConfig {
                 workers: 0,
                 budget_per_workspace: 0,
                 budget_global: 0,
+                drain_max_wait_secs: 0,
             },
             observability: ObservabilityConfig {
                 log_format: String::new(),
@@ -656,6 +675,10 @@ impl TieredConfig for OperatorConfig {
             workers: 4,
             budget_per_workspace: 4,
             budget_global: 16,
+            // Safe under the Kubernetes default terminationGracePeriodSeconds
+            // of 30s, leaving 10s for the pool close and final status write.
+            // The chart raises this and the grace period together.
+            drain_max_wait_secs: 20,
         };
         c.observability = ObservabilityConfig {
             log_format: "pretty".to_string(),

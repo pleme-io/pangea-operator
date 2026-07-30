@@ -2,10 +2,12 @@
 //!
 //! Provides Prometheus metrics, OpenTelemetry tracing, and health endpoints.
 
+pub mod bounded_writer;
 mod metrics;
 mod tracing_setup;
 
 pub use metrics::{ActiveReconcileGuard, Metrics};
+pub use bounded_writer::{Bound, BoundedMakeWriter, ClipStats};
 pub use tracing_setup::init_tracing;
 
 use axum::{http::StatusCode, routing::get, Router};

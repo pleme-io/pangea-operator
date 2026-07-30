@@ -114,7 +114,7 @@ fn error_policy(
     )
 }
 
-#[instrument(skip(state), fields(name = %pd.name_any()))]
+#[instrument(skip_all, fields(name = %pd.name_any()))]
 async fn reconcile(
     pd: Arc<PangeaDashboard>,
     state: Arc<ControllerState>,

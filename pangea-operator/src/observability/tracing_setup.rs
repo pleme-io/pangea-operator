@@ -30,6 +30,21 @@ use opentelemetry::trace::TracerProvider as _;
 /// On success, the global subscriber is set; subsequent `tracing::*`
 /// macros emit through it. Returns an error only if the stdout layer
 /// itself fails to initialize.
+/// The stdout writer every fmt layer goes through, bounded per record.
+///
+/// Not an optimisation. `tracing`'s stdout writer is a synchronous mutex, so
+/// an oversized record is written on the tokio worker thread that emitted it
+/// and starves the runtime — including the liveness handler, which the kubelet
+/// then restarts the pod for, mid-cycle. See `observability::bounded_writer`
+/// for the 2026-07-30 incident this closes.
+fn bounded_stdout() -> crate::observability::bounded_writer::BoundedMakeWriter<fn() -> std::io::Stdout>
+{
+    crate::observability::bounded_writer::BoundedMakeWriter::new(
+        std::io::stdout as fn() -> std::io::Stdout,
+        crate::observability::bounded_writer::Bound::from_env(),
+    )
+}
+
 pub fn init_tracing() -> crate::error::Result<()> {
     let log_format = env::var("LOG_FORMAT").unwrap_or_else(|_| "pretty".to_string());
 
@@ -47,6 +62,7 @@ pub fn init_tracing() -> crate::error::Result<()> {
         // JSON + OTLP
         ("json", Some(endpoint)) => {
             let fmt_layer = fmt::layer()
+                .with_writer(bounded_stdout())
                 .json()
                 .with_target(true)
                 .with_thread_ids(true)
@@ -67,6 +83,7 @@ pub fn init_tracing() -> crate::error::Result<()> {
         // JSON only
         ("json", None) => {
             let fmt_layer = fmt::layer()
+                .with_writer(bounded_stdout())
                 .json()
                 .with_target(true)
                 .with_thread_ids(true)
@@ -77,7 +94,7 @@ pub fn init_tracing() -> crate::error::Result<()> {
         }
         // Pretty + OTLP
         (_, Some(endpoint)) => {
-            let fmt_layer = fmt::layer().pretty();
+            let fmt_layer = fmt::layer().with_writer(bounded_stdout()).pretty();
             match build_otlp_tracer(&endpoint) {
                 Ok(tracer) => {
                     let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
@@ -92,7 +109,7 @@ pub fn init_tracing() -> crate::error::Result<()> {
         }
         // Pretty only
         (_, None) => {
-            let fmt_layer = fmt::layer().pretty();
+            let fmt_layer = fmt::layer().with_writer(bounded_stdout()).pretty();
             registry.with(fmt_layer).init();
             info!("Tracing initialized (pretty)");
         }

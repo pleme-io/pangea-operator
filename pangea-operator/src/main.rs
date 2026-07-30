@@ -1,5 +1,6 @@
 //! Pangea Operator - Kubernetes operator for Pangea infrastructure management.
 
+use pangea_operator::drain::DrainOutcome;
 use pangea_operator::{
     controller::{
         AmiTestController, ComplianceBindingController, ComplianceScheduleController,
@@ -619,10 +620,41 @@ async fn main() -> Result<()> {
     // invariant) before their task is cancelled. Postgres itself rolls
     // back an uncommitted transaction on connection loss either way (no
     // half-applied state can persist), but a hard `.abort()` mid-cycle
-    // still discards otherwise-complete work that a short grace window
-    // lets finish and commit instead of being wastefully retried after
-    // restart.
-    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    // still discards otherwise-complete work that a grace window lets
+    // finish and commit instead of being wastefully retried after restart.
+    //
+    // This used to be an unconditional `sleep(5s)`, which was wrong in both
+    // directions: three orders of magnitude too short for a real cycle (a
+    // measured ~11m plan + ~11m apply on pleme-io-opensource), and pure
+    // latency for the far more common idle shutdown. It waits on the
+    // admission budget now — see `drain` for the incident that motivated it.
+    let drain_budget = std::time::Duration::from_secs(op_cfg.reconcile.drain_max_wait_secs);
+    let in_flight_budgets = state.workspace_budgets.clone();
+    match pangea_operator::drain::await_in_flight(
+        move || in_flight_budgets.total_in_flight(),
+        drain_budget,
+        std::time::Duration::from_secs(1),
+    )
+    .await
+    {
+        DrainOutcome::Idle => info!("No expensive phases in flight; draining immediately"),
+        DrainOutcome::Drained { waited } => info!(
+            waited_secs = waited.as_secs(),
+            "In-flight reconcile work committed before shutdown"
+        ),
+        // The case the old code hit on every single eviction, silently.
+        DrainOutcome::Deadline {
+            still_in_flight,
+            waited,
+        } => warn!(
+            still_in_flight,
+            waited_secs = waited.as_secs(),
+            drain_budget_secs = op_cfg.reconcile.drain_max_wait_secs,
+            "Drain deadline reached with work still running; aborting will discard these cycles \
+             and they will restart from the top. Raise podDisruptionBudget/terminationGracePeriod \
+             or shard the workspace if this recurs."
+        ),
+    }
 
     // Abort controllers (they run forever)
     template_controller.abort();

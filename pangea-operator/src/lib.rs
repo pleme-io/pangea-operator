@@ -44,6 +44,10 @@ pub mod chart_values;
 pub mod config;
 pub mod crd;
 pub mod controller;
+// Bounded, in-flight-aware shutdown drain — waits on the admission budget
+// instead of a fixed sleep, so an eviction mid-cycle stops discarding tens of
+// minutes of provider work. See src/drain.rs.
+pub mod drain;
 pub mod error;
 pub mod executor;
 pub mod executor_migration;

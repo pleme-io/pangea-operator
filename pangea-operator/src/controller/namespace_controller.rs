@@ -64,7 +64,7 @@ impl NamespaceController {
 }
 
 /// Reconcile a PangeaNamespace resource.
-#[instrument(skip(state), fields(name = %namespace.name_any()))]
+#[instrument(skip_all, fields(name = %namespace.name_any()))]
 async fn reconcile_namespace(
     namespace: Arc<PangeaNamespace>,
     state: Arc<ControllerState>,

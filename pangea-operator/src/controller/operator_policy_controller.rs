@@ -81,7 +81,7 @@ impl OperatorPolicyController {
     }
 }
 
-#[instrument(skip(state), fields(name = %policy.name_any()))]
+#[instrument(skip_all, fields(name = %policy.name_any()))]
 async fn reconcile(
     policy: Arc<OperatorPolicy>,
     state: Arc<ControllerState>,

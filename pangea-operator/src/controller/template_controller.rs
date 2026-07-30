@@ -288,7 +288,21 @@ mod configmap_watch_mapper_tests {
 }
 
 /// Reconcile an InfrastructureTemplate resource.
-#[instrument(skip(state), fields(name = %template.name_any(), namespace = ?template.namespace()))]
+// `skip_all`, never an enumerated `skip(...)`. `#[instrument]` Debug-records
+// every argument it is not told to skip, and the JSON formatter stamps the
+// resulting span fields onto EVERY event inside the span. A large CR (a
+// workspace carrying hundreds of DriftDetails) turned each ordinary INFO line
+// into ~49KB; tracing's stdout writer is a synchronous mutex, so the reconcile
+// path blocked tokio workers on log I/O until the liveness handler could not
+// be scheduled inside the kubelet's 5s timeout and the pod was restarted
+// mid-cycle, discarding ~22 minutes of plan+apply. See tests/
+// instrument_never_dumps_a_cr.rs for the full account.
+//
+// An enumerated skip-list is not enough: it is a snapshot of today's
+// arguments, so the next parameter added here silently reintroduces the bug.
+// `skip_all` is total — nothing is ever auto-recorded — and the explicit
+// `fields(...)` below carry the only identity anyone wanted.
+#[instrument(skip_all, fields(name = %template.name_any(), namespace = ?template.namespace()))]
 async fn reconcile_template(
     template: Arc<InfrastructureTemplate>,
     state: Arc<ControllerState>,

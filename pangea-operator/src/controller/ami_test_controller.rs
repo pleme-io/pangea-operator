@@ -75,7 +75,7 @@ impl AmiTestController {
     }
 }
 
-#[instrument(skip(state), fields(name = %test.name_any(), namespace = ?test.namespace()))]
+#[instrument(skip_all, fields(name = %test.name_any(), namespace = ?test.namespace()))]
 async fn reconcile_ami_test(
     test: Arc<AmiTest>,
     state: Arc<ControllerState>,
