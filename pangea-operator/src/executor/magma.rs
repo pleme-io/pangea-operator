@@ -827,12 +827,8 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
                         )
                         .await?;
                     return Err(Error::MagmaExecution(format!(
-                        "apply stalled after {cycles} cycle(s): the quantum \
-                         ({}s) cannot cover this cycle's fixed prologue, so \
-                         retrying unchanged cannot converge. Raise \
-                         PANGEA_MAGMA_APPLY_QUANTUM_SECS or reduce the \
-                         prologue. stats={stats:?}",
-                        quantum.as_duration().as_secs()
+                        "apply stalled after {cycles} cycle(s): {}. stats={stats:?}",
+                        diagnose_stall(&stats)
                     )));
                 }
             }
@@ -2271,6 +2267,86 @@ where
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
+
+
+/// Explain a `Stalled` cycle from what the cycle actually measured.
+///
+/// A stall means one thing mechanically -- a cycle completed zero nodes and so
+/// retrying it unchanged cannot converge -- but it has genuinely different
+/// causes, and the fix for one is a no-op for the others. This used to emit a
+/// single hardcoded sentence blaming the quantum for all of them:
+///
+/// > the quantum (120s) cannot cover this cycle's fixed prologue, so retrying
+/// > unchanged cannot converge. Raise PANGEA_MAGMA_APPLY_QUANTUM_SECS or
+/// > reduce the prologue.
+///
+/// Observed live on camelot-eks 2026-07-30 against
+/// `prologue_ms: 11, elapsed_ms: 9607, quantum_ms: Some(120000),
+/// nodes_attempted: 9, nodes_completed: 0`. The prologue was ELEVEN
+/// MILLISECONDS against a two-minute quantum and the cycle used 8% of its
+/// budget, so the stated cause was not merely unproven, it was contradicted by
+/// the numbers printed in the same string. Following the instruction (raising
+/// `PANGEA_MAGMA_APPLY_QUANTUM_SECS`) would have changed nothing, because the
+/// real problem was that all 9 attempted nodes failed.
+///
+/// So the message is derived from the evidence rather than asserted. The
+/// distinguishing signal is cheap: a prologue that genuinely does not fit
+/// leaves no room to attempt anything, whereas nodes that fail attempt work
+/// and complete none of it.
+fn diagnose_stall(stats: &magma_apply::CycleStats) -> String {
+    let quantum_ms = stats.quantum_ms.unwrap_or(0);
+
+    // The original hypothesis, now only claimed when it is actually true.
+    if quantum_ms > 0 && stats.prologue_ms >= quantum_ms {
+        return format!(
+            "the fixed prologue ({}ms) meets or exceeds the quantum ({}ms), so no \
+             cycle can reach its first mutation. Raise \
+             PANGEA_MAGMA_APPLY_QUANTUM_SECS above the prologue, or reduce the \
+             prologue",
+            stats.prologue_ms, quantum_ms
+        );
+    }
+
+    if stats.nodes_attempted > 0 && stats.nodes_completed == 0 {
+        let budget = if quantum_ms > 0 {
+            format!(
+                " The cycle used {}ms of its {}ms quantum, so the quantum is NOT the \
+                 constraint and raising it will not help.",
+                stats.elapsed_ms, quantum_ms
+            )
+        } else {
+            String::new()
+        };
+        return format!(
+            "all {} attempted node(s) failed and {} completed ({} still remaining), so \
+             retrying unchanged cannot converge. This is a per-resource apply failure, \
+             not a scheduling problem: look at the provider errors for those nodes.{}",
+            stats.nodes_attempted, stats.nodes_completed, stats.nodes_remaining, budget
+        );
+    }
+
+    if stats.nodes_attempted == 0 {
+        return format!(
+            "no node was attempted at all across {} wave(s) (max wave width {}), so the \
+             cycle had nothing it could run. Suspect the dependency graph or the \
+             frontier cursor rather than any timing knob",
+            stats.waves_entered, stats.max_wave_width
+        );
+    }
+
+    // Completed > 0 yet still classified as stalled: not a shape this function
+    // claims to understand, and saying so beats inventing a cause.
+    format!(
+        "cycle made no forward progress for reasons not covered by the known stall \
+         shapes ({} attempted, {} completed, {} remaining, {}ms elapsed of {}ms \
+         quantum). Read the raw stats below rather than trusting this sentence",
+        stats.nodes_attempted,
+        stats.nodes_completed,
+        stats.nodes_remaining,
+        stats.elapsed_ms,
+        quantum_ms
+    )
+}
 
 #[cfg(test)]
 mod tests {
@@ -3965,5 +4041,100 @@ BUNDLED WITH
         let summary = &parsed["drift"]["summary"];
         assert_eq!(summary["total_changes"], 1);
         assert_eq!(summary["auto_corrected_with_alert"], 1);
+    }
+}
+
+#[cfg(test)]
+mod stall_diagnosis_tests {
+    use super::diagnose_stall;
+    use magma_apply::CycleStats;
+
+    /// The exact stats from camelot-eks 2026-07-30. The old message told the
+    /// reader to raise the quantum; these numbers say the quantum was 92%
+    /// unused. This test exists so that advice can never come back.
+    #[test]
+    fn the_live_stall_is_not_blamed_on_the_quantum() {
+        let stats = CycleStats {
+            prologue_ms: 11,
+            elapsed_ms: 9607,
+            quantum_ms: Some(120_000),
+            nodes_attempted: 9,
+            nodes_completed: 0,
+            nodes_remaining: 9,
+            waves_entered: 2,
+            max_wave_width: 8,
+            node_rpc_ms_total: 9038,
+            ..Default::default()
+        };
+        let msg = diagnose_stall(&stats);
+
+        assert!(
+            msg.contains("all 9 attempted node(s) failed"),
+            "must name the real cause, got: {msg}"
+        );
+        assert!(
+            msg.contains("raising it will not help"),
+            "must say the quantum is not the constraint, got: {msg}"
+        );
+        assert!(
+            !msg.contains("PANGEA_MAGMA_APPLY_QUANTUM_SECS"),
+            "must NOT send the reader to a knob that cannot help, got: {msg}"
+        );
+    }
+
+    /// The original hypothesis is still reachable -- when it is actually true.
+    #[test]
+    fn a_prologue_that_really_does_not_fit_still_says_so() {
+        let stats = CycleStats {
+            prologue_ms: 130_000,
+            elapsed_ms: 130_000,
+            quantum_ms: Some(120_000),
+            nodes_attempted: 0,
+            ..Default::default()
+        };
+        let msg = diagnose_stall(&stats);
+        assert!(msg.contains("prologue"), "got: {msg}");
+        assert!(
+            msg.contains("PANGEA_MAGMA_APPLY_QUANTUM_SECS"),
+            "this is the one case where that knob IS the fix, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn nothing_attempted_points_at_the_graph_not_a_timer() {
+        let stats = CycleStats {
+            prologue_ms: 5,
+            elapsed_ms: 40,
+            quantum_ms: Some(120_000),
+            nodes_attempted: 0,
+            waves_entered: 1,
+            max_wave_width: 0,
+            ..Default::default()
+        };
+        let msg = diagnose_stall(&stats);
+        assert!(msg.contains("no node was attempted"), "got: {msg}");
+        assert!(
+            !msg.contains("PANGEA_MAGMA_APPLY_QUANTUM_SECS"),
+            "a timing knob cannot fix an empty wave, got: {msg}"
+        );
+    }
+
+    /// An unrecognised shape must admit that rather than pick a cause.
+    #[test]
+    fn an_unknown_shape_says_it_is_unknown() {
+        let stats = CycleStats {
+            prologue_ms: 5,
+            elapsed_ms: 100,
+            quantum_ms: Some(120_000),
+            nodes_attempted: 4,
+            nodes_completed: 2,
+            nodes_remaining: 2,
+            ..Default::default()
+        };
+        let msg = diagnose_stall(&stats);
+        assert!(
+            msg.contains("not covered by the known stall shapes"),
+            "got: {msg}"
+        );
     }
 }
