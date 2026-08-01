@@ -1133,7 +1133,7 @@ fn to_universal_plan(plan: &magma_types::Plan) -> magma_converge::Plan {
         .resource_changes
         .iter()
         .map(|rc| {
-            let address = format!("{}.{}", rc.address.type_id.0, rc.address.name);
+            let address = rc.address.to_string();
             let action = match rc.action {
                 magma_types::Action::Create           => magma_converge::Action::Create,
                 magma_types::Action::Update           => magma_converge::Action::Update,
@@ -1284,7 +1284,7 @@ fn planned_changes_from_magma_plan(
     plan.resource_changes
         .iter()
         .map(|rc| PlannedChange {
-            address: format!("{}.{}", rc.address.type_id.0, rc.address.name),
+            address: rc.address.to_string(),
             action: PlanAction::from(&rc.action),
             after: rc.after.clone(),
             kind: ResourceKindClass::from(&rc.address.kind),
@@ -1864,7 +1864,7 @@ where
             plan_id:     plan_phase_id.clone(),
             kind:        "terraform".into(),
             applied:     outcome.applied.iter().map(|a| magma_converge::AppliedChange {
-                address: format!("{}.{}", a.address.type_id.0, a.address.name),
+                address: a.address.to_string(),
                 action:  match a.action {
                     magma_types::Action::Create  => magma_converge::Action::Create,
                     magma_types::Action::Update  => magma_converge::Action::Update,
@@ -1874,7 +1874,7 @@ where
                 },
             }).collect(),
             failed: outcome.failed.iter().map(|f| magma_converge::FailedChange {
-                address: format!("{}.{}", f.address.type_id.0, f.address.name),
+                address: f.address.to_string(),
                 action:  match f.action {
                     magma_types::Action::Create  => magma_converge::Action::Create,
                     magma_types::Action::Update  => magma_converge::Action::Update,
@@ -1971,7 +1971,7 @@ where
                 .failed
                 .iter()
                 .map(|f| crate::executor::tofu::FailedChangeRecord {
-                    address: format!("{}.{}", f.address.type_id.0, f.address.name),
+                    address: f.address.to_string(),
                     action: f.action.to_string(),
                     reason: f.reason.clone(),
                 })

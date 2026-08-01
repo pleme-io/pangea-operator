@@ -372,7 +372,7 @@ impl CycleArtifact {
                 // tofu show-json shape exactly so consumers can
                 // compare artifacts across executors. The existing
                 // `to_universal_plan` (magma.rs) uses the same form.
-                let address = format!("{}.{}", rc.address.type_id.0, rc.address.name);
+                let address = rc.address.to_string();
                 let action = match rc.action {
                     magma_types::Action::Create           => PlanAction::Create,
                     magma_types::Action::Update           => PlanAction::Update,
