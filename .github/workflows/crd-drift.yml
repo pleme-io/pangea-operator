@@ -74,8 +74,18 @@ jobs:
           repository: pleme-io/helmworks
           path: _helmworks
 
-      - name: PyYAML
-        run: python3 -m pip install --quiet pyyaml
+      # Nix-provided python, for the SAME reason the C toolchain above is
+      # Nix-provided: this job runs on `camelot-builder-pleme-eks`, an ARC
+      # container image, and it has no ambient package manager. The previous
+      # `python3 -m pip install pyyaml` died on
+      # `/usr/bin/python3: No module named pip` — a self-hosted-runner
+      # assumption that only ever held on a GitHub-hosted image.
+      - name: Put a Nix-provided python3 (with PyYAML) on PATH
+        run: >-
+          echo "$(nix build --no-link --print-out-paths --impure --expr
+          'with (builtins.getFlake "nixpkgs").legacyPackages.${builtins.currentSystem};
+           python3.withPackages (ps: [ ps.pyyaml ])')/bin"
+          >> "$GITHUB_PATH"
 
       - name: CRD drift gate
         run: |
