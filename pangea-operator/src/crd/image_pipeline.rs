@@ -15,10 +15,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use strum::Display;
 
-use super::{
-    Condition, ProviderCredentials, SecretRef, TemplateObjectRef, TemplateSource,
-};
 use super::ami_test::{FailurePolicy, TestSuite};
+use super::{Condition, ProviderCredentials, SecretRef, TemplateObjectRef, TemplateSource};
 
 /// ImagePipeline orchestrates the full AMI lifecycle:
 /// build → test → deploy → verify → complete (or rollback).
@@ -362,7 +360,9 @@ pub enum RollbackTrigger {
 // ---------------------------------------------------------------------------
 
 /// Lifecycle phase of an ImagePipeline.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, Default,
+)]
 pub enum ImagePipelinePhase {
     /// Initial state.
     #[default]
@@ -577,7 +577,10 @@ mod tests {
         // "webhook" above — silently behaved like "manual" and the
         // pipeline hung in AwaitingApproval forever with zero error.
         let err = mode("Auto").kind().unwrap_err();
-        assert!(err.contains("Auto"), "error should name the bad value: {err}");
+        assert!(
+            err.contains("Auto"),
+            "error should name the bad value: {err}"
+        );
         assert!(err.contains("auto") && err.contains("manual") && err.contains("webhook"));
     }
 

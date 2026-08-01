@@ -36,9 +36,10 @@ pub mod fixture;
 pub mod value;
 
 pub use evaluator::{
-    detect_load_path_conflicts, module_name_to_require_path, plan_load_paths, workspace_mirrors_gem,
-    CompileContext, Conflict, ConflictDetector, ContextWarnings, LoadPathConflict,
-    LoadPathConflictDetector, LoadPathEntry, LoadPathPlan, LoadPathSource, RubyEvaluator,
+    detect_load_path_conflicts, module_name_to_require_path, plan_load_paths,
+    workspace_mirrors_gem, CompileContext, Conflict, ConflictDetector, ContextWarnings,
+    LoadPathConflict, LoadPathConflictDetector, LoadPathEntry, LoadPathPlan, LoadPathSource,
+    RubyEvaluator,
 };
 pub use fixture::{parse_yaml_fixture, short_sha256_hex, ParsedFixture};
 pub use value::{json_to_ruby, ruby_hash_to_json, ruby_value_to_json, JsonHash};
@@ -124,9 +125,7 @@ mod tests {
     }
 
     fn step_string(ruby: &magnus::Ruby) {
-        let result: String = ruby
-            .eval(r#""hello, " + "pangea""#)
-            .expect("string concat");
+        let result: String = ruby.eval(r#""hello, " + "pangea""#).expect("string concat");
         assert_eq!(result, "hello, pangea");
     }
 
@@ -212,17 +211,11 @@ mod tests {
         std::env::remove_var(key);
 
         evaluator
-            .with_env(
-                &[(key.to_string(), "hello".to_string())],
-                |ev| {
-                    let v: String = ev
-                        .ruby()
-                        .eval(&format!(r#"ENV.fetch("{key}")"#))
-                        .unwrap();
-                    assert_eq!(v, "hello");
-                    Ok(())
-                },
-            )
+            .with_env(&[(key.to_string(), "hello".to_string())], |ev| {
+                let v: String = ev.ruby().eval(&format!(r#"ENV.fetch("{key}")"#)).unwrap();
+                assert_eq!(v, "hello");
+                Ok(())
+            })
             .unwrap();
 
         assert!(

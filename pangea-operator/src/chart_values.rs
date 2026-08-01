@@ -143,18 +143,30 @@ pub struct OperatorPolicyValues {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ControllerSuspendValues {
-    #[serde(default)] pub template: bool,
-    #[serde(default)] pub namespace: bool,
-    #[serde(default)] pub workspace_catalog: bool,
-    #[serde(default)] pub architecture_gem: bool,
-    #[serde(default)] pub compliance_binding: bool,
-    #[serde(default)] pub compliance_schedule: bool,
-    #[serde(default)] pub image_pipeline: bool,
-    #[serde(default)] pub flow: bool,
-    #[serde(default)] pub dashboard: bool,
-    #[serde(default)] pub ami_test: bool,
-    #[serde(default)] pub packer_build: bool,
-    #[serde(default)] pub synthesizer_format: bool,
+    #[serde(default)]
+    pub template: bool,
+    #[serde(default)]
+    pub namespace: bool,
+    #[serde(default)]
+    pub workspace_catalog: bool,
+    #[serde(default)]
+    pub architecture_gem: bool,
+    #[serde(default)]
+    pub compliance_binding: bool,
+    #[serde(default)]
+    pub compliance_schedule: bool,
+    #[serde(default)]
+    pub image_pipeline: bool,
+    #[serde(default)]
+    pub flow: bool,
+    #[serde(default)]
+    pub dashboard: bool,
+    #[serde(default)]
+    pub ami_test: bool,
+    #[serde(default)]
+    pub packer_build: bool,
+    #[serde(default)]
+    pub synthesizer_format: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]

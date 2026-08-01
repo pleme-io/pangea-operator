@@ -32,9 +32,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
-use crate::crd::architecture_gem::{
-    ArchitectureGem, Condition, Phase as GemPhase,
-};
+use crate::crd::architecture_gem::{ArchitectureGem, Condition, Phase as GemPhase};
 use crate::crd::workspace_catalog::{WorkspaceCatalog, WorkspaceCatalogStatus};
 use crate::crd::InfrastructureTemplate;
 use futures::StreamExt;
@@ -103,11 +101,9 @@ async fn reconcile(wsc: Arc<WorkspaceCatalog>, ctx: Arc<Context>) -> Result<Acti
     // → globalSuspend) — `Active` carves this catalog out of a more-
     // general pause; `Paused` freezes it regardless. Cache-only
     // variant (no metrics handle in this context).
-    if let Some(action) = crate::controller::policy_pipeline::run_for_catalog_with_cache(
-        &ctx.operator_policy,
-        &name,
-    )
-    .into_skip_action()
+    if let Some(action) =
+        crate::controller::policy_pipeline::run_for_catalog_with_cache(&ctx.operator_policy, &name)
+            .into_skip_action()
     {
         return Ok(action);
     }
@@ -225,11 +221,7 @@ fn gems_loaded_reason(missing: &[String], not_loaded: &[String]) -> &'static str
     }
 }
 
-fn gems_loaded_message(
-    required: &[String],
-    missing: &[String],
-    not_loaded: &[String],
-) -> String {
+fn gems_loaded_message(required: &[String], missing: &[String], not_loaded: &[String]) -> String {
     if !missing.is_empty() {
         format!(
             "{} required gem(s) have no ArchitectureGem CR: {}",
@@ -269,7 +261,8 @@ async fn patch_status_if_changed(
             return Ok(());
         }
     }
-    crate::controller::status::patch_status::<WorkspaceCatalog, _>(client, name, &new_status).await?;
+    crate::controller::status::patch_status::<WorkspaceCatalog, _>(client, name, &new_status)
+        .await?;
     Ok(())
 }
 
@@ -357,7 +350,11 @@ mod tests {
         assert_eq!(merged[0].last_transition_time, new_ts);
     }
 
-    fn mk_status(template_count: u32, verified: bool, conds: Vec<Condition>) -> WorkspaceCatalogStatus {
+    fn mk_status(
+        template_count: u32,
+        verified: bool,
+        conds: Vec<Condition>,
+    ) -> WorkspaceCatalogStatus {
         WorkspaceCatalogStatus {
             template_count,
             verified,
@@ -413,22 +410,14 @@ mod tests {
 
     #[test]
     fn gems_loaded_message_lists_missing() {
-        let m = gems_loaded_message(
-            &["a".into(), "b".into()],
-            &["a".into()],
-            &[],
-        );
+        let m = gems_loaded_message(&["a".into(), "b".into()], &["a".into()], &[]);
         assert!(m.contains("a"));
         assert!(m.contains("1 required gem"));
     }
 
     #[test]
     fn gems_loaded_message_lists_not_loaded() {
-        let m = gems_loaded_message(
-            &["a".into(), "b".into()],
-            &[],
-            &["b".into()],
-        );
+        let m = gems_loaded_message(&["a".into(), "b".into()], &[], &["b".into()]);
         assert!(m.contains("b"));
         assert!(m.contains("not phase=Loaded"));
     }

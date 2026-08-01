@@ -56,19 +56,14 @@ impl RubyPool {
     /// `n_workers` is clamped to `[1, 32]`. Zero is silently bumped
     /// to 1; values beyond 32 are likely a config typo (more VMs
     /// than CPUs would just thrash).
-    pub async fn spawn(
-        n_workers: usize,
-        gem_paths: Vec<PathBuf>,
-    ) -> Result<Self, BackendError> {
+    pub async fn spawn(n_workers: usize, gem_paths: Vec<PathBuf>) -> Result<Self, BackendError> {
         let n = n_workers.clamp(1, 32);
         info!(workers = n, "Spawning ruby pool");
 
         // Boot all workers in parallel — each spawn waits for its
         // own boot ack, but we can do them concurrently.
-        let workers: Vec<RubyOwner> = try_join_all(
-            (0..n).map(|_| RubyOwner::spawn(gem_paths.clone()))
-        )
-        .await?;
+        let workers: Vec<RubyOwner> =
+            try_join_all((0..n).map(|_| RubyOwner::spawn(gem_paths.clone()))).await?;
 
         info!(workers = n, "Ruby pool ready");
         Ok(Self {
@@ -101,18 +96,18 @@ impl RubyPool {
     /// gem. The `gem_cache` itself is filesystem-shared (one
     /// emptyDir mount across all workers in this process), so the
     /// clone happens once; the load-path update has to fan out.
-    pub async fn broadcast_prepend_load_path(
-        &self,
-        path: PathBuf,
-    ) -> Result<(), BackendError> {
+    pub async fn broadcast_prepend_load_path(&self, path: PathBuf) -> Result<(), BackendError> {
         try_join_all(self.workers.iter().map(|worker| {
             let p = path.clone();
             let tx = worker.tx_handle();
             async move {
                 let (rtx, rrx) = oneshot::channel();
-                tx.send(RubyRequest::PrependLoadPath { path: p, respond: rtx })
-                    .await
-                    .map_err(|_| BackendError::Ruby("ruby owner channel closed".into()))?;
+                tx.send(RubyRequest::PrependLoadPath {
+                    path: p,
+                    respond: rtx,
+                })
+                .await
+                .map_err(|_| BackendError::Ruby("ruby owner channel closed".into()))?;
                 rrx.await
                     .map_err(|_| BackendError::Ruby("prepend reply lost".into()))?
             }

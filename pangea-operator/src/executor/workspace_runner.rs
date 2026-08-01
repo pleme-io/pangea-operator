@@ -105,14 +105,14 @@ pub struct PlanResult {
 /// that errored during apply (empty on success).
 #[derive(Debug)]
 pub struct ApplyResult {
-    pub artifact:   Option<CycleArtifact>,
+    pub artifact: Option<CycleArtifact>,
     pub raw_stdout: String,
     /// Resource addresses that errored during apply. Empty on
     /// success; populated from the executor's failure output. Used
     /// by `cycle_receipts` to mark per-resource Failed outcomes.
-    pub failed:     Vec<String>,
+    pub failed: Vec<String>,
     /// Was the apply successful overall?
-    pub success:    bool,
+    pub success: bool,
 }
 
 /// Result of a `WorkspaceRunner::compile` call.
@@ -133,11 +133,11 @@ pub struct CompileResult {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
     pub severity: Severity,
-    pub message:  String,
+    pub message: String,
     /// Optional resource address the diagnostic refers to. Magma's
     /// preflight violations often name a specific resource;
     /// `tofu validate` diagnostics often don't.
-    pub address:  Option<String>,
+    pub address: Option<String>,
 }
 
 /// The typed, executor-agnostic abstraction the controller's phase
@@ -256,7 +256,10 @@ impl WorkspaceRunner for TofuWorkspaceRunner {
 
     async fn plan(&self, workspace: &Workspace) -> Result<PlanResult> {
         let plan_path = workspace.plan_path();
-        let plan = self.inner.plan(&workspace.path, Some(&plan_path), &[]).await?;
+        let plan = self
+            .inner
+            .plan(&workspace.path, Some(&plan_path), &[])
+            .await?;
         // `-detailed-exitcode == 2` means "changes pending". 0 means
         // success no changes; 1 means error.
         let has_changes = plan.exit_code == 2;
@@ -267,7 +270,7 @@ impl WorkspaceRunner for TofuWorkspaceRunner {
         // evaluation) need the raw form until they migrate to the
         // typed `CycleArtifact.resource_changes` path.
         let raw_show_json = match self.inner.show_plan(&workspace.path, &plan_path).await {
-            Ok(r)  => r.stdout,
+            Ok(r) => r.stdout,
             Err(_) => String::new(),
         };
         let artifact = CycleArtifact::from_tofu_plan_show_json(&raw_show_json);
@@ -284,16 +287,19 @@ impl WorkspaceRunner for TofuWorkspaceRunner {
 
     async fn apply(&self, workspace: &Workspace, auto_approve: bool) -> Result<ApplyResult> {
         let plan_path = workspace.plan_path();
-        let r = self.inner.apply(&workspace.path, Some(&plan_path), auto_approve).await?;
+        let r = self
+            .inner
+            .apply(&workspace.path, Some(&plan_path), auto_approve)
+            .await?;
         // Tofu apply has no native "artifact" — the post-apply re-plan
         // would produce one, but slice 2b doesn't run it. Returns
         // None; slice 2c's handle_applying explicitly re-plans + uses
         // the new artifact.
         Ok(ApplyResult {
-            artifact:   None,
-            failed:     extract_failed_addresses_from_tofu(&r),
+            artifact: None,
+            failed: extract_failed_addresses_from_tofu(&r),
             raw_stdout: r.stdout,
-            success:    r.success,
+            success: r.success,
         })
     }
 
@@ -314,10 +320,10 @@ impl WorkspaceRunner for TofuWorkspaceRunner {
         }
         let r = self.inner.destroy(&workspace.path, auto_approve).await?;
         Ok(ApplyResult {
-            artifact:   None,
-            failed:     extract_failed_addresses_from_tofu(&r),
+            artifact: None,
+            failed: extract_failed_addresses_from_tofu(&r),
             raw_stdout: r.stdout,
-            success:    r.success,
+            success: r.success,
         })
     }
 
@@ -394,7 +400,11 @@ impl MagmaWorkspaceRunner {
         artifact_store: Option<Arc<crate::backend::ArtifactStore>>,
         timeout: std::time::Duration,
     ) -> Self {
-        Self { inner, artifact_store, timeout }
+        Self {
+            inner,
+            artifact_store,
+            timeout,
+        }
     }
 
     /// Run `fut` bounded by `self.timeout`; a hang becomes a typed,
@@ -458,7 +468,10 @@ impl WorkspaceRunner for MagmaWorkspaceRunner {
     async fn apply(&self, workspace: &Workspace, auto_approve: bool) -> Result<ApplyResult> {
         let plan_path = workspace.path.join("magma-plan.json");
         let r = self
-            .bounded(self.inner.apply(&workspace.path, Some(&plan_path), auto_approve))
+            .bounded(
+                self.inner
+                    .apply(&workspace.path, Some(&plan_path), auto_approve),
+            )
             .await?;
         // DB-backed path: the post-apply bundle is committed to Postgres
         // (atomically with state via `put_apply_result`); there is no
@@ -473,9 +486,9 @@ impl WorkspaceRunner for MagmaWorkspaceRunner {
         };
         Ok(ApplyResult {
             artifact,
-            failed:     Vec::new(), // magma surfaces failures via Error::MagmaExecution today
+            failed: Vec::new(), // magma surfaces failures via Error::MagmaExecution today
             raw_stdout: r.stdout,
-            success:    r.success,
+            success: r.success,
         })
     }
 
@@ -489,12 +502,14 @@ impl WorkspaceRunner for MagmaWorkspaceRunner {
         // `.terraform` — that guard is permanently false for magma
         // (`init` is a documented no-op) and was silently skipping every
         // magma destroy fleet-wide.
-        let r = self.bounded(self.inner.destroy(&workspace.path, auto_approve)).await?;
+        let r = self
+            .bounded(self.inner.destroy(&workspace.path, auto_approve))
+            .await?;
         Ok(ApplyResult {
-            artifact:   None,
-            failed:     Vec::new(),
+            artifact: None,
+            failed: Vec::new(),
             raw_stdout: r.stdout,
-            success:    r.success,
+            success: r.success,
         })
     }
 
@@ -623,7 +638,10 @@ mod tests {
         let workspace = manager.get_or_create("ns", "fast-plan").await.unwrap();
 
         let result = runner.plan(&workspace).await;
-        assert!(result.is_ok(), "expected success within timeout, got {result:?}");
+        assert!(
+            result.is_ok(),
+            "expected success within timeout, got {result:?}"
+        );
     }
 
     /// Regression test for the fleet-wide bug where `handle_destroying`
@@ -642,14 +660,26 @@ mod tests {
 
         let tmp = tempfile::tempdir().unwrap();
         let manager = WorkspaceManager::new(tmp.path().to_path_buf());
-        let workspace = manager.get_or_create("ns", "never-initialized").await.unwrap();
-        assert!(!workspace.file_exists(".terraform"), "fixture must start uninitialized");
+        let workspace = manager
+            .get_or_create("ns", "never-initialized")
+            .await
+            .unwrap();
+        assert!(
+            !workspace.file_exists(".terraform"),
+            "fixture must start uninitialized"
+        );
 
         let result = runner.destroy(&workspace, true).await.unwrap();
-        assert!(result.success, "destroy against a never-initialized tofu workspace must succeed");
+        assert!(
+            result.success,
+            "destroy against a never-initialized tofu workspace must succeed"
+        );
 
-        let calls: Vec<&'static str> =
-            recorder.recorded_calls().iter().map(|c| c.command).collect();
+        let calls: Vec<&'static str> = recorder
+            .recorded_calls()
+            .iter()
+            .map(|c| c.command)
+            .collect();
         assert_eq!(
             calls,
             vec!["init", "destroy"],
@@ -668,15 +698,27 @@ mod tests {
 
         let tmp = tempfile::tempdir().unwrap();
         let manager = WorkspaceManager::new(tmp.path().to_path_buf());
-        let workspace = manager.get_or_create("ns", "already-initialized").await.unwrap();
-        tokio::fs::create_dir(workspace.path.join(".terraform")).await.unwrap();
+        let workspace = manager
+            .get_or_create("ns", "already-initialized")
+            .await
+            .unwrap();
+        tokio::fs::create_dir(workspace.path.join(".terraform"))
+            .await
+            .unwrap();
 
         let result = runner.destroy(&workspace, true).await.unwrap();
         assert!(result.success);
 
-        let calls: Vec<&'static str> =
-            recorder.recorded_calls().iter().map(|c| c.command).collect();
-        assert_eq!(calls, vec!["destroy"], "an already-initialized workspace must not re-init: got {calls:?}");
+        let calls: Vec<&'static str> = recorder
+            .recorded_calls()
+            .iter()
+            .map(|c| c.command)
+            .collect();
+        assert_eq!(
+            calls,
+            vec!["destroy"],
+            "an already-initialized workspace must not re-init: got {calls:?}"
+        );
     }
 
     #[test]
@@ -684,14 +726,21 @@ mod tests {
         let r = TofuResult {
             exit_code: 1,
             stdout: "Error: github_repository.foo: provider error: rate limit\n\
-                     Error: github_team.bar: not found".to_string(),
+                     Error: github_team.bar: not found"
+                .to_string(),
             stderr: String::new(),
             success: false,
             duration: std::time::Duration::from_secs(1),
             failed_changes: Vec::new(),
         };
         let addrs = extract_failed_addresses_from_tofu(&r);
-        assert_eq!(addrs, vec!["github_repository.foo".to_string(), "github_team.bar".to_string()]);
+        assert_eq!(
+            addrs,
+            vec![
+                "github_repository.foo".to_string(),
+                "github_team.bar".to_string()
+            ]
+        );
     }
 
     #[test]

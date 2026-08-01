@@ -65,7 +65,9 @@ pub fn for_phase(phase: Phase) -> Option<Box<dyn ReconcilePhase>> {
 pub struct PendingPhase;
 #[async_trait::async_trait]
 impl ReconcilePhase for PendingPhase {
-    fn name(&self) -> &'static str { "pending" }
+    fn name(&self) -> &'static str {
+        "pending"
+    }
     async fn handle(
         &self,
         template: &InfrastructureTemplate,
@@ -78,7 +80,9 @@ impl ReconcilePhase for PendingPhase {
 pub struct CompilingPhase;
 #[async_trait::async_trait]
 impl ReconcilePhase for CompilingPhase {
-    fn name(&self) -> &'static str { "compiling" }
+    fn name(&self) -> &'static str {
+        "compiling"
+    }
     async fn handle(
         &self,
         template: &InfrastructureTemplate,
@@ -91,7 +95,9 @@ impl ReconcilePhase for CompilingPhase {
 pub struct InitializingPhase;
 #[async_trait::async_trait]
 impl ReconcilePhase for InitializingPhase {
-    fn name(&self) -> &'static str { "initializing" }
+    fn name(&self) -> &'static str {
+        "initializing"
+    }
     async fn handle(
         &self,
         template: &InfrastructureTemplate,
@@ -104,7 +110,9 @@ impl ReconcilePhase for InitializingPhase {
 pub struct PlanningPhase;
 #[async_trait::async_trait]
 impl ReconcilePhase for PlanningPhase {
-    fn name(&self) -> &'static str { "planning" }
+    fn name(&self) -> &'static str {
+        "planning"
+    }
     async fn handle(
         &self,
         template: &InfrastructureTemplate,
@@ -117,7 +125,9 @@ impl ReconcilePhase for PlanningPhase {
 pub struct ApplyingPhase;
 #[async_trait::async_trait]
 impl ReconcilePhase for ApplyingPhase {
-    fn name(&self) -> &'static str { "applying" }
+    fn name(&self) -> &'static str {
+        "applying"
+    }
     async fn handle(
         &self,
         template: &InfrastructureTemplate,
@@ -130,7 +140,9 @@ impl ReconcilePhase for ApplyingPhase {
 pub struct ReadyPhase;
 #[async_trait::async_trait]
 impl ReconcilePhase for ReadyPhase {
-    fn name(&self) -> &'static str { "ready" }
+    fn name(&self) -> &'static str {
+        "ready"
+    }
     async fn handle(
         &self,
         template: &InfrastructureTemplate,
@@ -143,7 +155,9 @@ impl ReconcilePhase for ReadyPhase {
 pub struct DriftedPhase;
 #[async_trait::async_trait]
 impl ReconcilePhase for DriftedPhase {
-    fn name(&self) -> &'static str { "drifted" }
+    fn name(&self) -> &'static str {
+        "drifted"
+    }
     async fn handle(
         &self,
         template: &InfrastructureTemplate,
@@ -156,7 +170,9 @@ impl ReconcilePhase for DriftedPhase {
 pub struct FailedPhase;
 #[async_trait::async_trait]
 impl ReconcilePhase for FailedPhase {
-    fn name(&self) -> &'static str { "failed" }
+    fn name(&self) -> &'static str {
+        "failed"
+    }
     async fn handle(
         &self,
         template: &InfrastructureTemplate,
@@ -169,7 +185,9 @@ impl ReconcilePhase for FailedPhase {
 pub struct CompileBlockedPhase;
 #[async_trait::async_trait]
 impl ReconcilePhase for CompileBlockedPhase {
-    fn name(&self) -> &'static str { "compileblocked" }
+    fn name(&self) -> &'static str {
+        "compileblocked"
+    }
     async fn handle(
         &self,
         template: &InfrastructureTemplate,
@@ -182,7 +200,9 @@ impl ReconcilePhase for CompileBlockedPhase {
 pub struct DestroyingPhase;
 #[async_trait::async_trait]
 impl ReconcilePhase for DestroyingPhase {
-    fn name(&self) -> &'static str { "destroying" }
+    fn name(&self) -> &'static str {
+        "destroying"
+    }
     async fn handle(
         &self,
         template: &InfrastructureTemplate,

@@ -121,16 +121,10 @@ impl RubyOwner {
     /// Convenience: prepend `path/lib` (the gem's standard public-API
     /// location) to `$LOAD_PATH` so subsequent requires resolve.
     /// Used by the gem-cache integration after a fresh clone.
-    pub async fn prepend_load_path(
-        &self,
-        path: std::path::PathBuf,
-    ) -> Result<(), BackendError> {
+    pub async fn prepend_load_path(&self, path: std::path::PathBuf) -> Result<(), BackendError> {
         let (rtx, rrx) = oneshot::channel();
         self.tx
-            .send(RubyRequest::PrependLoadPath {
-                path,
-                respond: rtx,
-            })
+            .send(RubyRequest::PrependLoadPath { path, respond: rtx })
             .await
             .map_err(|_| BackendError::Ruby("ruby owner channel closed".into()))?;
         rrx.await
@@ -177,7 +171,10 @@ fn run_owner_loop(
     // to keep this file's surface narrow — pangea-ruby-eval's API is
     // the seam.
     for p in gem_paths.iter().rev() {
-        let escaped = p.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"");
+        let escaped = p
+            .to_string_lossy()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
         let src = format!(r#"$LOAD_PATH.unshift("{escaped}")"#);
         if let Err(e) = evaluator.eval_string(&src) {
             let _ = boot_tx.send(Err(format!("$LOAD_PATH.unshift: {e}")));
@@ -239,10 +236,7 @@ fn run_owner_loop(
 /// In-process equivalent of `GET /v1/architectures?gem=<gem>`.
 ///
 /// Mirrors `pangea-compiler/app.rb` lines 265-291.
-fn list_architectures(
-    evaluator: &RubyEvaluator,
-    gem: &str,
-) -> Result<ArchListing, BackendError> {
+fn list_architectures(evaluator: &RubyEvaluator, gem: &str) -> Result<ArchListing, BackendError> {
     // Try requiring the gem under both the dashed name (canonical
     // gem name; matches the existing pangea-compiler bundler path)
     // and the slashed form (matches gems whose entry file is at
@@ -251,7 +245,8 @@ fn list_architectures(
     // Missing-gem is a typed condition the controller surfaces.
     let dashed = gem.replace('\'', "\\'");
     let slashed = gem.replace('-', "/").replace('\'', "\\'");
-    let require_src = format!(r#"
+    let require_src = format!(
+        r#"
       loaded = false
       ['{dashed}', '{slashed}'].each do |require_path|
         begin
@@ -263,7 +258,8 @@ fn list_architectures(
         end
       end
       loaded ? :ok : :load_error
-    "#);
+    "#
+    );
     let _ = evaluator
         .eval_string(&require_src)
         .map_err(|e| BackendError::Ruby(format!("require {gem}: {e}")))?;
@@ -409,11 +405,8 @@ fn render_dashboard(
         // Hash/Array (forgot the `.to_json` / render step), serialize
         // it so the dashboard still lands rather than failing hard —
         // but a scalar (nil/number/bool) is genuinely wrong.
-        other @ (Json::Object(_) | Json::Array(_)) => {
-            serde_json::to_string(&other).map_err(|e| {
-                BackendError::Ruby(format!("serialize dashboard value: {e}"))
-            })
-        }
+        other @ (Json::Object(_) | Json::Array(_)) => serde_json::to_string(&other)
+            .map_err(|e| BackendError::Ruby(format!("serialize dashboard value: {e}"))),
         other => Err(BackendError::Ruby(format!(
             "dashboard Ruby must evaluate to a JSON string (or object/array); \
              got {}",
@@ -487,10 +480,7 @@ fn smoke_test(
             })
         }
     };
-    if let Err(e) = evaluator
-        .ruby()
-        .define_variable("$pangea_inputs", r_inputs)
-    {
+    if let Err(e) = evaluator.ruby().define_variable("$pangea_inputs", r_inputs) {
         return Ok(FixtureOutcome {
             passed: false,
             error: Some(format!("Define $pangea_inputs: {e}")),
@@ -534,10 +524,7 @@ fn smoke_test(
             })
         }
     };
-    let passed = obj
-        .get("passed")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+    let passed = obj.get("passed").and_then(|v| v.as_bool()).unwrap_or(false);
     let error = obj
         .get("error")
         .and_then(|v| v.as_str())
@@ -612,10 +599,11 @@ fn compile_template(
 
     // PANGEA_WORKSPACE_BASE validation (template_path mode only).
     if let Some(path) = req.template_path.as_deref() {
-        let base =
-            std::env::var("PANGEA_WORKSPACE_BASE").unwrap_or_else(|_| "/var/pangea/workspaces".to_string());
-        let real = std::fs::canonicalize(path)
-            .map_err(|e| BackendError::Compiler(format!("template_path canonicalize {path}: {e}")))?;
+        let base = std::env::var("PANGEA_WORKSPACE_BASE")
+            .unwrap_or_else(|_| "/var/pangea/workspaces".to_string());
+        let real = std::fs::canonicalize(path).map_err(|e| {
+            BackendError::Compiler(format!("template_path canonicalize {path}: {e}"))
+        })?;
         if !real.starts_with(format!("{base}/")) && !real.starts_with(&base) {
             return Err(BackendError::Compiler(format!(
                 "template_path must resolve under PANGEA_WORKSPACE_BASE ({base}): {}",
@@ -629,8 +617,9 @@ fn compile_template(
             )));
         }
         for rl in &req.rubylib_paths {
-            let r = std::fs::canonicalize(rl)
-                .map_err(|e| BackendError::Compiler(format!("rubylib_path canonicalize {rl}: {e}")))?;
+            let r = std::fs::canonicalize(rl).map_err(|e| {
+                BackendError::Compiler(format!("rubylib_path canonicalize {rl}: {e}"))
+            })?;
             if !r.starts_with(format!("{base}/")) && !r.starts_with(&base) {
                 return Err(BackendError::Compiler(format!(
                     "rubylib_paths entries must resolve under {base}: {rl}"
@@ -714,7 +703,10 @@ fn compile_template(
     let mut mirror_libs: Vec<PathBuf> = Vec::new();
     for rl in &req.rubylib_paths {
         let clone = PathBuf::from(rl);
-        if gem_libs.iter().any(|g| workspace_mirrors_gem(&clone, g, &["pangea/"])) {
+        if gem_libs
+            .iter()
+            .any(|g| workspace_mirrors_gem(&clone, g, &["pangea/"]))
+        {
             mirror_libs.push(clone); // skip prepend + skip purge for this clone
         } else {
             non_mirror_libs.push(clone);
@@ -747,8 +739,10 @@ fn compile_template(
     let ctx = if mirror_detected {
         ctx
     } else {
-        let non_mirror_strs: Vec<String> =
-            non_mirror_libs.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+        let non_mirror_strs: Vec<String> = non_mirror_libs
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
         // No mirror → the prior workspace-wins purge strategy, scoped to the
         // NON-mirror clones (a mirror clone is never prepended, so never purged).
         // Pangea::Architectures is the canonical bug-prone Dry::Struct module;
@@ -765,9 +759,8 @@ fn compile_template(
             // Inner returns BackendError; translate to EvalError at
             // the bracket boundary. The outer ? maps back via the
             // From impl on backend.rs.
-            run_capture_and_synthesize(ev, req).map_err(|e| {
-                pangea_ruby_eval::EvalError::Other(format!("compile: {e}"))
-            })
+            run_capture_and_synthesize(ev, req)
+                .map_err(|e| pangea_ruby_eval::EvalError::Other(format!("compile: {e}")))
         })
         .map_err(BackendError::from)?;
 
@@ -788,9 +781,8 @@ fn compile_template(
     // so in-process consumers (magma plan, preview, equivalence
     // tests) skip the re-parse round-trip; see
     // theory/IN-MEMORY-PIPELINE.md.
-    let terraform_json = serde_json::to_string_pretty(&synthesis_json).map_err(|e| {
-        BackendError::Compiler(format!("serialize synthesis to JSON: {e}"))
-    })?;
+    let terraform_json = serde_json::to_string_pretty(&synthesis_json)
+        .map_err(|e| BackendError::Compiler(format!("serialize synthesis to JSON: {e}")))?;
 
     Ok(CompileResult {
         terraform_json,
@@ -955,7 +947,10 @@ mod tests {
         // Empty rubylib_paths (inline-source template) → unchanged behavior:
         // exactly the prepare_gem cache prefix.
         let p = purge_feature_prefixes(&[]);
-        assert_eq!(p, vec!["/var/pangea/gems/pangea-architectures-main/".to_string()]);
+        assert_eq!(
+            p,
+            vec!["/var/pangea/gems/pangea-architectures-main/".to_string()]
+        );
     }
 
     #[test]
@@ -963,9 +958,8 @@ mod tests {
         // A git-source template (cloudflare-pleme) loads Pangea::Architectures
         // from its OWN clone lib; that path's $LOADED_FEATURES must be purged
         // too, or the re-require is a no-op → "uninitialized constant".
-        let rubylib = vec![
-            "/var/pangea/workspaces/cloudflare-pleme/cloudflare-rio/lib".to_string(),
-        ];
+        let rubylib =
+            vec!["/var/pangea/workspaces/cloudflare-pleme/cloudflare-rio/lib".to_string()];
         let p = purge_feature_prefixes(&rubylib);
         assert_eq!(p.len(), 2);
         assert_eq!(p[0], "/var/pangea/gems/pangea-architectures-main/");
@@ -977,4 +971,3 @@ mod tests {
         assert!(p.iter().all(|x| !x.contains("/nix/store")));
     }
 }
-

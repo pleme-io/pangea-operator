@@ -116,7 +116,8 @@ fn classify_kind(error_text: &str) -> ConflictKind {
     let t = error_text.to_ascii_lowercase();
     if t.contains("already protected") || t.contains("protection already exists") {
         ConflictKind::AlreadyProtected
-    } else if t.contains("already exists") || t.contains("name already")
+    } else if t.contains("already exists")
+        || t.contains("name already")
         || t.contains("already been taken")
     {
         ConflictKind::AlreadyExists
@@ -262,7 +263,9 @@ pub fn config_attrs_from_main_tf(json: &str) -> BTreeMap<String, serde_json::Val
         };
         for (label, block) in labels {
             let attrs = match block {
-                serde_json::Value::Array(a) => a.first().cloned().unwrap_or(serde_json::Value::Null),
+                serde_json::Value::Array(a) => {
+                    a.first().cloned().unwrap_or(serde_json::Value::Null)
+                }
                 other => other.clone(),
             };
             out.insert(format!("{rtype}.{label}"), attrs);
@@ -652,7 +655,10 @@ Error: PUT https://api.cloudflare.com/...: 429 Too Many Requests — rate limit 
             }
         }"#;
         let m = config_attrs_from_main_tf(json);
-        assert_eq!(m["github_repository.foo"]["name"].as_str(), Some("foo-repo"));
+        assert_eq!(
+            m["github_repository.foo"]["name"].as_str(),
+            Some("foo-repo")
+        );
     }
 
     #[test]

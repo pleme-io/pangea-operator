@@ -4,9 +4,7 @@
 //! Jobs for kensa/InSpec execution, collects results, emits HeartbeatChain
 //! events, and feeds the observability pipeline.
 
-use crate::crd::{
-    ComplianceSchedule, ComplianceSchedulePhase, ComplianceSuiteResult,
-};
+use crate::crd::{ComplianceSchedule, ComplianceSchedulePhase, ComplianceSuiteResult};
 use crate::error::Error;
 
 use chrono::{DateTime, Utc};
@@ -148,7 +146,13 @@ async fn reconcile(
         Ok(a) => Ok(a),
         Err(e) => {
             warn!(error = %e, "ComplianceSchedule reconciliation error");
-            let _ = update_phase(&schedule, ComplianceSchedulePhase::Error, Some(&e.to_string()), &state).await;
+            let _ = update_phase(
+                &schedule,
+                ComplianceSchedulePhase::Error,
+                Some(&e.to_string()),
+                &state,
+            )
+            .await;
             Ok(Action::requeue(ERROR_REQUEUE_INTERVAL))
         }
     }
@@ -186,14 +190,18 @@ async fn handle_running(
 
     for suite_spec in &schedule.spec.suites {
         let job_name = format!("{}-{}", name, suite_spec.name);
-        let job = jobs.items.iter().find(|j| {
-            j.metadata.name.as_deref() == Some(&job_name)
-        });
+        let job = jobs
+            .items
+            .iter()
+            .find(|j| j.metadata.name.as_deref() == Some(&job_name));
 
         match job {
             Some(j) => {
                 let status = j.status.as_ref();
-                if status.map(|s| s.succeeded.unwrap_or(0) > 0).unwrap_or(false) {
+                if status
+                    .map(|s| s.succeeded.unwrap_or(0) > 0)
+                    .unwrap_or(false)
+                {
                     results.push(ComplianceSuiteResult {
                         name: suite_spec.name.clone(),
                         runner: suite_spec.runner.clone(),
@@ -515,15 +523,17 @@ async fn launch_suites(
                     "json".to_string(),
                 ]
             }
-            crate::crd::ComplianceRunner::Script => {
-                suite
-                    .config
-                    .as_ref()
-                    .and_then(|c| c.get("command"))
-                    .and_then(|cmd| cmd.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-                    .unwrap_or_else(|| vec!["echo".to_string(), "no command".to_string()])
-            }
+            crate::crd::ComplianceRunner::Script => suite
+                .config
+                .as_ref()
+                .and_then(|c| c.get("command"))
+                .and_then(|cmd| cmd.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_else(|| vec!["echo".to_string(), "no command".to_string()]),
         };
 
         let timeout_secs = super::parse_duration(&suite.timeout)
@@ -558,13 +568,11 @@ async fn launch_suites(
                             name: "compliance-runner".to_string(),
                             image: Some(runner_image.to_string()),
                             command: Some(command),
-                            env: Some(vec![
-                                EnvVar {
-                                    name: "SUITE_NAME".to_string(),
-                                    value: Some(suite.name.clone()),
-                                    ..Default::default()
-                                },
-                            ]),
+                            env: Some(vec![EnvVar {
+                                name: "SUITE_NAME".to_string(),
+                                value: Some(suite.name.clone()),
+                                ..Default::default()
+                            }]),
                             ..Default::default()
                         }],
                         ..Default::default()
@@ -665,12 +673,7 @@ async fn update_suite_results(
         return Ok(());
     }
 
-    let total_runs = schedule
-        .status
-        .as_ref()
-        .map(|s| s.total_runs)
-        .unwrap_or(0)
-        + 1;
+    let total_runs = schedule.status.as_ref().map(|s| s.total_runs).unwrap_or(0) + 1;
 
     let patch = serde_json::json!({
         "status": {
@@ -856,7 +859,8 @@ mod tests {
             "kind": "ComplianceSchedule",
             "metadata": { "name": "x", "namespace": "y" },
             "spec": { "suites": [] }
-        })).unwrap();
+        }))
+        .unwrap();
         s.metadata.finalizers = finalizers;
         s
     }
@@ -864,8 +868,12 @@ mod tests {
     #[test]
     fn has_finalizer_canonical() {
         assert!(!has_finalizer(&fake_schedule(None)));
-        assert!(has_finalizer(&fake_schedule(Some(vec![FINALIZER_NAME.to_string()]))));
-        assert!(!has_finalizer(&fake_schedule(Some(vec!["unrelated/finalizer".to_string()]))));
+        assert!(has_finalizer(&fake_schedule(Some(vec![
+            FINALIZER_NAME.to_string()
+        ]))));
+        assert!(!has_finalizer(&fake_schedule(Some(vec![
+            "unrelated/finalizer".to_string()
+        ]))));
     }
 
     // ── cron scheduling (compliance-schedule-never-reruns fix) ──
@@ -876,9 +884,7 @@ mod tests {
     // pin the pure decision core (`decide_schedule` + its helpers) that
     // now drives that handler.
 
-    use super::{
-        decide_schedule, next_scheduled_run, parse_cron_expression, ScheduleDecision,
-    };
+    use super::{decide_schedule, next_scheduled_run, parse_cron_expression, ScheduleDecision};
     use crate::error::Error;
     use chrono::{TimeZone, Utc};
     use std::time::Duration;
@@ -992,8 +998,7 @@ mod tests {
         // reconcile".
         let last_run_at = dt(2026, 1, 1, 1, 0, 0);
         let now = dt(2026, 1, 1, 7, 0, 0); // well past the 06:00 boundary
-        let decision =
-            decide_schedule(Some("0 */6 * * *"), None, Some(last_run_at), now).unwrap();
+        let decision = decide_schedule(Some("0 */6 * * *"), None, Some(last_run_at), now).unwrap();
         assert_eq!(
             decision,
             ScheduleDecision::Due {

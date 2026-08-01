@@ -97,8 +97,10 @@ impl EffectiveReactivePolicy {
         // template). `resolve` starts from an all-`None` default and
         // applies each layer in order; the rightmost layer that sets a
         // field wins.
-        let merged =
-            ReactivePolicy::resolve(&[workspace_policy, template_policy], ReactivePolicy::default());
+        let merged = ReactivePolicy::resolve(
+            &[workspace_policy, template_policy],
+            ReactivePolicy::default(),
+        );
         // Project the merged layer onto the hard-defaulted concrete
         // policy: a field the cascade set overrides the default; an
         // unset field keeps the hard default.
@@ -208,10 +210,7 @@ fn check_failure(
             "{} consecutive failed reconciles (threshold: {}); last error: {}",
             status.failure_count,
             policy.max_consecutive_failures,
-            status
-                .last_error
-                .as_deref()
-                .unwrap_or("(none)")
+            status.last_error.as_deref().unwrap_or("(none)")
         ),
         routing: policy.routing.clone(),
     })
@@ -280,13 +279,14 @@ pub fn track_verified_blocked(
     now: DateTime<Utc>,
 ) -> Option<DateTime<Utc>> {
     use crate::crd::Condition as TplCondition;
-    let verified_false = status.conditions.iter().any(|c: &TplCondition| {
-        c.r#type == "Verified" && c.status == "False"
-    });
+    let verified_false = status
+        .conditions
+        .iter()
+        .any(|c: &TplCondition| c.r#type == "Verified" && c.status == "False");
     match (verified_false, status.verified_blocked_since) {
-        (true, Some(t)) => Some(t),     // already tracked
-        (true, None) => Some(now),       // first observation
-        (false, _) => None,              // cleared
+        (true, Some(t)) => Some(t), // already tracked
+        (true, None) => Some(now),  // first observation
+        (false, _) => None,         // cleared
     }
 }
 
@@ -484,7 +484,12 @@ mod tests {
         let t = template_with_status(s);
         let result = evaluate(&t, &EffectiveReactivePolicy::default(), Utc::now());
         match result {
-            Escalation::Triggered { action, reason, message, .. } => {
+            Escalation::Triggered {
+                action,
+                reason,
+                message,
+                ..
+            } => {
                 assert_eq!(action, ReactiveAction::Alert);
                 assert_eq!(reason, "FailureEscalation");
                 assert!(message.contains("5 consecutive"));

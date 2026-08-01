@@ -122,7 +122,11 @@ impl WorkspacePhase {
     }
 
     pub fn legal_triggers(self) -> Vec<WsTrigger> {
-        WS_TRANSITIONS.iter().filter(|t| t.from == self).map(|t| t.trigger).collect()
+        WS_TRANSITIONS
+            .iter()
+            .filter(|t| t.from == self)
+            .map(|t| t.trigger)
+            .collect()
     }
 
     pub fn advance(self, trigger: WsTrigger) -> Result<WorkspacePhase, WsTransitionError> {
@@ -130,7 +134,11 @@ impl WorkspacePhase {
             .iter()
             .find(|t| t.from == self && t.trigger == trigger)
             .map(|t| t.to)
-            .ok_or(WsTransitionError::Illegal { from: self, trigger, legal: self.legal_triggers() })
+            .ok_or(WsTransitionError::Illegal {
+                from: self,
+                trigger,
+                legal: self.legal_triggers(),
+            })
     }
 
     /// Runtime guard (same role as `lifecycle::Phase::edge_is_legal`).
@@ -206,13 +214,23 @@ pub struct WsTransition {
     pub kind: WsEdgeKind,
 }
 
-const fn w(from: WorkspacePhase, trigger: WsTrigger, to: WorkspacePhase, kind: WsEdgeKind) -> WsTransition {
-    WsTransition { from, trigger, to, kind }
+const fn w(
+    from: WorkspacePhase,
+    trigger: WsTrigger,
+    to: WorkspacePhase,
+    kind: WsEdgeKind,
+) -> WsTransition {
+    WsTransition {
+        from,
+        trigger,
+        to,
+        kind,
+    }
 }
 
 use WorkspacePhase as P;
-use WsTrigger as T;
 use WsEdgeKind as K;
+use WsTrigger as T;
 
 /// Explicit workspace transitions. The universal `DrainRequested → Draining`
 /// edge (every non-terminal phase is drain-safe — the shard can hand off from
@@ -223,16 +241,46 @@ pub static WS_EXPLICIT: &[WsTransition] = &[
     w(P::LoadingGems, T::GemLoadFailed, P::GemsFailed, K::Forward),
     w(P::GemsFailed, T::GemRetry, P::LoadingGems, K::Remediation),
     w(P::Ready, T::TemplatesDispatched, P::Converging, K::Forward),
-    w(P::Converging, T::AllTemplatesSettled, P::Settled, K::Forward),
+    w(
+        P::Converging,
+        T::AllTemplatesSettled,
+        P::Settled,
+        K::Forward,
+    ),
     w(P::Converging, T::TemplatesDegraded, P::Degraded, K::Forward),
-    w(P::Degraded, T::DegradedRecovered, P::Converging, K::Remediation),
+    w(
+        P::Degraded,
+        T::DegradedRecovered,
+        P::Converging,
+        K::Remediation,
+    ),
     w(P::Settled, T::TemplateDrift, P::Converging, K::Forward),
     // per-workspace gem freshness: a moved requiredGem reloads the env from any
     // serving phase (Ready/Converging/Settled/Degraded → LoadingGems).
-    w(P::Ready, T::GemSourceChanged, P::LoadingGems, K::Remediation),
-    w(P::Converging, T::GemSourceChanged, P::LoadingGems, K::Remediation),
-    w(P::Settled, T::GemSourceChanged, P::LoadingGems, K::Remediation),
-    w(P::Degraded, T::GemSourceChanged, P::LoadingGems, K::Remediation),
+    w(
+        P::Ready,
+        T::GemSourceChanged,
+        P::LoadingGems,
+        K::Remediation,
+    ),
+    w(
+        P::Converging,
+        T::GemSourceChanged,
+        P::LoadingGems,
+        K::Remediation,
+    ),
+    w(
+        P::Settled,
+        T::GemSourceChanged,
+        P::LoadingGems,
+        K::Remediation,
+    ),
+    w(
+        P::Degraded,
+        T::GemSourceChanged,
+        P::LoadingGems,
+        K::Remediation,
+    ),
     // teardown
     w(P::Draining, T::Drained, P::Released, K::Teardown),
 ];
@@ -241,19 +289,25 @@ fn ws_universal(from: WorkspacePhase) -> Vec<WsTransition> {
     // Every phase except the terminal/draining ones can begin draining (a
     // lease handoff can be requested from any serving or failure berth).
     if from != WorkspacePhase::Draining && from != WorkspacePhase::Released {
-        vec![w(from, WsTrigger::DrainRequested, WorkspacePhase::Draining, WsEdgeKind::Teardown)]
+        vec![w(
+            from,
+            WsTrigger::DrainRequested,
+            WorkspacePhase::Draining,
+            WsEdgeKind::Teardown,
+        )]
     } else {
         Vec::new()
     }
 }
 
-pub static WS_TRANSITIONS: std::sync::LazyLock<Vec<WsTransition>> = std::sync::LazyLock::new(|| {
-    let mut all = WS_EXPLICIT.to_vec();
-    for p in WorkspacePhase::all() {
-        all.extend(ws_universal(p));
-    }
-    all
-});
+pub static WS_TRANSITIONS: std::sync::LazyLock<Vec<WsTransition>> =
+    std::sync::LazyLock::new(|| {
+        let mut all = WS_EXPLICIT.to_vec();
+        for p in WorkspacePhase::all() {
+            all.extend(ws_universal(p));
+        }
+        all
+    });
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WsTransitionError {
@@ -267,11 +321,19 @@ pub enum WsTransitionError {
 impl fmt::Display for WsTransitionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            WsTransitionError::Illegal { from, trigger, legal } => {
+            WsTransitionError::Illegal {
+                from,
+                trigger,
+                legal,
+            } => {
                 let legal = if legal.is_empty() {
                     "<none — terminal>".to_string()
                 } else {
-                    legal.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", ")
+                    legal
+                        .iter()
+                        .map(|t| t.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 };
                 write!(
                     f,
@@ -301,8 +363,14 @@ mod tests {
 
     #[test]
     fn classes_partition() {
-        let settled: Vec<_> = WorkspacePhase::all().into_iter().filter(|p| p.class() == WsClass::Settled).collect();
-        let terminal: Vec<_> = WorkspacePhase::all().into_iter().filter(|p| p.class() == WsClass::Terminal).collect();
+        let settled: Vec<_> = WorkspacePhase::all()
+            .into_iter()
+            .filter(|p| p.class() == WsClass::Settled)
+            .collect();
+        let terminal: Vec<_> = WorkspacePhase::all()
+            .into_iter()
+            .filter(|p| p.class() == WsClass::Terminal)
+            .collect();
         assert_eq!(settled, vec![WorkspacePhase::Settled]);
         assert_eq!(terminal, vec![WorkspacePhase::Released]);
     }
@@ -347,7 +415,10 @@ mod tests {
                     }
                 }
             }
-            assert!(good, "NON-CONVERGENT workspace phase `{start}` reaches no good terminal");
+            assert!(
+                good,
+                "NON-CONVERGENT workspace phase `{start}` reaches no good terminal"
+            );
         }
     }
 
@@ -363,7 +434,10 @@ mod tests {
                 );
             }
             if !p.class().is_good_terminal() {
-                assert!(edges.iter().any(|t| t.to != p), "BERTH `{p}` has no phase-changing exit");
+                assert!(
+                    edges.iter().any(|t| t.to != p),
+                    "BERTH `{p}` has no phase-changing exit"
+                );
             }
             if p.class() == WsClass::Failure {
                 assert!(
@@ -377,7 +451,12 @@ mod tests {
     #[test]
     fn edge_legality_mirrors_table() {
         for tr in WS_TRANSITIONS.iter() {
-            assert!(tr.from.edge_is_legal(tr.to), "table edge {} → {} illegal", tr.from, tr.to);
+            assert!(
+                tr.from.edge_is_legal(tr.to),
+                "table edge {} → {} illegal",
+                tr.from,
+                tr.to
+            );
         }
         assert!(WorkspacePhase::Settled.edge_is_legal(WorkspacePhase::Settled));
         assert!(!WorkspacePhase::Unloaded.edge_is_legal(WorkspacePhase::Settled));
@@ -385,7 +464,9 @@ mod tests {
 
     #[test]
     fn illegal_transition_has_great_error_stack() {
-        let err = WorkspacePhase::Settled.advance(WsTrigger::GemsLoaded).unwrap_err();
+        let err = WorkspacePhase::Settled
+            .advance(WsTrigger::GemsLoaded)
+            .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("from `Settled`"), "{msg}");
         assert!(msg.contains("`GemsLoaded`"), "{msg}");
@@ -394,16 +475,31 @@ mod tests {
 
     #[test]
     fn happy_path() {
-        assert_eq!(P::Unloaded.advance(T::GemLoadStarted).unwrap(), P::LoadingGems);
+        assert_eq!(
+            P::Unloaded.advance(T::GemLoadStarted).unwrap(),
+            P::LoadingGems
+        );
         assert_eq!(P::LoadingGems.advance(T::GemsLoaded).unwrap(), P::Ready);
-        assert_eq!(P::Ready.advance(T::TemplatesDispatched).unwrap(), P::Converging);
-        assert_eq!(P::Converging.advance(T::AllTemplatesSettled).unwrap(), P::Settled);
+        assert_eq!(
+            P::Ready.advance(T::TemplatesDispatched).unwrap(),
+            P::Converging
+        );
+        assert_eq!(
+            P::Converging.advance(T::AllTemplatesSettled).unwrap(),
+            P::Settled
+        );
         assert_eq!(P::Settled.advance(T::TemplateDrift).unwrap(), P::Converging);
         // failure self-heals
         assert_eq!(P::GemsFailed.advance(T::GemRetry).unwrap(), P::LoadingGems);
-        assert_eq!(P::Degraded.advance(T::DegradedRecovered).unwrap(), P::Converging);
+        assert_eq!(
+            P::Degraded.advance(T::DegradedRecovered).unwrap(),
+            P::Converging
+        );
         // drainable from anywhere
-        assert_eq!(P::Converging.advance(T::DrainRequested).unwrap(), P::Draining);
+        assert_eq!(
+            P::Converging.advance(T::DrainRequested).unwrap(),
+            P::Draining
+        );
         assert_eq!(P::Draining.advance(T::Drained).unwrap(), P::Released);
     }
 }

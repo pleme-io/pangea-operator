@@ -151,7 +151,8 @@ impl TofuExecutor {
     pub async fn init(&self, work_dir: &Path, extra_args: &[&str]) -> Result<TofuResult> {
         let mut args: Vec<&str> = BASE_ARGS.to_vec();
         args.extend(extra_args);
-        self.execute(TofuCommand::Init, work_dir, &args, &HashMap::new()).await
+        self.execute(TofuCommand::Init, work_dir, &args, &HashMap::new())
+            .await
     }
 
     /// Run `tofu plan`.
@@ -172,7 +173,8 @@ impl TofuExecutor {
         }
 
         args.extend(extra_args);
-        self.execute(TofuCommand::Plan, work_dir, &args, &HashMap::new()).await
+        self.execute(TofuCommand::Plan, work_dir, &args, &HashMap::new())
+            .await
     }
 
     /// Run `tofu apply`.
@@ -213,7 +215,8 @@ impl TofuExecutor {
             args.push(pf.to_str().unwrap());
         }
 
-        self.execute(TofuCommand::Apply, work_dir, &args, &HashMap::new()).await
+        self.execute(TofuCommand::Apply, work_dir, &args, &HashMap::new())
+            .await
     }
 
     /// Run `tofu destroy`.
@@ -225,25 +228,29 @@ impl TofuExecutor {
             args.push("-auto-approve");
         }
 
-        self.execute(TofuCommand::Destroy, work_dir, &args, &HashMap::new()).await
+        self.execute(TofuCommand::Destroy, work_dir, &args, &HashMap::new())
+            .await
     }
 
     /// Run `tofu show` to parse plan output.
     pub async fn show_plan(&self, work_dir: &Path, plan_file: &Path) -> Result<TofuResult> {
         let args = vec!["-json", plan_file.to_str().unwrap()];
-        self.execute(TofuCommand::Show, work_dir, &args, &HashMap::new()).await
+        self.execute(TofuCommand::Show, work_dir, &args, &HashMap::new())
+            .await
     }
 
     /// Run `tofu output` to get outputs.
     pub async fn output(&self, work_dir: &Path) -> Result<TofuResult> {
         let args = vec!["-json"];
-        self.execute(TofuCommand::Output, work_dir, &args, &HashMap::new()).await
+        self.execute(TofuCommand::Output, work_dir, &args, &HashMap::new())
+            .await
     }
 
     /// Run `tofu refresh`.
     pub async fn refresh(&self, work_dir: &Path) -> Result<TofuResult> {
         let args = BASE_ARGS.to_vec();
-        self.execute(TofuCommand::Refresh, work_dir, &args, &HashMap::new()).await
+        self.execute(TofuCommand::Refresh, work_dir, &args, &HashMap::new())
+            .await
     }
 
     /// Run `tofu import <address> <id>` — adopt an out-of-band cloud
@@ -255,12 +262,7 @@ impl TofuExecutor {
     /// drift-details for the address before importing — re-importing
     /// an already-imported address fails with "resource already
     /// managed", which is harmless but noisy.
-    pub async fn import(
-        &self,
-        work_dir: &Path,
-        address: &str,
-        id: &str,
-    ) -> Result<TofuResult> {
+    pub async fn import(&self, work_dir: &Path, address: &str, id: &str) -> Result<TofuResult> {
         let mut args: Vec<&str> = BASE_ARGS.to_vec();
         // -lock-timeout=300s: the import-prepass runs N imports in
         // parallel (buffer_unordered in template_controller) and the
@@ -309,9 +311,9 @@ impl TofuExecutor {
             cmd.env(key, value);
         }
 
-        let mut child = cmd.spawn().map_err(|e| {
-            Error::TofuExecution(format!("Failed to spawn tofu: {}", e))
-        })?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| Error::TofuExecution(format!("Failed to spawn tofu: {}", e)))?;
 
         let stdout_handle = child.stdout.take().unwrap();
         let stderr_handle = child.stderr.take().unwrap();
@@ -355,7 +357,10 @@ impl TofuExecutor {
         let status = match wait_result {
             Ok(Ok(status)) => status,
             Ok(Err(e)) => {
-                return Err(Error::TofuExecution(format!("Failed to wait for tofu: {}", e)));
+                return Err(Error::TofuExecution(format!(
+                    "Failed to wait for tofu: {}",
+                    e
+                )));
             }
             Err(_) => {
                 // Timeout — send SIGTERM first, then SIGKILL as a last resort.
@@ -370,7 +375,10 @@ impl TofuExecutor {
                 // lock, and exit cleanly. We wait up to 30 seconds for that
                 // to happen; if tofu ignores the signal we escalate to
                 // SIGKILL so we don't hang the reconciler indefinitely.
-                error!(command = cmd_str, "Tofu command timed out — sending SIGTERM for clean shutdown");
+                error!(
+                    command = cmd_str,
+                    "Tofu command timed out — sending SIGTERM for clean shutdown"
+                );
                 if let Some(pid) = child.id() {
                     // SIGTERM via libc — tokio::process::Child::kill is SIGKILL.
                     #[cfg(unix)]
@@ -379,12 +387,13 @@ impl TofuExecutor {
                     }
                 }
                 // Grace period for tofu to release the lock + flush state.
-                let graceful = tokio::time::timeout(
-                    std::time::Duration::from_secs(30),
-                    child.wait(),
-                ).await;
+                let graceful =
+                    tokio::time::timeout(std::time::Duration::from_secs(30), child.wait()).await;
                 if graceful.is_err() {
-                    error!(command = cmd_str, "Tofu did not exit within 30s of SIGTERM — sending SIGKILL");
+                    error!(
+                        command = cmd_str,
+                        "Tofu did not exit within 30s of SIGTERM — sending SIGKILL"
+                    );
                     let _ = child.kill().await;
                 }
                 return Err(Error::Timeout(self.timeout.as_secs()));
@@ -509,12 +518,7 @@ impl IacExecutor for TofuExecutor {
         TofuExecutor::refresh(self, work_dir).await
     }
 
-    async fn import(
-        &self,
-        work_dir: &Path,
-        address: &str,
-        id: &str,
-    ) -> Result<TofuResult> {
+    async fn import(&self, work_dir: &Path, address: &str, id: &str) -> Result<TofuResult> {
         TofuExecutor::import(self, work_dir, address, id).await
     }
 }

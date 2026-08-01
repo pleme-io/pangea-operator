@@ -73,7 +73,9 @@ pub struct InMemoryRecurrenceTracker {
 
 impl InMemoryRecurrenceTracker {
     pub fn new() -> Self {
-        Self { inner: Mutex::new(HashMap::new()) }
+        Self {
+            inner: Mutex::new(HashMap::new()),
+        }
     }
 }
 
@@ -309,12 +311,8 @@ mod tests {
 
     #[test]
     fn strip_collapses_gem_cache_paths() {
-        let a = strip_variable_parts(
-            "in /var/pangea/gems/pangea-architectures-main/lib/x"
-        );
-        let b = strip_variable_parts(
-            "in /var/pangea/gems/pangea-architectures-9c83fbe/lib/x"
-        );
+        let a = strip_variable_parts("in /var/pangea/gems/pangea-architectures-main/lib/x");
+        let b = strip_variable_parts("in /var/pangea/gems/pangea-architectures-9c83fbe/lib/x");
         assert_eq!(a, b);
         assert!(a.contains("<GEM>"));
     }
@@ -329,9 +327,7 @@ mod tests {
 
     #[test]
     fn strip_preserves_meaningful_signal() {
-        let stripped = strip_variable_parts(
-            "uninitialized constant Pangea::Resources::Cloudflare"
-        );
+        let stripped = strip_variable_parts("uninitialized constant Pangea::Resources::Cloudflare");
         assert!(stripped.contains("uninitialized constant"));
         assert!(stripped.contains("Pangea::Resources::Cloudflare"));
     }
@@ -352,12 +348,15 @@ mod tests {
         // up to 32 chars after /nix/store/; lengths must match for
         // the post-hash remainder to align.
         let a = error_signature(
-            "cannot load such file -- /nix/store/abc12345678901234567890123456789-source/lib/x"
+            "cannot load such file -- /nix/store/abc12345678901234567890123456789-source/lib/x",
         );
         let b = error_signature(
-            "cannot load such file -- /nix/store/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz1-source/lib/x"
+            "cannot load such file -- /nix/store/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz1-source/lib/x",
         );
-        assert_eq!(a, b, "different nix-store hashes must share the same signature");
+        assert_eq!(
+            a, b,
+            "different nix-store hashes must share the same signature"
+        );
     }
 
     #[test]
@@ -424,12 +423,8 @@ mod tests {
             count: 42,
             age: Duration::from_secs(900),
         };
-        let s = AnomalySummary::compose(
-            &recurrence,
-            "ReloadGems",
-            2,
-            Some("load_path_double_load"),
-        );
+        let s =
+            AnomalySummary::compose(&recurrence, "ReloadGems", 2, Some("load_path_double_load"));
         assert_eq!(s.signature, "abc123");
         assert_eq!(s.recurrence_count, 42);
         assert_eq!(s.recurrence_age_s, 900);

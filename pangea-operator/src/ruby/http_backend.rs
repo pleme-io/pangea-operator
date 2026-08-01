@@ -7,8 +7,8 @@
 use async_trait::async_trait;
 
 use super::backend::{
-    ArchListing, BackendError, CompileAnyRequest, CompileAnyResult, CompileRequest,
-    CompileResult, CompilerBackend, FixtureOutcome, SmokeRequest,
+    ArchListing, BackendError, CompileAnyRequest, CompileAnyResult, CompileRequest, CompileResult,
+    CompilerBackend, FixtureOutcome, SmokeRequest,
 };
 
 #[derive(Clone)]
@@ -76,15 +76,14 @@ impl CompilerBackend for HttpCompilerBackend {
         // synthesis_value so embedded + HTTP backends present a
         // consistent CompileResult shape; magma + preview consumers
         // can stay backend-agnostic.
-        let synthesis_value: Option<serde_json::Value> =
-            serde_json::from_str(&terraform_json).ok();
-        Ok(CompileResult { terraform_json, synthesis_value })
+        let synthesis_value: Option<serde_json::Value> = serde_json::from_str(&terraform_json).ok();
+        Ok(CompileResult {
+            terraform_json,
+            synthesis_value,
+        })
     }
 
-    async fn compile_any(
-        &self,
-        req: CompileAnyRequest,
-    ) -> Result<CompileAnyResult, BackendError> {
+    async fn compile_any(&self, req: CompileAnyRequest) -> Result<CompileAnyResult, BackendError> {
         let url = format!("{}/compile-any", self.base_url);
         let resp = self
             .http
@@ -150,8 +149,7 @@ mod tests {
         // start with their own slash, so a trailing-slash base_url
         // produces a double-slash URL. The contract is "no trailing
         // slash"; this test locks that in.
-        let backend2 =
-            HttpCompilerBackend::new(client, "http://compiler:3000/");
+        let backend2 = HttpCompilerBackend::new(client, "http://compiler:3000/");
         assert!(
             backend2.base_url.ends_with('/'),
             "constructor preserves caller-provided trailing slash"

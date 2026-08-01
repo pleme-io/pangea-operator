@@ -37,8 +37,8 @@ pub async fn import_state(
         bail!("State directory does not exist: {}", state_dir);
     }
 
-    let tf_config = read_terraform_config(state_path)
-        .context("Failed to read Terraform configuration")?;
+    let tf_config =
+        read_terraform_config(state_path).context("Failed to read Terraform configuration")?;
 
     let state_file = state_path.join("terraform.tfstate");
     let has_local_state = state_file.exists();
@@ -85,10 +85,7 @@ pub async fn import_state(
     // Step 3: Verify
     println!();
     println!("Step 3 — Verify the operator has taken over:");
-    println!(
-        "  kubectl get infra {} -n {} -w",
-        template_name, namespace
-    );
+    println!("  kubectl get infra {} -n {} -w", template_name, namespace);
     println!("  # Should show: Pending -> Compiling -> Initializing -> Planning -> Ready");
 
     // Step 4: Disconnect
@@ -140,8 +137,8 @@ fn read_terraform_config(state_path: &Path) -> Result<String> {
     for path in &found {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read {}", path.display()))?;
-        let value: serde_json::Value =
-            serde_json::from_str(&content).with_context(|| format!("Invalid JSON in {}", path.display()))?;
+        let value: serde_json::Value = serde_json::from_str(&content)
+            .with_context(|| format!("Invalid JSON in {}", path.display()))?;
         if let serde_json::Value::Object(map) = value {
             for (k, v) in map {
                 merged.insert(k, v);

@@ -21,9 +21,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::executor::plan_change::{
-    DerivedImportId, PlanAction, PlannedChange, ResourceKindClass,
-};
+use crate::executor::plan_change::{DerivedImportId, PlanAction, PlannedChange, ResourceKindClass};
 
 /// A resolved import target: an address to adopt via `import`, the
 /// substituted import id, and the resolution source (`"hint"` for a
@@ -301,9 +299,7 @@ pub fn resolve_natural_id<'a>(
 ///   ]
 /// }
 /// ```
-pub fn parse_planned_attrs(
-    plan_json: &str,
-) -> BTreeMap<String, serde_json::Value> {
+pub fn parse_planned_attrs(plan_json: &str) -> BTreeMap<String, serde_json::Value> {
     let mut out = BTreeMap::new();
     let parsed: serde_json::Value = match serde_json::from_str(plan_json) {
         Ok(v) => v,
@@ -409,7 +405,10 @@ mod tests {
     #[test]
     fn resolve_user_natural_id_is_the_only_template_layer() {
         let mut user = BTreeMap::new();
-        user.insert("github_repository".to_string(), "custom-{{ .planned.name }}".to_string());
+        user.insert(
+            "github_repository".to_string(),
+            "custom-{{ .planned.name }}".to_string(),
+        );
         let r = resolve_natural_id("github_repository.foo", &user);
         assert_eq!(r.as_deref(), Some("custom-{{ .planned.name }}"));
     }
@@ -457,12 +456,7 @@ mod tests {
     fn substitute_planned_attr() {
         let planned = serde_json::json!({"name": "my-repo", "private": false});
         let vars = BTreeMap::new();
-        let out = substitute_with_planned(
-            "{{ .planned.name }}",
-            &planned,
-            &vars,
-        )
-        .unwrap();
+        let out = substitute_with_planned("{{ .planned.name }}", &planned, &vars).unwrap();
         assert_eq!(out, "my-repo");
     }
 
@@ -470,13 +464,12 @@ mod tests {
     fn substitute_combines_planned_and_var() {
         let planned = serde_json::json!({"id": "abc123"});
         let mut vars = BTreeMap::new();
-        vars.insert("zone_id".to_string(), serde_json::Value::String("zone1".into()));
-        let out = substitute_with_planned(
-            "{{ .zone_id }}/{{ .planned.id }}",
-            &planned,
-            &vars,
-        )
-        .unwrap();
+        vars.insert(
+            "zone_id".to_string(),
+            serde_json::Value::String("zone1".into()),
+        );
+        let out =
+            substitute_with_planned("{{ .zone_id }}/{{ .planned.id }}", &planned, &vars).unwrap();
         assert_eq!(out, "zone1/abc123");
     }
 
@@ -568,14 +561,15 @@ mod tests {
         // And the substitution succeeds when both vars are provided.
         let planned = serde_json::json!({});
         let mut vars = BTreeMap::new();
-        vars.insert("zone_id".to_string(), serde_json::Value::String("zone1".into()));
-        vars.insert("record_id".to_string(), serde_json::Value::String("rec123".into()));
-        let id = substitute_with_planned(
-            &resolved.unwrap(),
-            &planned,
-            &vars,
-        )
-        .unwrap();
+        vars.insert(
+            "zone_id".to_string(),
+            serde_json::Value::String("zone1".into()),
+        );
+        vars.insert(
+            "record_id".to_string(),
+            serde_json::Value::String("rec123".into()),
+        );
+        let id = substitute_with_planned(&resolved.unwrap(), &planned, &vars).unwrap();
         assert_eq!(id, "zone1/rec123");
     }
 
@@ -605,12 +599,9 @@ mod tests {
         // returns Err for null values (treats them as missing). Verify this
         // is the actual observed behavior.
         let vars = BTreeMap::new();
-        let err = substitute_with_planned(
-            "{{ .planned.account_id }}/{{ .planned.id }}",
-            attrs,
-            &vars,
-        )
-        .unwrap_err();
+        let err =
+            substitute_with_planned("{{ .planned.account_id }}/{{ .planned.id }}", attrs, &vars)
+                .unwrap_err();
         assert_eq!(
             err, "planned.id",
             "null value in plan must be treated identically to missing \
@@ -632,13 +623,22 @@ mod tests {
     /// The magma executor derives this from the catalog + state. In these
     /// pure-core tests it is supplied directly — the border is a value.
     fn exact(id: &str) -> DerivedImportId {
-        DerivedImportId { id: id.into(), exact: true }
+        DerivedImportId {
+            id: id.into(),
+            exact: true,
+        }
     }
     fn inexact(id: &str) -> DerivedImportId {
-        DerivedImportId { id: id.into(), exact: false }
+        DerivedImportId {
+            id: id.into(),
+            exact: false,
+        }
     }
     fn derived(pairs: &[(&str, DerivedImportId)]) -> BTreeMap<String, DerivedImportId> {
-        pairs.iter().map(|(a, d)| ((*a).to_string(), d.clone())).collect()
+        pairs
+            .iter()
+            .map(|(a, d)| ((*a).to_string(), d.clone()))
+            .collect()
     }
 
     fn auto_policy() -> ImportPolicy {

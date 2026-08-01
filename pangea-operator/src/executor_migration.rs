@@ -76,7 +76,10 @@ impl MigrationPhase {
     pub fn is_resting(self) -> bool {
         matches!(
             self,
-            MigrationPhase::Pinned | MigrationPhase::Held | MigrationPhase::Verified | MigrationPhase::RolledBack
+            MigrationPhase::Pinned
+                | MigrationPhase::Held
+                | MigrationPhase::Verified
+                | MigrationPhase::RolledBack
         )
     }
 }
@@ -331,7 +334,11 @@ impl Transition {
 /// Advance the migration FSM. Pure + total: every `(state, event)` pair
 /// returns a `Transition`; undefined pairs are identity (no-op) so a
 /// stray event can never corrupt state or panic.
-pub fn step(state: &MigrationState, event: &MigrationEvent, policy: &MigrationPolicy) -> Transition {
+pub fn step(
+    state: &MigrationState,
+    event: &MigrationEvent,
+    policy: &MigrationPolicy,
+) -> Transition {
     use MigrationEvent::*;
     use MigrationPhase::*;
 
@@ -364,7 +371,10 @@ pub fn step(state: &MigrationState, event: &MigrationEvent, policy: &MigrationPo
             };
             Transition::to(
                 next,
-                vec![Effect::SetAuthoritative(Authoritative::Tofu), Effect::RunShadowParity],
+                vec![
+                    Effect::SetAuthoritative(Authoritative::Tofu),
+                    Effect::RunShadowParity,
+                ],
             )
         }
 
@@ -381,7 +391,10 @@ pub fn step(state: &MigrationState, event: &MigrationEvent, policy: &MigrationPo
                             verified_cycles: 0,
                             ..*state
                         },
-                        vec![Effect::EmitParityReceipt, Effect::SetAuthoritative(Authoritative::Magma)],
+                        vec![
+                            Effect::EmitParityReceipt,
+                            Effect::SetAuthoritative(Authoritative::Magma),
+                        ],
                     )
                 } else {
                     Transition::to(
@@ -444,7 +457,10 @@ pub fn step(state: &MigrationState, event: &MigrationEvent, policy: &MigrationPo
                 divergence_count: state.divergence_count + 1,
                 ..*state
             },
-            vec![Effect::EmitAnomaly(AnomalyKind::ApplyFailed), Effect::RunShadowParity],
+            vec![
+                Effect::EmitAnomaly(AnomalyKind::ApplyFailed),
+                Effect::RunShadowParity,
+            ],
         ),
         (Held, Parity(ParityResult::Clean)) => Transition::identity(state),
 
@@ -523,13 +539,21 @@ mod tests {
     }
 
     /// Drive a sequence of events and return the final state.
-    fn run(start: MigrationState, events: &[MigrationEvent], policy: &MigrationPolicy) -> MigrationState {
+    fn run(
+        start: MigrationState,
+        events: &[MigrationEvent],
+        policy: &MigrationPolicy,
+    ) -> MigrationState {
         events.iter().fold(start, |s, e| step(&s, e, policy).next)
     }
 
     #[test]
     fn enroll_starts_shadowing_under_tofu() {
-        let t = step(&MigrationState::pinned(), &MigrationEvent::Enroll, &manual());
+        let t = step(
+            &MigrationState::pinned(),
+            &MigrationEvent::Enroll,
+            &manual(),
+        );
         assert_eq!(t.next.phase, MigrationPhase::Shadow);
         assert_eq!(t.next.phase.authoritative(), Authoritative::Tofu);
         assert!(t.effects.contains(&Effect::RunShadowParity));
@@ -539,7 +563,10 @@ mod tests {
     fn parity_streak_reaches_held_under_manual_policy() {
         let p = manual();
         let s = run(
-            MigrationState { phase: MigrationPhase::Shadow, ..MigrationState::pinned() },
+            MigrationState {
+                phase: MigrationPhase::Shadow,
+                ..MigrationState::pinned()
+            },
             &[
                 MigrationEvent::Parity(ParityResult::Clean),
                 MigrationEvent::Parity(ParityResult::Clean),
@@ -556,23 +583,35 @@ mod tests {
     #[test]
     fn auto_cutover_skips_held_and_goes_magma() {
         let p = auto();
-        let start = MigrationState { phase: MigrationPhase::Shadow, ..MigrationState::pinned() };
+        let start = MigrationState {
+            phase: MigrationPhase::Shadow,
+            ..MigrationState::pinned()
+        };
         // 3rd clean parity meets threshold → straight to Cutover.
         let t = step(
-            &MigrationState { parity_streak: 2, ..start },
+            &MigrationState {
+                parity_streak: 2,
+                ..start
+            },
             &MigrationEvent::Parity(ParityResult::Clean),
             &p,
         );
         assert_eq!(t.next.phase, MigrationPhase::Cutover);
         assert_eq!(t.next.phase.authoritative(), Authoritative::Magma);
-        assert!(t.effects.contains(&Effect::SetAuthoritative(Authoritative::Magma)));
+        assert!(t
+            .effects
+            .contains(&Effect::SetAuthoritative(Authoritative::Magma)));
     }
 
     #[test]
     fn held_cutover_then_verify() {
         let p = manual();
         let s = run(
-            MigrationState { phase: MigrationPhase::Held, parity_streak: 3, ..MigrationState::pinned() },
+            MigrationState {
+                phase: MigrationPhase::Held,
+                parity_streak: 3,
+                ..MigrationState::pinned()
+            },
             &[
                 MigrationEvent::CutoverApproved,
                 MigrationEvent::MagmaCycle(CycleResult::Clean),
@@ -588,36 +627,62 @@ mod tests {
     fn anomaly_during_cutover_rolls_back_to_tofu() {
         let p = manual();
         let t = step(
-            &MigrationState { phase: MigrationPhase::Cutover, ..MigrationState::pinned() },
+            &MigrationState {
+                phase: MigrationPhase::Cutover,
+                ..MigrationState::pinned()
+            },
             &MigrationEvent::MagmaCycle(CycleResult::Anomaly(AnomalyKind::ApplyFailed)),
             &p,
         );
         assert_eq!(t.next.phase, MigrationPhase::RolledBack);
         assert_eq!(t.next.phase.authoritative(), Authoritative::Tofu);
-        assert_eq!(t.next.rolled_back_reason, Some(RollbackReason::Anomaly(AnomalyKind::ApplyFailed)));
-        assert!(t.effects.contains(&Effect::SetAuthoritative(Authoritative::Tofu)));
+        assert_eq!(
+            t.next.rolled_back_reason,
+            Some(RollbackReason::Anomaly(AnomalyKind::ApplyFailed))
+        );
+        assert!(t
+            .effects
+            .contains(&Effect::SetAuthoritative(Authoritative::Tofu)));
     }
 
     #[test]
     fn verified_still_rolls_back_on_late_anomaly() {
         let p = manual();
         let t = step(
-            &MigrationState { phase: MigrationPhase::Verified, verified_cycles: 2, ..MigrationState::pinned() },
+            &MigrationState {
+                phase: MigrationPhase::Verified,
+                verified_cycles: 2,
+                ..MigrationState::pinned()
+            },
             &MigrationEvent::MagmaCycle(CycleResult::Anomaly(AnomalyKind::DriftRefused)),
             &p,
         );
         assert_eq!(t.next.phase, MigrationPhase::RolledBack);
-        assert_eq!(t.next.rolled_back_reason, Some(RollbackReason::Anomaly(AnomalyKind::DriftRefused)));
+        assert_eq!(
+            t.next.rolled_back_reason,
+            Some(RollbackReason::Anomaly(AnomalyKind::DriftRefused))
+        );
     }
 
     #[test]
     fn lifeline_never_auto_cuts_over_even_with_auto_policy() {
         // auto_cutover=true but lifeline=true → must still land in Held,
         // never Cutover, and request manual approval.
-        let p = MigrationPolicy { lifeline: true, ..auto() };
-        let start = MigrationState { phase: MigrationPhase::Shadow, parity_streak: 2, ..MigrationState::pinned() };
+        let p = MigrationPolicy {
+            lifeline: true,
+            ..auto()
+        };
+        let start = MigrationState {
+            phase: MigrationPhase::Shadow,
+            parity_streak: 2,
+            ..MigrationState::pinned()
+        };
         let t = step(&start, &MigrationEvent::Parity(ParityResult::Clean), &p);
-        assert_eq!(t.next.phase, MigrationPhase::Held, "lifeline must not auto-cut-over");
+        assert_eq!(
+            t.next.phase,
+            MigrationPhase::Held,
+            "lifeline must not auto-cut-over"
+        );
         assert_eq!(t.next.phase.authoritative(), Authoritative::Tofu);
         assert!(t.effects.contains(&Effect::RequestCutoverApproval));
     }
@@ -626,18 +691,37 @@ mod tests {
     fn lifeline_single_divergence_pins_immediately() {
         // Zero divergence budget for lifeline: the first divergence in
         // Shadow returns to Pinned (SSH path protected).
-        let p = MigrationPolicy { lifeline: true, divergence_budget: 5, ..auto() };
-        let start = MigrationState { phase: MigrationPhase::Shadow, parity_streak: 7, ..MigrationState::pinned() };
+        let p = MigrationPolicy {
+            lifeline: true,
+            divergence_budget: 5,
+            ..auto()
+        };
+        let start = MigrationState {
+            phase: MigrationPhase::Shadow,
+            parity_streak: 7,
+            ..MigrationState::pinned()
+        };
         let t = step(&start, &MigrationEvent::Parity(ParityResult::Diverged), &p);
-        assert_eq!(t.next.phase, MigrationPhase::Pinned, "lifeline tolerates zero divergence");
+        assert_eq!(
+            t.next.phase,
+            MigrationPhase::Pinned,
+            "lifeline tolerates zero divergence"
+        );
         assert_eq!(t.next.phase.authoritative(), Authoritative::Tofu);
-        assert!(t.effects.contains(&Effect::SetAuthoritative(Authoritative::Tofu)));
+        assert!(t
+            .effects
+            .contains(&Effect::SetAuthoritative(Authoritative::Tofu)));
     }
 
     #[test]
     fn divergence_within_budget_resets_streak_but_stays_shadow() {
         let p = auto(); // budget 1
-        let start = MigrationState { phase: MigrationPhase::Shadow, parity_streak: 2, divergence_count: 0, ..MigrationState::pinned() };
+        let start = MigrationState {
+            phase: MigrationPhase::Shadow,
+            parity_streak: 2,
+            divergence_count: 0,
+            ..MigrationState::pinned()
+        };
         let t = step(&start, &MigrationEvent::Parity(ParityResult::Diverged), &p);
         assert_eq!(t.next.phase, MigrationPhase::Shadow);
         assert_eq!(t.next.parity_streak, 0);
@@ -647,7 +731,11 @@ mod tests {
     #[test]
     fn divergence_over_budget_pins() {
         let p = auto(); // budget 1
-        let start = MigrationState { phase: MigrationPhase::Shadow, divergence_count: 1, ..MigrationState::pinned() };
+        let start = MigrationState {
+            phase: MigrationPhase::Shadow,
+            divergence_count: 1,
+            ..MigrationState::pinned()
+        };
         let t = step(&start, &MigrationEvent::Parity(ParityResult::Diverged), &p);
         assert_eq!(t.next.phase, MigrationPhase::Pinned);
     }
@@ -657,7 +745,10 @@ mod tests {
         let p = manual();
         // From Shadow: still tofu, so just pin (no rollback reason).
         let from_shadow = step(
-            &MigrationState { phase: MigrationPhase::Shadow, ..MigrationState::pinned() },
+            &MigrationState {
+                phase: MigrationPhase::Shadow,
+                ..MigrationState::pinned()
+            },
             &MigrationEvent::Abort(AbortReason::Manual),
             &p,
         );
@@ -665,12 +756,18 @@ mod tests {
         assert_eq!(from_shadow.next.rolled_back_reason, None);
         // From Cutover: magma was live, so revert + record.
         let from_cutover = step(
-            &MigrationState { phase: MigrationPhase::Cutover, ..MigrationState::pinned() },
+            &MigrationState {
+                phase: MigrationPhase::Cutover,
+                ..MigrationState::pinned()
+            },
             &MigrationEvent::Abort(AbortReason::Manual),
             &p,
         );
         assert_eq!(from_cutover.next.phase, MigrationPhase::RolledBack);
-        assert_eq!(from_cutover.next.rolled_back_reason, Some(RollbackReason::Aborted(AbortReason::Manual)));
+        assert_eq!(
+            from_cutover.next.rolled_back_reason,
+            Some(RollbackReason::Aborted(AbortReason::Manual))
+        );
     }
 
     #[test]
@@ -689,11 +786,19 @@ mod tests {
     fn step_is_total_undefined_pairs_are_identity() {
         let p = manual();
         // CutoverApproved while Pinned is meaningless → no-op.
-        let t = step(&MigrationState::pinned(), &MigrationEvent::CutoverApproved, &p);
+        let t = step(
+            &MigrationState::pinned(),
+            &MigrationEvent::CutoverApproved,
+            &p,
+        );
         assert_eq!(t.next, MigrationState::pinned());
         assert!(t.effects.is_empty());
         // MagmaCycle while Shadow (magma isn't authoritative) → no-op.
-        let s = MigrationState { phase: MigrationPhase::Shadow, parity_streak: 1, ..MigrationState::pinned() };
+        let s = MigrationState {
+            phase: MigrationPhase::Shadow,
+            parity_streak: 1,
+            ..MigrationState::pinned()
+        };
         let t2 = step(&s, &MigrationEvent::MagmaCycle(CycleResult::Clean), &p);
         assert_eq!(t2.next, s);
         assert!(t2.effects.is_empty());

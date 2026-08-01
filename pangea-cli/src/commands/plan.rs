@@ -18,7 +18,10 @@ pub async fn show_plan(
     match plan {
         Some(p) => output::print_plan(&p, format)?,
         None => {
-            eprintln!("No plan available for {}/{}. Template may not exist or has no pending changes.", ns, name);
+            eprintln!(
+                "No plan available for {}/{}. Template may not exist or has no pending changes.",
+                ns, name
+            );
             std::process::exit(1);
         }
     }

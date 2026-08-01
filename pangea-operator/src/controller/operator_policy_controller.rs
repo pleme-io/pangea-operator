@@ -229,11 +229,7 @@ fn status_needs_patch(
         || prev_workspace_overrides != new_workspace_overrides
 }
 
-fn error_policy(
-    _obj: Arc<OperatorPolicy>,
-    error: &Error,
-    _ctx: Arc<ControllerState>,
-) -> Action {
+fn error_policy(_obj: Arc<OperatorPolicy>, error: &Error, _ctx: Arc<ControllerState>) -> Action {
     error!(%error, "OperatorPolicy reconcile error");
     Action::requeue(ERROR_REQUEUE_INTERVAL)
 }

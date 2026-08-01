@@ -98,7 +98,10 @@ impl StateBackend for TofuPgStateBackend {
         template_name: &str,
         state_name: &str,
     ) -> Result<Option<TerraformState>> {
-        match self.get_state(schema_name, template_name, state_name).await? {
+        match self
+            .get_state(schema_name, template_name, state_name)
+            .await?
+        {
             Some(e) if e.data.is_some() => {
                 let data = e.data.unwrap();
                 let state: TerraformState =
@@ -121,7 +124,12 @@ impl StateBackend for TofuPgStateBackend {
         let text = std::str::from_utf8(data)
             .map_err(|e| Error::Config(format!("state bytes are not valid UTF-8: {e}")))?;
 
-        debug!(table, state_name, data_size = data.len(), "magma: saving tofu-format state");
+        debug!(
+            table,
+            state_name,
+            data_size = data.len(),
+            "magma: saving tofu-format state"
+        );
 
         let query = format!(
             "INSERT INTO {table} (name, data) VALUES ($1, $2) \
@@ -156,11 +164,7 @@ impl StateBackend for TofuPgStateBackend {
         Ok(result.rows_affected() > 0)
     }
 
-    async fn list_states(
-        &self,
-        schema_name: &str,
-        template_name: &str,
-    ) -> Result<Vec<StateEntry>> {
+    async fn list_states(&self, schema_name: &str, template_name: &str) -> Result<Vec<StateEntry>> {
         let table = Self::states_table(schema_name, template_name);
         let query = format!("SELECT id, name, data FROM {table} ORDER BY id DESC");
         let rows: Vec<(i64, String, Option<String>)> = sqlx::query_as(&query)

@@ -82,13 +82,8 @@ impl PackerExecutor {
 
     /// Run `packer validate`.
     pub async fn validate(&self, work_dir: &Path) -> Result<PackerResult> {
-        self.execute(
-            PackerCommand::Validate,
-            work_dir,
-            &["."],
-            &HashMap::new(),
-        )
-        .await
+        self.execute(PackerCommand::Validate, work_dir, &["."], &HashMap::new())
+            .await
     }
 
     /// Run `packer build` with variables and var-files.
@@ -122,13 +117,8 @@ impl PackerExecutor {
 
     /// Run `packer inspect`.
     pub async fn inspect_config(&self, work_dir: &Path) -> Result<PackerResult> {
-        self.execute(
-            PackerCommand::Inspect,
-            work_dir,
-            &["."],
-            &HashMap::new(),
-        )
-        .await
+        self.execute(PackerCommand::Inspect, work_dir, &["."], &HashMap::new())
+            .await
     }
 
     /// Execute a packer command.
@@ -166,9 +156,9 @@ impl PackerExecutor {
             cmd.env(key, value);
         }
 
-        let mut child = cmd.spawn().map_err(|e| {
-            Error::PackerExecution(format!("Failed to spawn packer: {}", e))
-        })?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| Error::PackerExecution(format!("Failed to spawn packer: {}", e)))?;
 
         let stdout_handle = child.stdout.take().unwrap();
         let stderr_handle = child.stderr.take().unwrap();
@@ -266,7 +256,11 @@ pub fn parse_packer_manifest(manifest_path: &Path) -> Result<String> {
     })?;
 
     let json: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
-        Error::PackerManifest(format!("Failed to parse {}: {}", manifest_path.display(), e))
+        Error::PackerManifest(format!(
+            "Failed to parse {}: {}",
+            manifest_path.display(),
+            e
+        ))
     })?;
 
     let ami_id = json["builds"]
@@ -296,7 +290,11 @@ pub fn parse_packer_manifest_region(manifest_path: &Path) -> Result<Option<Strin
     })?;
 
     let json: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
-        Error::PackerManifest(format!("Failed to parse {}: {}", manifest_path.display(), e))
+        Error::PackerManifest(format!(
+            "Failed to parse {}: {}",
+            manifest_path.display(),
+            e
+        ))
     })?;
 
     let region = json["builds"]
@@ -436,13 +434,17 @@ mod tests {
     #[test]
     fn test_parse_packer_manifest_picks_last_build() {
         let mut f = NamedTempFile::new().unwrap();
-        writeln!(f, r#"{{
+        writeln!(
+            f,
+            r#"{{
             "builds": [
                 {{"artifact_id": "us-east-1:ami-first"}},
                 {{"artifact_id": "us-east-1:ami-second"}},
                 {{"artifact_id": "us-east-1:ami-third"}}
             ]
-        }}"#).unwrap();
+        }}"#
+        )
+        .unwrap();
 
         let ami = parse_packer_manifest(f.path()).unwrap();
         assert_eq!(ami, "ami-third");

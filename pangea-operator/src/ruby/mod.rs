@@ -25,8 +25,8 @@ pub mod owner;
 pub mod pool;
 
 pub use backend::{
-    ArchListing, BackendError, CompileAnyRequest, CompileAnyResult, CompileRequest,
-    CompileResult, CompilerBackend, FixtureOutcome, GemSource, SmokeRequest, SourceKind,
+    ArchListing, BackendError, CompileAnyRequest, CompileAnyResult, CompileRequest, CompileResult,
+    CompilerBackend, FixtureOutcome, GemSource, SmokeRequest, SourceKind,
 };
 pub use http_backend::HttpCompilerBackend;
 

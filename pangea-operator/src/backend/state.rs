@@ -132,13 +132,15 @@ impl StateStore {
         template_name: &str,
         state_name: &str,
     ) -> Result<Option<TerraformState>> {
-        let entry = self.get_state(schema_name, template_name, state_name).await?;
+        let entry = self
+            .get_state(schema_name, template_name, state_name)
+            .await?;
 
         match entry {
             Some(e) if e.data.is_some() => {
                 let data = e.data.unwrap();
-                let state: TerraformState = serde_json::from_slice(&data)
-                    .map_err(|e| Error::Serialization(e))?;
+                let state: TerraformState =
+                    serde_json::from_slice(&data).map_err(|e| Error::Serialization(e))?;
                 Ok(Some(state))
             }
             _ => Ok(None),
@@ -182,12 +184,7 @@ impl StateStore {
             .await
             .map_err(|e| Error::Database(e))?;
 
-        info!(
-            table_name,
-            state_name,
-            id = row.0,
-            "State saved"
-        );
+        info!(table_name, state_name, id = row.0, "State saved");
 
         Ok(row.0)
     }
@@ -252,7 +249,10 @@ impl StateStore {
         template_name: &str,
         state_name: &str,
     ) -> Result<u32> {
-        match self.get_parsed_state(schema_name, template_name, state_name).await? {
+        match self
+            .get_parsed_state(schema_name, template_name, state_name)
+            .await?
+        {
             Some(state) => Ok(state.resources.len() as u32),
             None => Ok(0),
         }
@@ -265,7 +265,10 @@ impl StateStore {
         template_name: &str,
         state_name: &str,
     ) -> Result<Option<serde_json::Value>> {
-        match self.get_parsed_state(schema_name, template_name, state_name).await? {
+        match self
+            .get_parsed_state(schema_name, template_name, state_name)
+            .await?
+        {
             Some(state) => Ok(Some(state.outputs)),
             None => Ok(None),
         }
@@ -285,8 +288,8 @@ mod tests {
         // operator), so this exact realistic input never even reached the
         // database cleanly before — it's not just an injection risk, it's
         // a straightforwardly broken query for any real template name.
-        let t =
-            StateStore::qualified_state_table("pangea_cloudflare-pleme", "cloudflare-pleme").unwrap();
+        let t = StateStore::qualified_state_table("pangea_cloudflare-pleme", "cloudflare-pleme")
+            .unwrap();
         assert_eq!(t, "\"pangea_cloudflare-pleme\".\"cloudflare-pleme_states\"");
     }
 

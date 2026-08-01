@@ -8,14 +8,14 @@ pub mod iac_executor;
 // Typed, executor-agnostic, disk-free import-discovery border. Not
 // feature-gated — the `IacExecutor::planned_changes` method + the tofu
 // path reference it regardless of `executor_magma`. See module docs.
+pub mod packer;
+mod plan;
 pub mod plan_change;
+pub mod policy;
 pub mod recording;
 mod tofu;
-mod workspace;
-mod plan;
-pub mod packer;
-pub mod policy;
 pub mod variable_resolver;
+mod workspace;
 // Magma-backed alternative IacExecutor (feature-gated). Per
 // theory/MAGMA-OPERATOR-BACKEND.md. Both `TofuExecutor` and
 // `MagmaExecutor` ship side-by-side; the controller selects at
@@ -41,13 +41,18 @@ pub mod workspace_runner;
 
 pub use backend_select::ExecutorBackend;
 pub use iac_executor::IacExecutor;
+pub use packer::{
+    parse_packer_manifest, parse_packer_manifest_region, PackerCommand, PackerExecutor,
+    PackerResult,
+};
+pub use plan::{ChangeType, Plan, PlanSummary, ResourceChange};
 pub use plan_change::{PlanAction, PlannedChange, ResourceKindClass};
+pub use policy::{
+    evaluate as evaluate_policy, is_configured as policy_is_configured, PolicyOutcome,
+};
 pub use recording::{RecordedCall, RecordingExecutor};
-pub use tofu::{TofuExecutor, TofuCommand, TofuResult, FailedChangeRecord};
+pub use tofu::{FailedChangeRecord, TofuCommand, TofuExecutor, TofuResult};
 pub use workspace::{Workspace, WorkspaceManager};
-pub use plan::{Plan, PlanSummary, ResourceChange, ChangeType};
-pub use packer::{PackerExecutor, PackerCommand, PackerResult, parse_packer_manifest, parse_packer_manifest_region};
-pub use policy::{evaluate as evaluate_policy, is_configured as policy_is_configured, PolicyOutcome};
 
 #[cfg(feature = "executor_magma")]
 pub use magma::{MagmaExecutor, MagmaExecutorConfig, StateBackendAsync};
@@ -85,7 +90,7 @@ impl Default for ExecutorConfig {
             tofu_binary: PathBuf::from("tofu"),
             packer_binary: PathBuf::from("packer"),
             workspace_base: PathBuf::from("/tmp/pangea-workspaces"),
-            timeout_secs: 600,        // 10 minutes
+            timeout_secs: 600,         // 10 minutes
             packer_timeout_secs: 2700, // 45 minutes
             ruby_binary: None,
             verbose: false,
@@ -118,9 +123,7 @@ impl ExecutorConfig {
             .and_then(|s| s.parse().ok())
             .unwrap_or(2700);
 
-        let ruby_binary = std::env::var("RUBY_BINARY")
-            .map(PathBuf::from)
-            .ok();
+        let ruby_binary = std::env::var("RUBY_BINARY").map(PathBuf::from).ok();
 
         let verbose = std::env::var("PANGEA_VERBOSE")
             .map(|s| s == "1" || s.to_lowercase() == "true")

@@ -34,10 +34,7 @@ use tracing::warn;
 /// failure or stuck-phase clocks. Best-effort: hook failures are
 /// logged at warn but never fail the surrounding reconcile (the
 /// reconcile already succeeded by the time we got here).
-pub async fn run_for_template(
-    template: &InfrastructureTemplate,
-    state: &ControllerState,
-) {
+pub async fn run_for_template(template: &InfrastructureTemplate, state: &ControllerState) {
     if let Err(e) = run_reactive(template, state).await {
         warn!(error = %e, "post-reconcile reactive policy stage failed (non-fatal)");
     }
@@ -47,9 +44,6 @@ pub async fn run_for_template(
 /// `template/reactive_policy::apply_reactive_policy_internal` shape;
 /// pulled out here so the pipeline reads as an explicit list of
 /// stages rather than scattering pluck-from-controller calls.
-async fn run_reactive(
-    template: &InfrastructureTemplate,
-    state: &ControllerState,
-) -> Result<()> {
+async fn run_reactive(template: &InfrastructureTemplate, state: &ControllerState) -> Result<()> {
     super::template::reactive_policy::apply_reactive_policy_internal(template, state).await
 }

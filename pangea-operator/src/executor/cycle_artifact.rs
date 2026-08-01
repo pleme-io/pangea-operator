@@ -143,11 +143,11 @@ impl PlanAction {
     pub fn parse(raw: &str) -> Self {
         match raw {
             "no_op" | "no-op" | "noop" => Self::NoOp,
-            "create"                   => Self::Create,
-            "update"                   => Self::Update,
-            "delete"                   => Self::Delete,
-            "replace"                  => Self::Replace,
-            other                      => Self::Other(other.to_string()),
+            "create" => Self::Create,
+            "update" => Self::Update,
+            "delete" => Self::Delete,
+            "replace" => Self::Replace,
+            other => Self::Other(other.to_string()),
         }
     }
 }
@@ -185,12 +185,12 @@ pub enum Severity {
 ///                  change rather than silently treated as cosmetic)
 pub fn action_to_severity(action: &PlanAction) -> Severity {
     match action {
-        PlanAction::NoOp                => Severity::Cosmetic,
-        PlanAction::Create              => Severity::Functional,
-        PlanAction::Update              => Severity::Functional,
-        PlanAction::Delete              => Severity::Breaking,
-        PlanAction::Replace             => Severity::Breaking,
-        PlanAction::Other(_)            => Severity::Functional,
+        PlanAction::NoOp => Severity::Cosmetic,
+        PlanAction::Create => Severity::Functional,
+        PlanAction::Update => Severity::Functional,
+        PlanAction::Delete => Severity::Breaking,
+        PlanAction::Replace => Severity::Breaking,
+        PlanAction::Other(_) => Severity::Functional,
     }
 }
 
@@ -201,12 +201,12 @@ pub fn action_to_severity(action: &PlanAction) -> Severity {
 /// as `s`.
 pub fn plan_action_to_terraform_str(action: &PlanAction) -> &str {
     match action {
-        PlanAction::NoOp        => "no-op",
-        PlanAction::Create      => "create",
-        PlanAction::Update      => "update",
-        PlanAction::Delete      => "delete",
-        PlanAction::Replace     => "replace",
-        PlanAction::Other(s)    => s.as_str(),
+        PlanAction::NoOp => "no-op",
+        PlanAction::Create => "create",
+        PlanAction::Update => "update",
+        PlanAction::Delete => "delete",
+        PlanAction::Replace => "replace",
+        PlanAction::Other(s) => s.as_str(),
     }
 }
 
@@ -221,9 +221,9 @@ pub fn plan_action_to_terraform_str(action: &PlanAction) -> &str {
 ///                    state" bucket)
 pub fn severity_to_risk(severity: Severity) -> &'static str {
     match severity {
-        Severity::Cosmetic   => "safe",
+        Severity::Cosmetic => "safe",
         Severity::Functional => "modify",
-        Severity::Breaking   => "destroy",
+        Severity::Breaking => "destroy",
     }
 }
 
@@ -233,9 +233,9 @@ pub fn severity_to_risk(severity: Severity) -> &'static str {
 /// `action_distribution.total()`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SeverityRollup {
-    pub cosmetic:   u32,
+    pub cosmetic: u32,
     pub functional: u32,
-    pub breaking:   u32,
+    pub breaking: u32,
 }
 
 impl SeverityRollup {
@@ -245,9 +245,9 @@ impl SeverityRollup {
         let mut r = Self::default();
         for c in changes {
             match c.severity {
-                Severity::Cosmetic   => r.cosmetic   = r.cosmetic.saturating_add(1),
+                Severity::Cosmetic => r.cosmetic = r.cosmetic.saturating_add(1),
                 Severity::Functional => r.functional = r.functional.saturating_add(1),
-                Severity::Breaking   => r.breaking   = r.breaking.saturating_add(1),
+                Severity::Breaking => r.breaking = r.breaking.saturating_add(1),
             }
         }
         r
@@ -270,12 +270,12 @@ impl CycleArtifact {
         let mut d = ActionDistribution::default();
         for c in changes {
             match &c.action {
-                PlanAction::NoOp     => d.no_op   = d.no_op.saturating_add(1),
-                PlanAction::Create   => d.create  = d.create.saturating_add(1),
-                PlanAction::Update   => d.update  = d.update.saturating_add(1),
-                PlanAction::Delete   => d.delete  = d.delete.saturating_add(1),
-                PlanAction::Replace  => d.replace = d.replace.saturating_add(1),
-                PlanAction::Other(_) => d.other   = d.other.saturating_add(1),
+                PlanAction::NoOp => d.no_op = d.no_op.saturating_add(1),
+                PlanAction::Create => d.create = d.create.saturating_add(1),
+                PlanAction::Update => d.update = d.update.saturating_add(1),
+                PlanAction::Delete => d.delete = d.delete.saturating_add(1),
+                PlanAction::Replace => d.replace = d.replace.saturating_add(1),
+                PlanAction::Other(_) => d.other = d.other.saturating_add(1),
             }
         }
         d
@@ -297,11 +297,12 @@ impl CycleArtifact {
     /// going through `Plan::from_json`.
     pub fn summary_counts(&self) -> (u32, u32, u32, u32) {
         let d = &self.action_distribution;
-        let added     = d.create;
-        let changed   = d.update.saturating_add(d.replace);
+        let added = d.create;
+        let changed = d.update.saturating_add(d.replace);
         let destroyed = d.delete;
         // Total = every classified resource (no-ops + changes + other).
-        let total     = d.no_op
+        let total = d
+            .no_op
             .saturating_add(d.create)
             .saturating_add(d.update)
             .saturating_add(d.delete)
@@ -331,12 +332,12 @@ impl CycleArtifact {
             .filter(|c| !matches!(c.action, PlanAction::NoOp))
             .take(cap)
             .map(|c| crate::crd::DriftDetail {
-                address:         c.address.clone(),
-                action:          plan_action_to_terraform_str(&c.action).to_string(),
-                risk:            severity_to_risk(c.severity).to_string(),
-                attributes:      Vec::new(),
+                address: c.address.clone(),
+                action: plan_action_to_terraform_str(&c.action).to_string(),
+                risk: severity_to_risk(c.severity).to_string(),
+                attributes: Vec::new(),
                 policy_decision: None,
-                matched_policy:  None,
+                matched_policy: None,
             })
             .collect()
     }
@@ -374,25 +375,29 @@ impl CycleArtifact {
                 // `to_universal_plan` (magma.rs) uses the same form.
                 let address = rc.address.to_string();
                 let action = match rc.action {
-                    magma_types::Action::Create           => PlanAction::Create,
-                    magma_types::Action::Update           => PlanAction::Update,
-                    magma_types::Action::Delete           => PlanAction::Delete,
-                    magma_types::Action::Replace          => PlanAction::Replace,
-                    magma_types::Action::NoOp             => PlanAction::NoOp,
+                    magma_types::Action::Create => PlanAction::Create,
+                    magma_types::Action::Update => PlanAction::Update,
+                    magma_types::Action::Delete => PlanAction::Delete,
+                    magma_types::Action::Replace => PlanAction::Replace,
+                    magma_types::Action::NoOp => PlanAction::NoOp,
                     // Read = effectively no-op for diff purposes (data
                     // source refresh; nothing written).
-                    magma_types::Action::Read             => PlanAction::NoOp,
+                    magma_types::Action::Read => PlanAction::NoOp,
                     // Forget removes from state without destroying
                     // the cloud resource — closest user-facing
                     // semantic is "delete from our concern."
-                    magma_types::Action::Forget           => PlanAction::Delete,
+                    magma_types::Action::Forget => PlanAction::Delete,
                     // Both order variants collapse to Replace —
                     // matches `to_universal_plan`'s convention.
                     magma_types::Action::CreateThenDelete => PlanAction::Replace,
                     magma_types::Action::DeleteThenCreate => PlanAction::Replace,
                 };
                 let severity = action_to_severity(&action);
-                TypedResourceChange { address, action, severity }
+                TypedResourceChange {
+                    address,
+                    action,
+                    severity,
+                }
             })
             .collect();
 
@@ -456,12 +461,18 @@ impl CycleArtifact {
             .iter()
             .filter_map(|rc| {
                 let address = rc.get("address").and_then(|v| v.as_str())?.to_string();
-                let actions = rc.get("change").and_then(|v| v.get("actions"))?.as_array()?;
-                let action_strs: Vec<&str> =
-                    actions.iter().filter_map(|a| a.as_str()).collect();
+                let actions = rc
+                    .get("change")
+                    .and_then(|v| v.get("actions"))?
+                    .as_array()?;
+                let action_strs: Vec<&str> = actions.iter().filter_map(|a| a.as_str()).collect();
                 let action = action_set_to_plan_action(&action_strs);
                 let severity = action_to_severity(&action);
-                Some(TypedResourceChange { address, action, severity })
+                Some(TypedResourceChange {
+                    address,
+                    action,
+                    severity,
+                })
             })
             .collect();
 
@@ -475,7 +486,7 @@ impl CycleArtifact {
         Some(CycleArtifact {
             action_distribution,
             resource_changes,
-            artifact_ref:    None, // honest absence — see fn doc
+            artifact_ref: None, // honest absence — see fn doc
             severities,
             lifecycle_phase: None, // honest absence — tofu has no FSM
         })
@@ -514,9 +525,9 @@ mod tests {
     #[test]
     fn plan_action_parses_all_known_verbs() {
         // Hyphen + underscore + bare "noop" all bucket to NoOp.
-        assert_eq!(PlanAction::parse("no_op"),  PlanAction::NoOp);
-        assert_eq!(PlanAction::parse("no-op"),  PlanAction::NoOp);
-        assert_eq!(PlanAction::parse("noop"),   PlanAction::NoOp);
+        assert_eq!(PlanAction::parse("no_op"), PlanAction::NoOp);
+        assert_eq!(PlanAction::parse("no-op"), PlanAction::NoOp);
+        assert_eq!(PlanAction::parse("noop"), PlanAction::NoOp);
         assert_eq!(PlanAction::parse("create"), PlanAction::Create);
         assert_eq!(PlanAction::parse("update"), PlanAction::Update);
         assert_eq!(PlanAction::parse("delete"), PlanAction::Delete);
@@ -528,31 +539,43 @@ mod tests {
         // The whole point of Other(String): future tofu verbs (read,
         // forget, …) must survive parsing so we don't silently drop
         // them from the rollup or the resource_changes list.
-        assert_eq!(PlanAction::parse("read"),    PlanAction::Other("read".into()));
-        assert_eq!(PlanAction::parse("forget"),  PlanAction::Other("forget".into()));
-        assert_eq!(PlanAction::parse(""),        PlanAction::Other("".into()));
+        assert_eq!(PlanAction::parse("read"), PlanAction::Other("read".into()));
+        assert_eq!(
+            PlanAction::parse("forget"),
+            PlanAction::Other("forget".into())
+        );
+        assert_eq!(PlanAction::parse(""), PlanAction::Other("".into()));
     }
 
     #[test]
     fn action_to_severity_is_total_and_conservative() {
         // The whole tofu severity story rides on this mapping being
         // total. Drift here breaks the equivalence test.
-        assert_eq!(action_to_severity(&PlanAction::NoOp),    Severity::Cosmetic);
-        assert_eq!(action_to_severity(&PlanAction::Create),  Severity::Functional);
-        assert_eq!(action_to_severity(&PlanAction::Update),  Severity::Functional);
-        assert_eq!(action_to_severity(&PlanAction::Delete),  Severity::Breaking);
+        assert_eq!(action_to_severity(&PlanAction::NoOp), Severity::Cosmetic);
+        assert_eq!(
+            action_to_severity(&PlanAction::Create),
+            Severity::Functional
+        );
+        assert_eq!(
+            action_to_severity(&PlanAction::Update),
+            Severity::Functional
+        );
+        assert_eq!(action_to_severity(&PlanAction::Delete), Severity::Breaking);
         assert_eq!(action_to_severity(&PlanAction::Replace), Severity::Breaking);
         // Other → Functional rather than Cosmetic: unknown is
         // presumed to be a real change. Silent cosmetic would hide
         // a class of changes from the operator.
-        assert_eq!(action_to_severity(&PlanAction::Other("x".into())), Severity::Functional);
+        assert_eq!(
+            action_to_severity(&PlanAction::Other("x".into())),
+            Severity::Functional
+        );
     }
 
     #[test]
     fn severity_rollup_buckets_correctly() {
         let changes = vec![
-            change("a", PlanAction::NoOp,   Severity::Cosmetic),
-            change("b", PlanAction::NoOp,   Severity::Cosmetic),
+            change("a", PlanAction::NoOp, Severity::Cosmetic),
+            change("b", PlanAction::NoOp, Severity::Cosmetic),
             change("c", PlanAction::Create, Severity::Functional),
             change("d", PlanAction::Delete, Severity::Breaking),
             change("e", PlanAction::Delete, Severity::Breaking),
@@ -572,24 +595,28 @@ mod tests {
         // action_distribution.* and a count of resource_changes
         // filtered by action.
         let changes = vec![
-            change("a", PlanAction::NoOp,    Severity::Cosmetic),
-            change("b", PlanAction::Create,  Severity::Functional),
-            change("c", PlanAction::Delete,  Severity::Breaking),
+            change("a", PlanAction::NoOp, Severity::Cosmetic),
+            change("b", PlanAction::Create, Severity::Functional),
+            change("c", PlanAction::Delete, Severity::Breaking),
             change("d", PlanAction::Replace, Severity::Breaking),
-            change("e", PlanAction::Update,  Severity::Functional),
+            change("e", PlanAction::Update, Severity::Functional),
             change("f", PlanAction::Other("read".into()), Severity::Functional),
         ];
         let d = CycleArtifact::action_distribution_from(&changes);
-        assert_eq!(d.no_op,   1);
-        assert_eq!(d.create,  1);
-        assert_eq!(d.update,  1);
-        assert_eq!(d.delete,  1);
+        assert_eq!(d.no_op, 1);
+        assert_eq!(d.create, 1);
+        assert_eq!(d.update, 1);
+        assert_eq!(d.delete, 1);
         assert_eq!(d.replace, 1);
-        assert_eq!(d.other,   1);
+        assert_eq!(d.other, 1);
     }
 
     fn change(addr: &str, action: PlanAction, severity: Severity) -> TypedResourceChange {
-        TypedResourceChange { address: addr.into(), action, severity }
+        TypedResourceChange {
+            address: addr.into(),
+            action,
+            severity,
+        }
     }
 
     // ── from_magma_plan (the in-memory pipeline closer) ──────────
@@ -629,7 +656,7 @@ mod tests {
             ]
         }"#;
         let art = CycleArtifact::from_tofu_plan_show_json(stdout).unwrap();
-        assert_eq!(art.action_distribution.no_op,  1);
+        assert_eq!(art.action_distribution.no_op, 1);
         assert_eq!(art.action_distribution.create, 1);
         assert_eq!(art.action_distribution.update, 1);
         assert_eq!(art.action_distribution.delete, 1);
@@ -641,7 +668,10 @@ mod tests {
         assert_eq!(art.resource_changes[3].severity, Severity::Breaking);
         // Honest absence — slice-2 tofu reader does not populate
         // these fields.
-        assert!(art.artifact_ref.is_none(), "tofu side: artifact_ref deferred to later slice");
+        assert!(
+            art.artifact_ref.is_none(),
+            "tofu side: artifact_ref deferred to later slice"
+        );
         assert!(art.lifecycle_phase.is_none(), "tofu side: no lifecycle FSM");
         // SeverityRollup populates from resource_changes.
         let rollup = art.severities.unwrap();
@@ -683,7 +713,10 @@ mod tests {
             ]
         }"#;
         let art = CycleArtifact::from_tofu_plan_show_json(stdout).unwrap();
-        assert_eq!(art.resource_changes[0].action, PlanAction::Other("create+update".into()));
+        assert_eq!(
+            art.resource_changes[0].action,
+            PlanAction::Other("create+update".into())
+        );
         assert_eq!(art.action_distribution.other, 1);
     }
 
@@ -713,7 +746,12 @@ mod tests {
     fn summary_counts_projects_distribution_to_legacy_shape() {
         let art = CycleArtifact {
             action_distribution: ActionDistribution {
-                no_op: 100, create: 5, update: 3, delete: 2, replace: 1, other: 0,
+                no_op: 100,
+                create: 5,
+                update: 3,
+                delete: 2,
+                replace: 1,
+                other: 0,
             },
             resource_changes: vec![],
             artifact_ref: None,
@@ -721,20 +759,20 @@ mod tests {
             lifecycle_phase: None,
         };
         let (added, changed, destroyed, total) = art.summary_counts();
-        assert_eq!(added,     5);
-        assert_eq!(changed,   4, "update(3) + replace(1) = 4");
+        assert_eq!(added, 5);
+        assert_eq!(changed, 4, "update(3) + replace(1) = 4");
         assert_eq!(destroyed, 2);
-        assert_eq!(total,     111, "100 no-op + 5 + 3 + 2 + 1 = 111");
+        assert_eq!(total, 111, "100 no-op + 5 + 3 + 2 + 1 = 111");
     }
 
     #[test]
     fn drift_details_skips_no_ops_and_respects_cap() {
         let changes = vec![
-            change("a", PlanAction::NoOp,   Severity::Cosmetic),
+            change("a", PlanAction::NoOp, Severity::Cosmetic),
             change("b", PlanAction::Create, Severity::Functional),
             change("c", PlanAction::Update, Severity::Functional),
             change("d", PlanAction::Delete, Severity::Breaking),
-            change("e", PlanAction::NoOp,   Severity::Cosmetic),
+            change("e", PlanAction::NoOp, Severity::Cosmetic),
         ];
         let art = CycleArtifact {
             action_distribution: ActionDistribution::default(),
@@ -747,11 +785,11 @@ mod tests {
         // No-ops filtered out — 3 entries (b, c, d).
         assert_eq!(drifts.len(), 3);
         assert_eq!(drifts[0].address, "b");
-        assert_eq!(drifts[0].action,  "create");
-        assert_eq!(drifts[0].risk,    "modify");  // Functional → modify
+        assert_eq!(drifts[0].action, "create");
+        assert_eq!(drifts[0].risk, "modify"); // Functional → modify
         assert_eq!(drifts[1].address, "c");
         assert_eq!(drifts[2].address, "d");
-        assert_eq!(drifts[2].risk,    "destroy"); // Breaking → destroy
+        assert_eq!(drifts[2].risk, "destroy"); // Breaking → destroy
 
         // Cap honored.
         let capped = art.drift_details(2);
@@ -761,9 +799,9 @@ mod tests {
     #[test]
     fn drift_details_emits_terraform_vocab_for_known_actions() {
         let changes = vec![
-            change("a", PlanAction::Create,  Severity::Functional),
-            change("b", PlanAction::Update,  Severity::Functional),
-            change("c", PlanAction::Delete,  Severity::Breaking),
+            change("a", PlanAction::Create, Severity::Functional),
+            change("b", PlanAction::Update, Severity::Functional),
+            change("c", PlanAction::Delete, Severity::Breaking),
             change("d", PlanAction::Replace, Severity::Breaking),
             change("e", PlanAction::Other("read".into()), Severity::Functional),
         ];
@@ -776,7 +814,10 @@ mod tests {
         };
         let drifts = art.drift_details(50);
         let actions: Vec<&str> = drifts.iter().map(|d| d.action.as_str()).collect();
-        assert_eq!(actions, vec!["create", "update", "delete", "replace", "read"]);
+        assert_eq!(
+            actions,
+            vec!["create", "update", "delete", "replace", "read"]
+        );
     }
 
     // ── Equivalence (the slice-2 acceptance property) ──────────────
@@ -803,24 +844,29 @@ mod tests {
         let magma = CycleArtifact {
             action_distribution: ActionDistribution::default(),
             resource_changes: vec![
-                change("r.a", PlanAction::NoOp,    Severity::Cosmetic),
-                change("r.b", PlanAction::NoOp,    Severity::Cosmetic),
-                change("r.c", PlanAction::Create,  Severity::Functional),
+                change("r.a", PlanAction::NoOp, Severity::Cosmetic),
+                change("r.b", PlanAction::NoOp, Severity::Cosmetic),
+                change("r.c", PlanAction::Create, Severity::Functional),
                 change("r.d", PlanAction::Replace, Severity::Breaking),
             ],
-            artifact_ref:    None,
-            severities:      None,
+            artifact_ref: None,
+            severities: None,
             lifecycle_phase: None,
         };
         // Re-derive the magma side's distribution from its
         // resource_changes (this is what read_cycle_artifact does).
         let magma_dist = CycleArtifact::action_distribution_from(&magma.resource_changes);
 
-        assert_eq!(tofu.action_distribution, magma_dist,
-            "action_distribution must match across both readers");
+        assert_eq!(
+            tofu.action_distribution, magma_dist,
+            "action_distribution must match across both readers"
+        );
         // SeverityRollup also matches.
         let magma_rollup = SeverityRollup::from_changes(&magma.resource_changes);
-        assert_eq!(tofu.severities.unwrap(), magma_rollup,
-            "severity rollup must match across both readers");
+        assert_eq!(
+            tofu.severities.unwrap(),
+            magma_rollup,
+            "severity rollup must match across both readers"
+        );
     }
 }

@@ -67,7 +67,10 @@ pub const NON_RETRYABLE_BACKOFF: Duration = Duration::from_secs(300);
 /// `next_requeue_via_from_retryable_reproduces_tiered_backoff_byte_for_byte`.
 #[inline]
 pub fn tiered_backoff(retryable: bool) -> Duration {
-    next_requeue(RequeueOutcome::from_retryable(retryable), &RequeueCooldowns::default())
+    next_requeue(
+        RequeueOutcome::from_retryable(retryable),
+        &RequeueCooldowns::default(),
+    )
 }
 
 /// Run the standard error-policy effects: emit the per-controller

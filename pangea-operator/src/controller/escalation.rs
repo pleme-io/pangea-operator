@@ -149,11 +149,26 @@ impl EscalationLadder {
     ///   waste and forces inspection.
     pub fn pangea_default() -> Self {
         Self::from_rungs(vec![
-            EscalationRung { min_duration_unready: Duration::from_secs(0),    action: EscalationAction::Retry },
-            EscalationRung { min_duration_unready: Duration::from_secs(300),  action: EscalationAction::RefreshSource },
-            EscalationRung { min_duration_unready: Duration::from_secs(900),  action: EscalationAction::ReloadGems },
-            EscalationRung { min_duration_unready: Duration::from_secs(1800), action: EscalationAction::RecycleWorkers },
-            EscalationRung { min_duration_unready: Duration::from_secs(3600), action: EscalationAction::PauseAndAlert },
+            EscalationRung {
+                min_duration_unready: Duration::from_secs(0),
+                action: EscalationAction::Retry,
+            },
+            EscalationRung {
+                min_duration_unready: Duration::from_secs(300),
+                action: EscalationAction::RefreshSource,
+            },
+            EscalationRung {
+                min_duration_unready: Duration::from_secs(900),
+                action: EscalationAction::ReloadGems,
+            },
+            EscalationRung {
+                min_duration_unready: Duration::from_secs(1800),
+                action: EscalationAction::RecycleWorkers,
+            },
+            EscalationRung {
+                min_duration_unready: Duration::from_secs(3600),
+                action: EscalationAction::PauseAndAlert,
+            },
         ])
     }
 
@@ -198,11 +213,26 @@ mod tests {
     #[test]
     fn default_ladder_escalates_at_each_threshold() {
         let l = EscalationLadder::pangea_default();
-        assert_eq!(l.pick(Duration::from_secs(300)), EscalationAction::RefreshSource);
-        assert_eq!(l.pick(Duration::from_secs(900)), EscalationAction::ReloadGems);
-        assert_eq!(l.pick(Duration::from_secs(1800)), EscalationAction::RecycleWorkers);
-        assert_eq!(l.pick(Duration::from_secs(3600)), EscalationAction::PauseAndAlert);
-        assert_eq!(l.pick(Duration::from_secs(7200)), EscalationAction::PauseAndAlert);
+        assert_eq!(
+            l.pick(Duration::from_secs(300)),
+            EscalationAction::RefreshSource
+        );
+        assert_eq!(
+            l.pick(Duration::from_secs(900)),
+            EscalationAction::ReloadGems
+        );
+        assert_eq!(
+            l.pick(Duration::from_secs(1800)),
+            EscalationAction::RecycleWorkers
+        );
+        assert_eq!(
+            l.pick(Duration::from_secs(3600)),
+            EscalationAction::PauseAndAlert
+        );
+        assert_eq!(
+            l.pick(Duration::from_secs(7200)),
+            EscalationAction::PauseAndAlert
+        );
     }
 
     #[test]
@@ -223,12 +253,27 @@ mod tests {
         // Caller specifies thresholds out of order; ladder normalizes
         // so pick() can still rely on ascending iteration.
         let l = EscalationLadder::from_rungs(vec![
-            EscalationRung { min_duration_unready: Duration::from_secs(1800), action: EscalationAction::RecycleWorkers },
-            EscalationRung { min_duration_unready: Duration::from_secs(0),    action: EscalationAction::Retry },
-            EscalationRung { min_duration_unready: Duration::from_secs(900),  action: EscalationAction::ReloadGems },
-            EscalationRung { min_duration_unready: Duration::from_secs(300),  action: EscalationAction::RefreshSource },
+            EscalationRung {
+                min_duration_unready: Duration::from_secs(1800),
+                action: EscalationAction::RecycleWorkers,
+            },
+            EscalationRung {
+                min_duration_unready: Duration::from_secs(0),
+                action: EscalationAction::Retry,
+            },
+            EscalationRung {
+                min_duration_unready: Duration::from_secs(900),
+                action: EscalationAction::ReloadGems,
+            },
+            EscalationRung {
+                min_duration_unready: Duration::from_secs(300),
+                action: EscalationAction::RefreshSource,
+            },
         ]);
-        assert_eq!(l.pick(Duration::from_secs(950)), EscalationAction::ReloadGems);
+        assert_eq!(
+            l.pick(Duration::from_secs(950)),
+            EscalationAction::ReloadGems
+        );
         assert_eq!(l.pick(Duration::from_secs(0)), EscalationAction::Retry);
     }
 

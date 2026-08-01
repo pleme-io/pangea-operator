@@ -34,8 +34,8 @@ pub struct RoutingClient {
 impl RoutingClient {
     /// Build from environment + sensible defaults.
     pub fn from_env() -> Self {
-        let ntfy_base_url = std::env::var("PANGEA_NTFY_BASE_URL")
-            .unwrap_or_else(|_| "https://ntfy.sh".to_string());
+        let ntfy_base_url =
+            std::env::var("PANGEA_NTFY_BASE_URL").unwrap_or_else(|_| "https://ntfy.sh".to_string());
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
@@ -103,13 +103,7 @@ impl RoutingClient {
         }
     }
 
-    async fn deliver_ntfy(
-        &self,
-        action: ReactiveAction,
-        topic: &str,
-        title: &str,
-        body: &str,
-    ) {
+    async fn deliver_ntfy(&self, action: ReactiveAction, topic: &str, title: &str, body: &str) {
         let url = format!("{}/{}", self.ntfy_base_url.trim_end_matches('/'), topic);
         let priority = ntfy_priority(action);
         let tags = ntfy_tags(action);

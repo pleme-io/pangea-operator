@@ -33,7 +33,9 @@ pub use facade::{
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListTemplatesInput {
     #[serde(default)]
-    #[schemars(description = "Namespace to scope to (e.g. rio-architectures). Omitted = all namespaces.")]
+    #[schemars(
+        description = "Namespace to scope to (e.g. rio-architectures). Omitted = all namespaces."
+    )]
     pub namespace: Option<String>,
 }
 
@@ -88,18 +90,28 @@ fn nonce() -> String {
 impl PangeaOperatorMcp {
     #[must_use]
     pub fn new(store: Arc<dyn PangeaStore>) -> Self {
-        Self { store, tool_router: Self::tool_router() }
+        Self {
+            store,
+            tool_router: Self::tool_router(),
+        }
     }
 
-    #[tool(description = "List InfrastructureTemplates (optionally namespace-scoped) as compact summaries: phase, suspended, lastError, planSummary, resourceCounts, lastCycle. The 'what is the operator doing / what is stuck' overview.")]
-    pub async fn pangea_template_list(&self, Parameters(p): Parameters<ListTemplatesInput>) -> String {
+    #[tool(
+        description = "List InfrastructureTemplates (optionally namespace-scoped) as compact summaries: phase, suspended, lastError, planSummary, resourceCounts, lastCycle. The 'what is the operator doing / what is stuck' overview."
+    )]
+    pub async fn pangea_template_list(
+        &self,
+        Parameters(p): Parameters<ListTemplatesInput>,
+    ) -> String {
         match self.store.list_templates(p.namespace.as_deref()).await {
             Ok(v) => ok(&json!(v)),
             Err(e) => err(&e),
         }
     }
 
-    #[tool(description = "Get the full InfrastructureTemplate CR (spec + status.lastCycle) — the 'why is this template stuck / what did it last apply / what is the reconcile error' surface.")]
+    #[tool(
+        description = "Get the full InfrastructureTemplate CR (spec + status.lastCycle) — the 'why is this template stuck / what did it last apply / what is the reconcile error' surface."
+    )]
     pub async fn pangea_template_get(&self, Parameters(p): Parameters<TemplateRef>) -> String {
         match self.store.get_template(&p.namespace, &p.name).await {
             Ok(v) => ok(&v),
@@ -107,24 +119,45 @@ impl PangeaOperatorMcp {
         }
     }
 
-    #[tool(description = "Force a reconcile of one InfrastructureTemplate by stamping a reconcile-request annotation (the `flux reconcile` analog) — kick a stuck/slow template without touching its desired state.")]
-    pub async fn pangea_template_reconcile(&self, Parameters(p): Parameters<TemplateRef>) -> String {
+    #[tool(
+        description = "Force a reconcile of one InfrastructureTemplate by stamping a reconcile-request annotation (the `flux reconcile` analog) — kick a stuck/slow template without touching its desired state."
+    )]
+    pub async fn pangea_template_reconcile(
+        &self,
+        Parameters(p): Parameters<TemplateRef>,
+    ) -> String {
         let n = nonce();
-        match self.store.reconcile_template(&p.namespace, &p.name, &n).await {
-            Ok(()) => ok(&json!({ "reconcileRequestedAt": n, "template": format!("{}/{}", p.namespace, p.name) })),
+        match self
+            .store
+            .reconcile_template(&p.namespace, &p.name, &n)
+            .await
+        {
+            Ok(()) => ok(
+                &json!({ "reconcileRequestedAt": n, "template": format!("{}/{}", p.namespace, p.name) }),
+            ),
             Err(e) => err(&e),
         }
     }
 
-    #[tool(description = "Suspend (pause) or resume reconciliation of one InfrastructureTemplate via spec.suspend.")]
+    #[tool(
+        description = "Suspend (pause) or resume reconciliation of one InfrastructureTemplate via spec.suspend."
+    )]
     pub async fn pangea_template_suspend(&self, Parameters(p): Parameters<SuspendInput>) -> String {
-        match self.store.set_template_suspend(&p.namespace, &p.name, p.suspend).await {
-            Ok(()) => ok(&json!({ "suspended": p.suspend, "template": format!("{}/{}", p.namespace, p.name) })),
+        match self
+            .store
+            .set_template_suspend(&p.namespace, &p.name, p.suspend)
+            .await
+        {
+            Ok(()) => ok(
+                &json!({ "suspended": p.suspend, "template": format!("{}/{}", p.namespace, p.name) }),
+            ),
             Err(e) => err(&e),
         }
     }
 
-    #[tool(description = "List WorkspaceCatalogs (cluster-scoped) with their verify status — a workspace whose required ArchitectureGems are not all Loaded blocks every template under it from advancing past Verified.")]
+    #[tool(
+        description = "List WorkspaceCatalogs (cluster-scoped) with their verify status — a workspace whose required ArchitectureGems are not all Loaded blocks every template under it from advancing past Verified."
+    )]
     pub async fn pangea_workspace_list(&self, Parameters(_): Parameters<Empty>) -> String {
         match self.store.list_workspaces().await {
             Ok(v) => ok(&json!(v)),
@@ -132,7 +165,9 @@ impl PangeaOperatorMcp {
         }
     }
 
-    #[tool(description = "List ArchitectureGems with their load phase — a not-Loaded gem is a common root cause of templates stuck at Verified.")]
+    #[tool(
+        description = "List ArchitectureGems with their load phase — a not-Loaded gem is a common root cause of templates stuck at Verified."
+    )]
     pub async fn pangea_gem_list(&self, Parameters(_): Parameters<Empty>) -> String {
         match self.store.list_gems().await {
             Ok(v) => ok(&json!(v)),
@@ -140,10 +175,15 @@ impl PangeaOperatorMcp {
         }
     }
 
-    #[tool(description = "Roll-restart the pangea-operator Deployment (default pangea-system/pangea-operator) — the break-glass for a wedged controller.")]
+    #[tool(
+        description = "Roll-restart the pangea-operator Deployment (default pangea-system/pangea-operator) — the break-glass for a wedged controller."
+    )]
     pub async fn pangea_operator_restart(&self, Parameters(p): Parameters<OperatorRef>) -> String {
         let ns = p.namespace.as_deref().unwrap_or(DEFAULT_OPERATOR_NS);
-        let dep = p.deployment.as_deref().unwrap_or(DEFAULT_OPERATOR_DEPLOYMENT);
+        let dep = p
+            .deployment
+            .as_deref()
+            .unwrap_or(DEFAULT_OPERATOR_DEPLOYMENT);
         let n = nonce();
         match self.store.restart_operator(ns, dep, &n).await {
             Ok(()) => ok(&json!({ "restartedAt": n, "deployment": format!("{ns}/{dep}") })),
@@ -151,10 +191,15 @@ impl PangeaOperatorMcp {
         }
     }
 
-    #[tool(description = "Operator Deployment status — replicas / ready / available + conditions. Answers 'is the controller even up?' before chasing a template.")]
+    #[tool(
+        description = "Operator Deployment status — replicas / ready / available + conditions. Answers 'is the controller even up?' before chasing a template."
+    )]
     pub async fn pangea_operator_status(&self, Parameters(p): Parameters<OperatorRef>) -> String {
         let ns = p.namespace.as_deref().unwrap_or(DEFAULT_OPERATOR_NS);
-        let dep = p.deployment.as_deref().unwrap_or(DEFAULT_OPERATOR_DEPLOYMENT);
+        let dep = p
+            .deployment
+            .as_deref()
+            .unwrap_or(DEFAULT_OPERATOR_DEPLOYMENT);
         match self.store.operator_status(ns, dep).await {
             Ok(v) => ok(&v),
             Err(e) => err(&e),
@@ -197,24 +242,42 @@ mod tests {
     #[async_trait]
     impl PangeaStore for MockStore {
         async fn list_templates(&self, _ns: Option<&str>) -> Result<Vec<Value>, StoreError> {
-            Ok(vec![json!({ "name": "rio-tendril-cloudflare-tunnel", "phase": "Pending" })])
+            Ok(vec![
+                json!({ "name": "rio-tendril-cloudflare-tunnel", "phase": "Pending" }),
+            ])
         }
         async fn get_template(&self, ns: &str, name: &str) -> Result<Value, StoreError> {
-            Ok(json!({ "metadata": { "namespace": ns, "name": name }, "status": { "phase": "Pending" } }))
+            Ok(
+                json!({ "metadata": { "namespace": ns, "name": name }, "status": { "phase": "Pending" } }),
+            )
         }
-        async fn reconcile_template(&self, ns: &str, name: &str, _n: &str) -> Result<(), StoreError> {
+        async fn reconcile_template(
+            &self,
+            ns: &str,
+            name: &str,
+            _n: &str,
+        ) -> Result<(), StoreError> {
             self.reconciled.lock().unwrap().push(format!("{ns}/{name}"));
             Ok(())
         }
-        async fn set_template_suspend(&self, _ns: &str, name: &str, s: bool) -> Result<(), StoreError> {
+        async fn set_template_suspend(
+            &self,
+            _ns: &str,
+            name: &str,
+            s: bool,
+        ) -> Result<(), StoreError> {
             self.suspended.lock().unwrap().push((name.to_string(), s));
             Ok(())
         }
         async fn list_workspaces(&self) -> Result<Vec<Value>, StoreError> {
-            Ok(vec![json!({ "name": "rio-architectures", "status": { "verified": false } })])
+            Ok(vec![
+                json!({ "name": "rio-architectures", "status": { "verified": false } }),
+            ])
         }
         async fn list_gems(&self) -> Result<Vec<Value>, StoreError> {
-            Ok(vec![json!({ "name": "pangea-architectures", "phase": "Loaded" })])
+            Ok(vec![
+                json!({ "name": "pangea-architectures", "phase": "Loaded" }),
+            ])
         }
         async fn restart_operator(&self, ns: &str, dep: &str, _n: &str) -> Result<(), StoreError> {
             self.restarted.lock().unwrap().push(format!("{ns}/{dep}"));
@@ -228,7 +291,9 @@ mod tests {
     #[tokio::test]
     async fn template_list_returns_summaries() {
         let mcp = PangeaOperatorMcp::new(Arc::new(MockStore::default()));
-        let out = mcp.pangea_template_list(Parameters(ListTemplatesInput { namespace: None })).await;
+        let out = mcp
+            .pangea_template_list(Parameters(ListTemplatesInput { namespace: None }))
+            .await;
         assert!(out.contains("rio-tendril-cloudflare-tunnel"));
         assert!(out.contains("Pending"));
     }
@@ -244,16 +309,27 @@ mod tests {
             }))
             .await;
         assert!(out.contains("reconcileRequestedAt"));
-        assert_eq!(mock.reconciled.lock().unwrap().as_slice(), ["rio-architectures/rio-tendril-cloudflare-tunnel"]);
+        assert_eq!(
+            mock.reconciled.lock().unwrap().as_slice(),
+            ["rio-architectures/rio-tendril-cloudflare-tunnel"]
+        );
     }
 
     #[tokio::test]
     async fn operator_restart_defaults_to_pangea_system() {
         let mock = Arc::new(MockStore::default());
         let mcp = PangeaOperatorMcp::new(mock.clone());
-        let out = mcp.pangea_operator_restart(Parameters(OperatorRef { namespace: None, deployment: None })).await;
+        let out = mcp
+            .pangea_operator_restart(Parameters(OperatorRef {
+                namespace: None,
+                deployment: None,
+            }))
+            .await;
         assert!(out.contains("restartedAt"));
-        assert_eq!(mock.restarted.lock().unwrap().as_slice(), ["pangea-system/pangea-operator"]);
+        assert_eq!(
+            mock.restarted.lock().unwrap().as_slice(),
+            ["pangea-system/pangea-operator"]
+        );
     }
 
     #[tokio::test]
@@ -266,6 +342,9 @@ mod tests {
             suspend: true,
         }))
         .await;
-        assert_eq!(mock.suspended.lock().unwrap().as_slice(), [("x".to_string(), true)]);
+        assert_eq!(
+            mock.suspended.lock().unwrap().as_slice(),
+            [("x".to_string(), true)]
+        );
     }
 }

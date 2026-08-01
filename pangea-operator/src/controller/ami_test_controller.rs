@@ -107,9 +107,7 @@ async fn reconcile_ami_test(
             if let Ok(jobs) = job_api.list(&lp).await {
                 for job in jobs.items {
                     let jn = job.metadata.name.unwrap_or_default();
-                    let _ = job_api
-                        .delete(&jn, &Default::default())
-                        .await;
+                    let _ = job_api.delete(&jn, &Default::default()).await;
                 }
             }
             remove_finalizer(&test, &state).await?;
@@ -288,17 +286,19 @@ async fn handle_running(
                 if let Some(spec) = spec_suite {
                     if spec.depends_on.iter().any(|d| failed.contains(d)) {
                         suite_result.phase = SuitePhase::Skipped;
-                        suite_result.message =
-                            Some("Skipped: dependency failed".into());
+                        suite_result.message = Some("Skipped: dependency failed".into());
                     }
                 }
             }
         }
 
         // Check if all suites are terminal
-        let all_terminal = suites
-            .iter()
-            .all(|s| matches!(s.phase, SuitePhase::Succeeded | SuitePhase::Failed | SuitePhase::Skipped));
+        let all_terminal = suites.iter().all(|s| {
+            matches!(
+                s.phase,
+                SuitePhase::Succeeded | SuitePhase::Failed | SuitePhase::Skipped
+            )
+        });
 
         if all_terminal {
             update_suites(test, &suites, state).await?;
@@ -306,8 +306,13 @@ async fn handle_running(
             if test.spec.failure_policy.deregister_ami {
                 update_phase(test, AmiTestPhase::Cleaning, None, state).await?;
             } else {
-                update_phase(test, AmiTestPhase::Failed, Some("One or more suites failed"), state)
-                    .await?;
+                update_phase(
+                    test,
+                    AmiTestPhase::Failed,
+                    Some("One or more suites failed"),
+                    state,
+                )
+                .await?;
             }
             return Ok(Action::requeue(SHORT_REQUEUE_INTERVAL));
         }
@@ -413,9 +418,12 @@ async fn handle_running(
     update_suites(test, &suites, state).await?;
 
     // Check if all suites are terminal
-    let all_terminal = suites
-        .iter()
-        .all(|s| matches!(s.phase, SuitePhase::Succeeded | SuitePhase::Failed | SuitePhase::Skipped));
+    let all_terminal = suites.iter().all(|s| {
+        matches!(
+            s.phase,
+            SuitePhase::Succeeded | SuitePhase::Failed | SuitePhase::Skipped
+        )
+    });
 
     if all_terminal {
         let all_passed = suites.iter().all(|s| s.phase == SuitePhase::Succeeded);
@@ -424,8 +432,13 @@ async fn handle_running(
         } else if test.spec.failure_policy.deregister_ami {
             update_phase(test, AmiTestPhase::Cleaning, None, state).await?;
         } else {
-            update_phase(test, AmiTestPhase::Failed, Some("One or more suites failed"), state)
-                .await?;
+            update_phase(
+                test,
+                AmiTestPhase::Failed,
+                Some("One or more suites failed"),
+                state,
+            )
+            .await?;
         }
         return Ok(Action::requeue(SHORT_REQUEUE_INTERVAL));
     }
@@ -495,17 +508,15 @@ fn build_test_job(
                 profile.to_string(),
             ]
         }
-        crate::crd::TestSuiteType::Script => {
-            config
-                .and_then(|c| c.get("command"))
-                .and_then(|cmd| cmd.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_else(|| vec!["echo".to_string(), "no command specified".to_string()])
-        }
+        crate::crd::TestSuiteType::Script => config
+            .and_then(|c| c.get("command"))
+            .and_then(|cmd| cmd.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_else(|| vec!["echo".to_string(), "no command specified".to_string()]),
     };
 
     let env = vec![
@@ -526,10 +537,7 @@ fn build_test_job(
         "pangea.pleme.io/ami-test".to_string(),
         test_name.to_string(),
     );
-    labels.insert(
-        "pangea.pleme.io/suite".to_string(),
-        suite_name.to_string(),
-    );
+    labels.insert("pangea.pleme.io/suite".to_string(), suite_name.to_string());
 
     Job {
         metadata: ObjectMeta {
@@ -573,10 +581,7 @@ fn is_job_failed(status: &JobStatus) -> bool {
         || status
             .conditions
             .as_ref()
-            .map(|cs| {
-                cs.iter()
-                    .any(|c| c.type_ == "Failed" && c.status == "True")
-            })
+            .map(|cs| cs.iter().any(|c| c.type_ == "Failed" && c.status == "True"))
             .unwrap_or(false)
 }
 
@@ -584,9 +589,7 @@ fn is_job_failed(status: &JobStatus) -> bool {
 // DAG validation
 // ---------------------------------------------------------------------------
 
-fn validate_suite_dag(
-    suites: &[crate::crd::TestSuite],
-) -> std::result::Result<(), Error> {
+fn validate_suite_dag(suites: &[crate::crd::TestSuite]) -> std::result::Result<(), Error> {
     let names: HashSet<&str> = suites.iter().map(|s| s.name.as_str()).collect();
 
     for suite in suites {
@@ -661,14 +664,12 @@ async fn update_phase(
     state: &ControllerState,
 ) -> std::result::Result<(), Error> {
     let ready = phase == AmiTestPhase::Passed;
-    let conditions = vec![
-        create_condition(
-            "Ready",
-            ready,
-            &format!("{}", phase),
-            error_msg.unwrap_or(&format!("{}", phase)),
-        ),
-    ];
+    let conditions = vec![create_condition(
+        "Ready",
+        ready,
+        &format!("{}", phase),
+        error_msg.unwrap_or(&format!("{}", phase)),
+    )];
 
     let patch = serde_json::json!({
         "status": {
@@ -752,10 +753,7 @@ fn has_finalizer(test: &AmiTest) -> bool {
     crate::controller::finalizer::has(test, FINALIZER_NAME)
 }
 
-async fn add_finalizer(
-    test: &AmiTest,
-    state: &ControllerState,
-) -> std::result::Result<(), Error> {
+async fn add_finalizer(test: &AmiTest, state: &ControllerState) -> std::result::Result<(), Error> {
     crate::controller::finalizer::add(test, FINALIZER_NAME, &state.client)
         .await
         .map_err(Error::Kube)
@@ -770,11 +768,7 @@ async fn remove_finalizer(
         .map_err(Error::Kube)
 }
 
-fn error_policy(
-    _test: Arc<AmiTest>,
-    error: &Error,
-    ctx: Arc<ControllerState>,
-) -> Action {
+fn error_policy(_test: Arc<AmiTest>, error: &Error, ctx: Arc<ControllerState>) -> Action {
     use crate::controller::error_policy::{run_error_policy, tiered_backoff};
     run_error_policy(
         &ctx.metrics,

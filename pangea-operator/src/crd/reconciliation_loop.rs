@@ -165,13 +165,21 @@ mod tests {
     use super::*;
 
     fn labels(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]
     fn selector_matches_when_all_labels_present() {
-        let sel = LoopSelector { match_labels: labels(&[("pleme.io/group", "cloudflare-edge")]) };
-        assert!(sel.matches(&labels(&[("pleme.io/group", "cloudflare-edge"), ("x", "y")])));
+        let sel = LoopSelector {
+            match_labels: labels(&[("pleme.io/group", "cloudflare-edge")]),
+        };
+        assert!(sel.matches(&labels(&[
+            ("pleme.io/group", "cloudflare-edge"),
+            ("x", "y")
+        ])));
         assert!(!sel.matches(&labels(&[("pleme.io/group", "other")])));
         assert!(!sel.matches(&labels(&[("x", "y")])));
     }

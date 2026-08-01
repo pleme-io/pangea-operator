@@ -119,7 +119,9 @@ pub struct RetryHandler;
 
 #[async_trait]
 impl EscalationActionHandler for RetryHandler {
-    fn action(&self) -> EscalationAction { EscalationAction::Retry }
+    fn action(&self) -> EscalationAction {
+        EscalationAction::Retry
+    }
 
     async fn execute(&self, ctx: &EscalationContext<'_>) -> anyhow::Result<EscalationOutcome> {
         Ok(EscalationOutcome {
@@ -141,7 +143,9 @@ pub struct PauseAndAlertHandler;
 
 #[async_trait]
 impl EscalationActionHandler for PauseAndAlertHandler {
-    fn action(&self) -> EscalationAction { EscalationAction::PauseAndAlert }
+    fn action(&self) -> EscalationAction {
+        EscalationAction::PauseAndAlert
+    }
 
     async fn execute(&self, ctx: &EscalationContext<'_>) -> anyhow::Result<EscalationOutcome> {
         Ok(EscalationOutcome {
@@ -215,15 +219,18 @@ impl RefreshSourceHandler {
 
 #[async_trait]
 impl EscalationActionHandler for RefreshSourceHandler {
-    fn action(&self) -> EscalationAction { EscalationAction::RefreshSource }
+    fn action(&self) -> EscalationAction {
+        EscalationAction::RefreshSource
+    }
 
     async fn execute(&self, ctx: &EscalationContext<'_>) -> anyhow::Result<EscalationOutcome> {
-        let namespace = ctx.template.metadata.namespace
+        let namespace = ctx
+            .template
+            .metadata
+            .namespace
             .as_deref()
             .unwrap_or_default();
-        let name = ctx.template.metadata.name
-            .as_deref()
-            .unwrap_or_default();
+        let name = ctx.template.metadata.name.as_deref().unwrap_or_default();
 
         // Invalidate via the trait. On failure we still emit the
         // Event (so operators see the attempt) but propagate the
@@ -263,7 +270,9 @@ pub struct ReloadGemsHandler;
 
 #[async_trait]
 impl EscalationActionHandler for ReloadGemsHandler {
-    fn action(&self) -> EscalationAction { EscalationAction::ReloadGems }
+    fn action(&self) -> EscalationAction {
+        EscalationAction::ReloadGems
+    }
 
     async fn execute(&self, ctx: &EscalationContext<'_>) -> anyhow::Result<EscalationOutcome> {
         Ok(EscalationOutcome {
@@ -283,7 +292,9 @@ pub struct RecycleWorkersHandler;
 
 #[async_trait]
 impl EscalationActionHandler for RecycleWorkersHandler {
-    fn action(&self) -> EscalationAction { EscalationAction::RecycleWorkers }
+    fn action(&self) -> EscalationAction {
+        EscalationAction::RecycleWorkers
+    }
 
     async fn execute(&self, ctx: &EscalationContext<'_>) -> anyhow::Result<EscalationOutcome> {
         Ok(EscalationOutcome {
@@ -433,7 +444,9 @@ mod tests {
         assert_eq!(outcome.status_patch, serde_json::json!({}));
         assert_eq!(outcome.event_reason, "EscalationLadderRefreshSource");
         assert!(
-            outcome.event_message.contains("Workspace clone invalidated"),
+            outcome
+                .event_message
+                .contains("Workspace clone invalidated"),
             "RefreshSource event message must reflect the action taken"
         );
 
@@ -468,7 +481,10 @@ mod tests {
 
         let h = RefreshSourceHandler::new(Arc::new(FailingInvalidator));
         let ctx = minimal_ctx(EscalationAction::RefreshSource);
-        let err = h.execute(&ctx).await.expect_err("handler must surface error");
+        let err = h
+            .execute(&ctx)
+            .await
+            .expect_err("handler must surface error");
         assert!(err.to_string().contains("simulated disk failure"));
     }
 
@@ -490,7 +506,9 @@ mod tests {
         }
 
         let captured = Arc::new(Mutex::new(None));
-        let inv = Arc::new(CapturingInvalidator { captured: captured.clone() });
+        let inv = Arc::new(CapturingInvalidator {
+            captured: captured.clone(),
+        });
         let h = RefreshSourceHandler::new(inv);
         let ctx = minimal_ctx(EscalationAction::RefreshSource);
         h.execute(&ctx).await.unwrap();

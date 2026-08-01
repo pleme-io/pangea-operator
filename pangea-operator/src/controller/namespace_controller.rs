@@ -271,8 +271,7 @@ trait NamespaceBackendEnv: Send + Sync {
     /// Resolve `spec.backend.pg.secretRef` and open a connection with
     /// those credentials. Errors when the Secret is missing, malformed,
     /// or the database is unreachable.
-    async fn connect_via_secret_ref(&self, namespace: &PangeaNamespace)
-        -> Result<BackendManager>;
+    async fn connect_via_secret_ref(&self, namespace: &PangeaNamespace) -> Result<BackendManager>;
 }
 
 /// Verify PostgreSQL backend connectivity over the route that actually
@@ -326,10 +325,7 @@ async fn verify_postgres_backend_with<E: NamespaceBackendEnv + ?Sized>(
     match route {
         ProbeRoute::OperatorPool => {
             let manager = env.connect_operator_pool().await?;
-            Ok(VerifiedBackend {
-                route,
-                manager,
-            })
+            Ok(VerifiedBackend { route, manager })
         }
         ProbeRoute::SecretRef => {
             if let Some(pool) = pool_coords.as_ref() {
@@ -352,10 +348,7 @@ async fn verify_postgres_backend_with<E: NamespaceBackendEnv + ?Sized>(
                 );
             }
             let manager = env.connect_via_secret_ref(namespace).await?;
-            Ok(VerifiedBackend {
-                route,
-                manager,
-            })
+            Ok(VerifiedBackend { route, manager })
         }
     }
 }
@@ -394,10 +387,7 @@ impl NamespaceBackendEnv for ControllerBackendEnv<'_> {
         Ok(BackendManager::from_pool(pool))
     }
 
-    async fn connect_via_secret_ref(
-        &self,
-        namespace: &PangeaNamespace,
-    ) -> Result<BackendManager> {
+    async fn connect_via_secret_ref(&self, namespace: &PangeaNamespace) -> Result<BackendManager> {
         let pg = namespace
             .spec
             .backend
@@ -1027,7 +1017,11 @@ mod backend_probe_tests {
 
     #[test]
     fn matching_coordinates_route_to_the_operator_pool() {
-        let declared = coords("pangea-database-rw.camelot.svc.cluster.local", 5432, "pangea_state");
+        let declared = coords(
+            "pangea-database-rw.camelot.svc.cluster.local",
+            5432,
+            "pangea_state",
+        );
         let pool = declared.clone();
         assert_eq!(
             choose_probe_route(&declared, Some(&pool)),

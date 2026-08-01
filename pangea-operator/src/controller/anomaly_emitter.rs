@@ -95,7 +95,9 @@ pub struct TracingEmitter;
 
 #[async_trait]
 impl AnomalyEmitter for TracingEmitter {
-    fn name(&self) -> &'static str { "tracing" }
+    fn name(&self) -> &'static str {
+        "tracing"
+    }
 
     async fn emit(&self, ctx: &AnomalyContext<'_>) {
         tracing::info!(
@@ -124,7 +126,9 @@ impl MetricsEmitter {
 
 #[async_trait]
 impl AnomalyEmitter for MetricsEmitter {
-    fn name(&self) -> &'static str { "metrics" }
+    fn name(&self) -> &'static str {
+        "metrics"
+    }
 
     async fn emit(&self, ctx: &AnomalyContext<'_>) {
         let namespace = ctx.template.namespace().unwrap_or_default();
@@ -177,7 +181,9 @@ impl CompositeEmitter {
 
 #[async_trait]
 impl AnomalyEmitter for CompositeEmitter {
-    fn name(&self) -> &'static str { "composite" }
+    fn name(&self) -> &'static str {
+        "composite"
+    }
 
     async fn emit(&self, ctx: &AnomalyContext<'_>) {
         for emitter in &self.emitters {
@@ -202,7 +208,10 @@ mod tests {
 
     impl RecordingEmitter {
         fn new(name: &'static str) -> Self {
-            Self { name, calls: Mutex::new(vec![]) }
+            Self {
+                name,
+                calls: Mutex::new(vec![]),
+            }
         }
 
         fn call_count(&self) -> usize {
@@ -212,9 +221,14 @@ mod tests {
 
     #[async_trait]
     impl AnomalyEmitter for RecordingEmitter {
-        fn name(&self) -> &'static str { self.name }
+        fn name(&self) -> &'static str {
+            self.name
+        }
         async fn emit(&self, ctx: &AnomalyContext<'_>) {
-            self.calls.lock().unwrap().push(ctx.summary.signature.clone());
+            self.calls
+                .lock()
+                .unwrap()
+                .push(ctx.summary.signature.clone());
         }
     }
 
@@ -304,7 +318,9 @@ mod tests {
         }
         #[async_trait]
         impl AnomalyEmitter for OrderedEmitter {
-            fn name(&self) -> &'static str { "ordered" }
+            fn name(&self) -> &'static str {
+                "ordered"
+            }
             async fn emit(&self, _ctx: &AnomalyContext<'_>) {
                 let i = self.order.fetch_add(1, Ordering::SeqCst);
                 *self.mine.lock().unwrap() = Some(i);
@@ -315,9 +331,18 @@ mod tests {
         let b_mark = Arc::new(Mutex::new(None));
         let c_mark = Arc::new(Mutex::new(None));
         let composite = CompositeEmitter::new(vec![
-            Arc::new(OrderedEmitter { order: counter.clone(), mine: a_mark.clone() }),
-            Arc::new(OrderedEmitter { order: counter.clone(), mine: b_mark.clone() }),
-            Arc::new(OrderedEmitter { order: counter.clone(), mine: c_mark.clone() }),
+            Arc::new(OrderedEmitter {
+                order: counter.clone(),
+                mine: a_mark.clone(),
+            }),
+            Arc::new(OrderedEmitter {
+                order: counter.clone(),
+                mine: b_mark.clone(),
+            }),
+            Arc::new(OrderedEmitter {
+                order: counter.clone(),
+                mine: c_mark.clone(),
+            }),
         ]);
 
         let template = stub_template();

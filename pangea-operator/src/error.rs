@@ -210,7 +210,10 @@ mod tests {
     #[test]
     fn test_error_display_string_variants() {
         let e = Error::Compilation("syntax error".into());
-        assert_eq!(format!("{}", e), "Template compilation failed: syntax error");
+        assert_eq!(
+            format!("{}", e),
+            "Template compilation failed: syntax error"
+        );
 
         let e = Error::TofuExecution("plan failed".into());
         assert_eq!(format!("{}", e), "OpenTofu execution failed: plan failed");
@@ -264,10 +267,19 @@ mod tests {
         use shigoto_types::failure::FailureKind;
         // Transient (retryable) class.
         assert_eq!(Error::Timeout(60).failure_kind(), FailureKind::Transient);
-        assert_eq!(Error::Compilation("sidecar".into()).failure_kind(), FailureKind::Transient);
+        assert_eq!(
+            Error::Compilation("sidecar".into()).failure_kind(),
+            FailureKind::Transient
+        );
         // Declarative (give-up) class — a genuinely wrong source/config.
-        assert_eq!(Error::InvalidSource("bad".into()).failure_kind(), FailureKind::Declarative);
-        assert_eq!(Error::Config("bad".into()).failure_kind(), FailureKind::Declarative);
+        assert_eq!(
+            Error::InvalidSource("bad".into()).failure_kind(),
+            FailureKind::Declarative
+        );
+        assert_eq!(
+            Error::Config("bad".into()).failure_kind(),
+            FailureKind::Declarative
+        );
         // WithContext recurses, preserving the class of the inner error.
         assert_eq!(
             Error::Timeout(1).context("at reconcile").failure_kind(),
@@ -301,7 +313,8 @@ mod tests {
         assert!(!Error::SecretNotFound {
             namespace: "ns".into(),
             name: "s".into(),
-        }.is_retryable());
+        }
+        .is_retryable());
         assert!(!Error::NamespaceNotFound("ns".into()).is_retryable());
         assert!(!Error::HealthCheckFailed("fail".into()).is_retryable());
         assert!(!Error::AssertionFailed("fail".into()).is_retryable());
@@ -352,7 +365,10 @@ mod tests {
         let inner = Error::Timeout(30);
         let wrapped = inner.context("applying step vpc");
         let display = format!("{}", wrapped);
-        assert_eq!(display, "applying step vpc: Reconciliation timeout after 30 seconds");
+        assert_eq!(
+            display,
+            "applying step vpc: Reconciliation timeout after 30 seconds"
+        );
     }
 
     // ── T4: retryability classification audit ──

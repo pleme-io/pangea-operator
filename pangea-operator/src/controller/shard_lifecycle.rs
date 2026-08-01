@@ -81,7 +81,9 @@ impl ShardPhase {
     /// Exhaustive classification.
     pub fn class(self) -> ShardClass {
         match self {
-            ShardPhase::Unassigned | ShardPhase::Claiming | ShardPhase::Draining => ShardClass::Forward,
+            ShardPhase::Unassigned | ShardPhase::Claiming | ShardPhase::Draining => {
+                ShardClass::Forward
+            }
             ShardPhase::Owned => ShardClass::Settled,
             ShardPhase::Released => ShardClass::Terminal,
         }
@@ -98,7 +100,11 @@ impl ShardPhase {
     }
 
     pub fn legal_triggers(self) -> Vec<ShardTrigger> {
-        SHARD_TRANSITIONS.iter().filter(|t| t.from == self).map(|t| t.trigger).collect()
+        SHARD_TRANSITIONS
+            .iter()
+            .filter(|t| t.from == self)
+            .map(|t| t.trigger)
+            .collect()
     }
 
     pub fn advance(self, trigger: ShardTrigger) -> Result<ShardPhase, ShardTransitionError> {
@@ -106,11 +112,18 @@ impl ShardPhase {
             .iter()
             .find(|t| t.from == self && t.trigger == trigger)
             .map(|t| t.to)
-            .ok_or(ShardTransitionError::Illegal { from: self, trigger, legal: self.legal_triggers() })
+            .ok_or(ShardTransitionError::Illegal {
+                from: self,
+                trigger,
+                legal: self.legal_triggers(),
+            })
     }
 
     pub fn edge_is_legal(self, to: ShardPhase) -> bool {
-        self == to || SHARD_TRANSITIONS.iter().any(|t| t.from == self && t.to == to)
+        self == to
+            || SHARD_TRANSITIONS
+                .iter()
+                .any(|t| t.from == self && t.to == to)
     }
 }
 
@@ -166,13 +179,23 @@ pub struct ShardTransition {
     pub kind: ShardEdgeKind,
 }
 
-const fn s(from: ShardPhase, trigger: ShardTrigger, to: ShardPhase, kind: ShardEdgeKind) -> ShardTransition {
-    ShardTransition { from, trigger, to, kind }
+const fn s(
+    from: ShardPhase,
+    trigger: ShardTrigger,
+    to: ShardPhase,
+    kind: ShardEdgeKind,
+) -> ShardTransition {
+    ShardTransition {
+        from,
+        trigger,
+        to,
+        kind,
+    }
 }
 
+use ShardEdgeKind as K;
 use ShardPhase as P;
 use ShardTrigger as T;
-use ShardEdgeKind as K;
 
 /// Explicit shard transitions. The universal `LeaseLost → Unassigned` recovery
 /// edge (every *active* phase can safely reset on a lost lease) is added
@@ -191,19 +214,25 @@ fn shard_universal(from: ShardPhase) -> Vec<ShardTransition> {
     // safely reset to Unassigned — the sharding analog of drain-safe.
     match from {
         ShardPhase::Claiming | ShardPhase::Owned | ShardPhase::Draining => {
-            vec![s(from, ShardTrigger::LeaseLost, ShardPhase::Unassigned, ShardEdgeKind::Remediation)]
+            vec![s(
+                from,
+                ShardTrigger::LeaseLost,
+                ShardPhase::Unassigned,
+                ShardEdgeKind::Remediation,
+            )]
         }
         _ => Vec::new(),
     }
 }
 
-pub static SHARD_TRANSITIONS: std::sync::LazyLock<Vec<ShardTransition>> = std::sync::LazyLock::new(|| {
-    let mut all = SHARD_EXPLICIT.to_vec();
-    for p in ShardPhase::all() {
-        all.extend(shard_universal(p));
-    }
-    all
-});
+pub static SHARD_TRANSITIONS: std::sync::LazyLock<Vec<ShardTransition>> =
+    std::sync::LazyLock::new(|| {
+        let mut all = SHARD_EXPLICIT.to_vec();
+        for p in ShardPhase::all() {
+            all.extend(shard_universal(p));
+        }
+        all
+    });
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShardTransitionError {
@@ -217,11 +246,19 @@ pub enum ShardTransitionError {
 impl fmt::Display for ShardTransitionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ShardTransitionError::Illegal { from, trigger, legal } => {
+            ShardTransitionError::Illegal {
+                from,
+                trigger,
+                legal,
+            } => {
                 let legal = if legal.is_empty() {
                     "<none — terminal>".to_string()
                 } else {
-                    legal.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", ")
+                    legal
+                        .iter()
+                        .map(|t| t.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 };
                 write!(
                     f,
@@ -251,8 +288,14 @@ mod tests {
 
     #[test]
     fn classes_partition() {
-        let settled: Vec<_> = ShardPhase::all().into_iter().filter(|p| p.class() == ShardClass::Settled).collect();
-        let terminal: Vec<_> = ShardPhase::all().into_iter().filter(|p| p.class() == ShardClass::Terminal).collect();
+        let settled: Vec<_> = ShardPhase::all()
+            .into_iter()
+            .filter(|p| p.class() == ShardClass::Settled)
+            .collect();
+        let terminal: Vec<_> = ShardPhase::all()
+            .into_iter()
+            .filter(|p| p.class() == ShardClass::Terminal)
+            .collect();
         assert_eq!(settled, vec![ShardPhase::Owned]);
         assert_eq!(terminal, vec![ShardPhase::Released]);
     }
@@ -298,7 +341,10 @@ mod tests {
                     }
                 }
             }
-            assert!(good, "NON-CONVERGENT shard phase `{start}` reaches no good terminal");
+            assert!(
+                good,
+                "NON-CONVERGENT shard phase `{start}` reaches no good terminal"
+            );
         }
     }
 
@@ -308,15 +354,22 @@ mod tests {
     #[test]
     fn every_active_phase_is_safely_resettable() {
         for p in ShardPhase::all() {
-            let edges: Vec<&ShardTransition> = SHARD_TRANSITIONS.iter().filter(|t| t.from == p).collect();
-            if matches!(p, ShardPhase::Claiming | ShardPhase::Owned | ShardPhase::Draining) {
+            let edges: Vec<&ShardTransition> =
+                SHARD_TRANSITIONS.iter().filter(|t| t.from == p).collect();
+            if matches!(
+                p,
+                ShardPhase::Claiming | ShardPhase::Owned | ShardPhase::Draining
+            ) {
                 assert!(
                     edges.iter().any(|t| t.trigger == ShardTrigger::LeaseLost && t.to == ShardPhase::Unassigned),
                     "shard phase `{p}` cannot safely reset on LeaseLost — a replica failure would strand it"
                 );
             }
             if !p.class().is_good_terminal() {
-                assert!(edges.iter().any(|t| t.to != p), "shard phase `{p}` has no phase-changing exit");
+                assert!(
+                    edges.iter().any(|t| t.to != p),
+                    "shard phase `{p}` has no phase-changing exit"
+                );
             }
         }
     }
@@ -324,15 +377,25 @@ mod tests {
     #[test]
     fn edge_legality_mirrors_table() {
         for tr in SHARD_TRANSITIONS.iter() {
-            assert!(tr.from.edge_is_legal(tr.to), "table edge {} → {} illegal", tr.from, tr.to);
+            assert!(
+                tr.from.edge_is_legal(tr.to),
+                "table edge {} → {} illegal",
+                tr.from,
+                tr.to
+            );
         }
         assert!(ShardPhase::Owned.edge_is_legal(ShardPhase::Owned));
-        assert!(!ShardPhase::Unassigned.edge_is_legal(ShardPhase::Owned), "Unassigned → Owned must require Claiming");
+        assert!(
+            !ShardPhase::Unassigned.edge_is_legal(ShardPhase::Owned),
+            "Unassigned → Owned must require Claiming"
+        );
     }
 
     #[test]
     fn illegal_transition_has_great_error_stack() {
-        let err = ShardPhase::Owned.advance(ShardTrigger::ClaimWon).unwrap_err();
+        let err = ShardPhase::Owned
+            .advance(ShardTrigger::ClaimWon)
+            .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("from `Owned`"), "{msg}");
         assert!(msg.contains("`ClaimWon`"), "{msg}");
@@ -343,7 +406,10 @@ mod tests {
     fn happy_path() {
         assert_eq!(P::Unassigned.advance(T::ClaimStarted).unwrap(), P::Claiming);
         assert_eq!(P::Claiming.advance(T::ClaimWon).unwrap(), P::Owned);
-        assert_eq!(P::Owned.advance(T::RebalanceRequested).unwrap(), P::Draining);
+        assert_eq!(
+            P::Owned.advance(T::RebalanceRequested).unwrap(),
+            P::Draining
+        );
         assert_eq!(P::Draining.advance(T::DrainComplete).unwrap(), P::Released);
         assert_eq!(P::Released.advance(T::Reassign).unwrap(), P::Unassigned);
         // safe reset from anywhere active

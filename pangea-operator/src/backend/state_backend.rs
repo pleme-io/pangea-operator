@@ -80,11 +80,7 @@ pub trait StateBackend: Send + Sync + 'static {
     ) -> Result<bool>;
 
     /// List all state entries for a template. Newest first.
-    async fn list_states(
-        &self,
-        schema_name: &str,
-        template_name: &str,
-    ) -> Result<Vec<StateEntry>>;
+    async fn list_states(&self, schema_name: &str, template_name: &str) -> Result<Vec<StateEntry>>;
 }
 
 /// `StateBackend` implementation backed by `StateStore` (PG via sqlx).
@@ -147,11 +143,7 @@ impl StateBackend for PostgresStateBackend {
             .await
     }
 
-    async fn list_states(
-        &self,
-        schema_name: &str,
-        template_name: &str,
-    ) -> Result<Vec<StateEntry>> {
+    async fn list_states(&self, schema_name: &str, template_name: &str) -> Result<Vec<StateEntry>> {
         self.store.list_states(schema_name, template_name).await
     }
 }
@@ -189,13 +181,7 @@ impl InMemoryStateBackend {
     /// Snapshot of every populated key. Use in test assertions:
     /// `assert_eq!(backend.recorded_keys().len(), 3);`
     pub fn recorded_keys(&self) -> Vec<(String, String, String)> {
-        self.inner
-            .lock()
-            .unwrap()
-            .entries
-            .keys()
-            .cloned()
-            .collect()
+        self.inner.lock().unwrap().entries.keys().cloned().collect()
     }
 }
 
@@ -227,7 +213,9 @@ impl StateBackend for InMemoryStateBackend {
         template_name: &str,
         state_name: &str,
     ) -> Result<Option<TerraformState>> {
-        let entry = self.get_state(schema_name, template_name, state_name).await?;
+        let entry = self
+            .get_state(schema_name, template_name, state_name)
+            .await?;
         Ok(entry
             .and_then(|e| e.data)
             .and_then(|bytes| serde_json::from_slice(&bytes).ok()))
@@ -274,11 +262,7 @@ impl StateBackend for InMemoryStateBackend {
         Ok(self.inner.lock().unwrap().entries.remove(&key).is_some())
     }
 
-    async fn list_states(
-        &self,
-        schema_name: &str,
-        template_name: &str,
-    ) -> Result<Vec<StateEntry>> {
+    async fn list_states(&self, schema_name: &str, template_name: &str) -> Result<Vec<StateEntry>> {
         let inner = self.inner.lock().unwrap();
         let mut entries: Vec<StateEntry> = inner
             .entries
@@ -346,7 +330,9 @@ mod tests {
     #[tokio::test]
     async fn in_memory_delete_removes_entry() {
         let b = InMemoryStateBackend::new();
-        b.save_state("schema", "tmpl", "state", b"data").await.unwrap();
+        b.save_state("schema", "tmpl", "state", b"data")
+            .await
+            .unwrap();
         let removed = b.delete_state("schema", "tmpl", "state").await.unwrap();
         assert!(removed);
         let got = b.get_state("schema", "tmpl", "state").await.unwrap();
@@ -376,7 +362,10 @@ mod tests {
         let b = InMemoryStateBackend::new();
         b.save_state("s", "t", "s", b"not-json").await.unwrap();
         let parsed = b.get_parsed_state("s", "t", "s").await.unwrap();
-        assert!(parsed.is_none(), "garbage bytes should yield None, not an error");
+        assert!(
+            parsed.is_none(),
+            "garbage bytes should yield None, not an error"
+        );
     }
 
     #[tokio::test]

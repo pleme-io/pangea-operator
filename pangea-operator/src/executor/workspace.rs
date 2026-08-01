@@ -215,11 +215,11 @@ impl WorkspaceManager {
                     continue;
                 }
 
-                let mut name_entries = fs::read_dir(&ns_path)
-                    .await
-                    .map_err(|e| Error::Io(e))?;
+                let mut name_entries = fs::read_dir(&ns_path).await.map_err(|e| Error::Io(e))?;
 
-                while let Some(name_entry) = name_entries.next_entry().await.map_err(|e| Error::Io(e))? {
+                while let Some(name_entry) =
+                    name_entries.next_entry().await.map_err(|e| Error::Io(e))?
+                {
                     if name_entry.path().is_dir() {
                         let name = name_entry.file_name().to_string_lossy().to_string();
                         workspaces.push((namespace.clone(), name));
@@ -291,8 +291,7 @@ impl Workspace {
 
     /// Write JSON content to a file in the workspace.
     pub async fn write_json(&self, filename: &str, value: &serde_json::Value) -> Result<PathBuf> {
-        let content = serde_json::to_string_pretty(value)
-            .map_err(|e| Error::Serialization(e))?;
+        let content = serde_json::to_string_pretty(value).map_err(|e| Error::Serialization(e))?;
         self.write_file(filename, &content).await
     }
 
@@ -333,9 +332,7 @@ impl Workspace {
     /// directory. That is a distinct, explicit code path; it does not
     /// go through `clean()` and is unaffected by this change.
     pub async fn clean(&self) -> Result<()> {
-        let mut entries = fs::read_dir(&self.path)
-            .await
-            .map_err(|e| Error::Io(e))?;
+        let mut entries = fs::read_dir(&self.path).await.map_err(|e| Error::Io(e))?;
 
         while let Some(entry) = entries.next_entry().await.map_err(|e| Error::Io(e))? {
             let path = entry.path();
@@ -399,8 +396,12 @@ mod tests {
         fs::write(ws.state_path(), r#"{"version":4,"serial":3}"#)
             .await
             .expect("seed state file");
-        fs::write(ws.main_tf_path(), "{}").await.expect("seed main.tf.json");
-        fs::write(ws.plan_path(), b"binary-plan-data").await.expect("seed plan file");
+        fs::write(ws.main_tf_path(), "{}")
+            .await
+            .expect("seed main.tf.json");
+        fs::write(ws.plan_path(), b"binary-plan-data")
+            .await
+            .expect("seed plan file");
 
         ws.clean().await.expect("clean must succeed");
 
@@ -414,8 +415,14 @@ mod tests {
             r#"{"version":4,"serial":3}"#,
             "state CONTENT must be untouched, not just the filename surviving"
         );
-        assert!(!ws.main_tf_path().exists(), "rendered config must still be cleaned");
-        assert!(!ws.plan_path().exists(), "plan artifacts must still be cleaned");
+        assert!(
+            !ws.main_tf_path().exists(),
+            "rendered config must still be cleaned"
+        );
+        assert!(
+            !ws.plan_path().exists(),
+            "plan artifacts must still be cleaned"
+        );
     }
 
     #[tokio::test]
@@ -440,19 +447,37 @@ mod tests {
         fs::write(ws.path.join(".terraform.lock.hcl"), "lock")
             .await
             .expect("seed lock file");
-        fs::create_dir(ws.path.join(".terraform")).await.expect("seed .terraform dir");
+        fs::create_dir(ws.path.join(".terraform"))
+            .await
+            .expect("seed .terraform dir");
         fs::write(ws.path.join(".terraform").join("providers.json"), "{}")
             .await
             .expect("seed cached provider file");
-        fs::write(ws.backend_path(), "{}").await.expect("seed backend.tf.json");
-        fs::write(ws.providers_path(), "{}").await.expect("seed providers.tf.json");
+        fs::write(ws.backend_path(), "{}")
+            .await
+            .expect("seed backend.tf.json");
+        fs::write(ws.providers_path(), "{}")
+            .await
+            .expect("seed providers.tf.json");
 
         ws.clean().await.expect("clean must succeed");
 
-        assert!(ws.path.join(".terraform.lock.hcl").exists(), "lock file must survive");
-        assert!(ws.path.join(".terraform").exists(), "cached provider dir must survive");
-        assert!(!ws.backend_path().exists(), "backend.tf.json must still be cleaned");
-        assert!(!ws.providers_path().exists(), "providers.tf.json must still be cleaned");
+        assert!(
+            ws.path.join(".terraform.lock.hcl").exists(),
+            "lock file must survive"
+        );
+        assert!(
+            ws.path.join(".terraform").exists(),
+            "cached provider dir must survive"
+        );
+        assert!(
+            !ws.backend_path().exists(),
+            "backend.tf.json must still be cleaned"
+        );
+        assert!(
+            !ws.providers_path().exists(),
+            "providers.tf.json must still be cleaned"
+        );
     }
 
     #[tokio::test]
@@ -462,11 +487,16 @@ mod tests {
         // the ordinary bootstrap case, and clean() must handle it
         // gracefully rather than erroring on a missing file.
         let (_dir, ws) = make_workspace();
-        fs::write(ws.main_tf_path(), "{}").await.expect("seed main.tf.json");
+        fs::write(ws.main_tf_path(), "{}")
+            .await
+            .expect("seed main.tf.json");
 
         let result = ws.clean().await;
 
-        assert!(result.is_ok(), "clean() on a never-applied workspace must succeed");
+        assert!(
+            result.is_ok(),
+            "clean() on a never-applied workspace must succeed"
+        );
         assert!(!ws.state_path().exists());
         assert!(!ws.main_tf_path().exists());
     }
@@ -478,7 +508,9 @@ mod tests {
         // a row (each a generation bump) before the next apply. State
         // must survive every single one, unchanged.
         let (_dir, ws) = make_workspace();
-        fs::write(ws.state_path(), "real-state-bytes").await.unwrap();
+        fs::write(ws.state_path(), "real-state-bytes")
+            .await
+            .unwrap();
 
         for _ in 0..5 {
             fs::write(ws.main_tf_path(), "{}").await.unwrap();
@@ -521,7 +553,9 @@ mod tests {
             .expect("seed backup file");
         let repo_dir = ws.path.join("_repo");
         fs::create_dir_all(&repo_dir).await.expect("seed _repo dir");
-        fs::write(repo_dir.join("cloned.tf"), "source").await.expect("seed repo file");
+        fs::write(repo_dir.join("cloned.tf"), "source")
+            .await
+            .expect("seed repo file");
 
         wm.invalidate_repo_cache("ns", "tmpl")
             .await
@@ -537,18 +571,26 @@ mod tests {
             fs::read_to_string(ws.state_path()).await.unwrap(),
             r#"{"version":4,"serial":9}"#
         );
-        assert!(ws.state_backup_path().exists(), "terraform.tfstate.backup must survive");
+        assert!(
+            ws.state_backup_path().exists(),
+            "terraform.tfstate.backup must survive"
+        );
     }
 
     #[tokio::test]
     async fn invalidate_repo_cache_with_no_repo_dir_yet_is_not_an_error() {
         let base = tempfile::tempdir().expect("create temp base dir");
         let wm = WorkspaceManager::new(base.path().to_path_buf());
-        wm.get_or_create("ns", "tmpl").await.expect("create workspace");
+        wm.get_or_create("ns", "tmpl")
+            .await
+            .expect("create workspace");
 
         let result = wm.invalidate_repo_cache("ns", "tmpl").await;
 
-        assert!(result.is_ok(), "invalidating a never-cloned workspace must be a no-op, not an error");
+        assert!(
+            result.is_ok(),
+            "invalidating a never-cloned workspace must be a no-op, not an error"
+        );
     }
 
     // ── read_state_bytes ────────────────────────────────────────────
@@ -562,7 +604,9 @@ mod tests {
     #[tokio::test]
     async fn read_state_bytes_returns_the_file_contents() {
         let (_dir, ws) = make_workspace();
-        fs::write(ws.state_path(), b"some-state-bytes").await.unwrap();
+        fs::write(ws.state_path(), b"some-state-bytes")
+            .await
+            .unwrap();
         assert_eq!(
             ws.read_state_bytes().await,
             Some(b"some-state-bytes".to_vec())

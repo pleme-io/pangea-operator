@@ -38,11 +38,7 @@ pub fn has<R: ResourceExt>(obj: &R, finalizer_name: &str) -> bool {
 /// Add the named finalizer via a server-side merge patch. Idempotent
 /// from the API server's perspective; if the finalizer already
 /// exists the patch is a no-op for that field.
-pub async fn add<R>(
-    obj: &R,
-    finalizer_name: &str,
-    client: &kube::Client,
-) -> Result<(), kube::Error>
+pub async fn add<R>(obj: &R, finalizer_name: &str, client: &kube::Client) -> Result<(), kube::Error>
 where
     R: Resource<Scope = k8s_openapi::NamespaceResourceScope, DynamicType = ()>
         + Clone
@@ -126,7 +122,8 @@ mod tests {
             "kind": "PackerBuild",
             "metadata": { "name": "x", "namespace": "y" },
             "spec": { "source": { "raw": "" } }
-        })).expect("fake PackerBuild parses");
+        }))
+        .expect("fake PackerBuild parses");
         pb.metadata.finalizers = finalizers;
         pb
     }

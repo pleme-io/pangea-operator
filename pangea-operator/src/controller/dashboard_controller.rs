@@ -101,11 +101,7 @@ impl DashboardController {
     }
 }
 
-fn error_policy(
-    _pd: Arc<PangeaDashboard>,
-    error: &Error,
-    ctx: Arc<ControllerState>,
-) -> Action {
+fn error_policy(_pd: Arc<PangeaDashboard>, error: &Error, ctx: Arc<ControllerState>) -> Action {
     crate::controller::error_policy::run_error_policy(
         &ctx.metrics,
         crate::crd::ControllerKind::Dashboard,
@@ -115,10 +111,7 @@ fn error_policy(
 }
 
 #[instrument(skip_all, fields(name = %pd.name_any()))]
-async fn reconcile(
-    pd: Arc<PangeaDashboard>,
-    state: Arc<ControllerState>,
-) -> Result<Action, Error> {
+async fn reconcile(pd: Arc<PangeaDashboard>, state: Arc<ControllerState>) -> Result<Action, Error> {
     state
         .metrics
         .record_reconcile(crate::crd::ControllerKind::Dashboard, "ok");
@@ -165,7 +158,11 @@ async fn reconcile(
 
     let source_hash = source_hash_hex(&ruby_source);
     let cm_name = config_map_name(&name);
-    let folder = pd.spec.folder.clone().unwrap_or_else(|| "General".to_string());
+    let folder = pd
+        .spec
+        .folder
+        .clone()
+        .unwrap_or_else(|| "General".to_string());
 
     // Diff-gate (a): if sourceHash matches the last successful render AND
     // the rendered ConfigMap is still present, the dashboard is already
@@ -174,7 +171,12 @@ async fn reconcile(
     let prev_hash = pd.status.as_ref().and_then(|s| s.source_hash.as_deref());
     if prev_hash == Some(source_hash.as_str()) {
         let cm_api: Api<ConfigMap> = Api::namespaced(state.client.clone(), &namespace);
-        if cm_api.get_opt(&cm_name).await.map_err(Error::Kube)?.is_some() {
+        if cm_api
+            .get_opt(&cm_name)
+            .await
+            .map_err(Error::Kube)?
+            .is_some()
+        {
             debug!(%name, "sourceHash unchanged + ConfigMap present; skipping render");
             return Ok(Action::requeue(DEFAULT_REQUEUE_INTERVAL));
         }
@@ -425,7 +427,9 @@ async fn patch_failed(
     let needs_patch = dashboard_status_needs_patch(
         pd.status.as_ref(),
         PangeaDashboardPhase::Failed,
-        pd.status.as_ref().and_then(|s| s.config_map_name.as_deref()),
+        pd.status
+            .as_ref()
+            .and_then(|s| s.config_map_name.as_deref()),
         pd.status.as_ref().and_then(|s| s.dashboard_uid.as_deref()),
         prev_hash.as_deref(),
         &conditions,
@@ -575,9 +579,7 @@ mod tests {
         let mut pd = PangeaDashboard::new(
             "payments",
             crate::crd::PangeaDashboardSpec {
-                source: DashboardSource::Inline {
-                    ruby: "x".into(),
-                },
+                source: DashboardSource::Inline { ruby: "x".into() },
                 grafana_instance_selector: Default::default(),
                 folder: Some("rio".into()),
                 overwrite: true,
@@ -609,7 +611,10 @@ mod tests {
         );
 
         let labels = cm.metadata.labels.expect("labels present");
-        assert_eq!(labels.get("grafana_dashboard").map(String::as_str), Some("1"));
+        assert_eq!(
+            labels.get("grafana_dashboard").map(String::as_str),
+            Some("1")
+        );
         assert_eq!(
             labels.get("pleme.io/pangea-dashboard").map(String::as_str),
             Some("payments")

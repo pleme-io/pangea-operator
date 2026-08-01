@@ -67,7 +67,9 @@ fn format_ruby_error(e: &magnus::Error) -> String {
         .funcall::<_, _, Value>("class", ())
         .and_then(|c| c.funcall::<_, _, String>("name", ()))
         .unwrap_or_else(|_| "Exception".to_string());
-    let msg = exc.funcall::<_, _, String>("message", ()).unwrap_or_default();
+    let msg = exc
+        .funcall::<_, _, String>("message", ())
+        .unwrap_or_default();
     let bt: Vec<String> = exc
         .funcall::<_, _, RArray>("backtrace", ())
         .and_then(|arr| arr.to_vec::<String>())
@@ -259,11 +261,7 @@ pub trait ConflictDetector: Send + Sync {
     /// `$LOAD_PATH` (for detectors that need it). Returns typed
     /// conflicts; empty = no findings. MUST be pure (no Ruby
     /// state mutation, no I/O beyond what the inputs imply).
-    fn detect(
-        &self,
-        ctx: &CompileContext,
-        existing_load_path: &[PathBuf],
-    ) -> Vec<Conflict>;
+    fn detect(&self, ctx: &CompileContext, existing_load_path: &[PathBuf]) -> Vec<Conflict>;
 }
 
 /// First-class `ConflictDetector` for the load-path double-load
@@ -286,7 +284,9 @@ impl LoadPathConflictDetector {
     /// double-load risk (pangea-architectures, pangea-resources,
     /// pangea-core's submodules).
     pub fn pangea() -> Self {
-        Self { namespace_prefixes: vec!["pangea/".to_string()] }
+        Self {
+            namespace_prefixes: vec!["pangea/".to_string()],
+        }
     }
 }
 
@@ -295,11 +295,7 @@ impl ConflictDetector for LoadPathConflictDetector {
         "load_path_double_load"
     }
 
-    fn detect(
-        &self,
-        ctx: &CompileContext,
-        existing_load_path: &[PathBuf],
-    ) -> Vec<Conflict> {
+    fn detect(&self, ctx: &CompileContext, existing_load_path: &[PathBuf]) -> Vec<Conflict> {
         let prefixes: Vec<&str> = self.namespace_prefixes.iter().map(String::as_str).collect();
         detect_load_path_conflicts(existing_load_path, &ctx.load_paths, &prefixes)
             .into_iter()
@@ -499,16 +495,24 @@ impl LoadPathEntry {
     /// Convenience constructor — the most common case at the call
     /// site (controller passes a workspace's `_repo/lib`).
     pub fn workspace(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into(), source: LoadPathSource::WorkspaceRepo }
+        Self {
+            path: path.into(),
+            source: LoadPathSource::WorkspaceRepo,
+        }
     }
     pub fn gem(path: impl Into<PathBuf>, gem_name: impl Into<String>) -> Self {
         Self {
             path: path.into(),
-            source: LoadPathSource::GemBroadcast { gem_name: gem_name.into() },
+            source: LoadPathSource::GemBroadcast {
+                gem_name: gem_name.into(),
+            },
         }
     }
     pub fn other(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into(), source: LoadPathSource::Other }
+        Self {
+            path: path.into(),
+            source: LoadPathSource::Other,
+        }
     }
 }
 
@@ -563,10 +567,7 @@ pub struct LoadPathPlan {
 /// `O((W + G) × F)` where W/G are workspace + gem path counts and F
 /// is the file count under `namespace_prefixes`. For pangea-operator
 /// today: W=1, G=1, F~150 → tens of µs. Negligible vs compile time.
-pub fn plan_load_paths(
-    entries: &[LoadPathEntry],
-    namespace_prefixes: &[&str],
-) -> LoadPathPlan {
+pub fn plan_load_paths(entries: &[LoadPathEntry], namespace_prefixes: &[&str]) -> LoadPathPlan {
     let workspace: Vec<&LoadPathEntry> = entries
         .iter()
         .filter(|e| matches!(e.source, LoadPathSource::WorkspaceRepo))
@@ -656,7 +657,11 @@ pub fn plan_load_paths(
         .map(|p| p.display().to_string())
         .collect();
 
-    LoadPathPlan { install_order, purge_feature_prefixes, conflicts }
+    LoadPathPlan {
+        install_order,
+        purge_feature_prefixes,
+        conflicts,
+    }
 }
 
 /// Convert a Ruby module-style name (`Pangea::Architectures`) to the
@@ -729,7 +734,9 @@ impl CompileContext {
     /// minimum legal manifest). Most callers add `env` +
     /// `purge_modules` + `purge_feature_prefixes` via the builder
     /// methods.
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub fn with_load_paths(mut self, paths: Vec<PathBuf>) -> Self {
         self.load_paths = paths;
@@ -819,7 +826,8 @@ impl CompileContext {
         let mut seen = std::collections::HashSet::new();
         for p in &self.load_paths {
             if !seen.insert(p) {
-                w.messages.push(format!("duplicate load_path entry: {}", p.display()));
+                w.messages
+                    .push(format!("duplicate load_path entry: {}", p.display()));
             }
         }
         // 2. absolute purge_feature_prefixes
@@ -832,7 +840,11 @@ impl CompileContext {
         }
         // 3. purge_modules look like Ruby module paths
         for m in &self.purge_modules {
-            if m.is_empty() || !m.chars().all(|c| c.is_ascii_alphanumeric() || c == ':' || c == '_') {
+            if m.is_empty()
+                || !m
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == ':' || c == '_')
+            {
                 w.messages.push(format!(
                     "purge_modules entry doesn't look like a Ruby module path: {m:?}"
                 ));
@@ -1066,7 +1078,9 @@ impl RubyEvaluator {
             for c in detector.detect(ctx, &current_load_path) {
                 // Dual-surface: flat message string for legacy
                 // consumers + typed Conflict for structured consumers.
-                warnings.messages.push(format!("detector:{}: {}", c.detector, c.message));
+                warnings
+                    .messages
+                    .push(format!("detector:{}: {}", c.detector, c.message));
                 warnings.conflicts.push(c);
             }
         }
@@ -1092,7 +1106,11 @@ impl RubyEvaluator {
         //   6. run f (the compile body).
         //   7. (on drop) restore $LOAD_PATH + ENV.
         let purge_modules_vec: Vec<&str> = ctx.purge_modules.iter().map(String::as_str).collect();
-        let purge_prefixes_vec: Vec<&str> = ctx.purge_feature_prefixes.iter().map(String::as_str).collect();
+        let purge_prefixes_vec: Vec<&str> = ctx
+            .purge_feature_prefixes
+            .iter()
+            .map(String::as_str)
+            .collect();
         let result = self.with_env(&ctx.env, |ev| {
             ev.with_load_paths(&ctx.load_paths, |ev| {
                 ev.purge_for_workspace_compile(&purge_modules_vec, &purge_prefixes_vec)?;
@@ -1161,15 +1179,12 @@ impl RubyEvaluator {
             end
             nil
         "#;
-        let _: Value = self
-            .ruby
-            .eval(src)
-            .map_err(|e| {
-                EvalError::RubyException(format!(
-                    "install_dry_types_compat_patch: {}",
-                    format_ruby_error(&e)
-                ))
-            })?;
+        let _: Value = self.ruby.eval(src).map_err(|e| {
+            EvalError::RubyException(format!(
+                "install_dry_types_compat_patch: {}",
+                format_ruby_error(&e)
+            ))
+        })?;
         Ok(())
     }
 
@@ -1330,15 +1345,12 @@ impl RubyEvaluator {
             end
             "#,
         );
-        let _: Value = self
-            .ruby
-            .eval(&src)
-            .map_err(|e| {
-                EvalError::RubyException(format!(
-                    "purge_for_workspace_compile: {}",
-                    format_ruby_error(&e)
-                ))
-            })?;
+        let _: Value = self.ruby.eval(&src).map_err(|e| {
+            EvalError::RubyException(format!(
+                "purge_for_workspace_compile: {}",
+                format_ruby_error(&e)
+            ))
+        })?;
         Ok(())
     }
 }
@@ -1362,16 +1374,14 @@ mod tests {
 
     #[test]
     fn validate_flags_relative_purge_feature_prefixes() {
-        let ctx = CompileContext::new()
-            .with_purge_feature_prefixes(["not-absolute/path"]);
+        let ctx = CompileContext::new().with_purge_feature_prefixes(["not-absolute/path"]);
         let w = ctx.validate();
         assert!(w.messages.iter().any(|m| m.contains("not absolute")));
     }
 
     #[test]
     fn validate_flags_malformed_module_names() {
-        let ctx = CompileContext::new()
-            .with_purge_modules(["Pangea Architectures"]); // space in name
+        let ctx = CompileContext::new().with_purge_modules(["Pangea Architectures"]); // space in name
         let w = ctx.validate();
         assert!(w.messages.iter().any(|m| m.contains("doesn't look like")));
     }
@@ -1383,7 +1393,11 @@ mod tests {
             .with_purge_modules(["Pangea::Architectures"])
             .with_purge_feature_prefixes(["/var/pangea/gems/pangea-architectures-main/"]);
         let w = ctx.validate();
-        assert!(w.is_empty(), "clean manifest should produce no warnings, got: {:?}", w.messages);
+        assert!(
+            w.is_empty(),
+            "clean manifest should produce no warnings, got: {:?}",
+            w.messages
+        );
     }
 
     // ── detect_load_path_conflicts (the SHIELD) ──────────────────
@@ -1446,7 +1460,10 @@ mod tests {
             &[b.path().to_path_buf()],
             &["pangea/"],
         );
-        assert!(conflicts.is_empty(), "namespace prefix should filter scan scope");
+        assert!(
+            conflicts.is_empty(),
+            "namespace prefix should filter scan scope"
+        );
 
         // Widening the prefix DOES catch it.
         let conflicts = detect_load_path_conflicts(
@@ -1491,7 +1508,10 @@ mod tests {
             &["pangea/"],
         );
         assert_eq!(conflicts.len(), 1);
-        assert_eq!(conflicts[0].logical_path, "pangea/architectures/aws_vpc_network");
+        assert_eq!(
+            conflicts[0].logical_path,
+            "pangea/architectures/aws_vpc_network"
+        );
     }
 
     #[test]
@@ -1519,7 +1539,10 @@ mod tests {
 
     #[test]
     fn module_name_simple_two_segments() {
-        assert_eq!(module_name_to_require_path("Pangea::Architectures"), "pangea/architectures");
+        assert_eq!(
+            module_name_to_require_path("Pangea::Architectures"),
+            "pangea/architectures"
+        );
     }
 
     #[test]
@@ -1602,10 +1625,7 @@ mod tests {
         std::fs::create_dir_all(&ws).unwrap();
         make_pangea_rb(&ws, "architectures");
 
-        let plan = plan_load_paths(
-            &[LoadPathEntry::workspace(&ws)],
-            &["pangea/"],
-        );
+        let plan = plan_load_paths(&[LoadPathEntry::workspace(&ws)], &["pangea/"]);
         assert_eq!(plan.install_order, vec![ws]);
         assert!(plan.purge_feature_prefixes.is_empty());
         assert!(plan.conflicts.is_empty());
@@ -1696,9 +1716,10 @@ mod tests {
 
         assert_eq!(plan.purge_feature_prefixes.len(), 1);
         assert!(plan.purge_feature_prefixes[0].starts_with(&gem_overlap.display().to_string()));
-        assert!(plan.conflicts.iter().all(|c| {
-            c.evidence["gem_name"].as_str() == Some("pangea-architectures")
-        }));
+        assert!(plan
+            .conflicts
+            .iter()
+            .all(|c| { c.evidence["gem_name"].as_str() == Some("pangea-architectures") }));
     }
 
     #[test]
@@ -1727,4 +1748,3 @@ mod tests {
         assert_eq!(ctx.purge_feature_prefixes, plan.purge_feature_prefixes);
     }
 }
-

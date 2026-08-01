@@ -130,7 +130,10 @@ impl Config {
             }
             "output" => {
                 if !["table", "json", "yaml"].contains(&value) {
-                    anyhow::bail!("Invalid output format: {}. Must be table, json, or yaml", value);
+                    anyhow::bail!(
+                        "Invalid output format: {}. Must be table, json, or yaml",
+                        value
+                    );
                 }
                 self.output = value.to_string();
             }

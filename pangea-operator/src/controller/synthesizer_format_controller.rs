@@ -5,9 +5,7 @@
 //! Other CRDs (PackerBuild, future build types) reference a SynthesizerFormat
 //! by name and block until it reaches Ready.
 
-use crate::crd::synthesizer_format::{
-    SynthesizerFormat, SynthesizerFormatPhase,
-};
+use crate::crd::synthesizer_format::{SynthesizerFormat, SynthesizerFormatPhase};
 use crate::error::Error;
 
 use futures::StreamExt;
@@ -93,25 +91,13 @@ async fn reconcile(
         .unwrap_or(0);
 
     // Skip if already reconciled at this generation
-    if current_gen == observed_gen
-        && format
-            .status
-            .as_ref()
-            .and_then(|s| s.phase)
-            .is_some()
-    {
+    if current_gen == observed_gen && format.status.as_ref().and_then(|s| s.phase).is_some() {
         return Ok(Action::requeue(DEFAULT_REQUEUE_INTERVAL));
     }
 
     // Step 1: Validate the spec locally
     if let Err(err) = validate_spec(&format.spec) {
-        update_status(
-            &format,
-            SynthesizerFormatPhase::Invalid,
-            Some(&err),
-            &state,
-        )
-        .await?;
+        update_status(&format, SynthesizerFormatPhase::Invalid, Some(&err), &state).await?;
         return Ok(Action::requeue(DEFAULT_REQUEUE_INTERVAL));
     }
 
@@ -158,10 +144,7 @@ fn validate_spec(
             return Err("Array section name cannot be empty".into());
         }
         if s.type_field.is_empty() {
-            return Err(format!(
-                "Array section '{}' has empty type_field",
-                s.name
-            ));
+            return Err(format!("Array section '{}' has empty type_field", s.name));
         }
     }
     for s in &spec.map_sections {
@@ -237,11 +220,18 @@ async fn update_status(
     }
 
     let ready = phase == SynthesizerFormatPhase::Ready;
-    let message = error.unwrap_or(if ready { "Format validated and ready" } else { "Validation failed" });
+    let message = error.unwrap_or(if ready {
+        "Format validated and ready"
+    } else {
+        "Validation failed"
+    });
 
-    let conditions = vec![
-        create_condition("Ready", ready, &format!("{phase}"), message),
-    ];
+    let conditions = vec![create_condition(
+        "Ready",
+        ready,
+        &format!("{phase}"),
+        message,
+    )];
 
     let new_observed_gen = format.metadata.generation.unwrap_or(0);
 
@@ -276,9 +266,13 @@ async fn update_status(
         }
     });
 
-    api.patch_status(&name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
-        .await
-        .map_err(Error::Kube)?;
+    api.patch_status(
+        &name,
+        &PatchParams::apply("pangea-operator"),
+        &Patch::Merge(&patch),
+    )
+    .await
+    .map_err(Error::Kube)?;
 
     info!(%phase, "SynthesizerFormat status updated");
     Ok(())
@@ -336,10 +330,8 @@ fn synthesizer_format_status_needs_patch(
     let prev_conditions: &[crate::crd::Condition] =
         prev.map(|s| s.conditions.as_slice()).unwrap_or(&[]);
 
-    let conditions_match = crate::controller::status::conditions_observably_equal(
-        prev_conditions,
-        new_conditions,
-    );
+    let conditions_match =
+        crate::controller::status::conditions_observably_equal(prev_conditions, new_conditions);
 
     prev.is_none()
         || !conditions_match
@@ -366,8 +358,15 @@ mod tests {
             reason: reason.into(),
             message: msg.into(),
             last_transition_time: chrono::TimeZone::with_ymd_and_hms(
-                &chrono::Utc, 2025, 1, 1, 0, 0, 0
-            ).unwrap(),
+                &chrono::Utc,
+                2025,
+                1,
+                1,
+                0,
+                0,
+                0,
+            )
+            .unwrap(),
         }
     }
 

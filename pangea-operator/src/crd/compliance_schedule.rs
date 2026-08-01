@@ -302,7 +302,9 @@ pub struct AttestationConfig {
 // ---------------------------------------------------------------------------
 
 /// Lifecycle phase of a ComplianceSchedule.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, Default,
+)]
 pub enum ComplianceSchedulePhase {
     /// Waiting for first scheduled run.
     #[default]
@@ -425,6 +427,9 @@ mod tests {
     // std `#[derive(Default)]` + `#[default]`.
     #[test]
     fn compliance_schedule_phase_default_is_idle() {
-        assert_eq!(ComplianceSchedulePhase::default(), ComplianceSchedulePhase::Idle);
+        assert_eq!(
+            ComplianceSchedulePhase::default(),
+            ComplianceSchedulePhase::Idle
+        );
     }
 }

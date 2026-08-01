@@ -33,8 +33,9 @@ use super::{
 // Helpers lifted to controller/template/* sub-modules during the
 // 2026-05-03 review passes (R6 + T1). Re-import them under the names
 // the call sites in this file already use.
-use super::template::finalizer::{add_finalizer, has_finalizer, remove_finalizer};
+use super::template::cycle_receipts::{record_reconcile_cycle, truncate_for_status, CycleResult};
 use super::template::events::record_event;
+use super::template::finalizer::{add_finalizer, has_finalizer, remove_finalizer};
 use super::template::freshness::{
     evaluate_source_freshness, git_rev_parse_head, observe_head, Freshness,
 };
@@ -42,11 +43,10 @@ use super::template::provider_creds::resolve_provider_config;
 use super::template::secret_files::write_secret_files;
 use super::template::status::{
     update_apply_status, update_compiled_revision, update_drift_check_timestamp,
-    ObservationOutcome, update_freshness_status, update_pending_plan_hash, update_phase,
-    update_phase_with_error,
+    update_freshness_status, update_pending_plan_hash, update_phase, update_phase_with_error,
     update_plan_status, update_settling_status, workspace_drift_reaction_to_policy_decision,
+    ObservationOutcome,
 };
-use super::template::cycle_receipts::{record_reconcile_cycle, truncate_for_status, CycleResult};
 
 /// Controller for InfrastructureTemplate resources.
 pub struct TemplateController {
@@ -78,10 +78,9 @@ impl TemplateController {
         // events at the source so reconciles only fire on actual spec
         // mutations + the explicit Action::requeue tick. See
         // controller::generation_filter for the full rationale.
-        let controller =
-            crate::controller::generation_filter::filtered_controller::<InfrastructureTemplate>(
-                client.clone(),
-            );
+        let controller = crate::controller::generation_filter::filtered_controller::<
+            InfrastructureTemplate,
+        >(client.clone());
 
         // Reactive ConfigMap watch (fleet task #131). A ConfigMap edit
         // does NOT bump the owning InfrastructureTemplate's
@@ -316,8 +315,7 @@ async fn reconcile_template(
     // on every scope exit (including early-returns + the `?` error
     // paths). Before this, `pangea_active_reconciliations` was declared
     // but never moved, so it sat flat at 0.
-    let _active_guard =
-        crate::observability::ActiveReconcileGuard::enter(&state.metrics);
+    let _active_guard = crate::observability::ActiveReconcileGuard::enter(&state.metrics);
     // Per-controller reconcile counter — completes the denominator
     // for `pangea_controller_reconciliations_total{controller="template"}`
     // so the chart 0.8.14 PangeaControllerReconcileRateHigh alert can
@@ -413,18 +411,19 @@ async fn reconcile_template(
     // cascade in handle_planning. Treat lookup failures as "no parent"
     // (best-effort cascade); we'd rather reconcile without the
     // workspace-level overrides than refuse to reconcile.
-    let parent_wsc = match crate::controller::workspace_catalog_controller::parent_catalog_for_template(
-        &state.client,
-        &template,
-    )
-    .await
-    {
-        Ok(p) => p,
-        Err(e) => {
-            warn!(error = %e, "WorkspaceCatalog lookup failed; reconciling without workspace cascade");
-            None
-        }
-    };
+    let parent_wsc =
+        match crate::controller::workspace_catalog_controller::parent_catalog_for_template(
+            &state.client,
+            &template,
+        )
+        .await
+        {
+            Ok(p) => p,
+            Err(e) => {
+                warn!(error = %e, "WorkspaceCatalog lookup failed; reconciling without workspace cascade");
+                None
+            }
+        };
 
     // ReactivePolicy auto-suspend gate: a prior reconcile triggered a
     // Suspend escalation (e.g. 5+ consecutive failures) and patched
@@ -510,15 +509,9 @@ async fn reconcile_template(
             // reads of `auto_suspended` are this gate (verified single
             // site), so falling through with the on-cluster latch still
             // true is safe — nothing below re-parks on the stale value.
-            let last_escalated_at = template
-                .status
-                .as_ref()
-                .and_then(|s| s.last_escalated_at);
-            if auto_suspend_probe_due(
-                Utc::now(),
-                last_escalated_at,
-                auto_suspend_probe_interval(),
-            ) {
+            let last_escalated_at = template.status.as_ref().and_then(|s| s.last_escalated_at);
+            if auto_suspend_probe_due(Utc::now(), last_escalated_at, auto_suspend_probe_interval())
+            {
                 info!(
                     ?last_escalated_at,
                     probe_interval_secs = AUTO_SUSPEND_PROBE_INTERVAL_SECS,
@@ -655,16 +648,25 @@ async fn reconcile_template(
         .and_then(|s| s.phase)
         .unwrap_or(Phase::Pending);
 
-    if generation_invalidates_render(current_gen, observed_gen) && current_phase != Phase::Pending && current_phase != Phase::Destroying {
+    if generation_invalidates_render(current_gen, observed_gen)
+        && current_phase != Phase::Pending
+        && current_phase != Phase::Destroying
+    {
         info!(
             current_gen,
-            observed_gen,
-            "Spec changed — cleaning workspace and restarting from Pending"
+            observed_gen, "Spec changed — cleaning workspace and restarting from Pending"
         );
         let workspace = state.workspace_manager.get_workspace(&template).await?;
         workspace.clean().await?;
         update_phase(&template, Phase::Pending, &state).await?;
-        record_event(&template, &state, EventType::Normal, "SpecChanged", "Template spec changed, restarting reconciliation").await;
+        record_event(
+            &template,
+            &state,
+            EventType::Normal,
+            "SpecChanged",
+            "Template spec changed, restarting reconciliation",
+        )
+        .await;
         return Ok(Action::requeue(SHORT_REQUEUE_INTERVAL));
     }
 
@@ -693,7 +695,14 @@ async fn reconcile_template(
             {
                 warn!(error = %pe, "failed to record reconcile error on CR status");
             }
-            record_event(&template, &state, EventType::Warning, "ReconcileFailed", &err_msg).await;
+            record_event(
+                &template,
+                &state,
+                EventType::Warning,
+                "ReconcileFailed",
+                &err_msg,
+            )
+            .await;
             return Err(e);
         }
     };
@@ -861,7 +870,9 @@ async fn resolve_template_dependencies(
     template: &InfrastructureTemplate,
     state: &ControllerState,
 ) -> crate::controller::template_dependency::DependencyResolution {
-    use crate::controller::template_dependency::{resolve_dependency_vars, DepRef, UpstreamOutputs};
+    use crate::controller::template_dependency::{
+        resolve_dependency_vars, DepRef, UpstreamOutputs,
+    };
     let own_ns = template.metadata.namespace.as_deref().unwrap_or("default");
     let mut dep_refs = std::collections::BTreeMap::new();
     let mut upstream: UpstreamOutputs = std::collections::BTreeMap::new();
@@ -869,11 +880,16 @@ async fn resolve_template_dependencies(
         let up_name = vref.template_ref.name.clone();
         dep_refs.insert(
             var_name.clone(),
-            DepRef { template: up_name.clone(), output_key: vref.output_key.clone(), mock: vref.mock_output.clone() },
+            DepRef {
+                template: up_name.clone(),
+                output_key: vref.output_key.clone(),
+                mock: vref.mock_output.clone(),
+            },
         );
         if !upstream.contains_key(&up_name) {
             let up_ns = vref.template_ref.namespace.as_deref().unwrap_or(own_ns);
-            let up_api: kube::Api<InfrastructureTemplate> = kube::Api::namespaced(state.client.clone(), up_ns);
+            let up_api: kube::Api<InfrastructureTemplate> =
+                kube::Api::namespaced(state.client.clone(), up_ns);
             if let Ok(Some(up)) = up_api.get_opt(&up_name).await {
                 if let Some(outs) = up.status.as_ref().and_then(|s| s.outputs.clone()) {
                     upstream.insert(up_name, outs);
@@ -956,7 +972,10 @@ async fn handle_compiling(
             .unwrap_or_default();
         let cm_api: Api<ConfigMap> = Api::namespaced(state.client.clone(), &ns);
         let cm = cm_api.get(&cm_ref.name).await.map_err(|e| {
-            Error::Config(format!("Failed to fetch ConfigMap {}/{}: {}", ns, cm_ref.name, e))
+            Error::Config(format!(
+                "Failed to fetch ConfigMap {}/{}: {}",
+                ns, cm_ref.name, e
+            ))
         })?;
         cm.data
             .as_ref()
@@ -1115,7 +1134,8 @@ async fn handle_compiling(
         // best-effort: a missing namespace/workspace simply contributes no layer
         // (behaviour-preserving for templates with no parent).
         let ns_defaults = {
-            let pns_api: kube::Api<crate::crd::PangeaNamespace> = kube::Api::all(state.client.clone());
+            let pns_api: kube::Api<crate::crd::PangeaNamespace> =
+                kube::Api::all(state.client.clone());
             pns_api
                 .get_opt(&template.spec.pangea_namespace)
                 .await
@@ -1124,15 +1144,16 @@ async fn handle_compiling(
                 .and_then(|ns| ns.spec.default_variables)
                 .unwrap_or_default()
         };
-        let ws_defaults = crate::controller::workspace_catalog_controller::parent_catalog_for_template(
-            &state.client,
-            template,
-        )
-        .await
-        .ok()
-        .flatten()
-        .and_then(|wsc| wsc.spec.variables)
-        .unwrap_or_default();
+        let ws_defaults =
+            crate::controller::workspace_catalog_controller::parent_catalog_for_template(
+                &state.client,
+                template,
+            )
+            .await
+            .ok()
+            .flatten()
+            .and_then(|wsc| wsc.spec.variables)
+            .unwrap_or_default();
         let template_vars = template.spec.variables.clone().unwrap_or_default();
         let mut variables = crate::controller::config_cascade::resolve_variables(&[
             &ns_defaults,
@@ -1186,12 +1207,14 @@ async fn handle_compiling(
                     .or_else(|| template.namespace())
                     .unwrap_or_default();
                 let secret_api: Api<Secret> = Api::namespaced(state.client.clone(), &ns);
-                let secret = secret_api.get(&sref.name).await.map_err(|_| {
-                    Error::SecretNotFound {
-                        namespace: ns.clone(),
-                        name: sref.name.clone(),
-                    }
-                })?;
+                let secret =
+                    secret_api
+                        .get(&sref.name)
+                        .await
+                        .map_err(|_| Error::SecretNotFound {
+                            namespace: ns.clone(),
+                            name: sref.name.clone(),
+                        })?;
                 debug!(
                     provider = provider_kind.name(),
                     secret_namespace = %ns,
@@ -1279,8 +1302,9 @@ async fn handle_compiling(
     let magma_db_backed = magma_active && state.artifact_store.is_some();
     if magma_active {
         if let Some(store) = state.artifact_store.as_ref() {
-            let value: serde_json::Value = serde_json::from_str(&terraform_json)
-                .map_err(|e| Error::Compilation(format!("rendered terraform JSON is not valid JSON: {e}")))?;
+            let value: serde_json::Value = serde_json::from_str(&terraform_json).map_err(|e| {
+                Error::Compilation(format!("rendered terraform JSON is not valid JSON: {e}"))
+            })?;
             let schema_name = format!("pangea_{}", template.spec.pangea_namespace);
             let template_name = template.name_any();
             // Record the source revision this render was produced AT — the
@@ -1312,7 +1336,9 @@ async fn handle_compiling(
     // Postgres when the store is wired). The tofu path requires it, and
     // the magma disk-fallback path reads it via `load_config`.
     if !magma_db_backed {
-        workspace.write_file("main.tf.json", &terraform_json).await?;
+        workspace
+            .write_file("main.tf.json", &terraform_json)
+            .await?;
         info!("Template content written to workspace");
     } else {
         info!("Skipping main.tf.json disk write (DB-backed magma path; rendered config is in Postgres)");
@@ -1330,7 +1356,14 @@ async fn handle_compiling(
     update_compiled_revision(template, compiled_revision.as_deref(), state).await?;
 
     update_phase(template, Phase::Initializing, state).await?;
-    record_event(template, state, EventType::Normal, "Compiled", "Template source resolved and written to workspace").await;
+    record_event(
+        template,
+        state,
+        EventType::Normal,
+        "Compiled",
+        "Template source resolved and written to workspace",
+    )
+    .await;
 
     Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
 }
@@ -1357,12 +1390,13 @@ async fn git_auth_env(
             .or_else(|| template.namespace())
             .unwrap_or_default();
         let secret_api: Api<Secret> = Api::namespaced(state.client.clone(), &ns);
-        let secret = secret_api.get(&secret_ref.name).await.map_err(|_| {
-            Error::SecretNotFound {
+        let secret = secret_api
+            .get(&secret_ref.name)
+            .await
+            .map_err(|_| Error::SecretNotFound {
                 namespace: ns.clone(),
                 name: secret_ref.name.clone(),
-            }
-        })?;
+            })?;
 
         if let Some(data) = &secret.data {
             // Support HTTPS token auth via username/password
@@ -1384,7 +1418,9 @@ async fn git_auth_env(
                     user_path.display(),
                     pass_path.display(),
                 );
-                workspace.write_file("_git_askpass.sh", &script_content).await?;
+                workspace
+                    .write_file("_git_askpass.sh", &script_content)
+                    .await?;
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
@@ -1479,7 +1515,14 @@ async fn observe_source_freshness(
                  unverified; reconciling against the last-observed revision"
             );
             warn!(error = %e, "freshness probe failed — {msg}");
-            record_event(template, state, EventType::Warning, "SourceUnobservable", &msg).await;
+            record_event(
+                template,
+                state,
+                EventType::Warning,
+                "SourceUnobservable",
+                &msg,
+            )
+            .await;
             Ok(Freshness::Unknown)
         }
     }
@@ -1535,10 +1578,7 @@ const DEFAULT_MAX_DRIFT_CYCLES: u32 = 5;
 ///   * `max == 0` is treated as "never escalate" — a defensive
 ///     interpretation, since 0 would otherwise escalate on the first
 ///     failure which is almost certainly user error.
-pub(crate) fn evaluate_compile_failure_escalation(
-    prior: u32,
-    max: u32,
-) -> (u32, bool) {
+pub(crate) fn evaluate_compile_failure_escalation(prior: u32, max: u32) -> (u32, bool) {
     let next = prior.saturating_add(1);
     let escalate = max > 0 && next >= max;
     (next, escalate)
@@ -1599,15 +1639,11 @@ async fn handle_compile_failure(
     let duration_unready = template
         .status
         .as_ref()
-        .and_then(|s| {
-            s.last_applied_at
-                .as_ref()
-                .or(s.phase_entered_at.as_ref())
-        })
+        .and_then(|s| s.last_applied_at.as_ref().or(s.phase_entered_at.as_ref()))
         .map(|t| (now - *t).to_std().unwrap_or(std::time::Duration::ZERO))
         .unwrap_or(std::time::Duration::ZERO);
-    let recommended_action = crate::controller::escalation::EscalationLadder::pangea_default()
-        .pick(duration_unready);
+    let recommended_action =
+        crate::controller::escalation::EscalationLadder::pangea_default().pick(duration_unready);
 
     // Anomaly recurrence — the known-unknowns axis. Hash the error
     // into a stable signature + bump the in-process tracker. Same
@@ -1616,9 +1652,7 @@ async fn handle_compile_failure(
     // class repeated 100 times, or 100 distinct issues?".
     let signature = crate::controller::anomaly_tracker::error_signature(err_msg);
     let recurrence_key = format!("{}/{}", namespace, name);
-    let recurrence = state
-        .anomaly_tracker
-        .observe(&recurrence_key, &signature);
+    let recurrence = state.anomaly_tracker.observe(&recurrence_key, &signature);
 
     // Composite three-axis summary — one structured event for log
     // analytics + Prometheus + (slice-4) `.status.anomalies[]`. Same
@@ -1742,7 +1776,10 @@ async fn handle_compile_failure(
         });
         if let (Some(merged_status), Some(handler_status)) = (
             patch.get_mut("status").and_then(|s| s.as_object_mut()),
-            outcome.status_patch.get("status").and_then(|s| s.as_object()),
+            outcome
+                .status_patch
+                .get("status")
+                .and_then(|s| s.as_object()),
         ) {
             for (k, v) in handler_status {
                 merged_status.insert(k.clone(), v.clone());
@@ -1856,9 +1893,10 @@ async fn handle_initializing(
 
     // Resolve PangeaNamespace to get backend configuration
     let pns_api: Api<PangeaNamespace> = Api::all(state.client.clone());
-    let pangea_ns = pns_api.get(&template.spec.pangea_namespace).await.map_err(|_| {
-        Error::NamespaceNotFound(template.spec.pangea_namespace.clone())
-    })?;
+    let pangea_ns = pns_api
+        .get(&template.spec.pangea_namespace)
+        .await
+        .map_err(|_| Error::NamespaceNotFound(template.spec.pangea_namespace.clone()))?;
 
     // Resolve PostgreSQL credentials from Secret. On the magma path the
     // operator-side backend.tf.json is never read (magma uses the
@@ -1872,29 +1910,40 @@ async fn handle_initializing(
             .or_else(|| template.namespace())
             .unwrap_or_else(|| "default".to_string());
         let secret_api: Api<Secret> = Api::namespaced(state.client.clone(), &secret_ns);
-        let secret = secret_api.get(&pg.secret_ref.name).await.map_err(|_| {
-            Error::SecretNotFound {
-                namespace: secret_ns.clone(),
-                name: pg.secret_ref.name.clone(),
-            }
-        })?;
+        let secret =
+            secret_api
+                .get(&pg.secret_ref.name)
+                .await
+                .map_err(|_| Error::SecretNotFound {
+                    namespace: secret_ns.clone(),
+                    name: pg.secret_ref.name.clone(),
+                })?;
 
         let data = secret.data.as_ref().ok_or_else(|| {
-            Error::Config(format!("Secret {}/{} has no data", secret_ns, pg.secret_ref.name))
+            Error::Config(format!(
+                "Secret {}/{} has no data",
+                secret_ns, pg.secret_ref.name
+            ))
         })?;
 
         let username = data
             .get(&pg.secret_ref.username_key)
             .map(|v| String::from_utf8_lossy(&v.0).to_string())
             .ok_or_else(|| {
-                Error::Config(format!("Key '{}' not found in secret", pg.secret_ref.username_key))
+                Error::Config(format!(
+                    "Key '{}' not found in secret",
+                    pg.secret_ref.username_key
+                ))
             })?;
 
         let password = data
             .get(&pg.secret_ref.password_key)
             .map(|v| String::from_utf8_lossy(&v.0).to_string())
             .ok_or_else(|| {
-                Error::Config(format!("Key '{}' not found in secret", pg.secret_ref.password_key))
+                Error::Config(format!(
+                    "Key '{}' not found in secret",
+                    pg.secret_ref.password_key
+                ))
             })?;
 
         let credentials = Credentials::new(username, password);
@@ -1913,7 +1962,12 @@ async fn handle_initializing(
     // Write provider configuration if credentials are specified — but
     // not on the magma path, where providers come from the rendered
     // config (`load_config_routed`), not providers.tf.json on disk.
-    if let Some(provider_creds) = template.spec.provider_credentials.as_ref().filter(|_| !magma_active) {
+    if let Some(provider_creds) = template
+        .spec
+        .provider_credentials
+        .as_ref()
+        .filter(|_| !magma_active)
+    {
         let provider_config = resolve_provider_config(provider_creds, template, state).await?;
         BackendConfigGenerator::write_provider_config(provider_config, &workspace.path).await?;
     }
@@ -1932,7 +1986,14 @@ async fn handle_initializing(
     if result.success {
         info!("executor init completed successfully");
         update_phase(template, Phase::Planning, state).await?;
-        record_event(template, state, EventType::Normal, "Initialized", "Backend initialized successfully").await;
+        record_event(
+            template,
+            state,
+            EventType::Normal,
+            "Initialized",
+            "Backend initialized successfully",
+        )
+        .await;
     } else {
         let err_msg = format!("init failed: {}", result.stderr);
         warn!(%err_msg);
@@ -2245,7 +2306,9 @@ mod lock_contention_tests {
         // them mean "someone else holds the lock, retry shortly".
         assert!(!is_lock_contention(&Error::Timeout(30)));
         assert!(!is_lock_contention(&Error::Config("bad config".into())));
-        assert!(!is_lock_contention(&Error::InvalidSource("bad source".into())));
+        assert!(!is_lock_contention(&Error::InvalidSource(
+            "bad source".into()
+        )));
     }
 }
 
@@ -2569,13 +2632,8 @@ async fn handle_planning(
     // documented default). The engine annotates each drift entry with
     // its resolved decision and emits an aggregate that drives the
     // plan→apply gate below.
-    let policy_outcome = evaluate_policy(
-        &template.spec.policies,
-        effective_default,
-        &raw_drifts,
-    );
-    let policy_was_configured =
-        policy_is_configured(&template.spec.policies, effective_default);
+    let policy_outcome = evaluate_policy(&template.spec.policies, effective_default, &raw_drifts);
+    let policy_was_configured = policy_is_configured(&template.spec.policies, effective_default);
 
     let resource_summary = summary.as_ref().map(|s| ResourceSummary {
         total: s.total,
@@ -2623,7 +2681,12 @@ async fn handle_planning(
         .policy_decisions_total
         .with_label_values(&[&tname, &tns, "refuse"])
         .inc_by(policy_outcome.evaluation.refuse_count as u64);
-    update_drift_detail_gauges(&state.metrics, &tname, &tns, &policy_outcome.annotated_drifts);
+    update_drift_detail_gauges(
+        &state.metrics,
+        &tname,
+        &tns,
+        &policy_outcome.annotated_drifts,
+    );
 
     if !has_changes {
         info!("No changes detected");
@@ -2632,7 +2695,7 @@ async fn handle_planning(
             template,
             state,
             Some(&workspace.path),
-                plan_result.artifact.clone(), // slice 2c: runner-provided artifact threads through cycle receipt
+            plan_result.artifact.clone(), // slice 2c: runner-provided artifact threads through cycle receipt
             &[],
             plan_text.clone(),
             CycleResult::NoChanges,
@@ -2666,7 +2729,14 @@ async fn handle_planning(
                 Phase::Failed, // just set by update_phase_with_error() above
             )
             .await?;
-            record_event(template, state, EventType::Warning, "PolicyRefused", &err_msg).await;
+            record_event(
+                template,
+                state,
+                EventType::Warning,
+                "PolicyRefused",
+                &err_msg,
+            )
+            .await;
             Ok(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL))
         }
         PolicyDecision::AutoApply => {
@@ -2871,7 +2941,11 @@ fn evaluate_auto_apply_gate(
     previously_applied: bool,
     state_present_now: bool,
 ) -> AutoApplyGate {
-    if state_continuity_breach(is_durable_state_backend, previously_applied, state_present_now) {
+    if state_continuity_breach(
+        is_durable_state_backend,
+        previously_applied,
+        state_present_now,
+    ) {
         AutoApplyGate::BlockedByStateContinuityBreach
     } else {
         AutoApplyGate::Proceed
@@ -2988,7 +3062,9 @@ enum ApprovalHashInput<'a> {
 fn resolve_approval_hash_input(fingerprint: &CurrentStateFingerprint) -> ApprovalHashInput<'_> {
     match fingerprint {
         CurrentStateFingerprint::Absent => ApprovalHashInput::Hashable(None),
-        CurrentStateFingerprint::Present(bytes) => ApprovalHashInput::Hashable(Some(bytes.as_slice())),
+        CurrentStateFingerprint::Present(bytes) => {
+            ApprovalHashInput::Hashable(Some(bytes.as_slice()))
+        }
         CurrentStateFingerprint::Unreadable => ApprovalHashInput::RefuseUnreadable,
     }
 }
@@ -3032,7 +3108,10 @@ async fn current_state_fingerprint(
             );
             return CurrentStateFingerprint::Unreadable;
         };
-        match backend.get_state(schema_name, template_name, "default").await {
+        match backend
+            .get_state(schema_name, template_name, "default")
+            .await
+        {
             Ok(Some(entry)) => match entry.data {
                 Some(bytes) => CurrentStateFingerprint::Present(bytes),
                 None => CurrentStateFingerprint::Absent,
@@ -3181,7 +3260,14 @@ async fn route_through_approval_gate(
     if is_approved {
         info!(plan_hash, "Plan approved by user, proceeding to apply");
         update_phase(template, Phase::Applying, state).await?;
-        record_event(template, state, EventType::Normal, "PlanApproved", "Plan approved by user").await;
+        record_event(
+            template,
+            state,
+            EventType::Normal,
+            "PlanApproved",
+            "Plan approved by user",
+        )
+        .await;
         Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
     } else {
         info!(plan_hash, "Policy requires approval, waiting");
@@ -3200,7 +3286,11 @@ async fn route_through_approval_gate(
             CycleResult::PolicyGated(PolicyDecision::RequireApproval),
             // No phase transition this tick — pass the template's current,
             // unchanged phase (Planning, per this function's caller).
-            template.status.as_ref().and_then(|s| s.phase).unwrap_or_default(),
+            template
+                .status
+                .as_ref()
+                .and_then(|s| s.phase)
+                .unwrap_or_default(),
         )
         .await?;
         record_event(
@@ -3292,18 +3382,18 @@ async fn handle_applying(
     // error, or early return) by `LockGuard::drop`.
     let schema_name = format!("pangea_{}", template.spec.pangea_namespace);
     let template_name = template.name_any();
-    let _state_lock_guard =
-        match acquire_mutation_lock(state, &schema_name, &template_name).await? {
-            LockDispatch::Proceed(guard) => guard,
-            LockDispatch::Contended => {
-                warn!(
-                    template = %template_name,
-                    "Applying: another operator pod holds this template's state lock \
-                     — requeueing instead of racing a concurrent apply"
-                );
-                return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
-            }
-        };
+    let _state_lock_guard = match acquire_mutation_lock(state, &schema_name, &template_name).await?
+    {
+        LockDispatch::Proceed(guard) => guard,
+        LockDispatch::Contended => {
+            warn!(
+                template = %template_name,
+                "Applying: another operator pod holds this template's state lock \
+                 — requeueing instead of racing a concurrent apply"
+            );
+            return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
+        }
+    };
 
     // Snapshot the drift_details that handle_planning persisted on
     // status before the apply ran — this is the per-resource change
@@ -3324,14 +3414,8 @@ async fn handle_applying(
     // creating a duplicate. Imported addresses are tracked so the
     // cycle receipt can mark them Outcome::Imported (instead of
     // whatever the post-import plan would derive).
-    let mut imported_addresses = run_import_prepass(
-        template,
-        state,
-        &workspace.path,
-        &plan_path,
-        &prior_drifts,
-    )
-    .await;
+    let mut imported_addresses =
+        run_import_prepass(template, state, &workspace.path, &plan_path, &prior_drifts).await;
 
     // Use plan file if it exists, otherwise apply directly. If we
     // imported anything, drop the cached plan file — the new state
@@ -3461,9 +3545,7 @@ async fn handle_applying(
         }
     }
 
-    let mut result = executor
-        .apply(&workspace.path, plan_file, true)
-        .await?;
+    let mut result = executor.apply(&workspace.path, plan_file, true).await?;
 
     // Self-heal: stale-plan auto-recovery within the same reconcile.
     //
@@ -3507,9 +3589,7 @@ async fn handle_applying(
             return Ok(action);
         }
 
-        result = executor
-            .apply(&workspace.path, None, true)
-            .await?;
+        result = executor.apply(&workspace.path, None, true).await?;
     }
 
     // Post-apply conflict resolution — the typed, cascading
@@ -3576,7 +3656,10 @@ async fn handle_applying(
     }
 
     if result.success {
-        info!(duration_secs = result.duration.as_secs_f64(), "executor apply completed successfully");
+        info!(
+            duration_secs = result.duration.as_secs_f64(),
+            "executor apply completed successfully"
+        );
 
         // Fetch outputs
         let outputs = match executor.output(&workspace.path).await {
@@ -3593,7 +3676,13 @@ async fn handle_applying(
             .status
             .as_ref()
             .and_then(|s| s.compiled_revision.clone());
-        update_apply_status(template, outputs.clone(), applied_revision.as_deref(), state).await?;
+        update_apply_status(
+            template,
+            outputs.clone(),
+            applied_revision.as_deref(),
+            state,
+        )
+        .await?;
 
         // X2: write tofu outputs to user-bound K8s Secrets. Best-
         // effort — bindings logged + metric'd; failure here doesn't
@@ -3620,15 +3709,19 @@ async fn handle_applying(
                 .unwrap_or_else(|| "unknown".into());
             for r in &results {
                 let result_label = match &r.status {
-                    crate::controller::template::output_bindings::PublishStatus::Published { .. } => "published",
-                    crate::controller::template::output_bindings::PublishStatus::OutputMissing => "output_missing",
-                    crate::controller::template::output_bindings::PublishStatus::Errored(_) => "errored",
+                    crate::controller::template::output_bindings::PublishStatus::Published {
+                        ..
+                    } => "published",
+                    crate::controller::template::output_bindings::PublishStatus::OutputMissing => {
+                        "output_missing"
+                    }
+                    crate::controller::template::output_bindings::PublishStatus::Errored(_) => {
+                        "errored"
+                    }
                 };
-                state.metrics.record_output_binding(
-                    &template_name,
-                    &template_ns,
-                    result_label,
-                );
+                state
+                    .metrics
+                    .record_output_binding(&template_name, &template_ns, result_label);
             }
             info!(
                 template = %template_name,
@@ -3673,11 +3766,20 @@ async fn handle_applying(
             post_apply_artifact,
             &prior_drifts,
             prior_plan_summary,
-            CycleResult::AppliedSuccess { imported_addresses: imported_addresses.clone() },
+            CycleResult::AppliedSuccess {
+                imported_addresses: imported_addresses.clone(),
+            },
             Phase::Ready, // just set by update_phase() above
         )
         .await?;
-        record_event(template, state, EventType::Normal, "Applied", "Infrastructure applied successfully").await;
+        record_event(
+            template,
+            state,
+            EventType::Normal,
+            "Applied",
+            "Infrastructure applied successfully",
+        )
+        .await;
     } else {
         // OpenTofu writes most diagnostics to stdout, not stderr. Combine
         // both into the err_msg so the operator surface tells the human
@@ -3712,46 +3814,48 @@ async fn handle_applying(
         //   2. Fallback — when the executor produced no structured records
         //      (the tofu path, whose failures only surface as stdout/
         //      stderr text), classify the combined output once.
-        let anomalies: Vec<crate::controller::anomaly::ApplyAnomaly> =
-            if !result.failed_changes.is_empty() {
-                result
-                    .failed_changes
-                    .iter()
-                    .map(|fc| {
-                        crate::controller::anomaly::classify(&fc.reason, &fc.address, &fc.action)
-                    })
-                    .collect()
+        let anomalies: Vec<crate::controller::anomaly::ApplyAnomaly> = if !result
+            .failed_changes
+            .is_empty()
+        {
+            result
+                .failed_changes
+                .iter()
+                .map(|fc| crate::controller::anomaly::classify(&fc.reason, &fc.address, &fc.action))
+                .collect()
+        } else {
+            // FIX 2 (tofu fallback): the legacy executor surfaces failures
+            // only as a stdout/stderr blob, never structured per-resource
+            // records. Classifying the WHOLE blob once is
+            // first-substring-match-wins across many resources'
+            // diagnostics — a conflict in one resource masks a different
+            // anomaly (rate-limit / permission / transient-net) in
+            // another. Split the blob into per-address diagnostic blocks
+            // (`conflict::apply_error_blocks`) and classify EACH block
+            // separately, mirroring the magma per-`FailedChange` path so
+            // both executors produce a per-resource anomaly list. The
+            // tofu action grammar isn't recoverable from the diagnostic
+            // text, so we pass "" for the per-block action (the
+            // anomalies that carry it record an empty action — the
+            // address + class are what drive the remediation).
+            let blocks = crate::controller::conflict::apply_error_blocks(&combined_output);
+            if blocks.is_empty() {
+                // No resource-scoped blocks parsed (a backend / init /
+                // non-resource error). Fall back to the single blanket
+                // classify so the failure is still typed + surfaced, never
+                // silently dropped.
+                vec![crate::controller::anomaly::classify(
+                    &combined_output,
+                    "",
+                    "",
+                )]
             } else {
-                // FIX 2 (tofu fallback): the legacy executor surfaces failures
-                // only as a stdout/stderr blob, never structured per-resource
-                // records. Classifying the WHOLE blob once is
-                // first-substring-match-wins across many resources'
-                // diagnostics — a conflict in one resource masks a different
-                // anomaly (rate-limit / permission / transient-net) in
-                // another. Split the blob into per-address diagnostic blocks
-                // (`conflict::apply_error_blocks`) and classify EACH block
-                // separately, mirroring the magma per-`FailedChange` path so
-                // both executors produce a per-resource anomaly list. The
-                // tofu action grammar isn't recoverable from the diagnostic
-                // text, so we pass "" for the per-block action (the
-                // anomalies that carry it record an empty action — the
-                // address + class are what drive the remediation).
-                let blocks = crate::controller::conflict::apply_error_blocks(&combined_output);
-                if blocks.is_empty() {
-                    // No resource-scoped blocks parsed (a backend / init /
-                    // non-resource error). Fall back to the single blanket
-                    // classify so the failure is still typed + surfaced, never
-                    // silently dropped.
-                    vec![crate::controller::anomaly::classify(&combined_output, "", "")]
-                } else {
-                    blocks
-                        .iter()
-                        .map(|(addr, reason)| {
-                            crate::controller::anomaly::classify(reason, addr, "")
-                        })
-                        .collect()
-                }
-            };
+                blocks
+                    .iter()
+                    .map(|(addr, reason)| crate::controller::anomaly::classify(reason, addr, ""))
+                    .collect()
+            }
+        };
 
         // Pick the single anomaly that drives this tick's reconcile action.
         // Recovery anomalies (stale-plan / empty-workspace) take precedence
@@ -3843,7 +3947,14 @@ async fn handle_applying(
             1000,
             "…[truncated, full err in template status]",
         );
-        record_event(template, state, EventType::Warning, event_reason, &event_msg).await;
+        record_event(
+            template,
+            state,
+            EventType::Warning,
+            event_reason,
+            &event_msg,
+        )
+        .await;
     }
 
     Ok(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL))
@@ -4113,9 +4224,7 @@ async fn react_to_apply_anomaly(
 fn suggested_import_hint(address: &str) -> String {
     let ty = address.split('.').next().unwrap_or(address);
     match ty {
-        "cloudflare_dns_record" | "cloudflare_record" => {
-            "{{ zone_id }}/<record_id>".to_string()
-        }
+        "cloudflare_dns_record" | "cloudflare_record" => "{{ zone_id }}/<record_id>".to_string(),
         _ => "<natural-id>".to_string(),
     }
 }
@@ -4387,7 +4496,6 @@ async fn read_legacy_show_plan_json(
     }
 }
 
-
 /// Run the pre-apply import sweep. Returns the set of addresses
 /// successfully imported so the cycle receipt can mark them as
 /// `Outcome::Imported` instead of whatever the apply-time plan
@@ -4439,10 +4547,7 @@ async fn run_import_prepass(
     let (create_addresses_owned, planned_by_addr, derived_by_addr): (
         Vec<String>,
         std::collections::BTreeMap<String, serde_json::Value>,
-        std::collections::BTreeMap<
-            String,
-            crate::executor::plan_change::DerivedImportId,
-        >,
+        std::collections::BTreeMap<String, crate::executor::plan_change::DerivedImportId>,
     ) = match executor.planned_changes().await {
         Ok(Some(changes)) => {
             let (creates, planned, derived) = discovery_from_planned_changes(&changes);
@@ -4476,7 +4581,11 @@ async fn run_import_prepass(
                 plan_json_len = plan_json.len(),
                 plan_creates = plan_creates_n,
                 total_create_addresses = creates.len(),
-                source = if plan_creates_n > 0 { "plan" } else { "prior_drifts" },
+                source = if plan_creates_n > 0 {
+                    "plan"
+                } else {
+                    "prior_drifts"
+                },
                 "import prepass: create-action discovery"
             );
             // parse_planned_attrs is best-effort — only the auto-import
@@ -4649,7 +4758,11 @@ async fn run_import_prepass(
                     &t.source,
                 )
                 .await;
-                if ok { Some(t.address) } else { None }
+                if ok {
+                    Some(t.address)
+                } else {
+                    None
+                }
             }
         })
         .buffer_unordered(IMPORT_CONCURRENCY)
@@ -4803,8 +4916,8 @@ async fn handle_ready(
     // last phase handler that still spoke `IacExecutor` directly for
     // its plan call.
     let runner = state.executor_runner_for(template);
-    let interval = parse_duration(&template.spec.refresh_interval)
-        .unwrap_or(DEFAULT_REQUEUE_INTERVAL);
+    let interval =
+        parse_duration(&template.spec.refresh_interval).unwrap_or(DEFAULT_REQUEUE_INTERVAL);
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
 
@@ -4841,15 +4954,15 @@ async fn handle_ready(
     // Throttle the EXPENSIVE plan only — the cheap HEAD observation above
     // already ran this tick. (The plan stays on the refreshInterval cadence;
     // the freshness probe does not.)
-    if let Some(last_check) = template
-        .status
-        .as_ref()
-        .and_then(|s| s.last_drift_check_at)
-    {
+    if let Some(last_check) = template.status.as_ref().and_then(|s| s.last_drift_check_at) {
         let elapsed = Utc::now().signed_duration_since(last_check);
-        let interval_chrono = chrono::Duration::from_std(interval).unwrap_or(chrono::Duration::minutes(5));
+        let interval_chrono =
+            chrono::Duration::from_std(interval).unwrap_or(chrono::Duration::minutes(5));
         if elapsed < interval_chrono {
-            debug!("Plan throttled ({}s since last); HEAD already observed this tick", elapsed.num_seconds());
+            debug!(
+                "Plan throttled ({}s since last); HEAD already observed this tick",
+                elapsed.num_seconds()
+            );
             return Ok(ReconcileAction::Requeue(interval));
         }
     }
@@ -4891,7 +5004,10 @@ async fn handle_ready(
     } else if let Some(art) = plan_result.artifact.as_ref() {
         art.drift_details(50)
     } else {
-        warn!(runner = runner.name(), "Drift check produced no analyzable output");
+        warn!(
+            runner = runner.name(),
+            "Drift check produced no analyzable output"
+        );
         Vec::new()
     };
 
@@ -4915,7 +5031,14 @@ async fn handle_ready(
     );
     let action = crate::controller::settling::action_for(&outcome, &settling_policy);
 
-    update_settling_status(template, &outcome, &drift_details, freshness.as_ref(), state).await?;
+    update_settling_status(
+        template,
+        &outcome,
+        &drift_details,
+        freshness.as_ref(),
+        state,
+    )
+    .await?;
 
     // Mirror settling state into Prometheus gauges + counters.
     let tname = template.name_any();
@@ -4935,7 +5058,16 @@ async fn handle_ready(
         .metrics
         .settled
         .with_label_values(&[&tname, &tns])
-        .set(if matches!(outcome, crate::controller::settling::SettlingOutcome::Settled) { 1 } else { 0 });
+        .set(
+            if matches!(
+                outcome,
+                crate::controller::settling::SettlingOutcome::Settled
+            ) {
+                1
+            } else {
+                0
+            },
+        );
     let _ = cycles;
     update_drift_detail_gauges(&state.metrics, &tname, &tns, &drift_details);
 
@@ -4949,7 +5081,14 @@ async fn handle_ready(
             warn!("Drift detected, transitioning to Drifted");
             state.metrics.drift_detected_total.inc();
             update_phase(template, Phase::Drifted, state).await?;
-            record_event(template, state, EventType::Warning, "DriftDetected", "Infrastructure drift detected").await;
+            record_event(
+                template,
+                state,
+                EventType::Warning,
+                "DriftDetected",
+                "Infrastructure drift detected",
+            )
+            .await;
             Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
         }
         SettlingAction::AlertButContinue => {
@@ -4982,10 +5121,9 @@ async fn handle_ready(
                     "identical drift fingerprint across cycles",
                     "StuckByFingerprint",
                 ),
-                SettlingOutcome::StuckByCount { .. } => (
-                    "exceeded max consecutive drift cycles",
-                    "StuckByCount",
-                ),
+                SettlingOutcome::StuckByCount { .. } => {
+                    ("exceeded max consecutive drift cycles", "StuckByCount")
+                }
                 _ => ("stuck", "Unknown"),
             };
             state
@@ -5003,7 +5141,14 @@ async fn handle_ready(
             );
             warn!(%err_msg, "Settling escalated to Failed");
             update_phase_with_error(template, Phase::Failed, &err_msg, state).await?;
-            record_event(template, state, EventType::Warning, "SettlingFailed", &err_msg).await;
+            record_event(
+                template,
+                state,
+                EventType::Warning,
+                "SettlingFailed",
+                &err_msg,
+            )
+            .await;
             Ok(ReconcileAction::Requeue(ERROR_REQUEUE_INTERVAL))
         }
     }
@@ -5027,8 +5172,16 @@ fn update_drift_detail_gauges(
     let risks = ["none", "low", "medium", "high"];
     let mut buckets: HashMap<(&str, &str), u64> = HashMap::new();
     for d in drifts {
-        let action = actions.iter().copied().find(|a| *a == d.action).unwrap_or("update");
-        let risk = risks.iter().copied().find(|r| *r == d.risk).unwrap_or("low");
+        let action = actions
+            .iter()
+            .copied()
+            .find(|a| *a == d.action)
+            .unwrap_or("update");
+        let risk = risks
+            .iter()
+            .copied()
+            .find(|r| *r == d.risk)
+            .unwrap_or("low");
         *buckets.entry((action, risk)).or_default() += 1;
     }
     for &a in &actions {
@@ -5045,10 +5198,15 @@ fn update_drift_detail_gauges(
 fn stuck_summary(outcome: &crate::controller::settling::SettlingOutcome) -> (u32, Vec<String>) {
     use crate::controller::settling::SettlingOutcome;
     match outcome {
-        SettlingOutcome::StuckByFingerprint { cycles, stuck_addresses, .. }
-        | SettlingOutcome::StuckByCount { cycles, stuck_addresses } => {
-            (*cycles, stuck_addresses.clone())
+        SettlingOutcome::StuckByFingerprint {
+            cycles,
+            stuck_addresses,
+            ..
         }
+        | SettlingOutcome::StuckByCount {
+            cycles,
+            stuck_addresses,
+        } => (*cycles, stuck_addresses.clone()),
         SettlingOutcome::Progressing { cycles } => (*cycles, vec![]),
         SettlingOutcome::Settled => (0, vec![]),
     }
@@ -5084,7 +5242,14 @@ async fn handle_drifted(
             return Ok(action);
         }
         info!("Auto-correcting drift");
-        record_event(template, state, EventType::Normal, "DriftCorrection", "Auto-correcting infrastructure drift").await;
+        record_event(
+            template,
+            state,
+            EventType::Normal,
+            "DriftCorrection",
+            "Auto-correcting infrastructure drift",
+        )
+        .await;
         update_phase(template, Phase::Planning, state).await?;
         Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
     } else {
@@ -5092,11 +5257,9 @@ async fn handle_drifted(
         let approved = template
             .status
             .as_ref()
-            .and_then(|s| {
-                match (&s.pending_plan_hash, &s.approved_plan_hash) {
-                    (Some(pending), Some(approved)) => Some(pending == approved),
-                    _ => None,
-                }
+            .and_then(|s| match (&s.pending_plan_hash, &s.approved_plan_hash) {
+                (Some(pending), Some(approved)) => Some(pending == approved),
+                _ => None,
             })
             .unwrap_or(false);
 
@@ -5110,7 +5273,14 @@ async fn handle_drifted(
                 return Ok(action);
             }
             info!("Drift correction approved");
-            record_event(template, state, EventType::Normal, "DriftApproved", "Drift correction approved by user").await;
+            record_event(
+                template,
+                state,
+                EventType::Normal,
+                "DriftApproved",
+                "Drift correction approved by user",
+            )
+            .await;
             update_phase(template, Phase::Planning, state).await?;
             Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
         } else {
@@ -5216,7 +5386,11 @@ fn failed_retry_decision(
     if retries_exhausted {
         FailedRetryDecision::SlowCadenceAfterExhaustion(EXHAUSTED_RETRY_INTERVAL)
     } else {
-        FailedRetryDecision::ExponentialBackoff(exponential_backoff(failure_count, backoff_seconds, 600))
+        FailedRetryDecision::ExponentialBackoff(exponential_backoff(
+            failure_count,
+            backoff_seconds,
+            600,
+        ))
     }
 }
 
@@ -5260,7 +5434,8 @@ async fn handle_failed(
         decision.event_type(),
         decision.event_reason(),
         &format!("Retrying after failure (attempt {})", failure_count),
-    ).await;
+    )
+    .await;
 
     Ok(ReconcileAction::Requeue(decision.requeue_after()))
 }
@@ -5323,7 +5498,10 @@ async fn handle_compile_blocked(
         return Ok(ReconcileAction::Requeue(remaining));
     }
 
-    info!(failures, "CompileBlocked: backoff elapsed — retrying compile");
+    info!(
+        failures,
+        "CompileBlocked: backoff elapsed — retrying compile"
+    );
     update_phase(template, Phase::Compiling, state).await?;
     record_event(
         template,
@@ -5384,18 +5562,18 @@ async fn handle_destroying(
     // of this function via RAII.
     let schema_name = format!("pangea_{}", template.spec.pangea_namespace);
     let template_name = template.name_any();
-    let _state_lock_guard =
-        match acquire_mutation_lock(state, &schema_name, &template_name).await? {
-            LockDispatch::Proceed(guard) => guard,
-            LockDispatch::Contended => {
-                warn!(
-                    template = %template_name,
-                    "Destroying: another operator pod holds this template's state lock \
-                     — requeueing instead of racing a concurrent destroy"
-                );
-                return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
-            }
-        };
+    let _state_lock_guard = match acquire_mutation_lock(state, &schema_name, &template_name).await?
+    {
+        LockDispatch::Proceed(guard) => guard,
+        LockDispatch::Contended => {
+            warn!(
+                template = %template_name,
+                "Destroying: another operator pod holds this template's state lock \
+                 — requeueing instead of racing a concurrent destroy"
+            );
+            return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
+        }
+    };
 
     // Always run destroy — unconditionally, for every executor. There is
     // deliberately NO "has this workspace been initialized/applied"
@@ -5425,16 +5603,34 @@ async fn handle_destroying(
         let err_msg = format!(
             "destroy failed (runner={}): {}",
             runner.name(),
-            if r.raw_stdout.is_empty() { String::new() } else { r.raw_stdout.clone() }
+            if r.raw_stdout.is_empty() {
+                String::new()
+            } else {
+                r.raw_stdout.clone()
+            }
         );
         warn!(%err_msg);
         update_phase_with_error(template, Phase::Failed, &err_msg, state).await?;
-        record_event(template, state, EventType::Warning, "DestroyFailed", &err_msg).await;
+        record_event(
+            template,
+            state,
+            EventType::Warning,
+            "DestroyFailed",
+            &err_msg,
+        )
+        .await;
         return Ok(ReconcileAction::Requeue(ERROR_REQUEUE_INTERVAL));
     }
 
     info!(runner = runner.name(), "destroy completed successfully");
-    record_event(template, state, EventType::Normal, "Destroyed", "Infrastructure destroyed successfully").await;
+    record_event(
+        template,
+        state,
+        EventType::Normal,
+        "Destroyed",
+        "Infrastructure destroyed successfully",
+    )
+    .await;
 
     // Clean up workspace
     let ns = template.namespace().unwrap_or_default();
@@ -5741,7 +5937,9 @@ fn drift_details_from_plan_result_sync(
     plan_result: &crate::executor::workspace_runner::PlanResult,
 ) -> Option<Vec<DriftDetail>> {
     if !plan_result.raw_show_json.is_empty() {
-        return Some(drift_details_from_tofu_show_json(&plan_result.raw_show_json));
+        return Some(drift_details_from_tofu_show_json(
+            &plan_result.raw_show_json,
+        ));
     }
     if let Some(art) = plan_result.artifact.as_ref() {
         return Some(plan_summary_and_drifts_from_artifact(art).1);
@@ -6243,7 +6441,11 @@ mod plan_approval_hash_tests {
     #[test]
     fn hash_is_stable_hex_format() {
         let hash = plan_approval_hash("Plan: 1 to add.", None);
-        assert_eq!(hash.len(), 16, "hash must be a fixed-width 16-char hex string");
+        assert_eq!(
+            hash.len(),
+            16,
+            "hash must be a fixed-width 16-char hex string"
+        );
         assert!(
             hash.chars().all(|c| c.is_ascii_hexdigit()),
             "hash must be lowercase hex: {hash}"
@@ -6372,7 +6574,11 @@ mod is_plan_approved_tests {
 
     fn spec_with(approved: Option<&str>) -> InfrastructureTemplateSpec {
         InfrastructureTemplateSpec {
-            source: TemplateSource { inline: Some(String::new()), config_map_ref: None, git_repository: None },
+            source: TemplateSource {
+                inline: Some(String::new()),
+                config_map_ref: None,
+                git_repository: None,
+            },
             pangea_namespace: "test".to_string(),
             template_name: None,
             variables: None,
@@ -6412,12 +6618,20 @@ mod is_plan_approved_tests {
 
     #[test]
     fn status_only_match_is_approved() {
-        assert!(is_plan_approved(&status_with(Some("abc123")), &spec_with(None), "abc123"));
+        assert!(is_plan_approved(
+            &status_with(Some("abc123")),
+            &spec_with(None),
+            "abc123"
+        ));
     }
 
     #[test]
     fn spec_only_match_is_approved() {
-        assert!(is_plan_approved(&None, &spec_with(Some("abc123")), "abc123"));
+        assert!(is_plan_approved(
+            &None,
+            &spec_with(Some("abc123")),
+            "abc123"
+        ));
     }
 
     #[test]
@@ -6490,7 +6704,9 @@ mod current_state_fingerprint_tests {
             _template_name: &str,
             _state_name: &str,
         ) -> Result<Option<StateEntry>> {
-            Err(Error::StateBackend("simulated connection failure".to_string()))
+            Err(Error::StateBackend(
+                "simulated connection failure".to_string(),
+            ))
         }
         async fn get_parsed_state(
             &self,
@@ -6498,7 +6714,9 @@ mod current_state_fingerprint_tests {
             _template_name: &str,
             _state_name: &str,
         ) -> Result<Option<TerraformState>> {
-            Err(Error::StateBackend("simulated connection failure".to_string()))
+            Err(Error::StateBackend(
+                "simulated connection failure".to_string(),
+            ))
         }
         async fn save_state(
             &self,
@@ -6507,7 +6725,9 @@ mod current_state_fingerprint_tests {
             _state_name: &str,
             _data: &[u8],
         ) -> Result<i64> {
-            Err(Error::StateBackend("simulated connection failure".to_string()))
+            Err(Error::StateBackend(
+                "simulated connection failure".to_string(),
+            ))
         }
         async fn delete_state(
             &self,
@@ -6515,23 +6735,34 @@ mod current_state_fingerprint_tests {
             _template_name: &str,
             _state_name: &str,
         ) -> Result<bool> {
-            Err(Error::StateBackend("simulated connection failure".to_string()))
+            Err(Error::StateBackend(
+                "simulated connection failure".to_string(),
+            ))
         }
         async fn list_states(
             &self,
             _schema_name: &str,
             _template_name: &str,
         ) -> Result<Vec<StateEntry>> {
-            Err(Error::StateBackend("simulated connection failure".to_string()))
+            Err(Error::StateBackend(
+                "simulated connection failure".to_string(),
+            ))
         }
     }
 
-    async fn workspace_with_state(content: Option<&[u8]>) -> (tempfile::TempDir, crate::executor::Workspace) {
+    async fn workspace_with_state(
+        content: Option<&[u8]>,
+    ) -> (tempfile::TempDir, crate::executor::Workspace) {
         let base = tempfile::tempdir().expect("create temp base dir");
         let wm = WorkspaceManager::new(base.path().to_path_buf());
-        let ws = wm.get_or_create("ns", "tmpl").await.expect("create workspace");
+        let ws = wm
+            .get_or_create("ns", "tmpl")
+            .await
+            .expect("create workspace");
         if let Some(bytes) = content {
-            tokio::fs::write(ws.state_path(), bytes).await.expect("seed state file");
+            tokio::fs::write(ws.state_path(), bytes)
+                .await
+                .expect("seed state file");
         }
         (base, ws)
     }
@@ -6543,7 +6774,12 @@ mod current_state_fingerprint_tests {
     async fn magma_backed_template_reads_real_state_from_the_backend() {
         let backend = InMemoryStateBackend::new();
         backend
-            .save_state("pangea_camelot", "camelot-eks", "default", b"vpc-real-state-bytes")
+            .save_state(
+                "pangea_camelot",
+                "camelot-eks",
+                "default",
+                b"vpc-real-state-bytes",
+            )
             .await
             .expect("seed magma state");
         let backend: Option<Arc<dyn StateBackend>> = Some(Arc::new(backend));
@@ -6574,7 +6810,8 @@ mod current_state_fingerprint_tests {
         let backend: Option<Arc<dyn StateBackend>> = Some(Arc::new(InMemoryStateBackend::new()));
         let (_dir, ws) = workspace_with_state(None).await;
 
-        let fingerprint = current_state_fingerprint(true, backend.as_ref(), "pangea_ns", "tmpl", &ws).await;
+        let fingerprint =
+            current_state_fingerprint(true, backend.as_ref(), "pangea_ns", "tmpl", &ws).await;
 
         assert_eq!(fingerprint, CurrentStateFingerprint::Absent);
     }
@@ -6587,14 +6824,24 @@ mod current_state_fingerprint_tests {
         // magma template's approval hash `plan_text`-derived only.
         let backend_a = InMemoryStateBackend::new();
         backend_a
-            .save_state("pangea_camelot", "camelot-eks", "default", b"vpc-094734439e62440a8-partial-state")
+            .save_state(
+                "pangea_camelot",
+                "camelot-eks",
+                "default",
+                b"vpc-094734439e62440a8-partial-state",
+            )
             .await
             .unwrap();
         let backend_a: Option<Arc<dyn StateBackend>> = Some(Arc::new(backend_a));
 
         let backend_b = InMemoryStateBackend::new();
         backend_b
-            .save_state("pangea_camelot", "camelot-eks", "default", b"vpc-06987bc0cd6d8aaad-different-state")
+            .save_state(
+                "pangea_camelot",
+                "camelot-eks",
+                "default",
+                b"vpc-06987bc0cd6d8aaad-different-state",
+            )
             .await
             .unwrap();
         let backend_b: Option<Arc<dyn StateBackend>> = Some(Arc::new(backend_b));
@@ -6602,8 +6849,22 @@ mod current_state_fingerprint_tests {
         let (_dir_a, ws_a) = workspace_with_state(None).await;
         let (_dir_b, ws_b) = workspace_with_state(None).await;
 
-        let fp_a = current_state_fingerprint(true, backend_a.as_ref(), "pangea_camelot", "camelot-eks", &ws_a).await;
-        let fp_b = current_state_fingerprint(true, backend_b.as_ref(), "pangea_camelot", "camelot-eks", &ws_b).await;
+        let fp_a = current_state_fingerprint(
+            true,
+            backend_a.as_ref(),
+            "pangea_camelot",
+            "camelot-eks",
+            &ws_a,
+        )
+        .await;
+        let fp_b = current_state_fingerprint(
+            true,
+            backend_b.as_ref(),
+            "pangea_camelot",
+            "camelot-eks",
+            &ws_b,
+        )
+        .await;
 
         let plan_text = "Plan: 50 to add, 0 to change, 0 to destroy.";
         let hash_a = match resolve_approval_hash_input(&fp_a) {
@@ -6633,12 +6894,24 @@ mod current_state_fingerprint_tests {
         // Even a wired, populated magma backend must be ignored on the
         // tofu path — `is_magma_backed: false` is what selects disk.
         let backend = InMemoryStateBackend::new();
-        backend.save_state("pangea_ns", "tmpl", "default", b"WRONG-this-must-not-be-read").await.unwrap();
+        backend
+            .save_state(
+                "pangea_ns",
+                "tmpl",
+                "default",
+                b"WRONG-this-must-not-be-read",
+            )
+            .await
+            .unwrap();
         let backend: Option<Arc<dyn StateBackend>> = Some(Arc::new(backend));
 
-        let fingerprint = current_state_fingerprint(false, backend.as_ref(), "pangea_ns", "tmpl", &ws).await;
+        let fingerprint =
+            current_state_fingerprint(false, backend.as_ref(), "pangea_ns", "tmpl", &ws).await;
 
-        assert_eq!(fingerprint, CurrentStateFingerprint::Present(b"tofu-local-state".to_vec()));
+        assert_eq!(
+            fingerprint,
+            CurrentStateFingerprint::Present(b"tofu-local-state".to_vec())
+        );
     }
 
     #[tokio::test]
@@ -6656,7 +6929,8 @@ mod current_state_fingerprint_tests {
         let backend: Option<Arc<dyn StateBackend>> = Some(Arc::new(FailingStateBackend));
         let (_dir, ws) = workspace_with_state(None).await;
 
-        let fingerprint = current_state_fingerprint(true, backend.as_ref(), "pangea_ns", "tmpl", &ws).await;
+        let fingerprint =
+            current_state_fingerprint(true, backend.as_ref(), "pangea_ns", "tmpl", &ws).await;
 
         assert_eq!(
             fingerprint,
@@ -6754,10 +7028,21 @@ mod canonical_drift_fingerprint_tests {
 
     #[test]
     fn same_entry_with_attributes_in_different_order_produces_the_same_fingerprint() {
-        let a = vec![drift("aws_eks_cluster.camelot-eks", "update", &["endpoint", "identity", "created_at"])];
-        let b = vec![drift("aws_eks_cluster.camelot-eks", "update", &["created_at", "identity", "endpoint"])];
+        let a = vec![drift(
+            "aws_eks_cluster.camelot-eks",
+            "update",
+            &["endpoint", "identity", "created_at"],
+        )];
+        let b = vec![drift(
+            "aws_eks_cluster.camelot-eks",
+            "update",
+            &["created_at", "identity", "endpoint"],
+        )];
 
-        assert_eq!(canonical_drift_fingerprint(&a), canonical_drift_fingerprint(&b));
+        assert_eq!(
+            canonical_drift_fingerprint(&a),
+            canonical_drift_fingerprint(&b)
+        );
     }
 
     #[test]
@@ -6765,7 +7050,10 @@ mod canonical_drift_fingerprint_tests {
         let a = vec![drift("aws_eks_cluster.camelot-eks", "create", &[])];
         let b = vec![drift("aws_eks_cluster.camelot-eks", "replace", &[])];
 
-        assert_ne!(canonical_drift_fingerprint(&a), canonical_drift_fingerprint(&b));
+        assert_ne!(
+            canonical_drift_fingerprint(&a),
+            canonical_drift_fingerprint(&b)
+        );
     }
 
     #[test]
@@ -6776,12 +7064,18 @@ mod canonical_drift_fingerprint_tests {
             drift("aws_iam_openid_connect_provider.oidc", "create", &[]),
         ];
 
-        assert_ne!(canonical_drift_fingerprint(&a), canonical_drift_fingerprint(&b));
+        assert_ne!(
+            canonical_drift_fingerprint(&a),
+            canonical_drift_fingerprint(&b)
+        );
     }
 
     #[test]
     fn empty_drift_list_is_stable() {
-        assert_eq!(canonical_drift_fingerprint(&[]), canonical_drift_fingerprint(&[]));
+        assert_eq!(
+            canonical_drift_fingerprint(&[]),
+            canonical_drift_fingerprint(&[])
+        );
         assert_eq!(canonical_drift_fingerprint(&[]), "");
     }
 }
@@ -6817,7 +7111,9 @@ mod canonical_drift_fingerprint_tests {
 /// different hashes — and neither collapses to the old constant.
 #[cfg(test)]
 mod db_backed_magma_drift_extraction_tests {
-    use super::{canonical_drift_fingerprint, plan_approval_hash, plan_summary_and_drifts_from_artifact};
+    use super::{
+        canonical_drift_fingerprint, plan_approval_hash, plan_summary_and_drifts_from_artifact,
+    };
     use crate::executor::cycle_artifact::{CycleArtifact, PlanAction, TypedResourceChange};
 
     /// Build a `CycleArtifact` the way `CycleArtifact::from_magma_plan`
@@ -6880,9 +7176,18 @@ mod db_backed_magma_drift_extraction_tests {
         let hash_eks = pending_plan_hash_for(&eks);
         let hash_iam = pending_plan_hash_for(&breathe_iam);
 
-        assert_ne!(hash_flux, hash_eks, "a 1-resource plan and a 3-resource plan must not collide");
-        assert_ne!(hash_flux, hash_iam, "two different 1-vs-3-resource plans must not collide");
-        assert_ne!(hash_eks, hash_iam, "two different 3-resource plans must not collide");
+        assert_ne!(
+            hash_flux, hash_eks,
+            "a 1-resource plan and a 3-resource plan must not collide"
+        );
+        assert_ne!(
+            hash_flux, hash_iam,
+            "two different 1-vs-3-resource plans must not collide"
+        );
+        assert_ne!(
+            hash_eks, hash_iam,
+            "two different 3-resource plans must not collide"
+        );
     }
 
     #[test]
@@ -6899,7 +7204,8 @@ mod db_backed_magma_drift_extraction_tests {
         );
 
         let flux_bootstrap = artifact_with_creates(&["flux_bootstrap_git.this"]);
-        let eks = artifact_with_creates(&["aws_vpc.camelot-eks-vpc", "aws_eks_cluster.camelot-eks"]);
+        let eks =
+            artifact_with_creates(&["aws_vpc.camelot-eks-vpc", "aws_eks_cluster.camelot-eks"]);
         let breathe_iam = artifact_with_creates(&[
             "aws_iam_role.camelot-breathe-controller",
             "aws_iam_role_policy.camelot-breathe-controller-policy",
@@ -7255,37 +7561,39 @@ mod state_continuity_breach_tests {
         evaluate_auto_apply_gate, failed_retry_decision, state_continuity_breach, AutoApplyGate,
         Duration, EventType, FailedRetryDecision, InfrastructureTemplate, EXHAUSTED_RETRY_INTERVAL,
     };
-    use crate::crd::{InfrastructureTemplateSpec, InfrastructureTemplateStatus, RetryPolicy, TemplateSource};
+    use crate::crd::{
+        InfrastructureTemplateSpec, InfrastructureTemplateStatus, RetryPolicy, TemplateSource,
+    };
 
     fn default_test_spec() -> InfrastructureTemplateSpec {
         InfrastructureTemplateSpec {
             source: TemplateSource {
-                inline:         Some(String::new()),
+                inline: Some(String::new()),
                 config_map_ref: None,
                 git_repository: None,
             },
-            pangea_namespace:    "test".to_string(),
-            template_name:       None,
-            variables:           None,
-            variable_refs:       None,
-            auto_approve:        true,
+            pangea_namespace: "test".to_string(),
+            template_name: None,
+            variables: None,
+            variable_refs: None,
+            auto_approve: true,
             spec_approved_plan_hash: None,
-            refresh_interval:    "10m".to_string(),
-            suspend:             false,
-            executor:            None,
-            destroy_protection:  false,
-            retry_policy:        None,
+            refresh_interval: "10m".to_string(),
+            suspend: false,
+            executor: None,
+            destroy_protection: false,
+            retry_policy: None,
             provider_credentials: None,
             compliance_profiles: vec![],
-            policies:            vec![],
-            default_decision:    None,
-            settling_policy:     None,
-            reactive_policy:     None,
-            import_policy:       None,
-            import_hints:        Default::default(),
-            conflict_policy:     None,
-            output_bindings:     Default::default(),
-            secret_files:        Default::default(),
+            policies: vec![],
+            default_decision: None,
+            settling_policy: None,
+            reactive_policy: None,
+            import_policy: None,
+            import_hints: Default::default(),
+            conflict_policy: None,
+            output_bindings: Default::default(),
+            secret_files: Default::default(),
         }
     }
 
@@ -7305,8 +7613,7 @@ mod state_continuity_breach_tests {
         // state is now gone. This MUST be flagged — it is precisely
         // the state pod restarts leave behind on an emptyDir workspace.
         assert!(state_continuity_breach(
-            /* is_durable_state_backend */ false,
-            /* previously_applied       */ true,
+            /* is_durable_state_backend */ false, /* previously_applied       */ true,
             /* state_present_now        */ false,
         ));
     }
@@ -7337,8 +7644,7 @@ mod state_continuity_breach_tests {
         // successful apply, which would be a severe regression (magma
         // is the fleet's default, safe executor — ★★ MAGMA-NATIVE).
         assert!(!state_continuity_breach(
-            /* is_durable_state_backend */ true,
-            /* previously_applied       */ true,
+            /* is_durable_state_backend */ true, /* previously_applied       */ true,
             /* state_present_now        */ false,
         ));
     }
@@ -7442,7 +7748,10 @@ mod state_continuity_breach_tests {
         let mut template = InfrastructureTemplate::new(
             "t",
             InfrastructureTemplateSpec {
-                retry_policy: Some(RetryPolicy { max_retries: 3, backoff_seconds: 30 }),
+                retry_policy: Some(RetryPolicy {
+                    max_retries: 3,
+                    backoff_seconds: 30,
+                }),
                 ..default_test_spec()
             },
         );
@@ -7600,8 +7909,8 @@ mod suspended_diff_tests {
     //! Lock in the diff-gate that breaks the suspended-template
     //! self-trigger watch loop (rio firefighting 2026-05-07: was
     //! observed at ~123 PATCH/sec on cloudflare-pleme).
-    use super::suspended_conditions_already_set;
     use super::super::reconciler::conditions_for_suspended;
+    use super::suspended_conditions_already_set;
     use crate::crd::Condition;
     use chrono::{TimeZone, Utc};
 
@@ -7929,7 +8238,9 @@ mod cycle_tests {
             None,
             None,
             None,
-            CycleResult::AppliedSuccess { imported_addresses: vec![] },
+            CycleResult::AppliedSuccess {
+                imported_addresses: vec![],
+            },
         );
         assert_eq!(cycle.summary.matched, 17, "20 total - 3 touched = 17");
         assert_eq!(cycle.summary.updated, 1);
@@ -7943,10 +8254,7 @@ mod cycle_tests {
 
     #[test]
     fn apply_success_with_imported_address_marks_outcome_imported() {
-        let drifts = vec![
-            d("cf_dns_record.foo", "create"),
-            d("cf_zone.bar", "create"),
-        ];
+        let drifts = vec![d("cf_dns_record.foo", "create"), d("cf_zone.bar", "create")];
         let cycle = build_reconcile_cycle(
             6,
             Utc::now(),
@@ -7964,8 +8272,16 @@ mod cycle_tests {
         assert_eq!(cycle.summary.imported, 1);
         assert_eq!(cycle.summary.created, 1);
         assert_eq!(cycle.summary.matched, 8);
-        let foo = cycle.outcomes.iter().find(|o| o.address == "cf_dns_record.foo").unwrap();
-        let bar = cycle.outcomes.iter().find(|o| o.address == "cf_zone.bar").unwrap();
+        let foo = cycle
+            .outcomes
+            .iter()
+            .find(|o| o.address == "cf_dns_record.foo")
+            .unwrap();
+        let bar = cycle
+            .outcomes
+            .iter()
+            .find(|o| o.address == "cf_zone.bar")
+            .unwrap();
         assert_eq!(foo.outcome, Outcome::Imported);
         assert_eq!(bar.outcome, Outcome::Created);
         assert!(foo.message.as_ref().unwrap().contains("import"));
@@ -7989,7 +8305,11 @@ mod cycle_tests {
         assert_eq!(cycle.summary.failed, 1);
         assert_eq!(cycle.summary.matched, 19);
         assert_eq!(cycle.outcomes[0].outcome, Outcome::Failed);
-        assert!(cycle.outcomes[0].message.as_ref().unwrap().contains("rate limit"));
+        assert!(cycle.outcomes[0]
+            .message
+            .as_ref()
+            .unwrap()
+            .contains("rate limit"));
     }
 
     #[test]
@@ -8008,7 +8328,11 @@ mod cycle_tests {
         );
         assert_eq!(cycle.summary.drifted_uncorrected, 1);
         assert_eq!(cycle.outcomes[0].outcome, Outcome::Drifted);
-        assert!(cycle.outcomes[0].message.as_ref().unwrap().contains("refuse"));
+        assert!(cycle.outcomes[0]
+            .message
+            .as_ref()
+            .unwrap()
+            .contains("refuse"));
     }
 
     #[test]
@@ -8088,8 +8412,9 @@ mod cycle_tests {
 
     #[test]
     fn outcomes_capped_at_100() {
-        let drifts: Vec<DriftDetail> =
-            (0..200).map(|i| d(&format!("cf_dns_record.r{i}"), "update")).collect();
+        let drifts: Vec<DriftDetail> = (0..200)
+            .map(|i| d(&format!("cf_dns_record.r{i}"), "update"))
+            .collect();
         let cycle = build_reconcile_cycle(
             8,
             Utc::now(),
@@ -8099,7 +8424,9 @@ mod cycle_tests {
             None,
             None,
             None,
-            CycleResult::AppliedSuccess { imported_addresses: vec![] },
+            CycleResult::AppliedSuccess {
+                imported_addresses: vec![],
+            },
         );
         assert_eq!(cycle.outcomes.len(), 100, "outcomes capped at 100");
         // Summary still counts the FULL touched-set in matched math:
@@ -8187,7 +8514,9 @@ mod anomaly_reaction_tests {
         // recovery (Absolute, converges in one reconcile) must drive the
         // tick, not the hold.
         let batch = vec![
-            ApplyAnomaly::Unclassified { reason: "weird".into() },
+            ApplyAnomaly::Unclassified {
+                reason: "weird".into(),
+            },
             ApplyAnomaly::StalePlan,
         ];
         let driver = select_driving_anomaly(&batch);
@@ -8203,12 +8532,16 @@ mod anomaly_reaction_tests {
                 address: "github_repository.a".into(),
                 action: "create".into(),
             },
-            ApplyAnomaly::ProviderUnavailable { provider: "cloudflare".into() },
+            ApplyAnomaly::ProviderUnavailable {
+                provider: "cloudflare".into(),
+            },
         ];
         let driver = select_driving_anomaly(&batch);
         assert_eq!(
             driver,
-            ApplyAnomaly::ProviderUnavailable { provider: "cloudflare".into() }
+            ApplyAnomaly::ProviderUnavailable {
+                provider: "cloudflare".into()
+            }
         );
     }
 

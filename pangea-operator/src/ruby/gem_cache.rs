@@ -160,9 +160,9 @@ impl GemCache {
                 path = %dir.display(),
                 "stale gem cache dir without .git — re-cloning"
             );
-            tokio::fs::remove_dir_all(&dir)
-                .await
-                .map_err(|e| GemCacheError::Filesystem(format!("remove stale {}: {e}", dir.display())))?;
+            tokio::fs::remove_dir_all(&dir).await.map_err(|e| {
+                GemCacheError::Filesystem(format!("remove stale {}: {e}", dir.display()))
+            })?;
         }
 
         // Cache miss. Make sure base_dir exists.
@@ -230,9 +230,7 @@ impl GemCache {
                 .map_err(|e| GemCacheError::Clone(format!("spawn git clone (full): {e}")))?;
             if !clone.status.success() {
                 let err = String::from_utf8_lossy(&clone.stderr);
-                return Err(GemCacheError::Clone(format!(
-                    "full clone failed: {err}"
-                )));
+                return Err(GemCacheError::Clone(format!("full clone failed: {err}")));
             }
             let checkout = Command::new("git")
                 .arg("-C")
@@ -288,7 +286,9 @@ fn inject_github_token(url: &str) -> String {
 /// and requires re-fetching on each `ensure()`.
 fn is_sha_ref(r: &str) -> bool {
     let len = r.len();
-    (7..=40).contains(&len) && r.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    (7..=40).contains(&len)
+        && r.bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
 /// Refresh a cached shallow clone to track upstream `<ref>`. Runs
@@ -361,9 +361,7 @@ mod tests {
     #[test]
     fn entry_dir_uses_name_and_ref() {
         let cache = GemCache::new("/tmp/gems");
-        let p = cache
-            .entry_dir("pangea-architectures", "7fb2fcc")
-            .unwrap();
+        let p = cache.entry_dir("pangea-architectures", "7fb2fcc").unwrap();
         assert_eq!(p, Path::new("/tmp/gems/pangea-architectures-7fb2fcc"));
     }
 
@@ -401,26 +399,30 @@ mod tests {
         let ssh = "git@github.com:pleme-io/pangea-architectures.git";
         assert_eq!(inject_github_token(ssh), ssh, "ssh URL should pass through");
         let other = "https://gitlab.com/foo/bar";
-        assert_eq!(inject_github_token(other), other, "non-github should pass through");
+        assert_eq!(
+            inject_github_token(other),
+            other,
+            "non-github should pass through"
+        );
         std::env::remove_var("PANGEA_GEM_AUTH_TOKEN");
     }
 
     #[test]
     fn is_sha_ref_classification() {
         // SHA-like (immutable in cache)
-        assert!(is_sha_ref("7fb2fcc"));                    // short
-        assert!(is_sha_ref("7fb2fccdeadbeef"));            // 15 chars
+        assert!(is_sha_ref("7fb2fcc")); // short
+        assert!(is_sha_ref("7fb2fccdeadbeef")); // 15 chars
         assert!(is_sha_ref("0123456789abcdef0123456789abcdef01234567")); // 40 chars
-        // Not SHA-like (re-fetch every ensure)
+                                                                         // Not SHA-like (re-fetch every ensure)
         assert!(!is_sha_ref("main"));
         assert!(!is_sha_ref("HEAD"));
-        assert!(!is_sha_ref("v0.1.0"));                    // tag — also mutable in practice
+        assert!(!is_sha_ref("v0.1.0")); // tag — also mutable in practice
         assert!(!is_sha_ref("feature/foo"));
         assert!(!is_sha_ref("ABCDEF0123456789ABCDEF0123456789ABCDEF01")); // uppercase rejected
         assert!(!is_sha_ref(""));
-        assert!(!is_sha_ref("abc"));                       // < 7 chars
-        assert!(!is_sha_ref("g"));                         // non-hex char
-        assert!(!is_sha_ref(&"a".repeat(41)));             // > 40 chars
+        assert!(!is_sha_ref("abc")); // < 7 chars
+        assert!(!is_sha_ref("g")); // non-hex char
+        assert!(!is_sha_ref(&"a".repeat(41))); // > 40 chars
     }
 
     // ── Integration tests guarding the load-bearing invariant ──
@@ -482,9 +484,12 @@ mod tests {
 
     /// Push a new commit overwriting `marker.txt`. Returns the new SHA.
     async fn add_commit(remote: &Path, content: &str) -> String {
-        tokio::fs::write(remote.join("lib").join("test_gem").join("marker.txt"), content)
-            .await
-            .unwrap();
+        tokio::fs::write(
+            remote.join("lib").join("test_gem").join("marker.txt"),
+            content,
+        )
+        .await
+        .unwrap();
         git_run(remote, &["add", "-A"]).await;
         git_run(remote, &["commit", "-q", "-m", "update"]).await;
         let sha_out = TokioCommand::new("git")

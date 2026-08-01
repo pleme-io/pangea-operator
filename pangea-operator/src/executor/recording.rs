@@ -223,12 +223,7 @@ impl IacExecutor for RecordingExecutor {
         Ok(self.record_and_respond("refresh", work_dir, Vec::new()))
     }
 
-    async fn import(
-        &self,
-        work_dir: &Path,
-        address: &str,
-        id: &str,
-    ) -> Result<TofuResult> {
+    async fn import(&self, work_dir: &Path, address: &str, id: &str) -> Result<TofuResult> {
         Ok(self.record_and_respond(
             "import",
             work_dir,
@@ -251,8 +246,12 @@ mod tests {
         let dir = Path::new("/tmp/wsa");
 
         exec.init(dir, &["-input=false"]).await.unwrap();
-        exec.plan(dir, Some(Path::new("/tmp/plan")), &[]).await.unwrap();
-        exec.apply(dir, Some(Path::new("/tmp/plan")), true).await.unwrap();
+        exec.plan(dir, Some(Path::new("/tmp/plan")), &[])
+            .await
+            .unwrap();
+        exec.apply(dir, Some(Path::new("/tmp/plan")), true)
+            .await
+            .unwrap();
 
         let calls = exec.recorded_calls();
         assert_eq!(calls.len(), 3);
@@ -314,8 +313,7 @@ mod tests {
     async fn dyn_dispatch_works() {
         // Confirm the trait object pattern callers will use compiles
         // and runs the right impl.
-        let exec: std::sync::Arc<dyn IacExecutor> =
-            std::sync::Arc::new(RecordingExecutor::new());
+        let exec: std::sync::Arc<dyn IacExecutor> = std::sync::Arc::new(RecordingExecutor::new());
         exec.refresh(Path::new("/w")).await.unwrap();
     }
 }

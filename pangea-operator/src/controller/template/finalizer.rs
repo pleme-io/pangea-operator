@@ -54,7 +54,8 @@ mod tests {
                 "source": { "raw": "" },
                 "pangeaNamespace": "default"
             }
-        })).expect("fake template parses");
+        }))
+        .expect("fake template parses");
         t.metadata.finalizers = finalizers;
         t
     }
@@ -63,6 +64,8 @@ mod tests {
     fn has_finalizer_detects_canonical_name() {
         assert!(!has_finalizer(&fake(None)));
         assert!(has_finalizer(&fake(Some(vec![FINALIZER_NAME.to_string()]))));
-        assert!(!has_finalizer(&fake(Some(vec!["other.io/finalizer".to_string()]))));
+        assert!(!has_finalizer(&fake(Some(vec![
+            "other.io/finalizer".to_string()
+        ]))));
     }
 }

@@ -15,11 +15,7 @@
 //! condition the operator-human can read with `kubectl get archgem`.
 
 use chrono::Utc;
-use kube::{
-    api::Api,
-    runtime::controller::Action,
-    Client,
-};
+use kube::{api::Api, runtime::controller::Action, Client};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -28,9 +24,7 @@ use tracing::{debug, error, info, warn};
 use crate::crd::architecture_gem::{
     ArchitectureGem, ArchitectureGemStatus, Condition, FixtureResult, Phase, SmokeStatus,
 };
-use crate::ruby::{
-    BackendError, CompilerBackend, HttpCompilerBackend, SmokeRequest,
-};
+use crate::ruby::{BackendError, CompilerBackend, HttpCompilerBackend, SmokeRequest};
 use futures::StreamExt;
 
 /// Wire ArchitectureGem reconciliation into the operator's runtime.
@@ -394,7 +388,8 @@ async fn patch_status_if_changed(
             return Ok(());
         }
     }
-    crate::controller::status::patch_status::<ArchitectureGem, _>(client, name, &new_status).await?;
+    crate::controller::status::patch_status::<ArchitectureGem, _>(client, name, &new_status)
+        .await?;
     Ok(())
 }
 

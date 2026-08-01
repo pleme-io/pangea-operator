@@ -48,7 +48,10 @@ pub struct PangeaDashboardSpec {
 
     /// Ruby modules to extend the synthesizer with before evaluation.
     /// Defaults to `["Pangea::Grafana"]` for dashboard builder access.
-    #[serde(default = "default_extend_modules", skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default = "default_extend_modules",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub extend_modules: Vec<String>,
 
     /// Commit message for Grafana's built-in version tracking.
@@ -93,7 +96,9 @@ pub enum DashboardSource {
 // ---------------------------------------------------------------------------
 
 /// Lifecycle phase of a PangeaDashboard.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, Default,
+)]
 pub enum PangeaDashboardPhase {
     /// Awaiting synthesis.
     #[default]

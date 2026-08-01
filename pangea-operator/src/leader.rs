@@ -307,19 +307,18 @@ impl LeaderElector {
                 } else {
                     now
                 };
-                let transitions = spec.lease_transitions.unwrap_or(0)
-                    + if held_by_us { 0 } else { 1 };
+                let transitions =
+                    spec.lease_transitions.unwrap_or(0) + if held_by_us { 0 } else { 1 };
 
                 // Compare-and-set on resourceVersion: replace() carries the
                 // version from `existing`, so a competing write since our read
                 // yields 409 and we retry on the next tick.
-                let updated = self.build_lease_from(
-                    &existing,
-                    acquire_time,
-                    now,
-                    transitions,
-                );
-                match self.api.replace(name, &PostParams::default(), &updated).await {
+                let updated = self.build_lease_from(&existing, acquire_time, now, transitions);
+                match self
+                    .api
+                    .replace(name, &PostParams::default(), &updated)
+                    .await
+                {
                     Ok(_) => Ok(true),
                     Err(kube::Error::Api(ae)) if ae.code == 409 => Ok(false),
                     Err(e) => Err(e.into()),

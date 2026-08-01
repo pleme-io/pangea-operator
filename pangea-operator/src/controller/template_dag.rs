@@ -58,7 +58,11 @@ fn template_kind() -> JobKindId {
 }
 
 fn node_id(template: &str) -> JobId {
-    JobId { scope: JobScope::Global, kind: template_kind(), subject: JobSubject::Pinned(template.to_string()) }
+    JobId {
+        scope: JobScope::Global,
+        kind: template_kind(),
+        subject: JobSubject::Pinned(template.to_string()),
+    }
 }
 
 fn node_name(id: &JobId) -> Option<String> {
@@ -104,7 +108,10 @@ impl std::fmt::Display for DagError {
 impl TemplateDag {
     #[must_use]
     pub fn new() -> Self {
-        Self { dag: Dag::new(), names: BTreeSet::new() }
+        Self {
+            dag: Dag::new(),
+            names: BTreeSet::new(),
+        }
     }
 
     /// Register a template and the upstreams it depends on. Idempotent; an
@@ -144,7 +151,11 @@ impl TemplateDag {
     /// are all `ready` and which is not itself already `ready`. Deterministic.
     #[must_use]
     pub fn eligible(&self, ready: &BTreeSet<String>) -> Vec<String> {
-        self.names.iter().filter(|t| !ready.contains(*t) && self.deps_satisfied(t, ready)).cloned().collect()
+        self.names
+            .iter()
+            .filter(|t| !ready.contains(*t) && self.deps_satisfied(t, ready))
+            .cloned()
+            .collect()
     }
 
     /// Topological apply order — every template after all its upstreams, ties
@@ -152,7 +163,11 @@ impl TemplateDag {
     /// graph has a cycle.
     pub fn apply_order(&self) -> Result<Vec<String>, DagError> {
         match self.dag.waves(None) {
-            Ok(waves) => Ok(waves.into_iter().flatten().filter_map(|id| node_name(&id)).collect()),
+            Ok(waves) => Ok(waves
+                .into_iter()
+                .flatten()
+                .filter_map(|id| node_name(&id))
+                .collect()),
             Err(ShigotoDagError::Cycle(_) | ShigotoDagError::DanglingEdge(_)) => {
                 Err(DagError::Cycle(self.unresolvable_nodes()))
             }
@@ -189,7 +204,11 @@ impl TemplateDag {
                 break;
             }
         }
-        self.names.iter().filter(|n| !ready.contains(*n)).cloned().collect()
+        self.names
+            .iter()
+            .filter(|n| !ready.contains(*n))
+            .cloned()
+            .collect()
     }
 }
 
@@ -223,7 +242,10 @@ mod tests {
         assert_eq!(d.eligible(&ready(&[])), vec!["vpc"]);
         // vpc ready: db unlocks; app still gated.
         assert_eq!(d.eligible(&ready(&["vpc"])), vec!["db"]);
-        assert!(!d.deps_satisfied("app", &ready(&["vpc"])), "app waits on db");
+        assert!(
+            !d.deps_satisfied("app", &ready(&["vpc"])),
+            "app waits on db"
+        );
         // vpc+db ready: app unlocks.
         assert_eq!(d.eligible(&ready(&["vpc", "db"])), vec!["app"]);
         assert!(d.deps_satisfied("app", &ready(&["vpc", "db"])));
@@ -248,7 +270,10 @@ mod tests {
             other => panic!("expected a cycle error, got {other:?}"),
         }
         // a cyclic pair can never become eligible from empty-ready.
-        assert!(d.eligible(&ready(&[])).is_empty(), "neither can start — correctly stuck, surfaced as a cycle");
+        assert!(
+            d.eligible(&ready(&[])).is_empty(),
+            "neither can start — correctly stuck, surfaced as a cycle"
+        );
     }
 
     /// Regression: a cycle among a subset of a larger graph must surface
@@ -264,12 +289,20 @@ mod tests {
         let d = dag(&[("root", &[]), ("x", &["root", "y"]), ("y", &["root", "x"])]);
         match d.apply_order() {
             Err(DagError::Cycle(c)) => {
-                assert_eq!(c, vec!["x".to_string(), "y".to_string()], "root resolves; only x,y are stuck");
+                assert_eq!(
+                    c,
+                    vec!["x".to_string(), "y".to_string()],
+                    "root resolves; only x,y are stuck"
+                );
             }
             other => panic!("expected a cycle error, got {other:?}"),
         }
         // root is NOT in a cycle even though the graph as a whole has one.
-        assert_eq!(d.eligible(&ready(&[])), vec!["root"], "root has no deps — eligible despite the x/y cycle");
+        assert_eq!(
+            d.eligible(&ready(&[])),
+            vec!["root"],
+            "root has no deps — eligible despite the x/y cycle"
+        );
     }
 
     #[test]
@@ -284,6 +317,9 @@ mod tests {
         // "vpc" is only ever named as an upstream, never `add`ed directly —
         // still must appear as a node (a leaf).
         let d = dag(&[("app", &["db"]), ("db", &["vpc"])]);
-        assert_eq!(d.nodes(), vec!["app".to_string(), "db".to_string(), "vpc".to_string()]);
+        assert_eq!(
+            d.nodes(),
+            vec!["app".to_string(), "db".to_string(), "vpc".to_string()]
+        );
     }
 }

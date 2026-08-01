@@ -93,10 +93,7 @@ pub async fn apply_output_bindings(
 ///
 /// Separated from the K8s I/O so unit tests can exercise the value
 /// shape without a kube client.
-pub fn extract_output_value(
-    outputs: &BTreeMap<String, JsonValue>,
-    output: &str,
-) -> Option<String> {
+pub fn extract_output_value(outputs: &BTreeMap<String, JsonValue>, output: &str) -> Option<String> {
     let entry = outputs.get(output)?;
     // Prefer the tofu-shaped {value, type, sensitive} envelope; fall
     // back to treating the entry itself as the value.
@@ -140,7 +137,12 @@ async fn apply_single_binding(
     };
 
     let api: Api<Secret> = Api::namespaced(client.clone(), &binding.secret_ref.namespace);
-    let existed_before = api.get_opt(&binding.secret_ref.name).await.ok().flatten().is_some();
+    let existed_before = api
+        .get_opt(&binding.secret_ref.name)
+        .await
+        .ok()
+        .flatten()
+        .is_some();
 
     let secret = build_secret_manifest(template, binding, &value);
     match api
@@ -212,26 +214,28 @@ pub fn build_secret_manifest(
     // lives in the SAME namespace as the template, since K8s rejects
     // cross-namespace owner refs. Cross-namespace bindings still get
     // labels for traceability.
-    let owner_refs = if template.metadata.namespace.as_deref()
-        == Some(&binding.secret_ref.namespace)
-    {
-        template.metadata.uid.as_ref().map(|uid| {
-            vec![OwnerReference {
-                api_version: "pangea.pleme.io/v1alpha1".into(),
-                kind: "InfrastructureTemplate".into(),
-                name: template.metadata.name.clone().unwrap_or_default(),
-                uid: uid.clone(),
-                controller: Some(false),
-                block_owner_deletion: Some(false),
-            }]
-        })
-    } else {
-        None
-    };
+    let owner_refs =
+        if template.metadata.namespace.as_deref() == Some(&binding.secret_ref.namespace) {
+            template.metadata.uid.as_ref().map(|uid| {
+                vec![OwnerReference {
+                    api_version: "pangea.pleme.io/v1alpha1".into(),
+                    kind: "InfrastructureTemplate".into(),
+                    name: template.metadata.name.clone().unwrap_or_default(),
+                    uid: uid.clone(),
+                    controller: Some(false),
+                    block_owner_deletion: Some(false),
+                }]
+            })
+        } else {
+            None
+        };
 
     let mut data: std::collections::BTreeMap<String, ByteString> =
         std::collections::BTreeMap::new();
-    data.insert(binding.secret_ref.key.clone(), ByteString(value.as_bytes().to_vec()));
+    data.insert(
+        binding.secret_ref.key.clone(),
+        ByteString(value.as_bytes().to_vec()),
+    );
 
     Secret {
         metadata: ObjectMeta {
@@ -374,7 +378,10 @@ mod tests {
         let b = binding("zone.id", "cf", "cf-zone", "id", false);
         let s = build_secret_manifest(&t, &b, "abc123");
         let data = s.data.as_ref().expect("data");
-        assert_eq!(data.get("id").map(|v| v.0.clone()), Some(b"abc123".to_vec()));
+        assert_eq!(
+            data.get("id").map(|v| v.0.clone()),
+            Some(b"abc123".to_vec())
+        );
         assert_eq!(s.metadata.name.as_deref(), Some("cf-zone"));
         assert_eq!(s.metadata.namespace.as_deref(), Some("cf"));
         assert_eq!(s.type_.as_deref(), Some("Opaque"));
@@ -387,12 +394,19 @@ mod tests {
         let s = build_secret_manifest(&t, &b, "abc123");
         let labels = s.metadata.labels.as_ref().expect("labels");
         assert_eq!(
-            labels.get("app.kubernetes.io/managed-by").map(|s| s.as_str()),
+            labels
+                .get("app.kubernetes.io/managed-by")
+                .map(|s| s.as_str()),
             Some("pangea-operator")
         );
-        assert_eq!(labels.get("pangea.pleme.io/template").map(|s| s.as_str()), Some("ct"));
         assert_eq!(
-            labels.get("pangea.pleme.io/template-namespace").map(|s| s.as_str()),
+            labels.get("pangea.pleme.io/template").map(|s| s.as_str()),
+            Some("ct")
+        );
+        assert_eq!(
+            labels
+                .get("pangea.pleme.io/template-namespace")
+                .map(|s| s.as_str()),
             Some("cf")
         );
     }
@@ -403,7 +417,10 @@ mod tests {
         let b = binding("creds.token", "cf", "cf-token", "token", true);
         let s = build_secret_manifest(&t, &b, "tok-123");
         let labels = s.metadata.labels.as_ref().expect("labels");
-        assert_eq!(labels.get("pangea.pleme.io/sensitive").map(|s| s.as_str()), Some("true"));
+        assert_eq!(
+            labels.get("pangea.pleme.io/sensitive").map(|s| s.as_str()),
+            Some("true")
+        );
     }
 
     #[test]
@@ -440,7 +457,10 @@ mod tests {
         let s = build_secret_manifest(&t, &b, "abc");
         assert!(s.metadata.owner_references.is_none());
         let labels = s.metadata.labels.as_ref().expect("labels");
-        assert_eq!(labels.get("pangea.pleme.io/template").map(|s| s.as_str()), Some("ct"));
+        assert_eq!(
+            labels.get("pangea.pleme.io/template").map(|s| s.as_str()),
+            Some("ct")
+        );
     }
 
     #[test]
@@ -477,5 +497,4 @@ mod tests {
         ];
         assert_eq!(summarize(&r), (2, 1, 1));
     }
-
 }

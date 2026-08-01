@@ -128,7 +128,10 @@ async fn acquire_import_state_lock(key: String) -> tokio::sync::OwnedMutexGuard<
         let mut map = registry
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        Arc::clone(map.entry(key).or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))))
+        Arc::clone(
+            map.entry(key)
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
+        )
     };
     mutex.lock_owned().await
 }
@@ -221,10 +224,10 @@ fn plan_reuse_is_current(plan_revision: Option<&str>, render_revision: Option<&s
 /// `AsyncStateStore` that magma-operator-backend's `OperatorBackend`
 /// consumes. One of these per reconcile.
 pub struct StateBackendAsync<S: StateBackend + ?Sized> {
-    inner:         Arc<S>,
-    schema_name:   String,
+    inner: Arc<S>,
+    schema_name: String,
     template_name: String,
-    state_name:    String,
+    state_name: String,
 }
 
 impl<S: StateBackend + ?Sized> StateBackendAsync<S> {
@@ -236,9 +239,9 @@ impl<S: StateBackend + ?Sized> StateBackendAsync<S> {
     ) -> Self {
         Self {
             inner,
-            schema_name:   schema_name.into(),
+            schema_name: schema_name.into(),
             template_name: template_name.into(),
-            state_name:    state_name.into(),
+            state_name: state_name.into(),
         }
     }
 }
@@ -256,7 +259,12 @@ impl<S: StateBackend + ?Sized> AsyncStateStore for StateBackendAsync<S> {
 
     async fn save_state_bytes(&self, bytes: &[u8]) -> std::result::Result<(), StoreError> {
         self.inner
-            .save_state(&self.schema_name, &self.template_name, &self.state_name, bytes)
+            .save_state(
+                &self.schema_name,
+                &self.template_name,
+                &self.state_name,
+                bytes,
+            )
             .await
             .map_err(|e| StoreError::Inner(e.to_string()))?;
         Ok(())
@@ -272,11 +280,11 @@ pub struct MagmaExecutorConfig<S: StateBackend + ?Sized> {
     /// State backend (operator-side; PG or in-memory).
     pub state_backend: Arc<S>,
     /// Schema name (PG schema / namespace key).
-    pub schema_name:   String,
+    pub schema_name: String,
     /// Template name (CR name).
     pub template_name: String,
     /// State name (workspace state slot, typically "default").
-    pub state_name:    String,
+    pub state_name: String,
     /// On-disk encoding for the state bytes. `Magma` (default) is
     /// the typed magma format; `Tofu` is the OpenTofu-readable
     /// format (use this when the same state is read by both
@@ -380,17 +388,17 @@ where
 {
     fn default() -> Self {
         Self {
-            state_backend:   Default::default(),
-            schema_name:     "default".into(),
-            template_name:   "default".into(),
-            state_name:      "default".into(),
-            backend_shape:   BackendShape::Magma,
+            state_backend: Default::default(),
+            schema_name: "default".into(),
+            template_name: "default".into(),
+            state_name: "default".into(),
+            backend_shape: BackendShape::Magma,
             plan_checkpoint: true,
             apply_quantum_secs: Some(120),
-            preflight_laws:  true,
-            drift_policy:    magma_drift::DriftPolicy::conservative_default(),
-            audit_log_path:  None,
-            artifact_store:  None,
+            preflight_laws: true,
+            drift_policy: magma_drift::DriftPolicy::conservative_default(),
+            audit_log_path: None,
+            artifact_store: None,
             provider_configs: std::collections::BTreeMap::new(),
             structural_apply: false,
         }
@@ -400,17 +408,17 @@ where
 impl<S: StateBackend + ?Sized> Clone for MagmaExecutorConfig<S> {
     fn clone(&self) -> Self {
         Self {
-            state_backend:   Arc::clone(&self.state_backend),
-            schema_name:     self.schema_name.clone(),
-            template_name:   self.template_name.clone(),
-            state_name:      self.state_name.clone(),
-            backend_shape:   self.backend_shape,
+            state_backend: Arc::clone(&self.state_backend),
+            schema_name: self.schema_name.clone(),
+            template_name: self.template_name.clone(),
+            state_name: self.state_name.clone(),
+            backend_shape: self.backend_shape,
             plan_checkpoint: self.plan_checkpoint,
             apply_quantum_secs: self.apply_quantum_secs,
-            preflight_laws:  self.preflight_laws,
-            drift_policy:    self.drift_policy.clone(),
-            audit_log_path:  self.audit_log_path.clone(),
-            artifact_store:  self.artifact_store.clone(),
+            preflight_laws: self.preflight_laws,
+            drift_policy: self.drift_policy.clone(),
+            audit_log_path: self.audit_log_path.clone(),
+            artifact_store: self.artifact_store.clone(),
             provider_configs: self.provider_configs.clone(),
             structural_apply: self.structural_apply,
         }
@@ -455,8 +463,8 @@ pub struct MagmaExecutor<S: StateBackend + ?Sized> {
 /// apply loop writes the cursor exactly at each yield boundary regardless of
 /// this throttle, so a cycle that ends always records its true frontier.
 struct StoreCheckpointSink {
-    store:    Arc<crate::backend::ArtifactStore>,
-    schema:   String,
+    store: Arc<crate::backend::ArtifactStore>,
+    schema: String,
     template: String,
     debounce: Debounce,
 }
@@ -476,7 +484,7 @@ struct Debounce {
     /// write. `std::sync::Mutex` is correct here: the guard is dropped before
     /// any `.await`.
     last: StdMutex<Option<Instant>>,
-    min:  std::time::Duration,
+    min: std::time::Duration,
 }
 
 impl Debounce {
@@ -518,11 +526,7 @@ impl StoreCheckpointSink {
     /// workspace holds 10 resources or 10,000.
     const MIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
-    fn new(
-        store: Arc<crate::backend::ArtifactStore>,
-        schema: String,
-        template: String,
-    ) -> Self {
+    fn new(store: Arc<crate::backend::ArtifactStore>, schema: String, template: String) -> Self {
         Self {
             store,
             schema,
@@ -651,10 +655,7 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
                     .get_plan_revision(&self.cfg.schema_name, &self.cfg.template_name)
                     .await?;
                 let render_revision = store
-                    .get_rendered_config_revision(
-                        &self.cfg.schema_name,
-                        &self.cfg.template_name,
-                    )
+                    .get_rendered_config_revision(&self.cfg.schema_name, &self.cfg.template_name)
                     .await?;
                 if plan_reuse_is_current(plan_revision.as_deref(), render_revision.as_deref()) {
                     Ok(DbPlanRead::Present(plan))
@@ -724,18 +725,14 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
         // run-to-completion path, byte-for-byte. Resumption is opt-out.
         let quantum = self.cfg.apply_quantum_secs.and_then(Quantum::from_secs);
         let Some(quantum) = quantum else {
-            return Ok(
-                magma_apply::engine::run_plan_with_providers(plan, state, ctx).await
-            );
+            return Ok(magma_apply::engine::run_plan_with_providers(plan, state, ctx).await);
         };
 
         // Only the DB-backed path can persist a frontier. Without a store
         // there is nowhere durable to put a cursor, so resumption would be a
         // lie — fall back to run-to-completion rather than pretend.
         let Some(store) = self.cfg.artifact_store.clone() else {
-            return Ok(
-                magma_apply::engine::run_plan_with_providers(plan, state, ctx).await
-            );
+            return Ok(magma_apply::engine::run_plan_with_providers(plan, state, ctx).await);
         };
 
         let sink = StoreCheckpointSink::new(
@@ -799,11 +796,7 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
                     // between cycles resumes from the true frontier rather
                     // than the last debounced one.
                     store
-                        .put_apply_cursor(
-                            &self.cfg.schema_name,
-                            &self.cfg.template_name,
-                            &cursor,
-                        )
+                        .put_apply_cursor(&self.cfg.schema_name, &self.cfg.template_name, &cursor)
                         .await?;
                     tracing::info!(
                         schema = %self.cfg.schema_name,
@@ -820,11 +813,7 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
                     // operator should resume from it once the prologue or the
                     // quantum changes.
                     store
-                        .put_apply_cursor(
-                            &self.cfg.schema_name,
-                            &self.cfg.template_name,
-                            &cursor,
-                        )
+                        .put_apply_cursor(&self.cfg.schema_name, &self.cfg.template_name, &cursor)
                         .await?;
                     return Err(Error::MagmaExecution(format!(
                         "apply stalled after {cycles} cycle(s): {}. stats={stats:?}",
@@ -1050,9 +1039,9 @@ fn ok_tofu_result(stdout: String, started: Instant) -> TofuResult {
     TofuResult {
         exit_code: 0,
         stdout,
-        stderr:    String::new(),
-        success:   true,
-        duration:  started.elapsed(),
+        stderr: String::new(),
+        success: true,
+        duration: started.elapsed(),
         failed_changes: Vec::new(),
     }
 }
@@ -1069,9 +1058,9 @@ fn ok_tofu_result(stdout: String, started: Instant) -> TofuResult {
 /// verify chain integrity with `magma_stream::verify_chain`.
 async fn emit_stream_events(
     audit_log_path: &Option<PathBuf>,
-    plan:           &magma_converge::Plan,
-    drift:          &magma_drift::DriftReport,
-    outcome:        Option<&magma_converge::Outcome>,
+    plan: &magma_converge::Plan,
+    drift: &magma_drift::DriftReport,
+    outcome: Option<&magma_converge::Outcome>,
 ) -> Vec<magma_stream::Event> {
     use std::sync::Arc;
 
@@ -1135,13 +1124,13 @@ fn to_universal_plan(plan: &magma_types::Plan) -> magma_converge::Plan {
         .map(|rc| {
             let address = rc.address.to_string();
             let action = match rc.action {
-                magma_types::Action::Create           => magma_converge::Action::Create,
-                magma_types::Action::Update           => magma_converge::Action::Update,
-                magma_types::Action::Delete           => magma_converge::Action::Delete,
-                magma_types::Action::Replace          => magma_converge::Action::Replace,
-                magma_types::Action::NoOp             => magma_converge::Action::NoOp,
-                magma_types::Action::Read             => magma_converge::Action::NoOp,
-                magma_types::Action::Forget           => magma_converge::Action::Delete,
+                magma_types::Action::Create => magma_converge::Action::Create,
+                magma_types::Action::Update => magma_converge::Action::Update,
+                magma_types::Action::Delete => magma_converge::Action::Delete,
+                magma_types::Action::Replace => magma_converge::Action::Replace,
+                magma_types::Action::NoOp => magma_converge::Action::NoOp,
+                magma_types::Action::Read => magma_converge::Action::NoOp,
+                magma_types::Action::Forget => magma_converge::Action::Delete,
                 magma_types::Action::CreateThenDelete => magma_converge::Action::Replace,
                 magma_types::Action::DeleteThenCreate => magma_converge::Action::Replace,
             };
@@ -1376,9 +1365,9 @@ fn changes_tofu_result(stdout: String, started: Instant) -> TofuResult {
     TofuResult {
         exit_code: 2,
         stdout,
-        stderr:    String::new(),
-        success:   true,
-        duration:  started.elapsed(),
+        stderr: String::new(),
+        success: true,
+        duration: started.elapsed(),
         failed_changes: Vec::new(),
     }
 }
@@ -1386,10 +1375,10 @@ fn changes_tofu_result(stdout: String, started: Instant) -> TofuResult {
 fn err_tofu_result(stderr: String, started: Instant) -> TofuResult {
     TofuResult {
         exit_code: 1,
-        stdout:    String::new(),
+        stdout: String::new(),
         stderr,
-        success:   false,
-        duration:  started.elapsed(),
+        success: false,
+        duration: started.elapsed(),
         failed_changes: Vec::new(),
     }
 }
@@ -1546,10 +1535,7 @@ where
         let plan_source_revision: Option<String> = match &self.cfg.artifact_store {
             Some(store) => {
                 store
-                    .get_rendered_config_revision(
-                        &self.cfg.schema_name,
-                        &self.cfg.template_name,
-                    )
+                    .get_rendered_config_revision(&self.cfg.schema_name, &self.cfg.template_name)
                     .await?
             }
             None => None,
@@ -1575,7 +1561,9 @@ where
                     .unwrap_or_else(|| Self::plan_checkpoint_path(work_dir));
                 let bytes = serde_json::to_vec_pretty(&plan)
                     .map_err(|e| Error::MagmaExecution(format!("encode plan: {e}")))?;
-                tokio::fs::write(&checkpoint, &bytes).await.map_err(Error::Io)?;
+                tokio::fs::write(&checkpoint, &bytes)
+                    .await
+                    .map_err(Error::Io)?;
             }
             None => {}
         }
@@ -1592,11 +1580,9 @@ where
         // (if changes pending). apply() picks up from Planning and
         // transitions Applying -> Verifying -> Stable / Failed.
         let mut lifecycle = magma_fsm::LifecycleState::new();
-        lifecycle.transition(
-            magma_fsm::Phase::Planning,
-            None,
-            "magma_executor::plan",
-        ).map_err(|e| Error::MagmaExecution(format!("fsm transition: {e}")))?;
+        lifecycle
+            .transition(magma_fsm::Phase::Planning, None, "magma_executor::plan")
+            .map_err(|e| Error::MagmaExecution(format!("fsm transition: {e}")))?;
 
         // Emit typed events into a magma-stream PlanStream so the
         // BLAKE3-chained audit log captures every lifecycle stage.
@@ -1607,7 +1593,8 @@ where
             &universal_plan,
             &drift_report,
             None, // no outcome at plan-stage
-        ).await;
+        )
+        .await;
 
         // Build a typed Bundle: plan + drift + lifecycle + audit
         // chain + optional gem-tree attestation. The bundle's
@@ -1624,7 +1611,8 @@ where
             lifecycle.clone(),
             audit_events,
             gem_tree_attestation,
-        ).map_err(|e| Error::MagmaExecution(format!("magma_bundle::new: {e}")))?;
+        )
+        .map_err(|e| Error::MagmaExecution(format!("magma_bundle::new: {e}")))?;
 
         // Persist the plan-stage bundle so apply() (potentially a
         // separate reconcile) can pick it up and continue the
@@ -1646,7 +1634,9 @@ where
                 let bundle_path = Self::bundle_checkpoint_path(work_dir);
                 let bundle_bytes = serde_json::to_vec_pretty(&bundle)
                     .map_err(|e| Error::MagmaExecution(format!("encode bundle: {e}")))?;
-                tokio::fs::write(&bundle_path, &bundle_bytes).await.map_err(Error::Io)?;
+                tokio::fs::write(&bundle_path, &bundle_bytes)
+                    .await
+                    .map_err(Error::Io)?;
             }
         }
 
@@ -1813,9 +1803,11 @@ where
         // fallback).
         let bundle_path = Self::bundle_checkpoint_path(work_dir);
         let prev_bundle: Option<magma_bundle::Bundle> = match &self.cfg.artifact_store {
-            Some(store) => store
-                .get_bundle(&self.cfg.schema_name, &self.cfg.template_name)
-                .await?,
+            Some(store) => {
+                store
+                    .get_bundle(&self.cfg.schema_name, &self.cfg.template_name)
+                    .await?
+            }
             None if bundle_path.exists() => tokio::fs::read(&bundle_path)
                 .await
                 .ok()
@@ -1861,30 +1853,38 @@ where
         let universal_plan = to_universal_plan(&plan);
         let drift = magma_drift::classify(&universal_plan, &self.cfg.drift_policy);
         let universal_outcome = magma_converge::Outcome {
-            plan_id:     plan_phase_id.clone(),
-            kind:        "terraform".into(),
-            applied:     outcome.applied.iter().map(|a| magma_converge::AppliedChange {
-                address: a.address.to_string(),
-                action:  match a.action {
-                    magma_types::Action::Create  => magma_converge::Action::Create,
-                    magma_types::Action::Update  => magma_converge::Action::Update,
-                    magma_types::Action::Delete  => magma_converge::Action::Delete,
-                    magma_types::Action::Replace => magma_converge::Action::Replace,
-                    _ => magma_converge::Action::NoOp,
-                },
-            }).collect(),
-            failed: outcome.failed.iter().map(|f| magma_converge::FailedChange {
-                address: f.address.to_string(),
-                action:  match f.action {
-                    magma_types::Action::Create  => magma_converge::Action::Create,
-                    magma_types::Action::Update  => magma_converge::Action::Update,
-                    magma_types::Action::Delete  => magma_converge::Action::Delete,
-                    magma_types::Action::Replace => magma_converge::Action::Replace,
-                    _ => magma_converge::Action::NoOp,
-                },
-                error: f.reason.clone(),
-            }).collect(),
-            started_at:  outcome.started_at,
+            plan_id: plan_phase_id.clone(),
+            kind: "terraform".into(),
+            applied: outcome
+                .applied
+                .iter()
+                .map(|a| magma_converge::AppliedChange {
+                    address: a.address.to_string(),
+                    action: match a.action {
+                        magma_types::Action::Create => magma_converge::Action::Create,
+                        magma_types::Action::Update => magma_converge::Action::Update,
+                        magma_types::Action::Delete => magma_converge::Action::Delete,
+                        magma_types::Action::Replace => magma_converge::Action::Replace,
+                        _ => magma_converge::Action::NoOp,
+                    },
+                })
+                .collect(),
+            failed: outcome
+                .failed
+                .iter()
+                .map(|f| magma_converge::FailedChange {
+                    address: f.address.to_string(),
+                    action: match f.action {
+                        magma_types::Action::Create => magma_converge::Action::Create,
+                        magma_types::Action::Update => magma_converge::Action::Update,
+                        magma_types::Action::Delete => magma_converge::Action::Delete,
+                        magma_types::Action::Replace => magma_converge::Action::Replace,
+                        _ => magma_converge::Action::NoOp,
+                    },
+                    error: f.reason.clone(),
+                })
+                .collect(),
+            started_at: outcome.started_at,
             finished_at: outcome.finished_at,
         };
         // Emit apply-stage events into the audit chain (PlanComputed
@@ -1896,7 +1896,8 @@ where
             &universal_plan,
             &drift,
             Some(&universal_outcome),
-        ).await;
+        )
+        .await;
         let workspace_label = self.cfg.schema_name.clone() + "/" + &self.cfg.template_name;
         let gem_tree_attestation = compute_gem_tree_attestation(work_dir).await;
         let final_bundle = magma_bundle::Bundle::new_with_gem_tree(
@@ -1908,7 +1909,8 @@ where
             lifecycle.clone(),
             audit_events,
             gem_tree_attestation,
-        ).map_err(|e| Error::MagmaExecution(format!("magma_bundle::new: {e}")))?;
+        )
+        .map_err(|e| Error::MagmaExecution(format!("magma_bundle::new: {e}")))?;
 
         // Persist the post-apply state + bundle. DB-backed path → ONE
         // atomic Postgres transaction (`put_apply_result`): the state
@@ -1941,7 +1943,9 @@ where
             None => {
                 let bundle_bytes = serde_json::to_vec_pretty(&final_bundle)
                     .map_err(|e| Error::MagmaExecution(format!("encode bundle: {e}")))?;
-                tokio::fs::write(&bundle_path, &bundle_bytes).await.map_err(Error::Io)?;
+                tokio::fs::write(&bundle_path, &bundle_bytes)
+                    .await
+                    .map_err(Error::Io)?;
             }
         }
 
@@ -1993,22 +1997,22 @@ where
             .iter()
             .map(|r| magma_types::ResourceChange {
                 address: r.address.clone(),
-                action:  magma_types::Action::Delete,
-                before:  r.instances.first().map(|i| i.attributes.clone()),
-                after:   None,
+                action: magma_types::Action::Delete,
+                before: r.instances.first().map(|i| i.attributes.clone()),
+                after: None,
                 reasons: vec![magma_types::ChangeReason::DeletedResource],
             })
             .collect();
         let plan = magma_types::Plan {
-            id:               magma_types::PlanId([0u8; 32]),
-            created_at:       chrono::Utc::now(),
-            config_root:      work_dir.to_path_buf(),
-            variables:        Default::default(),
+            id: magma_types::PlanId([0u8; 32]),
+            created_at: chrono::Utc::now(),
+            config_root: work_dir.to_path_buf(),
+            variables: Default::default(),
             resource_changes,
-            output_changes:   vec![],
+            output_changes: vec![],
             // A synthesized destroy plan performs no refresh, so it carries
             // the default (unqualified) observation rather than claiming one.
-            observation:      Default::default(),
+            observation: Default::default(),
         };
         // REAL destroy: drive providers over gRPC so each resource's Delete is
         // a real provider DestroyResource RPC (the state-level run_plan only
@@ -2047,7 +2051,10 @@ where
             .await
             .map_err(|e| Error::MagmaExecution(format!("write state: {e}")))?;
 
-        let stdout = format!("magma destroy: removed {} resources\n", outcome.applied.len());
+        let stdout = format!(
+            "magma destroy: removed {} resources\n",
+            outcome.applied.len()
+        );
         Ok(if outcome.failed.is_empty() {
             ok_tofu_result(stdout, started)
         } else {
@@ -2121,12 +2128,7 @@ where
     /// `(schema_name, template_name, state_name)` so concurrent imports
     /// against the SAME workspace can't race a lost update (see that
     /// guard's doc for the full "why").
-    async fn import(
-        &self,
-        work_dir: &Path,
-        address: &str,
-        id: &str,
-    ) -> Result<TofuResult> {
+    async fn import(&self, work_dir: &Path, address: &str, id: &str) -> Result<TofuResult> {
         let started = Instant::now();
 
         let lock_key = import_state_lock_key(
@@ -2267,7 +2269,6 @@ where
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
-
 
 /// Explain a `Stalled` cycle from what the cycle actually measured.
 ///
@@ -2453,21 +2454,21 @@ mod tests {
         MagmaExecutorConfig {
             // Unit tests have no provider binaries — structural apply.
             structural_apply: true,
-            state_backend:   Arc::new(InMemoryStateBackend::new()),
-            schema_name:     "test_schema".into(),
-            template_name:   "test_template".into(),
-            state_name:      "default".into(),
-            backend_shape:   BackendShape::Magma,
+            state_backend: Arc::new(InMemoryStateBackend::new()),
+            schema_name: "test_schema".into(),
+            template_name: "test_template".into(),
+            state_name: "default".into(),
+            backend_shape: BackendShape::Magma,
             plan_checkpoint: true,
             apply_quantum_secs: None,
             // Test fixtures use minimal Pangea shapes that omit
             // `terraform.required_providers`; preflight would
             // reject them. Production code paths use the
             // Default which has preflight_laws: true.
-            preflight_laws:  false,
-            drift_policy:    magma_drift::DriftPolicy::conservative_default(),
-            audit_log_path:  None,
-            artifact_store:  None,
+            preflight_laws: false,
+            drift_policy: magma_drift::DriftPolicy::conservative_default(),
+            audit_log_path: None,
+            artifact_store: None,
             provider_configs: std::collections::BTreeMap::new(),
         }
     }
@@ -2514,7 +2515,11 @@ mod tests {
 
         // Apply consumes the checkpoint.
         let apply_result = exec.apply(tmp.path(), None, true).await.unwrap();
-        assert!(apply_result.success, "apply failed: {}", apply_result.stdout);
+        assert!(
+            apply_result.success,
+            "apply failed: {}",
+            apply_result.stdout
+        );
         assert_eq!(apply_result.exit_code, 0);
 
         // Second plan: state now contains the resource → no changes.
@@ -2542,8 +2547,11 @@ mod tests {
         // magma::types::Plan serializes its fields as `id` (PlanId)
         // and `resource_changes` (Vec). show_plan emits the typed
         // Plan as pretty JSON, so both field names must appear.
-        assert!(shown.stdout.contains("\"id\""),
-                "missing id field in shown plan:\n{}", shown.stdout);
+        assert!(
+            shown.stdout.contains("\"id\""),
+            "missing id field in shown plan:\n{}",
+            shown.stdout
+        );
         assert!(shown.stdout.contains("resource_changes"));
     }
 
@@ -2583,7 +2591,10 @@ mod tests {
 
         let tmp = tempfile::tempdir().unwrap();
         let manager = WorkspaceManager::new(tmp.path().to_path_buf());
-        let workspace = manager.get_or_create("test-ns", "never-applied").await.unwrap();
+        let workspace = manager
+            .get_or_create("test-ns", "never-applied")
+            .await
+            .unwrap();
         assert!(
             !workspace.file_exists(".terraform"),
             "magma must never create .terraform — that's the whole bug"
@@ -2624,7 +2635,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
 
         let result = exec
-            .import(tmp.path(), "aws_iam_role.adopted", "arn:aws:iam::123:role/adopted")
+            .import(
+                tmp.path(),
+                "aws_iam_role.adopted",
+                "arn:aws:iam::123:role/adopted",
+            )
             .await
             .unwrap();
         assert!(result.success, "import should succeed: {}", result.stdout);
@@ -2964,13 +2979,11 @@ mod tests {
         );
         let exec = MagmaExecutor::new(aware_cfg);
 
-        let ctx = exec
-            .refresh_ctx_for(tmp.path(), &cfg)
-            .expect(
-                "structural_apply: false must route plan() through \
+        let ctx = exec.refresh_ctx_for(tmp.path(), &cfg).expect(
+            "structural_apply: false must route plan() through \
                  refresh_then_plan(cfg, state, Some(&ctx)) — a real \
                  ApplyContext, not None",
-            );
+        );
         assert_eq!(
             ctx.workspace_dir,
             tmp.path(),
@@ -3176,7 +3189,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn apply_regenerates_missing_disk_checkpoint_is_a_hard_io_error_but_present_plan_applies() {
+    async fn apply_regenerates_missing_disk_checkpoint_is_a_hard_io_error_but_present_plan_applies()
+    {
         // Regression guard for the Reaction-B refactor: the DB-backed
         // never-stuck regeneration path needs a live Postgres ArtifactStore
         // (integration-only), but the disk-fallback contract must be
@@ -3206,40 +3220,43 @@ mod tests {
     fn planned_changes_from_magma_plan_maps_create_managed_only() {
         use crate::executor::plan_change::{PlanAction, ResourceKindClass};
 
-        let addr = |kind: magma_types::ResourceKind, ty: &str, name: &str| {
-            magma_types::ResourceAddress {
-                module:  magma_types::ModulePath::root(),
+        let addr =
+            |kind: magma_types::ResourceKind, ty: &str, name: &str| magma_types::ResourceAddress {
+                module: magma_types::ModulePath::root(),
                 kind,
                 type_id: magma_types::ResourceTypeId(ty.into()),
-                name:    name.into(),
-                key:     None,
-            }
-        };
+                name: name.into(),
+                key: None,
+            };
         let plan = magma_types::Plan {
-            id:             magma_types::PlanId([0u8; 32]),
-            created_at:     chrono::Utc::now(),
-            config_root:    std::path::PathBuf::from("/nonexistent"),
-            variables:      Default::default(),
+            id: magma_types::PlanId([0u8; 32]),
+            created_at: chrono::Utc::now(),
+            config_root: std::path::PathBuf::from("/nonexistent"),
+            variables: Default::default(),
             resource_changes: vec![
                 // A create-that-exists managed resource — the breathe class.
                 magma_types::ResourceChange {
-                    address: addr(magma_types::ResourceKind::Managed, "github_repository", "breathe"),
-                    action:  magma_types::Action::Create,
-                    before:  None,
-                    after:   Some(json!({ "name": "breathe" })),
+                    address: addr(
+                        magma_types::ResourceKind::Managed,
+                        "github_repository",
+                        "breathe",
+                    ),
+                    action: magma_types::Action::Create,
+                    before: None,
+                    after: Some(json!({ "name": "breathe" })),
                     reasons: vec![magma_types::ChangeReason::NewResource],
                 },
                 // A data source read — must NOT appear in discovery.
                 magma_types::ResourceChange {
                     address: addr(magma_types::ResourceKind::Data, "github_user", "me"),
-                    action:  magma_types::Action::Read,
-                    before:  None,
-                    after:   Some(json!({ "login": "me" })),
+                    action: magma_types::Action::Read,
+                    before: None,
+                    after: Some(json!({ "login": "me" })),
                     reasons: vec![],
                 },
             ],
             output_changes: vec![],
-            observation:    Default::default(),
+            observation: Default::default(),
         };
 
         // No state: the mapper still must be total, and every derived id it
@@ -3254,7 +3271,11 @@ mod tests {
         assert_eq!(create.action, PlanAction::Create);
         assert_eq!(create.kind, ResourceKindClass::Managed);
         assert_eq!(
-            create.after.as_ref().and_then(|a| a.get("name")).and_then(|v| v.as_str()),
+            create
+                .after
+                .as_ref()
+                .and_then(|a| a.get("name"))
+                .and_then(|v| v.as_str()),
             Some("breathe")
         );
 
@@ -3276,26 +3297,26 @@ mod tests {
     fn state_with_repo(resource_name: &str, real_name: &str) -> magma_types::State {
         let mut st = empty_state();
         st.resources.push(magma_types::StateResource {
-            address:  magma_types::ResourceAddress {
-                module:  magma_types::ModulePath::root(),
-                kind:    magma_types::ResourceKind::Managed,
+            address: magma_types::ResourceAddress {
+                module: magma_types::ModulePath::root(),
+                kind: magma_types::ResourceKind::Managed,
                 type_id: magma_types::ResourceTypeId("github_repository".into()),
-                name:    resource_name.into(),
-                key:     None,
+                name: resource_name.into(),
+                key: None,
             },
             provider: magma_types::ProviderReference {
                 source: "registry.terraform.io/integrations/github".into(),
-                name:   "github".into(),
-                alias:  None,
+                name: "github".into(),
+                alias: None,
             },
             instances: vec![magma_types::StateInstance {
-                index_key:                 None,
-                attributes:                json!({ "name": real_name, "node_id": "R_kgDOTdnhyQ" }),
-                schema_version:            0,
+                index_key: None,
+                attributes: json!({ "name": real_name, "node_id": "R_kgDOTdnhyQ" }),
+                schema_version: 0,
                 sensitive_attribute_paths: vec![],
-                private:                   vec![],
-                dependencies:              vec![],
-                status:                    magma_types::InstanceStatus::Ready,
+                private: vec![],
+                dependencies: vec![],
+                status: magma_types::InstanceStatus::Ready,
             }],
         });
         st
@@ -3304,28 +3325,28 @@ mod tests {
     fn create(ty: &str, name: &str, after: serde_json::Value) -> magma_types::ResourceChange {
         magma_types::ResourceChange {
             address: magma_types::ResourceAddress {
-                module:  magma_types::ModulePath::root(),
-                kind:    magma_types::ResourceKind::Managed,
+                module: magma_types::ModulePath::root(),
+                kind: magma_types::ResourceKind::Managed,
                 type_id: magma_types::ResourceTypeId(ty.into()),
-                name:    name.into(),
-                key:     None,
+                name: name.into(),
+                key: None,
             },
-            action:  magma_types::Action::Create,
-            before:  None,
-            after:   Some(after),
+            action: magma_types::Action::Create,
+            before: None,
+            after: Some(after),
             reasons: vec![magma_types::ChangeReason::NewResource],
         }
     }
 
     fn plan_of(changes: Vec<magma_types::ResourceChange>) -> magma_types::Plan {
         magma_types::Plan {
-            id:               magma_types::PlanId([0u8; 32]),
-            created_at:       chrono::Utc::now(),
-            config_root:      std::path::PathBuf::from("/nonexistent"),
-            variables:        Default::default(),
+            id: magma_types::PlanId([0u8; 32]),
+            created_at: chrono::Utc::now(),
+            config_root: std::path::PathBuf::from("/nonexistent"),
+            variables: Default::default(),
             resource_changes: changes,
-            output_changes:   vec![],
-            observation:      Default::default(),
+            output_changes: vec![],
+            observation: Default::default(),
         }
     }
 
@@ -3344,7 +3365,10 @@ mod tests {
         let got = changes[0].import_id.clone().expect("an id is derivable");
         assert_eq!(got.id, "banken:bug");
         assert!(got.exact, "a fully state-resolved parent is exact");
-        assert!(!got.id.contains("${"), "raw reference leaked into the import id");
+        assert!(
+            !got.id.contains("${"),
+            "raw reference leaked into the import id"
+        );
     }
 
     /// Five of the nine label parents are underscore-sanitized in state
@@ -3383,7 +3407,10 @@ mod tests {
         let got = changes[0].import_id.clone().expect("an id is derivable");
         assert_eq!(got.id, "cse-lint:main");
         assert!(got.exact);
-        assert!(!got.id.contains("R_kgDO"), "node id leaked into the import id");
+        assert!(
+            !got.id.contains("R_kgDO"),
+            "node id leaked into the import id"
+        );
     }
 
     /// Never round up. With the parent absent from state the only available
@@ -3397,7 +3424,10 @@ mod tests {
             json!({ "repository": "${github_repository.tag_forge.name}", "name": "bug" }),
         )]);
         let changes = planned_changes_from_magma_plan(&plan, &empty_state());
-        let got = changes[0].import_id.clone().expect("a guess is still returned");
+        let got = changes[0]
+            .import_id
+            .clone()
+            .expect("a guess is still returned");
         assert_eq!(got.id, "tag_forge:bug");
         assert!(
             !got.exact,
@@ -3409,7 +3439,11 @@ mod tests {
     /// Only creates can collide, so only creates get an adoption id.
     #[test]
     fn a_non_create_never_derives_an_import_id() {
-        let mut ch = create("github_issue_label", "l", json!({ "repository": "r", "name": "bug" }));
+        let mut ch = create(
+            "github_issue_label",
+            "l",
+            json!({ "repository": "r", "name": "bug" }),
+        );
         ch.action = magma_types::Action::Update;
         let changes = planned_changes_from_magma_plan(&plan_of(vec![ch]), &empty_state());
         assert_eq!(changes[0].import_id, None);
@@ -3453,21 +3487,23 @@ mod tests {
         // simulates that by constructing TWO independent
         // MagmaExecutor instances over a SHARED InMemoryStateBackend.
         let store: Arc<InMemoryStateBackend> = Arc::new(InMemoryStateBackend::new());
-        let make_executor = || MagmaExecutor::new(MagmaExecutorConfig {
-            structural_apply: true,
-            state_backend:   Arc::clone(&store),
-            schema_name:     "s".into(),
-            template_name:   "t".into(),
-            state_name:      "default".into(),
-            backend_shape:   BackendShape::Magma,
-            plan_checkpoint: true,
-            apply_quantum_secs: None,
-            preflight_laws:  false,
-            drift_policy:    magma_drift::DriftPolicy::conservative_default(),
-            audit_log_path:  None,
-            artifact_store:  None,
-            provider_configs: std::collections::BTreeMap::new(),
-        });
+        let make_executor = || {
+            MagmaExecutor::new(MagmaExecutorConfig {
+                structural_apply: true,
+                state_backend: Arc::clone(&store),
+                schema_name: "s".into(),
+                template_name: "t".into(),
+                state_name: "default".into(),
+                backend_shape: BackendShape::Magma,
+                plan_checkpoint: true,
+                apply_quantum_secs: None,
+                preflight_laws: false,
+                drift_policy: magma_drift::DriftPolicy::conservative_default(),
+                audit_log_path: None,
+                artifact_store: None,
+                provider_configs: std::collections::BTreeMap::new(),
+            })
+        };
 
         let tmp = tempfile::tempdir().unwrap();
         render_workspace(
@@ -3486,22 +3522,32 @@ mod tests {
         drop(exec1);
 
         let checkpoint = tmp.path().join("magma-plan.json");
-        assert!(checkpoint.exists(), "checkpoint must survive across instances");
+        assert!(
+            checkpoint.exists(),
+            "checkpoint must survive across instances"
+        );
 
         let state_before = store.get_state("s", "t", "default").await.unwrap();
-        assert!(state_before.is_none(), "state must be untouched until apply");
+        assert!(
+            state_before.is_none(),
+            "state must be untouched until apply"
+        );
 
         // Instance #2: apply from the existing checkpoint.
         let exec2 = make_executor();
         let apply_result = exec2.apply(tmp.path(), None, true).await.unwrap();
-        assert!(apply_result.success, "instance 2 must apply from checkpoint");
+        assert!(
+            apply_result.success,
+            "instance 2 must apply from checkpoint"
+        );
         assert_eq!(apply_result.exit_code, 0);
 
         let state_after = store
-            .get_state("s", "t", "default").await.unwrap()
+            .get_state("s", "t", "default")
+            .await
+            .unwrap()
             .expect("state must exist after apply");
-        let parsed: serde_json::Value =
-            serde_json::from_slice(&state_after.data.unwrap()).unwrap();
+        let parsed: serde_json::Value = serde_json::from_slice(&state_after.data.unwrap()).unwrap();
         assert!(parsed["resources"].as_array().unwrap().len() >= 1);
     }
 
@@ -3511,21 +3557,23 @@ mod tests {
         // but with different state_name slots must never see each
         // other's resources.
         let store: Arc<InMemoryStateBackend> = Arc::new(InMemoryStateBackend::new());
-        let make = |state_name: &str| MagmaExecutor::new(MagmaExecutorConfig {
-            structural_apply: true,
-            state_backend:   Arc::clone(&store),
-            schema_name:     "s".into(),
-            template_name:   "t".into(),
-            state_name:      state_name.into(),
-            backend_shape:   BackendShape::Magma,
-            plan_checkpoint: true,
-            apply_quantum_secs: None,
-            preflight_laws:  false,
-            drift_policy:    magma_drift::DriftPolicy::conservative_default(),
-            audit_log_path:  None,
-            artifact_store:  None,
-            provider_configs: std::collections::BTreeMap::new(),
-        });
+        let make = |state_name: &str| {
+            MagmaExecutor::new(MagmaExecutorConfig {
+                structural_apply: true,
+                state_backend: Arc::clone(&store),
+                schema_name: "s".into(),
+                template_name: "t".into(),
+                state_name: state_name.into(),
+                backend_shape: BackendShape::Magma,
+                plan_checkpoint: true,
+                apply_quantum_secs: None,
+                preflight_laws: false,
+                drift_policy: magma_drift::DriftPolicy::conservative_default(),
+                audit_log_path: None,
+                artifact_store: None,
+                provider_configs: std::collections::BTreeMap::new(),
+            })
+        };
 
         let tmp_a = tempfile::tempdir().unwrap();
         let tmp_b = tempfile::tempdir().unwrap();
@@ -3535,14 +3583,16 @@ mod tests {
                 "provider": { "aws": { "region": "us-east-1" } },
                 "resource": { "aws_iam_role": { "rA": { "name": "A" } } },
             }),
-        ).await;
+        )
+        .await;
         render_workspace(
             tmp_b.path(),
             &json!({
                 "provider": { "aws": { "region": "us-east-1" } },
                 "resource": { "aws_iam_role": { "rB": { "name": "B" } } },
             }),
-        ).await;
+        )
+        .await;
 
         let exec_a = make("slot_a");
         let exec_b = make("slot_b");
@@ -3553,16 +3603,18 @@ mod tests {
 
         let entry_a = store.get_state("s", "t", "slot_a").await.unwrap().unwrap();
         let entry_b = store.get_state("s", "t", "slot_b").await.unwrap().unwrap();
-        let parsed_a: serde_json::Value =
-            serde_json::from_slice(&entry_a.data.unwrap()).unwrap();
-        let parsed_b: serde_json::Value =
-            serde_json::from_slice(&entry_b.data.unwrap()).unwrap();
+        let parsed_a: serde_json::Value = serde_json::from_slice(&entry_a.data.unwrap()).unwrap();
+        let parsed_b: serde_json::Value = serde_json::from_slice(&entry_b.data.unwrap()).unwrap();
         let names_a: Vec<&str> = parsed_a["resources"]
-            .as_array().unwrap().iter()
+            .as_array()
+            .unwrap()
+            .iter()
             .map(|r| r["address"]["name"].as_str().unwrap_or(""))
             .collect();
         let names_b: Vec<&str> = parsed_b["resources"]
-            .as_array().unwrap().iter()
+            .as_array()
+            .unwrap()
+            .iter()
             .map(|r| r["address"]["name"].as_str().unwrap_or(""))
             .collect();
         assert_eq!(names_a, vec!["rA"]);
@@ -3583,13 +3635,18 @@ mod tests {
         .await;
 
         let custom_plan = tmp.path().join("custom-plan.json");
-        exec.plan(tmp.path(), Some(&custom_plan), &[]).await.unwrap();
+        exec.plan(tmp.path(), Some(&custom_plan), &[])
+            .await
+            .unwrap();
         assert!(custom_plan.exists(), "plan written to explicit path");
         assert!(
             !tmp.path().join("magma-plan.json").exists(),
             "default checkpoint should not exist when explicit plan_file is set",
         );
-        let apply_result = exec.apply(tmp.path(), Some(&custom_plan), true).await.unwrap();
+        let apply_result = exec
+            .apply(tmp.path(), Some(&custom_plan), true)
+            .await
+            .unwrap();
         assert!(apply_result.success);
     }
 
@@ -3617,17 +3674,17 @@ mod tests {
     async fn tofu_shape_persistence_writes_canonical_provider_form() {
         let cfg = MagmaExecutorConfig {
             structural_apply: true,
-            state_backend:   Arc::new(InMemoryStateBackend::new()),
-            schema_name:     "s".into(),
-            template_name:   "t".into(),
-            state_name:      "default".into(),
-            backend_shape:   BackendShape::Tofu,
+            state_backend: Arc::new(InMemoryStateBackend::new()),
+            schema_name: "s".into(),
+            template_name: "t".into(),
+            state_name: "default".into(),
+            backend_shape: BackendShape::Tofu,
             plan_checkpoint: true,
             apply_quantum_secs: None,
-            preflight_laws:  false,
-            drift_policy:    magma_drift::DriftPolicy::conservative_default(),
-            audit_log_path:  None,
-            artifact_store:  None,
+            preflight_laws: false,
+            drift_policy: magma_drift::DriftPolicy::conservative_default(),
+            audit_log_path: None,
+            artifact_store: None,
             provider_configs: std::collections::BTreeMap::new(),
         };
         let exec = MagmaExecutor::new(cfg.clone());
@@ -3676,17 +3733,17 @@ mod tests {
         // become theorems" property in operator form.
         let cfg = MagmaExecutorConfig {
             structural_apply: true, // (moot: this test rejects at preflight, never applies)
-            state_backend:   Arc::new(InMemoryStateBackend::new()),
-            schema_name:     "s".into(),
-            template_name:   "t".into(),
-            state_name:      "default".into(),
-            backend_shape:   BackendShape::Magma,
+            state_backend: Arc::new(InMemoryStateBackend::new()),
+            schema_name: "s".into(),
+            template_name: "t".into(),
+            state_name: "default".into(),
+            backend_shape: BackendShape::Magma,
             plan_checkpoint: true,
             apply_quantum_secs: None,
-            preflight_laws:  true, // production default
-            drift_policy:    magma_drift::DriftPolicy::conservative_default(),
-            audit_log_path:  None,
-            artifact_store:  None,
+            preflight_laws: true, // production default
+            drift_policy: magma_drift::DriftPolicy::conservative_default(),
+            audit_log_path: None,
+            artifact_store: None,
             provider_configs: std::collections::BTreeMap::new(),
         };
         let exec = MagmaExecutor::new(cfg);
@@ -3795,7 +3852,9 @@ DEPENDENCIES
 BUNDLED WITH
    2.5.22
 "#;
-        tokio::fs::write(tmp.path().join("Gemfile.lock"), lock).await.unwrap();
+        tokio::fs::write(tmp.path().join("Gemfile.lock"), lock)
+            .await
+            .unwrap();
 
         exec.plan(tmp.path(), None, &[]).await.unwrap();
         let bundle_path = tmp.path().join("magma-bundle.json");
@@ -3803,7 +3862,11 @@ BUNDLED WITH
         let bundle: magma_bundle::Bundle = serde_json::from_slice(&bytes).unwrap();
         bundle.verify().unwrap();
         let attestation = bundle.gem_tree_attestation.as_deref().unwrap();
-        assert_eq!(attestation.len(), 64, "gem-tree attestation should be 64-hex BLAKE3");
+        assert_eq!(
+            attestation.len(),
+            64,
+            "gem-tree attestation should be 64-hex BLAKE3"
+        );
     }
 
     #[tokio::test]
@@ -3844,18 +3907,30 @@ BUNDLED WITH
 
         // Stdout JSON carries the bundle_id + phase.
         let parsed: serde_json::Value = serde_json::from_str(&result.stdout).unwrap();
-        assert!(parsed["bundle"].is_object(), "plan stdout missing bundle block");
+        assert!(
+            parsed["bundle"].is_object(),
+            "plan stdout missing bundle block"
+        );
         let bundle_id = parsed["bundle"]["bundle_id"].as_str().unwrap();
-        assert_eq!(bundle_id.len(), 64, "bundle_id should be 64-char BLAKE3 hex");
+        assert_eq!(
+            bundle_id.len(),
+            64,
+            "bundle_id should be 64-char BLAKE3 hex"
+        );
         assert_eq!(parsed["bundle"]["phase"], "Planning");
 
         // Bundle file materialized on disk.
         let bundle_path = tmp.path().join("magma-bundle.json");
-        assert!(bundle_path.exists(), "magma-bundle.json should exist after plan");
+        assert!(
+            bundle_path.exists(),
+            "magma-bundle.json should exist after plan"
+        );
         let bytes = std::fs::read(&bundle_path).unwrap();
         let bundle: magma_bundle::Bundle = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(bundle.bundle_id, bundle_id);
-        bundle.verify().unwrap_or_else(|e| panic!("bundle.verify(): {e:?}"));
+        bundle
+            .verify()
+            .unwrap_or_else(|e| panic!("bundle.verify(): {e:?}"));
     }
 
     #[tokio::test]
@@ -3886,10 +3961,18 @@ BUNDLED WITH
         let bundle_path = tmp.path().join("magma-bundle.json");
         let bytes = std::fs::read(&bundle_path).unwrap();
         let bundle: magma_bundle::Bundle = serde_json::from_slice(&bytes).unwrap();
-        bundle.verify().unwrap_or_else(|e| panic!("post-apply bundle.verify(): {e:?}"));
+        bundle
+            .verify()
+            .unwrap_or_else(|e| panic!("post-apply bundle.verify(): {e:?}"));
         assert_eq!(bundle.lifecycle.current, magma_fsm::Phase::Stable);
-        assert!(bundle.outcome.is_some(), "post-apply bundle should carry an Outcome");
-        assert!(bundle.fully_succeeded(), "post-apply bundle.fully_succeeded()");
+        assert!(
+            bundle.outcome.is_some(),
+            "post-apply bundle should carry an Outcome"
+        );
+        assert!(
+            bundle.fully_succeeded(),
+            "post-apply bundle.fully_succeeded()"
+        );
     }
 
     // ── Regression: `advance_lifecycle_through_apply` recovers from
@@ -3922,7 +4005,11 @@ BUNDLED WITH
             .transition(magma_fsm::Phase::Applying, None, "first apply: applying")
             .unwrap();
         lifecycle
-            .transition(magma_fsm::Phase::Failed, None, "first apply: transient failure")
+            .transition(
+                magma_fsm::Phase::Failed,
+                None,
+                "first apply: transient failure",
+            )
             .unwrap();
         assert_eq!(lifecycle.current, magma_fsm::Phase::Failed);
 
@@ -4031,7 +4118,10 @@ BUNDLED WITH
         .await;
         let result = exec.plan(tmp.path(), None, &[]).await.unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&result.stdout).unwrap();
-        assert!(parsed["drift"].is_object(), "plan stdout missing drift block");
+        assert!(
+            parsed["drift"].is_object(),
+            "plan stdout missing drift block"
+        );
         // Create of Functional severity routes to AutoCorrectWithAlert
         // under the conservative_default policy.
         let decisions = parsed["drift"]["decisions"].as_array().unwrap();

@@ -162,7 +162,10 @@ pub fn resolve_template_state(
     // Layer 3: controller-class binary suspend.
     if spec.controller_suspend.is_set(ControllerKind::Template) {
         return SuspensionDecision::Paused {
-            reason: Some(format!("controllerSuspend.{}", ControllerKind::Template.name())),
+            reason: Some(format!(
+                "controllerSuspend.{}",
+                ControllerKind::Template.name()
+            )),
             source: SuspensionSource::Controller,
         };
     }
@@ -181,10 +184,7 @@ pub fn resolve_template_state(
 /// Resolve the effective suspension state for a `WorkspaceCatalog`
 /// itself (not its child templates — those use `resolve_template_state`).
 /// Skips the cascade layer (no parent above catalogs).
-pub fn resolve_catalog_state(
-    spec: &OperatorPolicySpec,
-    catalog_name: &str,
-) -> SuspensionDecision {
+pub fn resolve_catalog_state(spec: &OperatorPolicySpec, catalog_name: &str) -> SuspensionDecision {
     // Layer 1: most-specific per-catalog entry.
     if let Some(entry) = spec.workspace_suspend.catalog_entry(catalog_name) {
         if let Some(d) = decision_from_entry(entry, SuspensionSource::Workspace) {
@@ -281,11 +281,7 @@ pub fn check_template_workspace_policy(
             state
                 .metrics
                 .policy_skipped_total
-                .with_label_values(&[
-                    ControllerKind::Template.name(),
-                    source.name(),
-                    &key,
-                ])
+                .with_label_values(&[ControllerKind::Template.name(), source.name(), &key])
                 .inc();
             Some(Action::requeue(POLICY_RECHECK_INTERVAL))
         }
@@ -390,10 +386,7 @@ mod tests {
     /// Pure unit test of the gate logic, decoupled from kube/api state.
     /// Tests directly against the cache rather than constructing a full
     /// `ControllerState` (which requires a live `kube::Client`).
-    fn evaluate(
-        cache: &OperatorPolicyCache,
-        controller: ControllerKind,
-    ) -> (bool, u64) {
+    fn evaluate(cache: &OperatorPolicyCache, controller: ControllerKind) -> (bool, u64) {
         let spec = cache.read();
         let initial_count = cache.skipped();
         let suspended = spec.global_suspend || spec.controller_suspend.is_set(controller);
@@ -602,7 +595,10 @@ mod tests {
             Some(WorkspaceState::Active),
         );
         let d = resolve(&spec);
-        assert!(d.is_active_override(), "template Active overrides catalog Paused");
+        assert!(
+            d.is_active_override(),
+            "template Active overrides catalog Paused"
+        );
         assert_eq!(d.source(), Some(SuspensionSource::Workspace));
     }
 
@@ -850,8 +846,7 @@ mod tests {
         };
 
         // tmpl-healthy (no per-template override) inherits catalog Active.
-        let d_healthy =
-            resolve_template_state(&spec, "ns", "tmpl-healthy", Some("opensource"));
+        let d_healthy = resolve_template_state(&spec, "ns", "tmpl-healthy", Some("opensource"));
         assert!(d_healthy.is_active_override());
 
         // tmpl-broken has explicit Paused — overrides catalog Active.

@@ -381,7 +381,19 @@ pub struct VerifiedBlockedPolicy {
 }
 
 /// What to do when a reactive policy is triggered.
-#[derive(Debug, Clone, Copy, Default, Display, EnumString, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    Display,
+    EnumString,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+)]
 #[serde(rename_all = "camelCase")]
 #[strum(serialize_all = "camelCase")]
 pub enum ReactiveAction {
@@ -567,12 +579,24 @@ pub struct Condition {
 
 impl crate::controller::status::ConditionLike for Condition {
     type Time = DateTime<Utc>;
-    fn condition_type(&self) -> &str { &self.condition_type }
-    fn status(&self) -> &str { &self.status }
-    fn reason(&self) -> &str { &self.reason }
-    fn message(&self) -> &str { &self.message }
-    fn last_transition_time(&self) -> &DateTime<Utc> { &self.last_transition_time }
-    fn set_last_transition_time(&mut self, t: DateTime<Utc>) { self.last_transition_time = t; }
+    fn condition_type(&self) -> &str {
+        &self.condition_type
+    }
+    fn status(&self) -> &str {
+        &self.status
+    }
+    fn reason(&self) -> &str {
+        &self.reason
+    }
+    fn message(&self) -> &str {
+        &self.message
+    }
+    fn last_transition_time(&self) -> &DateTime<Utc> {
+        &self.last_transition_time
+    }
+    fn set_last_transition_time(&mut self, t: DateTime<Utc>) {
+        self.last_transition_time = t;
+    }
 }
 
 fn default_refresh_interval() -> String {

@@ -52,7 +52,10 @@ async fn moved_remote_head_is_observed_as_stale() {
     let head = observe_head(&url, "main", &[])
         .await
         .expect("ls-remote against moved remote");
-    assert_eq!(head, v2, "observe_head must see the new commit (1 RTT, no clone)");
+    assert_eq!(
+        head, v2,
+        "observe_head must see the new commit (1 RTT, no clone)"
+    );
     assert_eq!(
         evaluate_source_freshness(Some(&compiled), &head),
         Freshness::Stale {
@@ -85,7 +88,10 @@ async fn unreachable_remote_errors_so_caller_maps_to_unknown() {
     // source_freshness_check_failures_total counter), never a bogus
     // revision.
     let err = observe_head("file:///nonexistent/definitely/not/a/repo", "main", &[]).await;
-    assert!(err.is_err(), "unreachable remote must error, not fabricate a HEAD");
+    assert!(
+        err.is_err(),
+        "unreachable remote must error, not fabricate a HEAD"
+    );
 }
 
 #[tokio::test]

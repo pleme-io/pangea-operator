@@ -63,8 +63,10 @@ async fn three_axis_composition_persistent_failure_reaches_pause_and_alert() {
     let signatures: Vec<String> = err_variants.iter().map(|m| error_signature(m)).collect();
     // Variants 0 and 1 differ ONLY in workspace path — must canonicalize
     // to one signature (workspace path → <NAME>).
-    assert_eq!(signatures[0], signatures[1],
-        "workspace path stripping must canonicalize to one signature");
+    assert_eq!(
+        signatures[0], signatures[1],
+        "workspace path stripping must canonicalize to one signature"
+    );
     // Variant 2 differs from 0 by trailing hex — must canonicalize to a
     // separate signature (the message has different overall shape with
     // the hex suffix added; strip only canonicalizes WHICH hex, not
@@ -89,19 +91,22 @@ async fn three_axis_composition_persistent_failure_reaches_pause_and_alert() {
     // ── Escalation axis: deeper rung as time grows ───────────────────
     let ladder = EscalationLadder::pangea_default();
     let timeline = [
-        (Duration::from_secs(0),    EscalationAction::Retry),           // 0s → Retry
-        (Duration::from_secs(60),   EscalationAction::Retry),           // 1min → still Retry
-        (Duration::from_secs(300),  EscalationAction::RefreshSource),   // 5min → RefreshSource
-        (Duration::from_secs(900),  EscalationAction::ReloadGems),      // 15min → ReloadGems
-        (Duration::from_secs(1800), EscalationAction::RecycleWorkers),  // 30min → RecycleWorkers
-        (Duration::from_secs(3600), EscalationAction::PauseAndAlert),   // 60min → PauseAndAlert
+        (Duration::from_secs(0), EscalationAction::Retry), // 0s → Retry
+        (Duration::from_secs(60), EscalationAction::Retry), // 1min → still Retry
+        (Duration::from_secs(300), EscalationAction::RefreshSource), // 5min → RefreshSource
+        (Duration::from_secs(900), EscalationAction::ReloadGems), // 15min → ReloadGems
+        (Duration::from_secs(1800), EscalationAction::RecycleWorkers), // 30min → RecycleWorkers
+        (Duration::from_secs(3600), EscalationAction::PauseAndAlert), // 60min → PauseAndAlert
         // Past the deepest rung — stays PauseAndAlert (no overflow).
-        (Duration::from_secs(86400), EscalationAction::PauseAndAlert),   // 24h → still PauseAndAlert
+        (Duration::from_secs(86400), EscalationAction::PauseAndAlert), // 24h → still PauseAndAlert
     ];
     for (dur, expected) in timeline.iter() {
         let picked = ladder.pick(*dur);
-        assert_eq!(picked, *expected,
-            "duration {:?} → expected {:?}, got {:?}", dur, expected, picked);
+        assert_eq!(
+            picked, *expected,
+            "duration {:?} → expected {:?}, got {:?}",
+            dur, expected, picked
+        );
     }
 
     // ── Composite: build AnomalySummary at the deepest rung ──────────
@@ -158,13 +163,20 @@ async fn three_axis_composition_distinct_signatures_track_independently() {
 
     let sig_a = error_signature("Attribute :cluster_name has already been defined");
     let sig_b = error_signature("uninitialized constant Pangea::Resources::Cloudflare");
-    assert_ne!(sig_a, sig_b, "distinct error classes must have distinct signatures");
+    assert_ne!(
+        sig_a, sig_b,
+        "distinct error classes must have distinct signatures"
+    );
 
     let tracker = InMemoryRecurrenceTracker::new();
     let key = "test-ns/test-t";
 
-    for _ in 0..5 { tracker.observe(key, &sig_a); }
-    for _ in 0..3 { tracker.observe(key, &sig_b); }
+    for _ in 0..5 {
+        tracker.observe(key, &sig_a);
+    }
+    for _ in 0..3 {
+        tracker.observe(key, &sig_b);
+    }
 
     let r_a = tracker.peek(key, &sig_a).expect("a observed");
     let r_b = tracker.peek(key, &sig_b).expect("b observed");
@@ -215,9 +227,15 @@ async fn three_axis_composition_action_label_round_trips_through_summary() {
         let registry = EscalationHandlerRegistry::pangea_default_noop();
         let handler = registry.handler_for(action);
 
-        assert_eq!(handler.action().label(), summary.recommended_action,
-            "round-trip action label mismatch for {action:?}");
-        assert_eq!(handler.action().depth(), summary.recommended_depth,
-            "round-trip action depth mismatch for {action:?}");
+        assert_eq!(
+            handler.action().label(),
+            summary.recommended_action,
+            "round-trip action label mismatch for {action:?}"
+        );
+        assert_eq!(
+            handler.action().depth(),
+            summary.recommended_depth,
+            "round-trip action depth mismatch for {action:?}"
+        );
     }
 }

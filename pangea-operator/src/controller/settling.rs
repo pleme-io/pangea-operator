@@ -36,9 +36,16 @@ pub enum SettlingOutcome {
     Progressing { cycles: u32 },
     /// Drift this cycle AND the diff is identical to last cycle —
     /// content-based "stuck" signal. Fires regardless of cycle count.
-    StuckByFingerprint { cycles: u32, fingerprint: String, stuck_addresses: Vec<String> },
+    StuckByFingerprint {
+        cycles: u32,
+        fingerprint: String,
+        stuck_addresses: Vec<String>,
+    },
     /// Drift this cycle AND we've exceeded the count threshold.
-    StuckByCount { cycles: u32, stuck_addresses: Vec<String> },
+    StuckByCount {
+        cycles: u32,
+        stuck_addresses: Vec<String>,
+    },
 }
 
 impl SettlingOutcome {
@@ -181,13 +188,22 @@ mod tests {
     }
 
     fn pol(max: u32, on: SettlingExhaustionAction) -> SettlingPolicy {
-        SettlingPolicy { max_consecutive_drift_cycles: max, on_exhaustion: on }
+        SettlingPolicy {
+            max_consecutive_drift_cycles: max,
+            on_exhaustion: on,
+        }
     }
 
     #[test]
     fn fingerprint_is_stable_across_order() {
-        let a = vec![d("aws_vpc.x", "update", &["a", "b"]), d("aws_subnet.y", "create", &[])];
-        let b = vec![d("aws_subnet.y", "create", &[]), d("aws_vpc.x", "update", &["b", "a"])];
+        let a = vec![
+            d("aws_vpc.x", "update", &["a", "b"]),
+            d("aws_subnet.y", "create", &[]),
+        ];
+        let b = vec![
+            d("aws_subnet.y", "create", &[]),
+            d("aws_vpc.x", "update", &["b", "a"]),
+        ];
         assert_eq!(fingerprint(&a), fingerprint(&b));
     }
 
@@ -261,7 +277,10 @@ mod tests {
             SettlingAction::KeepTrying
         );
         assert_eq!(
-            action_for(&SettlingOutcome::Settled, &pol(5, SettlingExhaustionAction::Fail)),
+            action_for(
+                &SettlingOutcome::Settled,
+                &pol(5, SettlingExhaustionAction::Fail)
+            ),
             SettlingAction::AcceptSettled
         );
     }

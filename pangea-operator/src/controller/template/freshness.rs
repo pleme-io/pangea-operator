@@ -104,11 +104,7 @@ pub async fn git_rev_parse_head(repo_dir: &std::path::Path) -> Result<String> {
 /// commit; a SHA-pinned source is definitionally at its pinned
 /// revision). An empty listing (ref deleted upstream) is an error —
 /// the caller maps any error here to [`Freshness::Unknown`].
-pub async fn observe_head(
-    url: &str,
-    git_ref: &str,
-    env: &[(String, String)],
-) -> Result<String> {
+pub async fn observe_head(url: &str, git_ref: &str, env: &[(String, String)]) -> Result<String> {
     if git_ref.len() == 40 && git_ref.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Ok(git_ref.to_string());
     }
@@ -179,7 +175,10 @@ mod tests {
         let env = non_interactive_git_env(&[("GIT_ASKPASS".into(), "/x/askpass.sh".into())]);
         let has = |k: &str, v: &str| env.iter().any(|(ek, ev)| ek == k && ev == v);
         assert!(has("GIT_ASKPASS", "/x/askpass.sh"), "base auth preserved");
-        assert!(has("GIT_TERMINAL_PROMPT", "0"), "no terminal prompt → fail fast, never hang");
+        assert!(
+            has("GIT_TERMINAL_PROMPT", "0"),
+            "no terminal prompt → fail fast, never hang"
+        );
         assert!(has("GIT_CONFIG_NOSYSTEM", "1"));
         assert!(has("GIT_CONFIG_GLOBAL", "/dev/null"));
     }
@@ -189,7 +188,9 @@ mod tests {
         // If a caller already pinned GIT_TERMINAL_PROMPT, respect it.
         let env = non_interactive_git_env(&[("GIT_TERMINAL_PROMPT".into(), "1".into())]);
         assert_eq!(
-            env.iter().filter(|(k, _)| k == "GIT_TERMINAL_PROMPT").count(),
+            env.iter()
+                .filter(|(k, _)| k == "GIT_TERMINAL_PROMPT")
+                .count(),
             1,
             "no duplicate keys"
         );
@@ -240,8 +241,14 @@ mod tests {
             compiled: Some("abc".into()),
             head: "def".into(),
         };
-        assert_eq!(ready_drift_decision(&stale, false), ReadyAction::RecompileStale);
-        assert_eq!(ready_drift_decision(&stale, true), ReadyAction::RecompileStale);
+        assert_eq!(
+            ready_drift_decision(&stale, false),
+            ReadyAction::RecompileStale
+        );
+        assert_eq!(
+            ready_drift_decision(&stale, true),
+            ReadyAction::RecompileStale
+        );
     }
 
     #[test]

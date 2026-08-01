@@ -7,11 +7,11 @@ use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 use tracing::{error, info};
 
-use crate::crd::{
-    InfrastructureTemplate as CrdTemplate, PangeaNamespace as CrdNamespace,
-};
+use crate::crd::{InfrastructureTemplate as CrdTemplate, PangeaNamespace as CrdNamespace};
 
-use super::types::{InfrastructureTemplate, LogEntry, PangeaNamespace, Phase, PlanResult, TemplateInput};
+use super::types::{
+    InfrastructureTemplate, LogEntry, PangeaNamespace, Phase, PlanResult, TemplateInput,
+};
 
 /// Shared context for GraphQL operations.
 #[derive(Clone)]
@@ -47,7 +47,10 @@ impl QueryRoot {
             Ok(None) => Ok(None),
             Err(e) => {
                 error!(error = %e, "Failed to get template");
-                Err(async_graphql::Error::new(format!("Failed to get template: {}", e)))
+                Err(async_graphql::Error::new(format!(
+                    "Failed to get template: {}",
+                    e
+                )))
             }
         }
     }
@@ -139,18 +142,16 @@ impl QueryRoot {
 
                 if let Some(res) = resources {
                     let has_changes = res.added > 0 || res.changed > 0 || res.destroyed > 0;
-                    let summary = status
-                        .and_then(|s| s.plan_summary.clone())
-                        .unwrap_or_else(|| {
-                            if has_changes {
-                                format!(
-                                    "+{} ~{} -{}",
-                                    res.added, res.changed, res.destroyed
-                                )
-                            } else {
-                                "No changes".to_string()
-                            }
-                        });
+                    let summary =
+                        status
+                            .and_then(|s| s.plan_summary.clone())
+                            .unwrap_or_else(|| {
+                                if has_changes {
+                                    format!("+{} ~{} -{}", res.added, res.changed, res.destroyed)
+                                } else {
+                                    "No changes".to_string()
+                                }
+                            });
 
                     Ok(Some(PlanResult {
                         has_changes,
@@ -181,7 +182,11 @@ pub struct MutationRoot;
 #[Object]
 impl MutationRoot {
     /// Trigger reconciliation for a template.
-    async fn apply(&self, ctx: &Context<'_>, input: TemplateInput) -> Result<InfrastructureTemplate> {
+    async fn apply(
+        &self,
+        ctx: &Context<'_>,
+        input: TemplateInput,
+    ) -> Result<InfrastructureTemplate> {
         let context = ctx.data::<GraphQLContext>()?;
         let api: Api<CrdTemplate> = Api::namespaced(context.client.clone(), &input.namespace);
 

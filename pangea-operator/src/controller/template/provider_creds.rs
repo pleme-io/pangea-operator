@@ -48,25 +48,26 @@ pub async fn resolve_provider_config(
     template: &InfrastructureTemplate,
     state: &ControllerState,
 ) -> Result<Option<serde_json::Value>> {
-    let default_ns = template.namespace().unwrap_or_else(|| "default".to_string());
+    let default_ns = template
+        .namespace()
+        .unwrap_or_else(|| "default".to_string());
 
     let aws_creds = if let Some(aws) = &provider_creds.aws {
-        let ns = aws
-            .secret_ref
-            .namespace
-            .as_deref()
-            .unwrap_or(&default_ns);
+        let ns = aws.secret_ref.namespace.as_deref().unwrap_or(&default_ns);
         let secret_api: Api<Secret> = Api::namespaced(state.client.clone(), ns);
-        let secret = secret_api.get(&aws.secret_ref.name).await.map_err(|_| {
-            Error::SecretNotFound {
-                namespace: ns.to_string(),
-                name: aws.secret_ref.name.clone(),
-            }
-        })?;
+        let secret =
+            secret_api
+                .get(&aws.secret_ref.name)
+                .await
+                .map_err(|_| Error::SecretNotFound {
+                    namespace: ns.to_string(),
+                    name: aws.secret_ref.name.clone(),
+                })?;
 
-        let data = secret.data.as_ref().ok_or_else(|| {
-            Error::Config("AWS credentials secret has no data".into())
-        })?;
+        let data = secret
+            .data
+            .as_ref()
+            .ok_or_else(|| Error::Config("AWS credentials secret has no data".into()))?;
 
         let access_key = data
             .get("access_key")
@@ -95,22 +96,21 @@ pub async fn resolve_provider_config(
     };
 
     let cf_creds = if let Some(cf) = &provider_creds.cloudflare {
-        let ns = cf
-            .secret_ref
-            .namespace
-            .as_deref()
-            .unwrap_or(&default_ns);
+        let ns = cf.secret_ref.namespace.as_deref().unwrap_or(&default_ns);
         let secret_api: Api<Secret> = Api::namespaced(state.client.clone(), ns);
-        let secret = secret_api.get(&cf.secret_ref.name).await.map_err(|_| {
-            Error::SecretNotFound {
-                namespace: ns.to_string(),
-                name: cf.secret_ref.name.clone(),
-            }
-        })?;
+        let secret =
+            secret_api
+                .get(&cf.secret_ref.name)
+                .await
+                .map_err(|_| Error::SecretNotFound {
+                    namespace: ns.to_string(),
+                    name: cf.secret_ref.name.clone(),
+                })?;
 
-        let data = secret.data.as_ref().ok_or_else(|| {
-            Error::Config("Cloudflare credentials secret has no data".into())
-        })?;
+        let data = secret
+            .data
+            .as_ref()
+            .ok_or_else(|| Error::Config("Cloudflare credentials secret has no data".into()))?;
 
         // Several legacy + current key names — be tolerant so the
         // operator works with secrets that follow either the
@@ -132,22 +132,21 @@ pub async fn resolve_provider_config(
     };
 
     let pb_creds = if let Some(pb) = &provider_creds.porkbun {
-        let ns = pb
-            .secret_ref
-            .namespace
-            .as_deref()
-            .unwrap_or(&default_ns);
+        let ns = pb.secret_ref.namespace.as_deref().unwrap_or(&default_ns);
         let secret_api: Api<Secret> = Api::namespaced(state.client.clone(), ns);
-        let secret = secret_api.get(&pb.secret_ref.name).await.map_err(|_| {
-            Error::SecretNotFound {
-                namespace: ns.to_string(),
-                name: pb.secret_ref.name.clone(),
-            }
-        })?;
+        let secret =
+            secret_api
+                .get(&pb.secret_ref.name)
+                .await
+                .map_err(|_| Error::SecretNotFound {
+                    namespace: ns.to_string(),
+                    name: pb.secret_ref.name.clone(),
+                })?;
 
-        let data = secret.data.as_ref().ok_or_else(|| {
-            Error::Config("Porkbun credentials secret has no data".into())
-        })?;
+        let data = secret
+            .data
+            .as_ref()
+            .ok_or_else(|| Error::Config("Porkbun credentials secret has no data".into()))?;
 
         // Tolerant of the terraform-attribute naming (api_key /
         // secret_api_key) and the env-var convention
@@ -191,10 +190,7 @@ pub async fn resolve_provider_config(
 /// string (lossy). The tolerant-key fallbacks mirror
 /// [`resolve_provider_config`] so the magma path accepts the exact
 /// same secret shapes the tofu path does.
-fn first_present(
-    data: &BTreeMap<String, ByteString>,
-    candidates: &[&str],
-) -> Option<String> {
+fn first_present(data: &BTreeMap<String, ByteString>, candidates: &[&str]) -> Option<String> {
     candidates
         .iter()
         .find_map(|k| data.get(*k))
@@ -228,18 +224,22 @@ fn provider_config_object(
 ) -> Option<serde_json::Value> {
     match kind {
         ProviderKind::Cloudflare => {
-            let api_token = first_present(
-                data,
-                &["api_token", "CLOUDFLARE_API_TOKEN", "CF_API_TOKEN"],
-            )?;
+            let api_token =
+                first_present(data, &["api_token", "CLOUDFLARE_API_TOKEN", "CF_API_TOKEN"])?;
             let mut obj = serde_json::Map::new();
-            obj.insert("api_token".to_string(), serde_json::Value::String(api_token));
+            obj.insert(
+                "api_token".to_string(),
+                serde_json::Value::String(api_token),
+            );
             Some(serde_json::Value::Object(obj))
         }
         ProviderKind::Aws => {
             let mut obj = serde_json::Map::new();
             if let Some(region) = aws_region {
-                obj.insert("region".to_string(), serde_json::Value::String(region.to_string()));
+                obj.insert(
+                    "region".to_string(),
+                    serde_json::Value::String(region.to_string()),
+                );
             }
             if let Some(ak) = first_present(data, &["access_key", "AWS_ACCESS_KEY_ID"]) {
                 obj.insert("access_key".to_string(), serde_json::Value::String(ak));
@@ -298,8 +298,14 @@ fn provider_config_object(
             let access_id = first_present(data, &["access_id", "AKEYLESS_ACCESS_ID"])?;
             let access_key = first_present(data, &["access_key", "AKEYLESS_ACCESS_KEY"])?;
             let mut login_obj = serde_json::Map::new();
-            login_obj.insert("access_id".to_string(), serde_json::Value::String(access_id));
-            login_obj.insert("access_key".to_string(), serde_json::Value::String(access_key));
+            login_obj.insert(
+                "access_id".to_string(),
+                serde_json::Value::String(access_id),
+            );
+            login_obj.insert(
+                "access_key".to_string(),
+                serde_json::Value::String(access_key),
+            );
             let mut obj = serde_json::Map::new();
             obj.insert(
                 "api_key_login".to_string(),
@@ -310,9 +316,16 @@ fn provider_config_object(
             // and the bare terraform attr name, tolerant-key style.
             if let Some(gw) = first_present(
                 data,
-                &["api_gateway_address", "AKEYLESS_GATEWAY", "AKEYLESS_API_GATEWAY"],
+                &[
+                    "api_gateway_address",
+                    "AKEYLESS_GATEWAY",
+                    "AKEYLESS_API_GATEWAY",
+                ],
             ) {
-                obj.insert("api_gateway_address".to_string(), serde_json::Value::String(gw));
+                obj.insert(
+                    "api_gateway_address".to_string(),
+                    serde_json::Value::String(gw),
+                );
             }
             Some(serde_json::Value::Object(obj))
         }
@@ -345,7 +358,9 @@ pub async fn resolve_provider_configs(
     template: &InfrastructureTemplate,
     state: &ControllerState,
 ) -> Result<BTreeMap<String, serde_json::Value>> {
-    let default_ns = template.namespace().unwrap_or_else(|| "default".to_string());
+    let default_ns = template
+        .namespace()
+        .unwrap_or_else(|| "default".to_string());
     let aws_region = provider_creds
         .aws
         .as_ref()
@@ -356,12 +371,13 @@ pub async fn resolve_provider_configs(
     for (kind, sref) in provider_creds.iter_secret_refs() {
         let ns = sref.namespace.as_deref().unwrap_or(&default_ns);
         let secret_api: Api<Secret> = Api::namespaced(state.client.clone(), ns);
-        let secret = secret_api.get(&sref.name).await.map_err(|_| {
-            Error::SecretNotFound {
+        let secret = secret_api
+            .get(&sref.name)
+            .await
+            .map_err(|_| Error::SecretNotFound {
                 namespace: ns.to_string(),
                 name: sref.name.clone(),
-            }
-        })?;
+            })?;
 
         let Some(data) = secret.data.as_ref() else {
             // No data block — nothing to forward for this provider.
@@ -391,17 +407,14 @@ pub fn merge_provider_config(
     base: &serde_json::Value,
     rendered: Option<&serde_json::Value>,
 ) -> serde_json::Value {
-    let mut merged: serde_json::Map<String, serde_json::Value> = base
-        .as_object()
-        .cloned()
-        .unwrap_or_default();
+    let mut merged: serde_json::Map<String, serde_json::Value> =
+        base.as_object().cloned().unwrap_or_default();
 
     if let Some(serde_json::Value::Object(rendered_obj)) = rendered {
         for (k, v) in rendered_obj {
             // Rendered tuning wins — but a null/empty rendered value must
             // not erase a real base credential.
-            let is_empty = v.is_null()
-                || matches!(v, serde_json::Value::String(s) if s.is_empty());
+            let is_empty = v.is_null() || matches!(v, serde_json::Value::String(s) if s.is_empty());
             if is_empty && merged.contains_key(k) {
                 continue;
             }

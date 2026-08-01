@@ -78,7 +78,11 @@ pub struct InfrastructureTemplateSpec {
     /// passively: a plan-hash change simply stops matching the old
     /// committed value, so a stale approval never silently re-approves a
     /// DIFFERENT plan without needing an explicit clear.
-    #[serde(default, rename = "approvedPlanHash", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "approvedPlanHash",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub spec_approved_plan_hash: Option<String>,
 
     /// Interval for drift detection checks.
@@ -1431,7 +1435,9 @@ pub struct ResourceOutcome {
 /// from tofu's lower-level action vocabulary (`create`/`update`/
 /// `delete`/`replace`/`no-op`) plus the apply outcome plus policy
 /// gating.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, EnumString,
+)]
 #[serde(rename_all = "PascalCase")]
 #[strum(serialize_all = "PascalCase")]
 pub enum Outcome {
@@ -1458,7 +1464,19 @@ pub enum Outcome {
 }
 
 /// Lifecycle phase of an InfrastructureTemplate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, EnumString, Default)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    Display,
+    EnumString,
+    Default,
+)]
 pub enum Phase {
     /// Initial state, waiting to be processed.
     #[default]
@@ -1549,12 +1567,24 @@ pub struct Condition {
 /// would have to hand-roll its own condition comparison.
 impl crate::controller::status::ConditionLike for Condition {
     type Time = DateTime<Utc>;
-    fn condition_type(&self) -> &str { &self.r#type }
-    fn status(&self) -> &str { &self.status }
-    fn reason(&self) -> &str { &self.reason }
-    fn message(&self) -> &str { &self.message }
-    fn last_transition_time(&self) -> &DateTime<Utc> { &self.last_transition_time }
-    fn set_last_transition_time(&mut self, t: DateTime<Utc>) { self.last_transition_time = t; }
+    fn condition_type(&self) -> &str {
+        &self.r#type
+    }
+    fn status(&self) -> &str {
+        &self.status
+    }
+    fn reason(&self) -> &str {
+        &self.reason
+    }
+    fn message(&self) -> &str {
+        &self.message
+    }
+    fn last_transition_time(&self) -> &DateTime<Utc> {
+        &self.last_transition_time
+    }
+    fn set_last_transition_time(&mut self, t: DateTime<Utc>) {
+        self.last_transition_time = t;
+    }
 }
 
 /// Summary of managed resources.
@@ -1932,10 +1962,7 @@ impl InfrastructureTemplate {
 
     /// Get the effective retry count.
     pub fn retry_count(&self) -> u32 {
-        self.status
-            .as_ref()
-            .map(|s| s.failure_count)
-            .unwrap_or(0)
+        self.status.as_ref().map(|s| s.failure_count).unwrap_or(0)
     }
 
     /// Check if retries are exhausted.

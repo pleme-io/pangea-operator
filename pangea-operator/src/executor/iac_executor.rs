@@ -98,12 +98,7 @@ pub trait IacExecutor: Send + Sync + 'static {
     /// resource into state without recreating it. The auto-import
     /// path drives this for every create-action whose natural-id
     /// can be substituted from plan attributes.
-    async fn import(
-        &self,
-        work_dir: &Path,
-        address: &str,
-        id: &str,
-    ) -> Result<TofuResult>;
+    async fn import(&self, work_dir: &Path, address: &str, id: &str) -> Result<TofuResult>;
 
     /// Magma-native, **disk-free**, **tofu-format-free** plan readback
     /// for import discovery.

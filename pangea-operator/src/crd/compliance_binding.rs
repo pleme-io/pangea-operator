@@ -118,11 +118,18 @@ pub struct BindingTarget {
 }
 
 /// Supported target resource kinds.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Display,
-         gen_platform::TypedDispatcher,
-         gen_platform::Discriminant,
-         gen_platform::IsVariant,
-         gen_platform::FromStrKind)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    Display,
+    gen_platform::TypedDispatcher,
+    gen_platform::Discriminant,
+    gen_platform::IsVariant,
+    gen_platform::FromStrKind,
+)]
 pub enum TargetKind {
     InfrastructureTemplate,
     InfrastructureFlow,

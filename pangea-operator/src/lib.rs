@@ -42,8 +42,8 @@ pub mod chart_values;
 // Typed shikumi progressive-discovery config surface (the operator's whole
 // env surface as one TieredConfig). See src/config.rs.
 pub mod config;
-pub mod crd;
 pub mod controller;
+pub mod crd;
 // Bounded, in-flight-aware shutdown drain — waits on the admission budget
 // instead of a fixed sleep, so an eviction mid-cycle stops discarding tens of
 // minutes of provider work. See src/drain.rs.

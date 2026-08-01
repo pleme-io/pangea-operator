@@ -93,12 +93,12 @@ async fn auth_middleware(
                 (StatusCode::UNAUTHORIZED, "Invalid token").into_response()
             }
         }
-        Some(_) => {
-            (StatusCode::UNAUTHORIZED, "Invalid authorization format, expected: Bearer <token>").into_response()
-        }
-        None => {
-            (StatusCode::UNAUTHORIZED, "Missing Authorization header").into_response()
-        }
+        Some(_) => (
+            StatusCode::UNAUTHORIZED,
+            "Invalid authorization format, expected: Bearer <token>",
+        )
+            .into_response(),
+        None => (StatusCode::UNAUTHORIZED, "Missing Authorization header").into_response(),
     }
 }
 
@@ -111,9 +111,7 @@ async fn graphql_handler(
 }
 
 /// GraphQL Playground handler.
-async fn graphql_playground(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+async fn graphql_playground(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     if !state.config.enable_playground {
         return (StatusCode::NOT_FOUND, "Playground disabled").into_response();
     }
@@ -148,11 +146,13 @@ pub fn graphql_router(schema: PangeaSchema) -> Router {
     let protected_routes = Router::new()
         .route("/graphql", post(graphql_handler))
         .route("/graphql/ws", get(graphql_ws_handler))
-        .route_layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth_middleware,
+        ));
 
     // Public routes (playground - can be disabled via config)
-    let public_routes = Router::new()
-        .route("/graphql", get(graphql_playground));
+    let public_routes = Router::new().route("/graphql", get(graphql_playground));
 
     Router::new()
         .merge(protected_routes)

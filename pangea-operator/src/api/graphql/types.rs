@@ -7,8 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::crd::{
-    self, InfrastructureTemplate as CrdTemplate,
-    PangeaNamespace as CrdNamespace, Phase as CrdPhase,
+    self, InfrastructureTemplate as CrdTemplate, PangeaNamespace as CrdNamespace, Phase as CrdPhase,
 };
 
 /// Lifecycle phase of an InfrastructureTemplate.
@@ -327,7 +326,10 @@ impl InfrastructureTemplate {
 
     /// Last error message.
     async fn last_error(&self) -> Option<String> {
-        self.inner.status.as_ref().and_then(|s| s.last_error.clone())
+        self.inner
+            .status
+            .as_ref()
+            .and_then(|s| s.last_error.clone())
     }
 
     /// Failure count.

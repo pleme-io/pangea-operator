@@ -72,9 +72,11 @@ pub fn ruby_value_to_json(value: Value) -> Result<Json, EvalError> {
 
     // Try symbol.
     if let Some(sym) = Symbol::from_value(value) {
-        return Ok(Json::String(sym.name().map_err(|e| {
-            EvalError::Conversion(format!("symbol name() failed: {e:?}"))
-        })?.into_owned()));
+        return Ok(Json::String(
+            sym.name()
+                .map_err(|e| EvalError::Conversion(format!("symbol name() failed: {e:?}")))?
+                .into_owned(),
+        ));
     }
 
     // Try array.
@@ -206,4 +208,3 @@ pub fn json_to_ruby(ruby: &magnus::Ruby, value: &Json) -> Result<Value, EvalErro
         }
     }
 }
-

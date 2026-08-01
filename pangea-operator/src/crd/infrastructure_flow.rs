@@ -125,7 +125,9 @@ fn default_max_delay() -> String {
 }
 
 /// Backoff strategy for retries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, EnumString,
+)]
 #[serde(rename_all = "camelCase")]
 pub enum BackoffStrategy {
     Exponential,
@@ -154,7 +156,9 @@ pub struct FlowTemplateRef {
 }
 
 /// Destroy ordering strategy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, EnumString,
+)]
 #[serde(rename_all = "camelCase")]
 pub enum DestroyOrder {
     /// Destroy in reverse dependency order (default).
@@ -205,7 +209,19 @@ pub struct InfrastructureFlowStatus {
 }
 
 /// Phase of an InfrastructureFlow.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, EnumString, Default)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    Display,
+    EnumString,
+    Default,
+)]
 pub enum FlowPhase {
     /// Waiting to start.
     #[default]

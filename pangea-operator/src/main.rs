@@ -11,7 +11,7 @@ use pangea_operator::{
     crd::generate_crds,
     error::Result,
     executor::ExecutorConfig,
-    leader::{Leadership, LeaderConfig, LeaderElector},
+    leader::{LeaderConfig, LeaderElector, Leadership},
     observability::{init_tracing, run_health_server, Metrics, ShuttingDown},
 };
 
@@ -106,7 +106,10 @@ async fn main() -> Result<()> {
     // mirror of values.yaml) via schemars + a hand-spliced
     // useEmbeddedRuby/gemAuth conditional.
     if env::args().any(|arg| arg == "--generate-values-schema") {
-        print!("{}", pangea_operator::chart_values::generate_values_schema_json());
+        print!(
+            "{}",
+            pangea_operator::chart_values::generate_values_schema_json()
+        );
         return Ok(());
     }
 
@@ -181,7 +184,10 @@ async fn main() -> Result<()> {
                 // default to 4 once the metrics from S1 confirm
                 // the pool is healthy.
                 let n_workers: usize = op_cfg.compiler.ruby_workers;
-                info!(workers = n_workers, "Compiler backend: embedded magnus + gem cache");
+                info!(
+                    workers = n_workers,
+                    "Compiler backend: embedded magnus + gem cache"
+                );
                 let cache = pangea_operator::ruby::GemCache::from_env();
                 let pool = pangea_operator::ruby::RubyPool::spawn(n_workers, vec![])
                     .await
@@ -190,11 +196,9 @@ async fn main() -> Result<()> {
                 // Attach metrics so every dispatcher call emits
                 // pangea_compile_queue_depth + pangea_compile_request_seconds
                 // — see observability/metrics.rs S1 docstring.
-                let backend = pangea_operator::ruby::EmbeddedCompilerBackend::with_cache(
-                    pool,
-                    cache,
-                )
-                .with_metrics(metrics.clone());
+                let backend =
+                    pangea_operator::ruby::EmbeddedCompilerBackend::with_cache(pool, cache)
+                        .with_metrics(metrics.clone());
                 std::sync::Arc::new(backend)
             }
             // Fail loud: embedded was requested but the feature isn't compiled
@@ -330,9 +334,13 @@ async fn main() -> Result<()> {
     let health_addr = config.health_addr;
     let health_shutting_down = shutting_down.clone();
     tokio::spawn(async move {
-        if let Err(e) =
-            run_health_server(health_addr, health_metrics, health_ready_pool, health_shutting_down)
-                .await
+        if let Err(e) = run_health_server(
+            health_addr,
+            health_metrics,
+            health_ready_pool,
+            health_shutting_down,
+        )
+        .await
         {
             error!(error = %e, "Health server error");
         }
@@ -404,7 +412,9 @@ async fn main() -> Result<()> {
             }
         }
     } else {
-        info!("Leader election disabled (LEADER_ELECTION=false) — starting controllers immediately");
+        info!(
+            "Leader election disabled (LEADER_ELECTION=false) — starting controllers immediately"
+        );
         None
     };
 
@@ -522,7 +532,9 @@ async fn main() -> Result<()> {
     let wsc_metrics = state.metrics.clone();
     let workspace_catalog_controller = tokio::spawn(async move {
         pangea_operator::controller::workspace_catalog_controller::run(
-            wsc_client, wsc_policy, wsc_metrics,
+            wsc_client,
+            wsc_policy,
+            wsc_metrics,
         )
         .await;
         error!("WorkspaceCatalog controller exited");
@@ -705,11 +717,17 @@ async fn main() -> Result<()> {
 /// ever starts). Every failure path here returns `Err` (non-zero exit),
 /// the inverse of the main path's converge-don't-crash posture.
 async fn run_migrate() -> Result<()> {
-    info!(version = env!("CARGO_PKG_VERSION"), "Running pangea-operator --migrate");
+    info!(
+        version = env!("CARGO_PKG_VERSION"),
+        "Running pangea-operator --migrate"
+    );
 
-    let pg_password = env::var("PGPASSWORD").ok().filter(|p| !p.is_empty()).ok_or_else(|| {
-        pangea_operator::error::Error::Config("--migrate requires PGPASSWORD to be set".into())
-    })?;
+    let pg_password = env::var("PGPASSWORD")
+        .ok()
+        .filter(|p| !p.is_empty())
+        .ok_or_else(|| {
+            pangea_operator::error::Error::Config("--migrate requires PGPASSWORD to be set".into())
+        })?;
 
     let resolved = pangea_operator::config::OperatorConfig::resolve();
     let op_cfg = resolved.into_value();
@@ -745,4 +763,3 @@ async fn run_migrate() -> Result<()> {
     info!("--migrate: schema ensured successfully");
     Ok(())
 }
-

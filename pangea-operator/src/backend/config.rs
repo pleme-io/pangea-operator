@@ -3,9 +3,9 @@
 //! Generates the backend configuration files needed for OpenTofu
 //! to use PostgreSQL as its state backend.
 
+use super::Credentials;
 use crate::crd::{PangeaNamespace, PostgresBackendConfig};
 use crate::error::Result;
-use super::Credentials;
 use std::path::Path;
 use tracing::debug;
 
@@ -21,20 +21,16 @@ impl BackendConfigGenerator {
         template_name: &str,
         credentials: &Credentials,
     ) -> Result<serde_json::Value> {
-        let pg = namespace
-            .spec
-            .backend
-            .pg
-            .as_ref()
-            .ok_or_else(|| crate::error::Error::Config("Missing PostgreSQL configuration".into()))?;
+        let pg = namespace.spec.backend.pg.as_ref().ok_or_else(|| {
+            crate::error::Error::Config("Missing PostgreSQL configuration".into())
+        })?;
 
         let schema_name = namespace.schema_name();
         let conn_str = build_conn_str(pg, credentials);
 
         debug!(
             schema_name,
-            template_name,
-            "Generating backend configuration"
+            template_name, "Generating backend configuration"
         );
 
         // Generate backend configuration matching OpenTofu pg backend
@@ -106,8 +102,14 @@ impl BackendConfigGenerator {
             aws_config.insert("region".to_string(), serde_json::json!(region));
 
             if let Some(creds) = aws_credentials {
-                aws_config.insert("access_key".to_string(), serde_json::json!(creds.access_key));
-                aws_config.insert("secret_key".to_string(), serde_json::json!(creds.secret_key));
+                aws_config.insert(
+                    "access_key".to_string(),
+                    serde_json::json!(creds.access_key),
+                );
+                aws_config.insert(
+                    "secret_key".to_string(),
+                    serde_json::json!(creds.secret_key),
+                );
                 if let Some(token) = &creds.session_token {
                     aws_config.insert("token".to_string(), serde_json::json!(token));
                 }
@@ -120,7 +122,10 @@ impl BackendConfigGenerator {
             let mut cf_config = serde_json::Map::new();
             cf_config.insert("api_token".to_string(), serde_json::json!(creds.api_token));
 
-            providers.insert("cloudflare".to_string(), serde_json::Value::Object(cf_config));
+            providers.insert(
+                "cloudflare".to_string(),
+                serde_json::Value::Object(cf_config),
+            );
         }
 
         if let Some(creds) = porkbun_credentials {
@@ -304,7 +309,10 @@ mod tests {
         )
         .expect("cloudflare config produces a non-empty provider block");
 
-        assert_eq!(config["provider"]["cloudflare"]["api_token"], "cf-token-xyz");
+        assert_eq!(
+            config["provider"]["cloudflare"]["api_token"],
+            "cf-token-xyz"
+        );
         assert!(config["provider"].get("aws").is_none());
     }
 

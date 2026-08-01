@@ -54,7 +54,10 @@ impl StateLock {
     ) -> Result<LockGuard> {
         let lock_id = compute_lock_id(schema_name, template_name);
 
-        debug!(lock_id, schema_name, template_name, holder, "Trying to acquire lock");
+        debug!(
+            lock_id,
+            schema_name, template_name, holder, "Trying to acquire lock"
+        );
 
         // Try to acquire session-level advisory lock (non-blocking)
         let row: (bool,) = sqlx::query_as("SELECT pg_try_advisory_lock($1)")
@@ -67,7 +70,9 @@ impl StateLock {
             info!(lock_id, schema_name, template_name, "Lock acquired");
 
             // Record lock in tracking table (best effort)
-            let _ = self.record_lock(lock_id, schema_name, template_name, holder).await;
+            let _ = self
+                .record_lock(lock_id, schema_name, template_name, holder)
+                .await;
 
             Ok(LockGuard {
                 pool: self.pool.clone(),
@@ -75,7 +80,10 @@ impl StateLock {
                 released: false,
             })
         } else {
-            warn!(lock_id, schema_name, template_name, "Lock held by another process");
+            warn!(
+                lock_id,
+                schema_name, template_name, "Lock held by another process"
+            );
             Err(Error::LockFailed(format!(
                 "State lock for {}/{} is held by another process",
                 schema_name, template_name
@@ -94,7 +102,10 @@ impl StateLock {
         let lock_id = compute_lock_id(schema_name, template_name);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
 
-        debug!(lock_id, schema_name, template_name, timeout_secs, "Waiting for lock");
+        debug!(
+            lock_id,
+            schema_name, template_name, timeout_secs, "Waiting for lock"
+        );
 
         while std::time::Instant::now() < deadline {
             match self.try_acquire(schema_name, template_name, holder).await {
@@ -243,7 +254,10 @@ impl LockGuard {
         if row.0 {
             debug!(lock_id = self.lock_id, "Lock released");
         } else {
-            warn!(lock_id = self.lock_id, "Lock was not held (already released?)");
+            warn!(
+                lock_id = self.lock_id,
+                "Lock was not held (already released?)"
+            );
         }
 
         Ok(())

@@ -39,7 +39,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use pangea_operator::ruby::{CompileRequest, CompilerBackend, EmbeddedCompilerBackend, RubyPool, RubyRequest};
+use pangea_operator::ruby::{
+    CompileRequest, CompilerBackend, EmbeddedCompilerBackend, RubyPool, RubyRequest,
+};
 use tokio::sync::oneshot;
 
 /// The gem-cache root name the live `purge_feature_prefixes` hardcodes
@@ -90,10 +92,15 @@ fn write_file(path: &Path, body: &str) {
 async fn eval(pool: &RubyPool, source: &str) -> Result<serde_json::Value, String> {
     let (tx, rx) = oneshot::channel();
     pool.next_sender()
-        .send(RubyRequest::Eval { source: source.to_string(), respond: tx })
+        .send(RubyRequest::Eval {
+            source: source.to_string(),
+            respond: tx,
+        })
         .await
         .map_err(|_| "ruby channel closed".to_string())?;
-    rx.await.map_err(|_| "eval reply lost".to_string())?.map_err(|e| e.to_string())
+    rx.await
+        .map_err(|_| "eval reply lost".to_string())?
+        .map_err(|e| e.to_string())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -138,24 +145,40 @@ async fn dual_gem_load_reproduces_uninitialized_open_source_repo() {
 
     // Put the dry-struct stub on $LOAD_PATH (permanent) so both copies' require
     // of 'dry-struct' resolves to the single surviving registry.
-    pool.broadcast_prepend_load_path(stubs.clone()).await.expect("prepend stubs");
+    pool.broadcast_prepend_load_path(stubs.clone())
+        .await
+        .expect("prepend stubs");
 
     // A minimal TerraformSynthesizer so the compile's synthesis phase completes
     // (production bundles terraform-synthesizer; the harness doesn't). Lets a
     // SUCCESSFUL mirror compile return Ok — the real proof the dual-load is gone.
-    eval(&pool, "class TerraformSynthesizer; def synthesis; {}; end; end; nil")
-        .await
-        .expect("define TerraformSynthesizer stub");
+    eval(
+        &pool,
+        "class TerraformSynthesizer; def synthesis; {}; end; end; nil",
+    )
+    .await
+    .expect("define TerraformSynthesizer stub");
 
     // STEP A — prime the gem copy: prepend the gem lib, require types once →
     // OpenSourceRepo defined, attribute :cluster_name registered once.
-    pool.broadcast_prepend_load_path(gem_lib.clone()).await.expect("prepend gem lib");
+    pool.broadcast_prepend_load_path(gem_lib.clone())
+        .await
+        .expect("prepend gem lib");
     eval(&pool, "require 'pangea/architectures/types'; nil")
         .await
         .expect("STEP A: the gem copy loads cleanly once");
     // Sanity: it's defined exactly once now.
-    let defined = eval(&pool, "Pangea::Architectures.const_defined?(:OpenSourceRepo)").await.unwrap();
-    assert_eq!(defined, serde_json::json!(true), "STEP A primed OpenSourceRepo");
+    let defined = eval(
+        &pool,
+        "Pangea::Architectures.const_defined?(:OpenSourceRepo)",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        defined,
+        serde_json::json!(true),
+        "STEP A primed OpenSourceRepo"
+    );
 
     // ── PROBE (M1) — capture the EXACT Ruby mechanism, with its message ──
     // Re-load the CLONE copy directly (a second execution of the same logical
@@ -213,20 +236,28 @@ async fn dual_gem_load_reproduces_uninitialized_open_source_repo() {
     // succeeds. (The PROBE above shows the raw double-load STILL raises — the fix
     // works by AVOIDING the second execution, not by suppressing the symptom.) ──
     match &result {
-        Ok(_) => eprintln!("M2 FIX VERIFIED: the dual-mount compile now SUCCEEDS (gem-mirror skip-prepend)"),
+        Ok(_) => eprintln!(
+            "M2 FIX VERIFIED: the dual-mount compile now SUCCEEDS (gem-mirror skip-prepend)"
+        ),
         Err(e) => {
             let msg = e.to_string();
             // A regression would surface the redefinition / uninitialized constant.
             assert!(
                 !msg.contains("has already been defined")
                     && !msg.contains("RuntimeError")
-                    && !msg.contains("uninitialized constant Pangea::Architectures::OpenSourceRepo"),
+                    && !msg
+                        .contains("uninitialized constant Pangea::Architectures::OpenSourceRepo"),
                 "FIX REGRESSED — the dual-load failure is back: {msg}"
             );
-            panic!("the mirror compile failed for an unrelated reason (not the dual-load bug): {msg}");
+            panic!(
+                "the mirror compile failed for an unrelated reason (not the dual-load bug): {msg}"
+            );
         }
     }
-    assert!(result.is_ok(), "the gem-mirror compile must succeed with the skip-prepend fix");
+    assert!(
+        result.is_ok(),
+        "the gem-mirror compile must succeed with the skip-prepend fix"
+    );
 
     let _keep: &Arc<RubyPool> = &pool; // keep the VM alive to the end
     let _ = PathBuf::from(&tmp); // tmp left for inspection

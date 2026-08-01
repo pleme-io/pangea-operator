@@ -165,7 +165,10 @@ async fn reconcile(
         // Execute reactions
         for reaction in &binding.spec.reactions {
             let event_matches = match (&reaction.event, &compliance_state) {
-                (crate::crd::ComplianceEvent::NonCompliant, BindingComplianceState::NonCompliant) => true,
+                (
+                    crate::crd::ComplianceEvent::NonCompliant,
+                    BindingComplianceState::NonCompliant,
+                ) => true,
                 (crate::crd::ComplianceEvent::Compliant, BindingComplianceState::Compliant) => true,
                 (crate::crd::ComplianceEvent::Error, BindingComplianceState::Unknown) => true,
                 _ => false,
@@ -186,10 +189,7 @@ async fn reconcile(
     }
 
     // Update binding status
-    let compliance_hash = cs
-        .status
-        .as_ref()
-        .and_then(|s| s.compliance_hash.clone());
+    let compliance_hash = cs.status.as_ref().and_then(|s| s.compliance_hash.clone());
 
     let target_statuses: Vec<TargetStatus> = binding
         .spec
@@ -199,12 +199,22 @@ async fn reconcile(
             kind: t.kind.clone(),
             name: t.name.clone(),
             gated: compliance_state == BindingComplianceState::NonCompliant
-                && matches!(binding.spec.enforcement, EnforcementLevel::Gate | EnforcementLevel::Rollback),
+                && matches!(
+                    binding.spec.enforcement,
+                    EnforcementLevel::Gate | EnforcementLevel::Rollback
+                ),
             last_action: None,
         })
         .collect();
 
-    update_full_status(&binding, compliance_state, &target_statuses, compliance_hash.as_deref(), &state).await?;
+    update_full_status(
+        &binding,
+        compliance_state,
+        &target_statuses,
+        compliance_hash.as_deref(),
+        &state,
+    )
+    .await?;
 
     Ok(Action::requeue(SHORT_REQUEUE_INTERVAL))
 }
@@ -239,29 +249,30 @@ async fn enforce_on_targets(
                     .map_err(Error::Kube)?;
             }
             TargetKind::InfrastructureFlow => {
-                let api: Api<InfrastructureFlow> =
-                    Api::namespaced(state.client.clone(), target_ns);
+                let api: Api<InfrastructureFlow> = Api::namespaced(state.client.clone(), target_ns);
                 api.patch(&target.name, &pp, &Patch::Merge(&suspend_patch))
                     .await
                     .map_err(Error::Kube)?;
             }
             TargetKind::ImagePipeline => {
-                let api: Api<ImagePipeline> =
-                    Api::namespaced(state.client.clone(), target_ns);
+                let api: Api<ImagePipeline> = Api::namespaced(state.client.clone(), target_ns);
                 api.patch(&target.name, &pp, &Patch::Merge(&suspend_patch))
                     .await
                     .map_err(Error::Kube)?;
             }
             TargetKind::PackerBuild => {
-                let api: Api<PackerBuild> =
-                    Api::namespaced(state.client.clone(), target_ns);
+                let api: Api<PackerBuild> = Api::namespaced(state.client.clone(), target_ns);
                 api.patch(&target.name, &pp, &Patch::Merge(&suspend_patch))
                     .await
                     .map_err(Error::Kube)?;
             }
         }
 
-        let action = if should_suspend { "suspended" } else { "resumed" };
+        let action = if should_suspend {
+            "suspended"
+        } else {
+            "resumed"
+        };
         info!(target = %target.name, kind = %target.kind, action, "Enforcement applied");
     }
 
@@ -472,8 +483,7 @@ async fn request_target_reconcile(binding: &ComplianceBinding, state: &Controlle
                     .map(|_| ())
             }
             TargetKind::InfrastructureFlow => {
-                let api: Api<InfrastructureFlow> =
-                    Api::namespaced(state.client.clone(), target_ns);
+                let api: Api<InfrastructureFlow> = Api::namespaced(state.client.clone(), target_ns);
                 api.patch(&target.name, &pp, &Patch::Merge(&patch))
                     .await
                     .map(|_| ())
@@ -646,10 +656,8 @@ fn binding_status_needs_patch(
     let prev_observed_gen = prev.map(|s| s.observed_generation).unwrap_or(0);
     let prev_conditions: &[crate::crd::Condition] =
         prev.map(|s| s.conditions.as_slice()).unwrap_or(&[]);
-    let conditions_match = crate::controller::status::conditions_observably_equal(
-        prev_conditions,
-        new_conditions,
-    );
+    let conditions_match =
+        crate::controller::status::conditions_observably_equal(prev_conditions, new_conditions);
     !conditions_match
         || prev_state != Some(new_state)
         || prev_target_count != new_target_count
@@ -674,8 +682,15 @@ mod tests {
             reason: reason.into(),
             message: msg.into(),
             last_transition_time: chrono::TimeZone::with_ymd_and_hms(
-                &chrono::Utc, 2025, 1, 1, 0, 0, 0
-            ).unwrap(),
+                &chrono::Utc,
+                2025,
+                1,
+                1,
+                0,
+                0,
+                0,
+            )
+            .unwrap(),
         }
     }
 
@@ -829,7 +844,10 @@ mod tests {
             assert_eq!(format!("{:?}", v), format!("{:?}", back));
         }
         // Default is Unknown — the binding starts in observation mode.
-        assert_eq!(BindingComplianceState::default(), BindingComplianceState::Unknown);
+        assert_eq!(
+            BindingComplianceState::default(),
+            BindingComplianceState::Unknown
+        );
     }
 
     // ── ReactionAction::Event / ::Reconcile — was a silent no-op TODO,
@@ -878,7 +896,10 @@ mod tests {
         for (kind, expected_kind) in cases {
             let t = target(kind, "my-target");
             let obj_ref = target_object_ref(&t, "my-ns");
-            assert_eq!(obj_ref.api_version.as_deref(), Some("pangea.pleme.io/v1alpha1"));
+            assert_eq!(
+                obj_ref.api_version.as_deref(),
+                Some("pangea.pleme.io/v1alpha1")
+            );
             assert_eq!(obj_ref.kind.as_deref(), Some(expected_kind));
             assert_eq!(obj_ref.name.as_deref(), Some("my-target"));
             assert_eq!(obj_ref.namespace.as_deref(), Some("my-ns"));
@@ -907,7 +928,10 @@ mod tests {
 
     #[test]
     fn reaction_event_maps_noncompliant_to_warning() {
-        let r = reaction(ComplianceEvent::NonCompliant, crate::crd::ReactionAction::Event);
+        let r = reaction(
+            ComplianceEvent::NonCompliant,
+            crate::crd::ReactionAction::Event,
+        );
         let (event_type, reason) = reaction_event_type_and_reason(&r);
         assert_eq!(event_type, EventType::Warning);
         assert_eq!(reason, "ComplianceNonCompliant");
@@ -915,7 +939,10 @@ mod tests {
 
     #[test]
     fn reaction_event_maps_compliant_to_normal() {
-        let r = reaction(ComplianceEvent::Compliant, crate::crd::ReactionAction::Event);
+        let r = reaction(
+            ComplianceEvent::Compliant,
+            crate::crd::ReactionAction::Event,
+        );
         let (event_type, reason) = reaction_event_type_and_reason(&r);
         assert_eq!(event_type, EventType::Normal);
         assert_eq!(reason, "ComplianceCompliant");
@@ -930,13 +957,19 @@ mod tests {
 
     #[test]
     fn reaction_message_falls_back_to_default() {
-        let r = reaction(ComplianceEvent::NonCompliant, crate::crd::ReactionAction::Event);
+        let r = reaction(
+            ComplianceEvent::NonCompliant,
+            crate::crd::ReactionAction::Event,
+        );
         assert_eq!(reaction_message(&r), "Compliance state changed");
     }
 
     #[test]
     fn reaction_message_uses_template_when_set() {
-        let mut r = reaction(ComplianceEvent::NonCompliant, crate::crd::ReactionAction::Event);
+        let mut r = reaction(
+            ComplianceEvent::NonCompliant,
+            crate::crd::ReactionAction::Event,
+        );
         r.message_template = Some("custom message".into());
         assert_eq!(reaction_message(&r), "custom message");
     }
@@ -945,7 +978,10 @@ mod tests {
     fn reconcile_request_patch_carries_the_shared_annotation_key() {
         // Same annotation key the GraphQL `apply` mutation already
         // patches onto InfrastructureTemplate — one convention, not two.
-        assert_eq!(RECONCILE_REQUESTED_ANNOTATION, "pangea.pleme.io/reconcile-requested");
+        assert_eq!(
+            RECONCILE_REQUESTED_ANNOTATION,
+            "pangea.pleme.io/reconcile-requested"
+        );
 
         let ts = chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2026, 7, 19, 0, 0, 0).unwrap();
         let patch = reconcile_request_patch(ts);

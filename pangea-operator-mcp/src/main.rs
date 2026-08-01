@@ -27,8 +27,14 @@ async fn main() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("failed to initialise kube client: {e}"))?;
     let server = PangeaOperatorMcp::new(Arc::new(store));
 
-    let service = server.serve(stdio()).await.map_err(|e| anyhow::anyhow!("serve: {e}"))?;
-    service.waiting().await.map_err(|e| anyhow::anyhow!("waiting: {e}"))?;
+    let service = server
+        .serve(stdio())
+        .await
+        .map_err(|e| anyhow::anyhow!("serve: {e}"))?;
+    service
+        .waiting()
+        .await
+        .map_err(|e| anyhow::anyhow!("waiting: {e}"))?;
 
     tracing::info!("pangea-operator-mcp exiting");
     Ok(())

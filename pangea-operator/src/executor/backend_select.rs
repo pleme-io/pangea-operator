@@ -48,7 +48,7 @@ impl ExecutorBackend {
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim().to_lowercase().as_str() {
             "tofu" | "opentofu" => Some(ExecutorBackend::Tofu),
-            "magma"             => Some(ExecutorBackend::Magma),
+            "magma" => Some(ExecutorBackend::Magma),
             _ => None,
         }
     }
@@ -56,7 +56,7 @@ impl ExecutorBackend {
     /// String label suitable for logs and metrics.
     pub fn label(&self) -> &'static str {
         match self {
-            ExecutorBackend::Tofu  => "tofu",
+            ExecutorBackend::Tofu => "tofu",
             ExecutorBackend::Magma => "magma",
         }
     }
@@ -122,19 +122,31 @@ mod tests {
 
     #[test]
     fn case_insensitive() {
-        assert_eq!(ExecutorBackend::resolve(Some("MAGMA"), None), ExecutorBackend::Magma);
-        assert_eq!(ExecutorBackend::resolve(Some("Tofu"),  None), ExecutorBackend::Tofu);
-        assert_eq!(ExecutorBackend::resolve(Some("opentofu"), None), ExecutorBackend::Tofu);
+        assert_eq!(
+            ExecutorBackend::resolve(Some("MAGMA"), None),
+            ExecutorBackend::Magma
+        );
+        assert_eq!(
+            ExecutorBackend::resolve(Some("Tofu"), None),
+            ExecutorBackend::Tofu
+        );
+        assert_eq!(
+            ExecutorBackend::resolve(Some("opentofu"), None),
+            ExecutorBackend::Tofu
+        );
     }
 
     #[test]
     fn whitespace_tolerated() {
-        assert_eq!(ExecutorBackend::resolve(Some("  magma  "), None), ExecutorBackend::Magma);
+        assert_eq!(
+            ExecutorBackend::resolve(Some("  magma  "), None),
+            ExecutorBackend::Magma
+        );
     }
 
     #[test]
     fn label_matches_canonical_name() {
-        assert_eq!(ExecutorBackend::Tofu.label(),  "tofu");
+        assert_eq!(ExecutorBackend::Tofu.label(), "tofu");
         assert_eq!(ExecutorBackend::Magma.label(), "magma");
     }
 
@@ -174,7 +186,14 @@ mod tests {
     fn resolve_does_not_panic_on_garbage_input() {
         // No matter what byte sequence comes in via CR or env,
         // resolve must return a valid backend (never panic).
-        for garbage in ["", "?", "tofu;rm -rf /", "magma\n", "MAGMA\0", "\x00\x01\x02"] {
+        for garbage in [
+            "",
+            "?",
+            "tofu;rm -rf /",
+            "magma\n",
+            "MAGMA\0",
+            "\x00\x01\x02",
+        ] {
             let _ = ExecutorBackend::resolve(Some(garbage), Some(garbage));
         }
     }
@@ -187,8 +206,11 @@ mod tests {
         // before the new variant lands.
         let variants = [ExecutorBackend::Tofu, ExecutorBackend::Magma];
         for v in variants {
-            assert_eq!(ExecutorBackend::parse(v.label()), Some(v),
-                       "label/parse asymmetric for {v:?}");
+            assert_eq!(
+                ExecutorBackend::parse(v.label()),
+                Some(v),
+                "label/parse asymmetric for {v:?}"
+            );
         }
     }
 

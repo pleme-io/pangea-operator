@@ -40,13 +40,27 @@ pub struct ReconcileDemand {
 }
 
 impl Schedulable for ReconcileDemand {
-    fn sched_id(&self) -> &str { &self.unit }
-    fn sched_scope(&self) -> &str { &self.workspace }
-    fn priority_class(&self) -> PriorityClass { self.class }
-    fn staleness_secs(&self) -> u64 { self.staleness_secs }
-    fn behind_target(&self) -> bool { self.behind_head }
-    fn drift_magnitude(&self) -> u32 { self.drift_magnitude }
-    fn fairness_deficit(&self) -> u64 { self.fairness_deficit }
+    fn sched_id(&self) -> &str {
+        &self.unit
+    }
+    fn sched_scope(&self) -> &str {
+        &self.workspace
+    }
+    fn priority_class(&self) -> PriorityClass {
+        self.class
+    }
+    fn staleness_secs(&self) -> u64 {
+        self.staleness_secs
+    }
+    fn behind_target(&self) -> bool {
+        self.behind_head
+    }
+    fn drift_magnitude(&self) -> u32 {
+        self.drift_magnitude
+    }
+    fn fairness_deficit(&self) -> u64 {
+        self.fairness_deficit
+    }
     fn eligible(&self, now_secs: u64) -> bool {
         self.deps_ready && now_secs >= self.backoff_until_secs
     }
@@ -95,7 +109,11 @@ pub struct ReconcileQueue {
 impl ReconcileQueue {
     #[must_use]
     pub fn new(budget: Arc<FairBudget>, weights: UrgencyWeights) -> Self {
-        Self { demands: Mutex::new(HashMap::new()), budget, weights }
+        Self {
+            demands: Mutex::new(HashMap::new()),
+            budget,
+            weights,
+        }
     }
 
     /// A template reports it needs expensive work (or refreshes its metadata).
@@ -112,12 +130,18 @@ impl ReconcileQueue {
     /// A unit finished its expensive work — remove it from the queue (its permit
     /// is dropped by the caller, freeing the slot).
     pub fn complete(&self, unit: &str) {
-        self.demands.lock().expect("reconcile-queue mutex poisoned").remove(unit);
+        self.demands
+            .lock()
+            .expect("reconcile-queue mutex poisoned")
+            .remove(unit);
     }
 
     #[must_use]
     pub fn pending_len(&self) -> usize {
-        self.demands.lock().expect("reconcile-queue mutex poisoned").len()
+        self.demands
+            .lock()
+            .expect("reconcile-queue mutex poisoned")
+            .len()
     }
 
     #[must_use]
@@ -136,7 +160,8 @@ impl ReconcileQueue {
         let mut d = self.demands.lock().expect("reconcile-queue mutex poisoned");
         let snapshot: Vec<ReconcileDemand> = d.values().cloned().collect();
         let admitted = pick_admitted(&snapshot, now_secs, &self.weights, &self.budget);
-        let won: std::collections::HashSet<&str> = admitted.iter().map(|(u, _)| u.sched_id()).collect();
+        let won: std::collections::HashSet<&str> =
+            admitted.iter().map(|(u, _)| u.sched_id()).collect();
         // Anti-starvation OVER TIME: every eligible demand that was NOT admitted
         // this tick accrues deficit, so its urgency climbs until it wins.
         for demand in d.values_mut() {
@@ -144,7 +169,10 @@ impl ReconcileQueue {
                 demand.fairness_deficit = demand.fairness_deficit.saturating_add(1);
             }
         }
-        admitted.into_iter().map(|(u, p)| (u.unit.clone(), p)).collect()
+        admitted
+            .into_iter()
+            .map(|(u, p)| (u.unit.clone(), p))
+            .collect()
     }
 }
 
@@ -193,7 +221,10 @@ mod tests {
         let mut starved = d("starved", "ws-cold", PriorityClass::Normal);
         starved.fairness_deficit = 100;
         let pending = vec![busy, starved];
-        assert_eq!(schedule_next(&pending, 0, &UrgencyWeights::default(), 1)[0].unit, "starved");
+        assert_eq!(
+            schedule_next(&pending, 0, &UrgencyWeights::default(), 1)[0].unit,
+            "starved"
+        );
     }
 
     // ── ReconcileQueue: anti-starvation OVER TIME (the S3 contribution) ─────
@@ -231,8 +262,14 @@ mod tests {
             loud_again.drift_magnitude = 50;
             q.register(loud_again);
         }
-        assert!(quiet_ever_won, "quiet's rising fairness-deficit must eventually win it a turn");
-        assert!(q.fairness_deficit_of("quiet") > 0 || q.pending_len() < 2, "quiet accrued deficit while waiting");
+        assert!(
+            quiet_ever_won,
+            "quiet's rising fairness-deficit must eventually win it a turn"
+        );
+        assert!(
+            q.fairness_deficit_of("quiet") > 0 || q.pending_len() < 2,
+            "quiet accrued deficit while waiting"
+        );
     }
 
     /// A tick admits at most the budget, returns permits, and `complete` drains.
@@ -240,7 +277,11 @@ mod tests {
     fn queue_tick_is_bounded_and_completable() {
         let q = queue(2, 2);
         for i in 0..10 {
-            q.register(d(&format!("u{i}"), &format!("ws{i}"), PriorityClass::Normal));
+            q.register(d(
+                &format!("u{i}"),
+                &format!("ws{i}"),
+                PriorityClass::Normal,
+            ));
         }
         let admitted = q.tick(0);
         assert_eq!(admitted.len(), 2, "global cap bounds the wave");

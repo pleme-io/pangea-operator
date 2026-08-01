@@ -37,8 +37,8 @@ use opentelemetry::trace::TracerProvider as _;
 /// and starves the runtime — including the liveness handler, which the kubelet
 /// then restarts the pod for, mid-cycle. See `observability::bounded_writer`
 /// for the 2026-07-30 incident this closes.
-fn bounded_stdout() -> crate::observability::bounded_writer::BoundedMakeWriter<fn() -> std::io::Stdout>
-{
+fn bounded_stdout(
+) -> crate::observability::bounded_writer::BoundedMakeWriter<fn() -> std::io::Stdout> {
     crate::observability::bounded_writer::BoundedMakeWriter::new(
         std::io::stdout as fn() -> std::io::Stdout,
         crate::observability::bounded_writer::Bound::from_env(),
@@ -136,9 +136,10 @@ fn build_otlp_tracer(endpoint: &str) -> Result<opentelemetry_sdk::trace::Tracer,
     let service_name =
         env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| "pangea-operator".to_string());
 
-    let resource = opentelemetry_sdk::Resource::new(vec![
-        opentelemetry::KeyValue::new("service.name", service_name),
-    ]);
+    let resource = opentelemetry_sdk::Resource::new(vec![opentelemetry::KeyValue::new(
+        "service.name",
+        service_name,
+    )]);
 
     let exporter = opentelemetry_otlp::new_exporter()
         .tonic()
@@ -147,9 +148,7 @@ fn build_otlp_tracer(endpoint: &str) -> Result<opentelemetry_sdk::trace::Tracer,
     let provider = opentelemetry_otlp::new_pipeline()
         .tracing()
         .with_exporter(exporter)
-        .with_trace_config(
-            opentelemetry_sdk::trace::Config::default().with_resource(resource),
-        )
+        .with_trace_config(opentelemetry_sdk::trace::Config::default().with_resource(resource))
         .install_batch(opentelemetry_sdk::runtime::Tokio)
         .map_err(|e| format!("install OTLP tracing pipeline: {e}"))?;
 

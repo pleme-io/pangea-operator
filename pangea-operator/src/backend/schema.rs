@@ -24,7 +24,10 @@ impl SchemaManager {
     pub async fn ensure_schema(&self, schema_name: &str) -> Result<()> {
         // Validate schema name (prevent SQL injection)
         if !is_valid_identifier(schema_name) {
-            return Err(Error::Config(format!("Invalid schema name: {}", schema_name)));
+            return Err(Error::Config(format!(
+                "Invalid schema name: {}",
+                schema_name
+            )));
         }
 
         debug!(schema_name, "Ensuring schema exists");
@@ -73,8 +76,7 @@ impl SchemaManager {
         // Create unique index on name
         let create_index = format!(
             "CREATE UNIQUE INDEX IF NOT EXISTS {}_name_idx ON {} (name)",
-            template_name,
-            table_name
+            template_name, table_name
         );
 
         sqlx::query(&create_index)
@@ -119,7 +121,10 @@ impl SchemaManager {
     /// **Warning**: This is destructive and cannot be undone.
     pub async fn drop_schema(&self, schema_name: &str) -> Result<()> {
         if !is_valid_identifier(schema_name) {
-            return Err(Error::Config(format!("Invalid schema name: {}", schema_name)));
+            return Err(Error::Config(format!(
+                "Invalid schema name: {}",
+                schema_name
+            )));
         }
 
         warn!(schema_name, "Dropping schema (destructive operation)");
@@ -167,7 +172,8 @@ pub(crate) fn is_valid_identifier(name: &str) -> bool {
         return false;
     }
 
-    name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+    name.chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
 #[cfg(test)]

@@ -201,15 +201,24 @@ async fn main() -> Result<()> {
             namespace::execute(command, &client, cli.output).await?;
         }
 
-        Commands::Plan { template, namespace } => {
+        Commands::Plan {
+            template,
+            namespace,
+        } => {
             plan::show_plan(&client, &template, namespace.as_deref(), cli.output).await?;
         }
 
-        Commands::Apply { template, namespace } => {
+        Commands::Apply {
+            template,
+            namespace,
+        } => {
             template::apply(&client, &template, namespace.as_deref(), cli.output).await?;
         }
 
-        Commands::Approve { template, namespace } => {
+        Commands::Approve {
+            template,
+            namespace,
+        } => {
             template::approve(&client, &template, namespace.as_deref(), cli.output).await?;
         }
 
@@ -259,7 +268,10 @@ async fn main() -> Result<()> {
                 println!("  CLUSTER_NAME={} REGION={} PROFILE={} nix develop -c pangea apply inception_bootstrap.rb", cluster_name, region, profile);
                 println!();
                 println!("Step 2 — Wait for FluxCD to deploy the operator:");
-                println!("  aws eks update-kubeconfig --name {} --region {}", cluster_name, region);
+                println!(
+                    "  aws eks update-kubeconfig --name {} --region {}",
+                    cluster_name, region
+                );
                 println!("  kubectl get ks -A  # wait for infrastructure-pangea → Ready");
                 println!();
                 println!("Step 3 — Import state and unsuspend the inception flow:");

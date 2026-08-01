@@ -115,7 +115,7 @@ pub fn cycle_artifact_from_bytes(bytes: &[u8]) -> Option<CycleArtifact> {
     Some(CycleArtifact {
         action_distribution,
         resource_changes,
-        artifact_ref:    bundle_ref_from(&value, bytes),
+        artifact_ref: bundle_ref_from(&value, bytes),
         severities,
         lifecycle_phase: lifecycle_phase_from(&value),
     })
@@ -223,7 +223,7 @@ pub async fn read_bundle_artifacts(work_dir: &Path) -> Option<BundleArtifacts> {
 
     Some(BundleArtifacts {
         action_distribution: action_distribution_from(&value),
-        bundle_ref:          bundle_ref_from(&value, &bytes),
+        bundle_ref: bundle_ref_from(&value, &bytes),
     })
 }
 
@@ -272,7 +272,7 @@ pub async fn read_cycle_artifact(work_dir: &Path) -> Option<CycleArtifact> {
     Some(CycleArtifact {
         action_distribution,
         resource_changes,
-        artifact_ref:    bundle_ref_from(&value, &bytes),
+        artifact_ref: bundle_ref_from(&value, &bytes),
         severities,
         lifecycle_phase: lifecycle_phase_from(&value),
     })
@@ -289,8 +289,8 @@ fn bundle_ref_from(value: &serde_json::Value, raw: &[u8]) -> Option<BundleRef> {
     let bundle_id = value.get("bundle_id").and_then(|v| v.as_str())?;
 
     Some(BundleRef {
-        kind:       kind.to_string(),
-        bundle_id:  bundle_id.to_string(),
+        kind: kind.to_string(),
+        bundle_id: bundle_id.to_string(),
         size_bytes: raw.len() as u64,
     })
 }
@@ -334,7 +334,10 @@ fn bundle_ref_from(value: &serde_json::Value, raw: &[u8]) -> Option<BundleRef> {
 /// Breaking). Unknown severity strings fall back to the
 /// action-derived default via `action_to_severity`.
 fn resource_changes_from(value: &serde_json::Value) -> Vec<TypedResourceChange> {
-    let Some(changes) = value.get("plan").and_then(|v| v.get("changes")).and_then(|v| v.as_array())
+    let Some(changes) = value
+        .get("plan")
+        .and_then(|v| v.get("changes"))
+        .and_then(|v| v.as_array())
     else {
         return Vec::new();
     };
@@ -349,7 +352,11 @@ fn resource_changes_from(value: &serde_json::Value) -> Vec<TypedResourceChange> 
                 .and_then(|v| v.as_str())
                 .map(map_severity_with_fallback)
                 .unwrap_or_else(|| crate::executor::cycle_artifact::action_to_severity(&action));
-            TypedResourceChange { address, action, severity }
+            TypedResourceChange {
+                address,
+                action,
+                severity,
+            }
         })
         .collect()
 }
@@ -383,10 +390,10 @@ fn address_from_change(c: &serde_json::Value) -> String {
 /// default `action_to_severity` uses for `Other` actions.
 fn map_severity_with_fallback(raw: &str) -> Severity {
     match raw.to_ascii_lowercase().as_str() {
-        "cosmetic"             => Severity::Cosmetic,
-        "functional"           => Severity::Functional,
+        "cosmetic" => Severity::Cosmetic,
+        "functional" => Severity::Functional,
         "critical" | "breaking" => Severity::Breaking,
-        _                      => Severity::Functional,
+        _ => Severity::Functional,
     }
 }
 
@@ -414,14 +421,14 @@ fn action_distribution_from(value: &serde_json::Value) -> Option<ActionDistribut
         // across versions — bucket both. Same for the literal "noop".
         match action {
             "no_op" | "no-op" | "noop" => dist.no_op = dist.no_op.saturating_add(1),
-            "create"  => dist.create  = dist.create.saturating_add(1),
-            "update"  => dist.update  = dist.update.saturating_add(1),
-            "delete"  => dist.delete  = dist.delete.saturating_add(1),
+            "create" => dist.create = dist.create.saturating_add(1),
+            "update" => dist.update = dist.update.saturating_add(1),
+            "delete" => dist.delete = dist.delete.saturating_add(1),
             "replace" => dist.replace = dist.replace.saturating_add(1),
             // Catch-all preserves the count fidelity — a future tofu
             // vocab addition (read, forget, …) shows up as `other`
             // rather than silently disappearing from the rollup.
-            _         => dist.other   = dist.other.saturating_add(1),
+            _ => dist.other = dist.other.saturating_add(1),
         }
     }
     Some(dist)
@@ -502,7 +509,8 @@ mod tests {
         assert_eq!(dist.create, 1);
         assert_eq!(dist.other, 4, "read + forget + newverb + empty all → other");
         // Total preserved: 1 + 4 = 5 = plan.changes.len()
-        let total = dist.no_op + dist.create + dist.update + dist.delete + dist.replace + dist.other;
+        let total =
+            dist.no_op + dist.create + dist.update + dist.delete + dist.replace + dist.other;
         assert_eq!(total, 5);
     }
 
@@ -579,7 +587,11 @@ mod tests {
             }
         });
         let changes = resource_changes_from(&v);
-        assert_eq!(changes.len(), 3, "every plan.changes entry must survive, none silently dropped");
+        assert_eq!(
+            changes.len(),
+            3,
+            "every plan.changes entry must survive, none silently dropped"
+        );
         assert_eq!(changes[0].address, "aws_vpc.main");
         assert!(changes[1].address.contains("rabbitmq_queue"));
         assert_eq!(changes[2].address, "<unknown-resource>");
@@ -613,7 +625,9 @@ mod tests {
         tokio::fs::write(
             dir.path().join("magma-bundle.json"),
             serde_json::to_vec(&bundle).unwrap(),
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
         let art = read_cycle_artifact(dir.path()).await.unwrap();
         assert_eq!(art.action_distribution.create, 1);
@@ -651,7 +665,10 @@ mod tests {
 
         let raw = br#"{"kind":"terraform"}"#;
         let v: serde_json::Value = serde_json::from_slice(raw).unwrap();
-        assert!(bundle_ref_from(&v, raw).is_none(), "missing bundle_id → None");
+        assert!(
+            bundle_ref_from(&v, raw).is_none(),
+            "missing bundle_id → None"
+        );
     }
 
     #[tokio::test]
@@ -688,11 +705,13 @@ mod tests {
             "lifecycle": {"current": "planning"}
         });
         let raw = serde_json::to_vec(&bundle).unwrap();
-        tokio::fs::write(dir.path().join("magma-bundle.json"), &raw).await.unwrap();
+        tokio::fs::write(dir.path().join("magma-bundle.json"), &raw)
+            .await
+            .unwrap();
 
         let art = read_cycle_artifact(dir.path()).await.unwrap();
         // ActionDistribution faithfully reflects every change.
-        assert_eq!(art.action_distribution.no_op,  2);
+        assert_eq!(art.action_distribution.no_op, 2);
         assert_eq!(art.action_distribution.create, 1);
         assert_eq!(art.action_distribution.delete, 1);
         // Resource changes carry per-resource action + severity (and
@@ -700,15 +719,15 @@ mod tests {
         // outer-axis name).
         assert_eq!(art.resource_changes.len(), 4);
         assert_eq!(art.resource_changes[0].address, "github_repository.r1");
-        assert_eq!(art.resource_changes[0].action,  PlanAction::NoOp);
+        assert_eq!(art.resource_changes[0].action, PlanAction::NoOp);
         assert_eq!(art.resource_changes[0].severity, Severity::Cosmetic);
-        assert_eq!(art.resource_changes[3].action,  PlanAction::Delete);
+        assert_eq!(art.resource_changes[3].action, PlanAction::Delete);
         assert_eq!(art.resource_changes[3].severity, Severity::Breaking);
         // SeverityRollup matches per-resource breakdown.
         let rollup = art.severities.unwrap();
-        assert_eq!(rollup.cosmetic,   2);
+        assert_eq!(rollup.cosmetic, 2);
         assert_eq!(rollup.functional, 1);
-        assert_eq!(rollup.breaking,   1);
+        assert_eq!(rollup.breaking, 1);
         // Lifecycle phase came through.
         assert_eq!(art.lifecycle_phase.as_deref(), Some("planning"));
         // Bundle ref is populated.
@@ -737,11 +756,21 @@ mod tests {
         tokio::fs::write(
             dir.path().join("magma-bundle.json"),
             serde_json::to_vec(&bundle).unwrap(),
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
         let art = read_cycle_artifact(dir.path()).await.unwrap();
-        assert_eq!(art.resource_changes[0].severity, Severity::Breaking,    "delete defaults to Breaking");
-        assert_eq!(art.resource_changes[1].severity, Severity::Functional,  "create defaults to Functional");
+        assert_eq!(
+            art.resource_changes[0].severity,
+            Severity::Breaking,
+            "delete defaults to Breaking"
+        );
+        assert_eq!(
+            art.resource_changes[1].severity,
+            Severity::Functional,
+            "create defaults to Functional"
+        );
     }
 
     #[tokio::test]
@@ -753,7 +782,9 @@ mod tests {
     #[tokio::test]
     async fn read_cycle_artifact_handles_malformed_json() {
         let dir = tempfile::tempdir().unwrap();
-        tokio::fs::write(dir.path().join("magma-bundle.json"), b"{not json").await.unwrap();
+        tokio::fs::write(dir.path().join("magma-bundle.json"), b"{not json")
+            .await
+            .unwrap();
         assert!(read_cycle_artifact(dir.path()).await.is_none());
     }
 
@@ -768,7 +799,9 @@ mod tests {
         tokio::fs::write(
             dir.path().join("magma-bundle.json"),
             serde_json::to_vec(&bundle).unwrap(),
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
         let art = read_cycle_artifact(dir.path()).await.unwrap();
         assert!(art.resource_changes.is_empty());
@@ -886,7 +919,9 @@ mod tests {
         tokio::fs::write(
             dir.path().join("magma-bundle.json"),
             serde_json::to_vec(&bundle).unwrap(),
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
         let o = read_apply_outcome(dir.path()).await.unwrap();
         assert_eq!(o.applied, 1);

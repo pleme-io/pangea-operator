@@ -73,7 +73,10 @@ mod tests {
     use serde_json::json;
 
     fn m(pairs: &[(&str, Value)]) -> VariableMap {
-        pairs.iter().map(|(k, v)| ((*k).to_string(), v.clone())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), v.clone()))
+            .collect()
     }
 
     #[test]
@@ -84,7 +87,11 @@ mod tests {
         let eff = resolve_variables(&[&ns, &ws, &tpl]);
         // region: workspace overrides namespace; retics: template overrides namespace;
         // tenant: inherited from workspace; nothing dropped.
-        assert_eq!(eff["region"], json!("us-west-1"), "workspace overrides namespace");
+        assert_eq!(
+            eff["region"],
+            json!("us-west-1"),
+            "workspace overrides namespace"
+        );
         assert_eq!(eff["retics"], json!(5), "template (innermost) wins");
         assert_eq!(eff["tenant"], json!("acme"), "inherited from workspace");
         assert_eq!(eff.len(), 3);
@@ -117,8 +124,16 @@ mod tests {
         let a = m(&[("k", json!("a"))]);
         let b = m(&[("k", json!("b"))]);
         let c = m(&[("k", json!("c"))]);
-        assert_eq!(resolve_variables(&[&a, &b, &c])["k"], json!("c"), "last layer wins");
-        assert_eq!(resolve_variables(&[&c, &b, &a])["k"], json!("a"), "order matters");
+        assert_eq!(
+            resolve_variables(&[&a, &b, &c])["k"],
+            json!("c"),
+            "last layer wins"
+        );
+        assert_eq!(
+            resolve_variables(&[&c, &b, &a])["k"],
+            json!("a"),
+            "order matters"
+        );
     }
 
     #[test]

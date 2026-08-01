@@ -110,10 +110,7 @@ enum FleetError {
 
 /// Reconciler — refreshes the singleton's status with the current
 /// fleet aggregation. Bypasses globalSuspend.
-async fn reconcile(
-    fs: Arc<PangeaFleetStatus>,
-    ctx: Arc<Context>,
-) -> Result<Action, FleetError> {
+async fn reconcile(fs: Arc<PangeaFleetStatus>, ctx: Arc<Context>) -> Result<Action, FleetError> {
     let name = fs.metadata.name.clone().ok_or(FleetError::MissingName)?;
 
     if !is_singleton_name(&name) {
@@ -216,14 +213,9 @@ async fn aggregate_fleet_status(
     // sees every template's phase at once. Count by phase (a template with no
     // status yet counts as its default phase), then reset-then-set every known
     // phase so an emptied phase reads 0.
-    let mut phase_counts: std::collections::HashMap<String, i64> =
-        std::collections::HashMap::new();
+    let mut phase_counts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
     for t in &templates.items {
-        let phase = t
-            .status
-            .as_ref()
-            .and_then(|s| s.phase)
-            .unwrap_or_default();
+        let phase = t.status.as_ref().and_then(|s| s.phase).unwrap_or_default();
         *phase_counts.entry(phase.to_string()).or_insert(0) += 1;
     }
     metrics.set_templates_by_phase(&phase_counts);
@@ -241,40 +233,38 @@ async fn aggregate_fleet_status(
     // ── ImagePipeline ──
     let ip_api: Api<ImagePipeline> = Api::all(client.clone());
     let pipelines = ip_api.list(&lp).await?;
-    let image_pipelines = histogram_from(
-        &pipelines.items,
-        |p| p.status.as_ref().and_then(|s| s.phase.as_ref().map(|x| format!("{:?}", x))),
-    );
+    let image_pipelines = histogram_from(&pipelines.items, |p| {
+        p.status
+            .as_ref()
+            .and_then(|s| s.phase.as_ref().map(|x| format!("{:?}", x)))
+    });
 
     // ── PackerBuild ──
     let pb_api: Api<PackerBuild> = Api::all(client.clone());
     let builds = pb_api.list(&lp).await?;
-    let packer_builds = histogram_from(
-        &builds.items,
-        |b: &PackerBuild| {
-            b.status.as_ref().and_then(|s| s.phase.as_ref().map(|x| format!("{:?}", x)))
-        },
-    );
+    let packer_builds = histogram_from(&builds.items, |b: &PackerBuild| {
+        b.status
+            .as_ref()
+            .and_then(|s| s.phase.as_ref().map(|x| format!("{:?}", x)))
+    });
 
     // ── AmiTest ──
     let at_api: Api<AmiTest> = Api::all(client.clone());
     let tests = at_api.list(&lp).await?;
-    let ami_tests = histogram_from(
-        &tests.items,
-        |t: &AmiTest| {
-            t.status.as_ref().and_then(|s| s.phase.as_ref().map(|x| format!("{:?}", x)))
-        },
-    );
+    let ami_tests = histogram_from(&tests.items, |t: &AmiTest| {
+        t.status
+            .as_ref()
+            .and_then(|s| s.phase.as_ref().map(|x| format!("{:?}", x)))
+    });
 
     // ── ComplianceSchedule ──
     let cs_api: Api<ComplianceSchedule> = Api::all(client.clone());
     let schedules = cs_api.list(&lp).await?;
-    let compliance_schedules = histogram_from(
-        &schedules.items,
-        |s: &ComplianceSchedule| {
-            s.status.as_ref().and_then(|st| st.phase.as_ref().map(|x| format!("{:?}", x)))
-        },
-    );
+    let compliance_schedules = histogram_from(&schedules.items, |s: &ComplianceSchedule| {
+        s.status
+            .as_ref()
+            .and_then(|st| st.phase.as_ref().map(|x| format!("{:?}", x)))
+    });
 
     // ── ComplianceBinding ──
     let cb_api: Api<ComplianceBinding> = Api::all(client.clone());
@@ -284,32 +274,29 @@ async fn aggregate_fleet_status(
     // ── InfrastructureFlow ──
     let if_api: Api<InfrastructureFlow> = Api::all(client.clone());
     let flows = if_api.list(&lp).await?;
-    let infrastructure_flows = histogram_from(
-        &flows.items,
-        |f: &InfrastructureFlow| {
-            f.status.as_ref().and_then(|s| s.phase.as_ref().map(|x| format!("{:?}", x)))
-        },
-    );
+    let infrastructure_flows = histogram_from(&flows.items, |f: &InfrastructureFlow| {
+        f.status
+            .as_ref()
+            .and_then(|s| s.phase.as_ref().map(|x| format!("{:?}", x)))
+    });
 
     // ── PangeaDashboard ──
     let pd_api: Api<PangeaDashboard> = Api::all(client.clone());
     let dashboards = pd_api.list(&lp).await?;
-    let pangea_dashboards = histogram_from(
-        &dashboards.items,
-        |d: &PangeaDashboard| {
-            d.status.as_ref().and_then(|s| s.phase.as_ref().map(|x| format!("{:?}", x)))
-        },
-    );
+    let pangea_dashboards = histogram_from(&dashboards.items, |d: &PangeaDashboard| {
+        d.status
+            .as_ref()
+            .and_then(|s| s.phase.as_ref().map(|x| format!("{:?}", x)))
+    });
 
     // ── SynthesizerFormat ──
     let sf_api: Api<SynthesizerFormat> = Api::all(client.clone());
     let formats = sf_api.list(&lp).await?;
-    let synthesizer_formats = histogram_from(
-        &formats.items,
-        |f: &SynthesizerFormat| {
-            f.status.as_ref().and_then(|s| s.phase.as_ref().map(|x| format!("{:?}", x)))
-        },
-    );
+    let synthesizer_formats = histogram_from(&formats.items, |f: &SynthesizerFormat| {
+        f.status
+            .as_ref()
+            .and_then(|s| s.phase.as_ref().map(|x| format!("{:?}", x)))
+    });
 
     // Phase enum unused warnings are fine — they're imported above for
     // reference and may be used in future tests.
@@ -443,9 +430,7 @@ pub fn aggregate_compliance_bindings(items: &[ComplianceBinding]) -> ComplianceB
         .iter()
         .filter(|b| {
             matches!(
-                b.status
-                    .as_ref()
-                    .and_then(|s| s.compliance_state),
+                b.status.as_ref().and_then(|s| s.compliance_state),
                 Some(BindingComplianceState::NonCompliant)
             )
         })
@@ -471,10 +456,7 @@ pub fn histogram_from<T>(
 
 // ─── Status patch ────────────────────────────────────────────────────
 
-async fn patch_status(
-    client: &Client,
-    status: &PangeaFleetStatusStatus,
-) -> Result<(), FleetError> {
+async fn patch_status(client: &Client, status: &PangeaFleetStatusStatus) -> Result<(), FleetError> {
     let api: Api<PangeaFleetStatus> = Api::all(client.clone());
     let patch = serde_json::json!({ "status": status });
     api.patch_status(
@@ -497,11 +479,7 @@ async fn patch_status(
 /// race).
 async fn ensure_singleton(client: &Client) -> Result<(), kube::Error> {
     let api: Api<PangeaFleetStatus> = Api::all(client.clone());
-    if api
-        .get_opt(PANGEA_FLEET_STATUS_SINGLETON)
-        .await?
-        .is_some()
-    {
+    if api.get_opt(PANGEA_FLEET_STATUS_SINGLETON).await?.is_some() {
         return Ok(());
     }
     let cr = PangeaFleetStatus::new(PANGEA_FLEET_STATUS_SINGLETON, PangeaFleetStatusSpec {});
@@ -522,11 +500,7 @@ async fn ensure_singleton(client: &Client) -> Result<(), kube::Error> {
     }
 }
 
-fn error_policy(
-    _obj: Arc<PangeaFleetStatus>,
-    error: &FleetError,
-    _ctx: Arc<Context>,
-) -> Action {
+fn error_policy(_obj: Arc<PangeaFleetStatus>, error: &FleetError, _ctx: Arc<Context>) -> Action {
     warn!(error = %error, "PangeaFleetStatus error policy triggered");
     Action::requeue(REFRESH_INTERVAL)
 }
@@ -580,10 +554,8 @@ mod tests {
         let mut prev = empty_status();
         let mut new = empty_status();
         // Different timestamps — but the gate must ignore them.
-        prev.last_updated_at =
-            Some(chrono::Utc.with_ymd_and_hms(2026, 5, 7, 0, 0, 0).unwrap());
-        new.last_updated_at =
-            Some(chrono::Utc.with_ymd_and_hms(2026, 5, 7, 0, 0, 30).unwrap());
+        prev.last_updated_at = Some(chrono::Utc.with_ymd_and_hms(2026, 5, 7, 0, 0, 0).unwrap());
+        new.last_updated_at = Some(chrono::Utc.with_ymd_and_hms(2026, 5, 7, 0, 0, 30).unwrap());
         assert!(
             !fleet_status_changed(Some(&prev), &new),
             "timestamp-only churn must NOT trigger a PATCH (the loop bug)"
@@ -779,7 +751,9 @@ mod tests {
     fn histogram_from_works_for_arbitrary_typed_lists() {
         // Generic shape — exercises the polymorphism, doesn't matter
         // what T actually is.
-        struct Item { phase: Option<&'static str> }
+        struct Item {
+            phase: Option<&'static str>,
+        }
         let items = vec![
             Item { phase: Some("A") },
             Item { phase: Some("A") },

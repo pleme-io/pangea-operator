@@ -75,7 +75,8 @@ enum Error {
 
 async fn reconcile(roda: Arc<ReconciliationLoop>, ctx: Arc<Context>) -> Result<Action, Error> {
     let name = roda.metadata.name.clone().ok_or(Error::MissingName)?;
-    ctx.metrics.record_reconcile_named("reconciliationloop", "ok");
+    ctx.metrics
+        .record_reconcile_named("reconciliationloop", "ok");
 
     let cadence = parse_cadence(&roda.spec.cadence);
     let observed_generation = roda.metadata.generation.unwrap_or(0);
@@ -127,7 +128,10 @@ async fn reconcile(roda: Arc<ReconciliationLoop>, ctx: Arc<Context>) -> Result<A
         LoopPhase::Empty => (
             "True",
             "EmptyButHealthy",
-            format!("Loop active; selector matched 0 workspaces (cadence {})", roda.spec.cadence),
+            format!(
+                "Loop active; selector matched 0 workspaces (cadence {})",
+                roda.spec.cadence
+            ),
         ),
         _ => (
             "True",
@@ -218,7 +222,8 @@ fn status_content_equal(a: &ReconciliationLoopStatus, b: &ReconciliationLoopStat
 }
 
 fn error_policy(_obj: Arc<ReconciliationLoop>, err: &Error, ctx: Arc<Context>) -> Action {
-    ctx.metrics.record_reconcile_named("reconciliationloop", "error");
+    ctx.metrics
+        .record_reconcile_named("reconciliationloop", "error");
     warn!(error = %err, "ReconciliationLoop reconcile error; requeue in 60s");
     Action::requeue(Duration::from_secs(60))
 }

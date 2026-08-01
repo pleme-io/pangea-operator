@@ -288,40 +288,165 @@ pub struct Transition {
 /// per row, and folded into [`TRANSITIONS`] at first use.
 pub static EXPLICIT_TRANSITIONS: &[Transition] = &[
     // ── Forward path ────────────────────────────────────────────────
-    t(Phase::Pending, Trigger::SourceValidated, Phase::Compiling, EdgeKind::Forward),
-    t(Phase::Verifying, Trigger::GemsAssumedReady, Phase::Compiling, EdgeKind::Forward),
-    t(Phase::Verified, Trigger::GemsAssumedReady, Phase::Compiling, EdgeKind::Forward),
-    t(Phase::Compiling, Trigger::CompileOk, Phase::Initializing, EdgeKind::Forward),
-    t(Phase::Initializing, Trigger::InitOk, Phase::Planning, EdgeKind::Forward),
-    t(Phase::Planning, Trigger::ApplyAuthorized, Phase::Applying, EdgeKind::Forward),
-    t(Phase::Planning, Trigger::PlanNoChanges, Phase::Ready, EdgeKind::Forward),
-    t(Phase::Applying, Trigger::ApplyOk, Phase::Ready, EdgeKind::Forward),
+    t(
+        Phase::Pending,
+        Trigger::SourceValidated,
+        Phase::Compiling,
+        EdgeKind::Forward,
+    ),
+    t(
+        Phase::Verifying,
+        Trigger::GemsAssumedReady,
+        Phase::Compiling,
+        EdgeKind::Forward,
+    ),
+    t(
+        Phase::Verified,
+        Trigger::GemsAssumedReady,
+        Phase::Compiling,
+        EdgeKind::Forward,
+    ),
+    t(
+        Phase::Compiling,
+        Trigger::CompileOk,
+        Phase::Initializing,
+        EdgeKind::Forward,
+    ),
+    t(
+        Phase::Initializing,
+        Trigger::InitOk,
+        Phase::Planning,
+        EdgeKind::Forward,
+    ),
+    t(
+        Phase::Planning,
+        Trigger::ApplyAuthorized,
+        Phase::Applying,
+        EdgeKind::Forward,
+    ),
+    t(
+        Phase::Planning,
+        Trigger::PlanNoChanges,
+        Phase::Ready,
+        EdgeKind::Forward,
+    ),
+    t(
+        Phase::Applying,
+        Trigger::ApplyOk,
+        Phase::Ready,
+        EdgeKind::Forward,
+    ),
     // ── Compile-failure self-heal ───────────────────────────────────
-    t(Phase::Compiling, Trigger::CompileFailedThreshold, Phase::CompileBlocked, EdgeKind::Remediation),
-    t(Phase::CompileBlocked, Trigger::RetryBackoffElapsed, Phase::Compiling, EdgeKind::Remediation),
+    t(
+        Phase::Compiling,
+        Trigger::CompileFailedThreshold,
+        Phase::CompileBlocked,
+        EdgeKind::Remediation,
+    ),
+    t(
+        Phase::CompileBlocked,
+        Trigger::RetryBackoffElapsed,
+        Phase::Compiling,
+        EdgeKind::Remediation,
+    ),
     // ── Failure detours (every one carries a recovery exit) ─────────
-    t(Phase::Initializing, Trigger::InitFailed, Phase::Failed, EdgeKind::Forward),
-    t(Phase::Planning, Trigger::PlanRefusedOrFailed, Phase::Failed, EdgeKind::Forward),
-    t(Phase::Applying, Trigger::ApplyFailed, Phase::Failed, EdgeKind::Forward),
-    t(Phase::Ready, Trigger::SettlingEscalated, Phase::Failed, EdgeKind::Forward),
-    t(Phase::Drifted, Trigger::SettlingEscalated, Phase::Failed, EdgeKind::Forward),
-    t(Phase::Failed, Trigger::FailureBackoffElapsed, Phase::Pending, EdgeKind::Remediation),
+    t(
+        Phase::Initializing,
+        Trigger::InitFailed,
+        Phase::Failed,
+        EdgeKind::Forward,
+    ),
+    t(
+        Phase::Planning,
+        Trigger::PlanRefusedOrFailed,
+        Phase::Failed,
+        EdgeKind::Forward,
+    ),
+    t(
+        Phase::Applying,
+        Trigger::ApplyFailed,
+        Phase::Failed,
+        EdgeKind::Forward,
+    ),
+    t(
+        Phase::Ready,
+        Trigger::SettlingEscalated,
+        Phase::Failed,
+        EdgeKind::Forward,
+    ),
+    t(
+        Phase::Drifted,
+        Trigger::SettlingEscalated,
+        Phase::Failed,
+        EdgeKind::Forward,
+    ),
+    t(
+        Phase::Failed,
+        Trigger::FailureBackoffElapsed,
+        Phase::Pending,
+        EdgeKind::Remediation,
+    ),
     // ── Drift loop ──────────────────────────────────────────────────
-    t(Phase::Ready, Trigger::DriftDetected, Phase::Drifted, EdgeKind::Forward),
-    t(Phase::Drifted, Trigger::DriftApproved, Phase::Planning, EdgeKind::OperatorRework),
+    t(
+        Phase::Ready,
+        Trigger::DriftDetected,
+        Phase::Drifted,
+        EdgeKind::Forward,
+    ),
+    t(
+        Phase::Drifted,
+        Trigger::DriftApproved,
+        Phase::Planning,
+        EdgeKind::OperatorRework,
+    ),
     // ── Freshness / restart-safety recovery (collapsed to one edge) ─
-    t(Phase::Planning, Trigger::SourceStaleOrWorkspaceLost, Phase::Compiling, EdgeKind::Remediation),
-    t(Phase::Applying, Trigger::SourceStaleOrWorkspaceLost, Phase::Compiling, EdgeKind::Remediation),
-    t(Phase::Ready, Trigger::SourceStaleOrWorkspaceLost, Phase::Compiling, EdgeKind::Remediation),
-    t(Phase::Drifted, Trigger::SourceStaleOrWorkspaceLost, Phase::Compiling, EdgeKind::Remediation),
+    t(
+        Phase::Planning,
+        Trigger::SourceStaleOrWorkspaceLost,
+        Phase::Compiling,
+        EdgeKind::Remediation,
+    ),
+    t(
+        Phase::Applying,
+        Trigger::SourceStaleOrWorkspaceLost,
+        Phase::Compiling,
+        EdgeKind::Remediation,
+    ),
+    t(
+        Phase::Ready,
+        Trigger::SourceStaleOrWorkspaceLost,
+        Phase::Compiling,
+        EdgeKind::Remediation,
+    ),
+    t(
+        Phase::Drifted,
+        Trigger::SourceStaleOrWorkspaceLost,
+        Phase::Compiling,
+        EdgeKind::Remediation,
+    ),
     // ── Teardown ────────────────────────────────────────────────────
-    t(Phase::Destroying, Trigger::DestroyOk, Phase::Destroying, EdgeKind::Teardown), // → finalizer removed (gone)
-    t(Phase::Destroying, Trigger::DestroyFailed, Phase::Failed, EdgeKind::Forward),
+    t(
+        Phase::Destroying,
+        Trigger::DestroyOk,
+        Phase::Destroying,
+        EdgeKind::Teardown,
+    ), // → finalizer removed (gone)
+    t(
+        Phase::Destroying,
+        Trigger::DestroyFailed,
+        Phase::Failed,
+        EdgeKind::Forward,
+    ),
 ];
 
 /// `const fn` row constructor so the table is a compile-time `static`.
 const fn t(from: Phase, trigger: Trigger, to: Phase, kind: EdgeKind) -> Transition {
-    Transition { from, trigger, to, kind }
+    Transition {
+        from,
+        trigger,
+        to,
+        kind,
+    }
 }
 
 /// The universal edges every non-terminal phase carries: a CR deletion always
@@ -331,12 +456,22 @@ const fn t(from: Phase, trigger: Trigger, to: Phase, kind: EdgeKind) -> Transiti
 fn universal_edges_for(from: Phase) -> Vec<Transition> {
     let mut out = Vec::new();
     if from != Phase::Destroying {
-        out.push(t(from, Trigger::DeletionRequested, Phase::Destroying, EdgeKind::Teardown));
+        out.push(t(
+            from,
+            Trigger::DeletionRequested,
+            Phase::Destroying,
+            EdgeKind::Teardown,
+        ));
     }
     // SpecChanged restarts from Pending for every non-Pending, non-Destroying
     // phase (mirrors template_controller.rs:306-329).
     if from != Phase::Pending && from != Phase::Destroying {
-        out.push(t(from, Trigger::SpecChanged, Phase::Pending, EdgeKind::Remediation));
+        out.push(t(
+            from,
+            Trigger::SpecChanged,
+            Phase::Pending,
+            EdgeKind::Remediation,
+        ));
     }
     out
 }
@@ -368,7 +503,11 @@ pub enum TransitionError {
 impl fmt::Display for TransitionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TransitionError::Illegal { from, trigger, legal } => {
+            TransitionError::Illegal {
+                from,
+                trigger,
+                legal,
+            } => {
                 let legal = if legal.is_empty() {
                     "<none — this phase is terminal>".to_string()
                 } else {
@@ -413,7 +552,11 @@ mod tests {
         );
         // 12 variants today; bump deliberately when the enum grows (the
         // all_lifecycle match will have forced you to add the variant first).
-        assert_eq!(all.len(), 12, "Phase variant count changed — update all_lifecycle + this assertion");
+        assert_eq!(
+            all.len(),
+            12,
+            "Phase variant count changed — update all_lifecycle + this assertion"
+        );
     }
 
     /// Every phase must be classified, and exactly one good-terminal class
@@ -421,10 +564,24 @@ mod tests {
     /// exist. Pins the convergence structure.
     #[test]
     fn classes_partition_correctly() {
-        let settled: Vec<_> = Phase::all_lifecycle().into_iter().filter(|p| p.class() == PhaseClass::Settled).collect();
-        let terminal: Vec<_> = Phase::all_lifecycle().into_iter().filter(|p| p.class() == PhaseClass::Terminal).collect();
-        assert_eq!(settled, vec![Phase::Ready], "Ready must be the sole Settled phase");
-        assert_eq!(terminal, vec![Phase::Destroying], "Destroying must be the sole Terminal phase");
+        let settled: Vec<_> = Phase::all_lifecycle()
+            .into_iter()
+            .filter(|p| p.class() == PhaseClass::Settled)
+            .collect();
+        let terminal: Vec<_> = Phase::all_lifecycle()
+            .into_iter()
+            .filter(|p| p.class() == PhaseClass::Terminal)
+            .collect();
+        assert_eq!(
+            settled,
+            vec![Phase::Ready],
+            "Ready must be the sole Settled phase"
+        );
+        assert_eq!(
+            terminal,
+            vec![Phase::Destroying],
+            "Destroying must be the sole Terminal phase"
+        );
     }
 
     /// CI forcing-function #2 — no traps. Every non-good-terminal phase must
@@ -550,28 +707,65 @@ mod tests {
     fn edge_legality_mirrors_the_table() {
         // every real edge is legal
         for tr in TRANSITIONS.iter() {
-            assert!(tr.from.edge_is_legal(tr.to), "table edge {} → {} reported illegal", tr.from, tr.to);
+            assert!(
+                tr.from.edge_is_legal(tr.to),
+                "table edge {} → {} reported illegal",
+                tr.from,
+                tr.to
+            );
         }
         // no-op re-set is legal (idempotent patches)
         assert!(Phase::Ready.edge_is_legal(Phase::Ready));
         // a nonsense edge is illegal
-        assert!(!Phase::Ready.edge_is_legal(Phase::Initializing), "Ready → Initializing must be illegal");
-        assert!(!Phase::Pending.edge_is_legal(Phase::Applying), "Pending → Applying must be illegal");
+        assert!(
+            !Phase::Ready.edge_is_legal(Phase::Initializing),
+            "Ready → Initializing must be illegal"
+        );
+        assert!(
+            !Phase::Pending.edge_is_legal(Phase::Applying),
+            "Pending → Applying must be illegal"
+        );
     }
 
     /// Spot-check the happy path advances exactly as the handlers do.
     #[test]
     fn happy_path_advances() {
-        assert_eq!(Phase::Pending.advance(Trigger::SourceValidated).unwrap(), Phase::Compiling);
-        assert_eq!(Phase::Compiling.advance(Trigger::CompileOk).unwrap(), Phase::Initializing);
-        assert_eq!(Phase::Initializing.advance(Trigger::InitOk).unwrap(), Phase::Planning);
-        assert_eq!(Phase::Planning.advance(Trigger::ApplyAuthorized).unwrap(), Phase::Applying);
-        assert_eq!(Phase::Applying.advance(Trigger::ApplyOk).unwrap(), Phase::Ready);
+        assert_eq!(
+            Phase::Pending.advance(Trigger::SourceValidated).unwrap(),
+            Phase::Compiling
+        );
+        assert_eq!(
+            Phase::Compiling.advance(Trigger::CompileOk).unwrap(),
+            Phase::Initializing
+        );
+        assert_eq!(
+            Phase::Initializing.advance(Trigger::InitOk).unwrap(),
+            Phase::Planning
+        );
+        assert_eq!(
+            Phase::Planning.advance(Trigger::ApplyAuthorized).unwrap(),
+            Phase::Applying
+        );
+        assert_eq!(
+            Phase::Applying.advance(Trigger::ApplyOk).unwrap(),
+            Phase::Ready
+        );
         // settled terminal: a no-change plan rests at Ready
-        assert_eq!(Phase::Planning.advance(Trigger::PlanNoChanges).unwrap(), Phase::Ready);
+        assert_eq!(
+            Phase::Planning.advance(Trigger::PlanNoChanges).unwrap(),
+            Phase::Ready
+        );
         // self-heal: CompileBlocked always has a way back
-        assert_eq!(Phase::CompileBlocked.advance(Trigger::RetryBackoffElapsed).unwrap(), Phase::Compiling);
+        assert_eq!(
+            Phase::CompileBlocked
+                .advance(Trigger::RetryBackoffElapsed)
+                .unwrap(),
+            Phase::Compiling
+        );
         // every phase is deletable
-        assert_eq!(Phase::Ready.advance(Trigger::DeletionRequested).unwrap(), Phase::Destroying);
+        assert_eq!(
+            Phase::Ready.advance(Trigger::DeletionRequested).unwrap(),
+            Phase::Destroying
+        );
     }
 }

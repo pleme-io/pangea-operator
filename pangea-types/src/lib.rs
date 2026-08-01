@@ -10,15 +10,15 @@
 //! - `server`: Enables async-graphql derives for server-side use
 //! - `client`: Enables cynic derives for client-side use
 
-mod phase;
-mod template;
 mod namespace;
+mod phase;
 mod plan;
+mod template;
 
-pub use phase::Phase;
-pub use template::{InfrastructureTemplate, TemplateSource, ResourceCounts};
 pub use namespace::PangeaNamespace;
+pub use phase::Phase;
 pub use plan::PlanResult;
+pub use template::{InfrastructureTemplate, ResourceCounts, TemplateSource};
 
 /// DateTime scalar type for GraphQL.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

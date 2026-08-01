@@ -101,7 +101,9 @@ pub struct VarFileSource {
 }
 
 /// Lifecycle phase of a PackerBuild.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, Default,
+)]
 pub enum PackerBuildPhase {
     /// Initial state, waiting to be processed.
     #[default]

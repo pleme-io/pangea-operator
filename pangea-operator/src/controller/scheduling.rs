@@ -78,7 +78,12 @@ pub struct UrgencyWeights {
 
 impl Default for UrgencyWeights {
     fn default() -> Self {
-        UrgencyWeights { per_stale_sec: 1, behind_target: 3600, per_drift: 120, per_deficit: 600 }
+        UrgencyWeights {
+            per_stale_sec: 1,
+            behind_target: 3600,
+            per_drift: 120,
+            per_deficit: 600,
+        }
     }
 }
 
@@ -166,7 +171,10 @@ pub fn schedule<'a, T: Schedulable>(
 ) -> Vec<&'a T> {
     let adapters: Vec<RankAdapter<'a, T>> = pending.iter().map(RankAdapter).collect();
     let w = weights.to_shigoto();
-    shigoto_rank::pick(&adapters, now_secs, &w, slots).into_iter().map(|a| a.0).collect()
+    shigoto_rank::pick(&adapters, now_secs, &w, slots)
+        .into_iter()
+        .map(|a| a.0)
+        .collect()
 }
 
 /// The DISPATCH ENGINE — the single decision a central reconcile queue makes each
@@ -233,7 +241,10 @@ pub struct BudgetConfig {
 
 impl Default for BudgetConfig {
     fn default() -> Self {
-        BudgetConfig { per_scope: 2, global: 8 }
+        BudgetConfig {
+            per_scope: 2,
+            global: 8,
+        }
     }
 }
 
@@ -247,7 +258,11 @@ fn budget_kind() -> JobKindId {
 }
 
 fn budget_job_id(scope: &str) -> JobId {
-    JobId { scope: JobScope::Workspace(scope.to_string()), kind: budget_kind(), subject: JobSubject::None }
+    JobId {
+        scope: JobScope::Workspace(scope.to_string()),
+        kind: budget_kind(),
+        subject: JobSubject::None,
+    }
 }
 
 fn cap(n: usize) -> BudgetSpec {
@@ -272,7 +287,10 @@ impl FairBudget {
     pub fn new(cfg: BudgetConfig) -> Arc<Self> {
         let mut tree = BudgetTree::new();
         tree.global = Some(cap(cfg.global));
-        Arc::new(FairBudget { cfg, tree: Mutex::new(tree) })
+        Arc::new(FairBudget {
+            cfg,
+            tree: Mutex::new(tree),
+        })
     }
 
     /// Try to take a slot for `scope`. `Some(permit)` if both caps allow (the
@@ -284,9 +302,15 @@ impl FairBudget {
         // FairBudget applies `per_scope` uniformly to every scope, never
         // pre-declared — register this scope's cap lazily, the first time
         // it's seen (BudgetTree treats an absent scope as unbounded).
-        t.by_scope.entry(id.scope.clone()).or_insert_with(|| cap(self.cfg.per_scope));
+        t.by_scope
+            .entry(id.scope.clone())
+            .or_insert_with(|| cap(self.cfg.per_scope));
         match t.try_allocate(&id) {
-            Ok(()) => Some(BudgetPermit { budget: Arc::clone(self), scope: scope.to_string(), released: false }),
+            Ok(()) => Some(BudgetPermit {
+                budget: Arc::clone(self),
+                scope: scope.to_string(),
+                released: false,
+            }),
             Err(_) => None,
         }
     }
@@ -297,12 +321,18 @@ impl FairBudget {
     }
 
     pub fn total_in_flight(&self) -> usize {
-        self.tree.lock().expect("budget mutex poisoned").running_global() as usize
+        self.tree
+            .lock()
+            .expect("budget mutex poisoned")
+            .running_global() as usize
     }
 
     fn release(&self, scope: &str) {
         let id = budget_job_id(scope);
-        self.tree.lock().expect("budget mutex poisoned").release(&id);
+        self.tree
+            .lock()
+            .expect("budget mutex poisoned")
+            .release(&id);
     }
 }
 
@@ -342,30 +372,63 @@ mod tests {
     impl Mock {
         fn new(id: &str, class: PriorityClass) -> Self {
             Mock {
-                id: id.into(), scope: "s".into(), class, stale: 0, behind: false,
-                drift: 0, deficit: 0, backoff_until: 0, deps_ready: true,
+                id: id.into(),
+                scope: "s".into(),
+                class,
+                stale: 0,
+                behind: false,
+                drift: 0,
+                deficit: 0,
+                backoff_until: 0,
+                deps_ready: true,
             }
         }
     }
     impl Schedulable for Mock {
-        fn sched_id(&self) -> &str { &self.id }
-        fn sched_scope(&self) -> &str { &self.scope }
-        fn priority_class(&self) -> PriorityClass { self.class }
-        fn staleness_secs(&self) -> u64 { self.stale }
-        fn behind_target(&self) -> bool { self.behind }
-        fn drift_magnitude(&self) -> u32 { self.drift }
-        fn fairness_deficit(&self) -> u64 { self.deficit }
-        fn eligible(&self, now: u64) -> bool { self.deps_ready && now >= self.backoff_until }
+        fn sched_id(&self) -> &str {
+            &self.id
+        }
+        fn sched_scope(&self) -> &str {
+            &self.scope
+        }
+        fn priority_class(&self) -> PriorityClass {
+            self.class
+        }
+        fn staleness_secs(&self) -> u64 {
+            self.stale
+        }
+        fn behind_target(&self) -> bool {
+            self.behind
+        }
+        fn drift_magnitude(&self) -> u32 {
+            self.drift
+        }
+        fn fairness_deficit(&self) -> u64 {
+            self.deficit
+        }
+        fn eligible(&self, now: u64) -> bool {
+            self.deps_ready && now >= self.backoff_until
+        }
     }
-    fn w() -> UrgencyWeights { UrgencyWeights::default() }
+    fn w() -> UrgencyWeights {
+        UrgencyWeights::default()
+    }
 
     #[test]
     fn deterministic_total_order() {
-        let mut a = Mock::new("z", PriorityClass::Normal); a.drift = 5;
-        let mut b = Mock::new("a", PriorityClass::Normal); b.drift = 5;
+        let mut a = Mock::new("z", PriorityClass::Normal);
+        a.drift = 5;
+        let mut b = Mock::new("a", PriorityClass::Normal);
+        b.drift = 5;
         let pending = vec![a, b];
-        let s1: Vec<_> = schedule(&pending, 0, &w(), 9).iter().map(|x| x.id.clone()).collect();
-        let s2: Vec<_> = schedule(&pending, 0, &w(), 9).iter().map(|x| x.id.clone()).collect();
+        let s1: Vec<_> = schedule(&pending, 0, &w(), 9)
+            .iter()
+            .map(|x| x.id.clone())
+            .collect();
+        let s2: Vec<_> = schedule(&pending, 0, &w(), 9)
+            .iter()
+            .map(|x| x.id.clone())
+            .collect();
         assert_eq!(s1, s2);
         assert_eq!(s1[0], "a", "equal urgency breaks to lower id");
     }
@@ -374,46 +437,76 @@ mod tests {
     fn class_dominates_urgency() {
         let crit = Mock::new("crit", PriorityClass::Critical);
         let mut loud = Mock::new("loud", PriorityClass::Normal);
-        loud.stale = 999_999; loud.drift = 999; loud.behind = true;
+        loud.stale = 999_999;
+        loud.drift = 999;
+        loud.behind = true;
         let pending = vec![loud, crit];
         assert_eq!(schedule(&pending, 0, &w(), 9)[0].id, "crit");
     }
 
     #[test]
     fn fairness_deficit_prevents_starvation() {
-        let mut busy = Mock::new("busy", PriorityClass::Normal); busy.drift = 10;
+        let mut busy = Mock::new("busy", PriorityClass::Normal);
+        busy.drift = 10;
         let starved0 = Mock::new("starved", PriorityClass::Normal);
         let p0 = vec![busy, starved0];
-        assert_eq!(schedule(&p0, 0, &w(), 1)[0].id, "busy", "no deficit → busy wins");
+        assert_eq!(
+            schedule(&p0, 0, &w(), 1)[0].id,
+            "busy",
+            "no deficit → busy wins"
+        );
 
-        let mut busy2 = Mock::new("busy", PriorityClass::Normal); busy2.drift = 10;
-        let mut starved1 = Mock::new("starved", PriorityClass::Normal); starved1.deficit = 100;
+        let mut busy2 = Mock::new("busy", PriorityClass::Normal);
+        busy2.drift = 10;
+        let mut starved1 = Mock::new("starved", PriorityClass::Normal);
+        starved1.deficit = 100;
         let p1 = vec![busy2, starved1];
-        assert_eq!(schedule(&p1, 0, &w(), 1)[0].id, "starved", "accrued deficit overtakes — no starvation");
+        assert_eq!(
+            schedule(&p1, 0, &w(), 1)[0].id,
+            "starved",
+            "accrued deficit overtakes — no starvation"
+        );
     }
 
     #[test]
     fn backoff_and_deps_gate() {
-        let mut wedged = Mock::new("wedged", PriorityClass::Critical); wedged.backoff_until = 1000;
-        let mut blocked = Mock::new("blocked", PriorityClass::Critical); blocked.deps_ready = false;
+        let mut wedged = Mock::new("wedged", PriorityClass::Critical);
+        wedged.backoff_until = 1000;
+        let mut blocked = Mock::new("blocked", PriorityClass::Critical);
+        blocked.deps_ready = false;
         let ready = Mock::new("ready", PriorityClass::Low);
         let pending = vec![wedged, blocked, ready];
-        let ids: Vec<_> = schedule(&pending, 500, &w(), 9).iter().map(|x| x.id.clone()).collect();
-        assert_eq!(ids, vec!["ready".to_string()], "wedged+blocked excluded; only eligible Low runs");
+        let ids: Vec<_> = schedule(&pending, 500, &w(), 9)
+            .iter()
+            .map(|x| x.id.clone())
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["ready".to_string()],
+            "wedged+blocked excluded; only eligible Low runs"
+        );
     }
 
     #[test]
     fn bigger_gap_first() {
-        let mut small = Mock::new("small", PriorityClass::Normal); small.drift = 1;
-        let mut big = Mock::new("big", PriorityClass::Normal); big.drift = 50;
+        let mut small = Mock::new("small", PriorityClass::Normal);
+        small.drift = 1;
+        let mut big = Mock::new("big", PriorityClass::Normal);
+        big.drift = 50;
         let pending = vec![small, big];
         assert_eq!(schedule(&pending, 0, &w(), 1)[0].id, "big");
     }
 
     #[test]
     fn bounded_dispatch_at_100k() {
-        let pending: Vec<Mock> = (0..100_000).map(|i| Mock::new(&format!("u{i:06}"), PriorityClass::Normal)).collect();
-        assert_eq!(schedule(&pending, 0, &w(), 8).len(), 8, "100k pending → bounded dispatch");
+        let pending: Vec<Mock> = (0..100_000)
+            .map(|i| Mock::new(&format!("u{i:06}"), PriorityClass::Normal))
+            .collect();
+        assert_eq!(
+            schedule(&pending, 0, &w(), 8).len(),
+            8,
+            "100k pending → bounded dispatch"
+        );
     }
 
     // ── admission (FairBudget) proofs ──────────────────────────────────────
@@ -426,7 +519,10 @@ mod tests {
         let b = budget(2, 100);
         let _p1 = b.try_acquire("a").unwrap();
         let _p2 = b.try_acquire("a").unwrap();
-        assert!(b.try_acquire("a").is_none(), "3rd acquire on scope a refused (cap 2)");
+        assert!(
+            b.try_acquire("a").is_none(),
+            "3rd acquire on scope a refused (cap 2)"
+        );
     }
 
     #[test]
@@ -446,7 +542,11 @@ mod tests {
         assert!(b.try_acquire("wedged").is_none(), "wedged at its cap");
         let _o1 = b.try_acquire("other").unwrap();
         let _o2 = b.try_acquire("other").unwrap();
-        assert_eq!(b.in_flight("other"), 2, "other unaffected by wedged being capped");
+        assert_eq!(
+            b.in_flight("other"),
+            2,
+            "other unaffected by wedged being capped"
+        );
     }
 
     #[test]
@@ -466,9 +566,15 @@ mod tests {
         let b = budget(2, 6);
         let mut held = Vec::new();
         for _ in 0..10 {
-            if let Some(p) = b.try_acquire("hog") { held.push(p); }
+            if let Some(p) = b.try_acquire("hog") {
+                held.push(p);
+            }
         }
-        assert_eq!(b.in_flight("hog"), 2, "capped at its share, not the whole pool");
+        assert_eq!(
+            b.in_flight("hog"),
+            2,
+            "capped at its share, not the whole pool"
+        );
         assert!(b.try_acquire("other").is_some(), "room remains for others");
     }
 
@@ -492,8 +598,16 @@ mod tests {
         // BIND the result — the permits are RAII; dropping the Vec frees them.
         let admitted = pick_admitted(&pending, 0, &w(), &b);
         let got: Vec<&str> = admitted.iter().map(|(u, _)| u.sched_id()).collect();
-        assert_eq!(got, vec!["crit", "loud"], "Critical then loud-Normal admitted; Low skipped (scope at cap)");
-        assert_eq!(b.in_flight("ws"), 2, "exactly the per-scope cap in flight while the permits are held");
+        assert_eq!(
+            got,
+            vec!["crit", "loud"],
+            "Critical then loud-Normal admitted; Low skipped (scope at cap)"
+        );
+        assert_eq!(
+            b.in_flight("ws"),
+            2,
+            "exactly the per-scope cap in flight while the permits are held"
+        );
     }
 
     /// Anti-starvation across scopes: a saturated scope does NOT block admission
@@ -506,9 +620,18 @@ mod tests {
         let hot2 = in_scope("hot2", "hot", PriorityClass::Critical); // same scope, loses the 1 slot
         let cold = in_scope("cold", "cold", PriorityClass::Low); // different scope, still admitted
         let pending = vec![hot1, hot2, cold];
-        let got: Vec<&str> = pick_admitted(&pending, 0, &w(), &b).iter().map(|(u, _)| u.sched_id()).collect();
-        assert!(got.contains(&"hot1") && got.contains(&"cold"), "hot1 + cold admitted: {got:?}");
-        assert!(!got.contains(&"hot2"), "hot2 skipped — hot scope at cap (but cold not blocked)");
+        let got: Vec<&str> = pick_admitted(&pending, 0, &w(), &b)
+            .iter()
+            .map(|(u, _)| u.sched_id())
+            .collect();
+        assert!(
+            got.contains(&"hot1") && got.contains(&"cold"),
+            "hot1 + cold admitted: {got:?}"
+        );
+        assert!(
+            !got.contains(&"hot2"),
+            "hot2 skipped — hot scope at cap (but cold not blocked)"
+        );
     }
 
     /// Bounded: the global pool cap is never exceeded no matter how much pends,
@@ -521,9 +644,17 @@ mod tests {
             .collect();
         {
             let admitted = pick_admitted(&pending, 0, &w(), &b);
-            assert_eq!(admitted.len(), 3, "1000 pending → at most the global cap admitted");
+            assert_eq!(
+                admitted.len(),
+                3,
+                "1000 pending → at most the global cap admitted"
+            );
             assert_eq!(b.total_in_flight(), 3);
         } // permits dropped here
-        assert_eq!(b.total_in_flight(), 0, "RAII release frees the whole pool on completion");
+        assert_eq!(
+            b.total_in_flight(),
+            0,
+            "RAII release frees the whole pool on completion"
+        );
     }
 }

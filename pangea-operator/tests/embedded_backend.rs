@@ -302,10 +302,8 @@ async fn embedded_backend_smoke() {
     )
     .expect("write prepared_gem entrypoint");
 
-    let backend_with_cache = pangea_operator::ruby::EmbeddedCompilerBackend::with_cache(
-        pool.clone(),
-        cache.clone(),
-    );
+    let backend_with_cache =
+        pangea_operator::ruby::EmbeddedCompilerBackend::with_cache(pool.clone(), cache.clone());
     backend_with_cache
         .prepare_gem(&pangea_operator::ruby::GemSource {
             name: "pangea-prepared-gem".to_string(),

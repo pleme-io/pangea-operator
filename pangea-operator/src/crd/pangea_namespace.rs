@@ -326,7 +326,11 @@ impl PangeaNamespace {
             .map(|pg| pg.schema_prefix.as_str())
             .unwrap_or("pangea_");
 
-        format!("{}{}", prefix, self.metadata.name.as_deref().unwrap_or("default"))
+        format!(
+            "{}{}",
+            prefix,
+            self.metadata.name.as_deref().unwrap_or("default")
+        )
     }
 
     /// Build the PostgreSQL connection string (without credentials).

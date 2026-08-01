@@ -84,9 +84,9 @@ pub fn yaml_to_json_with_string_keys(value: serde_yaml::Value) -> Result<Json, E
             } else if let Some(u) = n.as_u64() {
                 Ok(Json::Number(u.into()))
             } else if let Some(f) = n.as_f64() {
-                serde_json::Number::from_f64(f).map(Json::Number).ok_or_else(|| {
-                    EvalError::Conversion(format!("non-finite YAML float: {f}"))
-                })
+                serde_json::Number::from_f64(f)
+                    .map(Json::Number)
+                    .ok_or_else(|| EvalError::Conversion(format!("non-finite YAML float: {f}")))
             } else {
                 Err(EvalError::Conversion(format!(
                     "YAML number not representable: {n:?}"

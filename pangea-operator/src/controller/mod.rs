@@ -4,69 +4,69 @@
 //! InfrastructureTemplate, PangeaNamespace, InfrastructureFlow, PackerBuild,
 //! AmiTest, and ImagePipeline.
 
-pub mod architecture_gem_controller;
 pub mod anomaly;
-pub mod conflict;
 pub mod anomaly_emitter;
 pub mod anomaly_tracker;
+pub mod architecture_gem_controller;
+pub mod config_cascade;
+pub mod conflict;
 pub mod error_policy;
 pub mod escalation;
 pub mod escalation_handlers;
 pub mod finalizer;
 pub mod fleet_status_controller;
+mod flow_controller;
+pub mod flow_scheduler;
 pub mod generation_filter;
 pub mod import;
 pub mod lifecycle;
-pub mod workspace_lifecycle;
-pub mod shard_lifecycle;
-pub mod scheduling;
-pub mod workspace_budget;
-pub mod reconcile_scheduler;
-pub mod status_patch;
 pub mod operator_policy_cache;
 pub mod operator_policy_controller;
+pub mod policy_cascade;
 pub mod policy_gate;
 pub mod policy_pipeline;
 pub mod post_reconcile_pipeline;
 pub mod reactive;
-pub mod routing;
-pub mod reconciliation_loop_controller;
-pub mod status;
-pub mod template_phase;
-pub mod workspace_catalog_controller;
-mod flow_controller;
-pub mod flow_scheduler;
-pub mod policy_cascade;
-pub mod config_cascade;
-pub mod template_dependency;
-pub mod template_dag;
+pub mod reconcile_scheduler;
 mod reconciler;
+pub mod reconciliation_loop_controller;
+pub mod routing;
+pub mod scheduling;
 pub mod settling;
+pub mod shard_lifecycle;
+pub mod status;
+pub mod status_patch;
+pub mod template_dag;
+pub mod template_dependency;
+pub mod template_phase;
+pub mod workspace_budget;
+pub mod workspace_catalog_controller;
+pub mod workspace_lifecycle;
 // `pub` (superset of `pub(crate)`): magma reuses template::provider_creds AND
 // the staleness_honesty integration test drives template::freshness.
-pub mod template;
-mod template_controller;
+mod ami_test_controller;
+mod compliance_binding_controller;
+mod compliance_schedule_controller;
+mod dashboard_controller;
+mod image_pipeline_controller;
 mod namespace_controller;
 mod packer_build_controller;
-mod ami_test_controller;
-mod image_pipeline_controller;
 mod synthesizer_format_controller;
-mod compliance_schedule_controller;
-mod compliance_binding_controller;
-mod dashboard_controller;
+pub mod template;
+mod template_controller;
 
-pub use reconciler::*;
-pub use flow_controller::FlowController;
-pub use template_controller::TemplateController;
-pub use namespace_controller::NamespaceController;
-pub use packer_build_controller::PackerBuildController;
 pub use ami_test_controller::AmiTestController;
-pub use image_pipeline_controller::ImagePipelineController;
-pub use synthesizer_format_controller::SynthesizerFormatController;
-pub use compliance_schedule_controller::ComplianceScheduleController;
 pub use compliance_binding_controller::ComplianceBindingController;
+pub use compliance_schedule_controller::ComplianceScheduleController;
 pub use dashboard_controller::DashboardController;
+pub use flow_controller::FlowController;
+pub use image_pipeline_controller::ImagePipelineController;
+pub use namespace_controller::NamespaceController;
 pub use operator_policy_controller::OperatorPolicyController;
+pub use packer_build_controller::PackerBuildController;
+pub use reconciler::*;
+pub use synthesizer_format_controller::SynthesizerFormatController;
+pub use template_controller::TemplateController;
 
 use crate::backend::StateBackend;
 use crate::error::Result;
@@ -295,10 +295,8 @@ impl ControllerState {
     ) -> Result<Self> {
         // Default backend selection: env var → magma default. The
         // CR-level override happens in `executor_for(template)`.
-        let default_backend = ExecutorBackend::resolve(
-            None,
-            std::env::var("PANGEA_EXECUTOR").ok().as_deref(),
-        );
+        let default_backend =
+            ExecutorBackend::resolve(None, std::env::var("PANGEA_EXECUTOR").ok().as_deref());
         let executor: Arc<dyn IacExecutor> = Arc::new(TofuExecutor::new(
             executor_config.tofu_binary.clone(),
             Duration::from_secs(executor_config.timeout_secs),
@@ -435,10 +433,12 @@ impl ControllerState {
             cfg!(feature = "executor_magma"),
             crate::executor::backend_select::forbid_tofu_from_env(),
         )
-        .map_err(|TofuForbiddenSelection| crate::error::Error::TofuForbidden {
-            template: template.name_any(),
-            reason: "PANGEA_FORBID_TOFU is set".to_string(),
-        })?;
+        .map_err(
+            |TofuForbiddenSelection| crate::error::Error::TofuForbidden {
+                template: template.name_any(),
+                reason: "PANGEA_FORBID_TOFU is set".to_string(),
+            },
+        )?;
 
         Ok(match chosen {
             ExecutorBackend::Magma => self.magma_executor_for(template),
@@ -462,10 +462,7 @@ impl ControllerState {
         // (cycle-receipt labeling, plan-gate, runner build for plan)
         // use this. The mutating apply/destroy path resolves creds via
         // `magma_executor_for_with_creds` and threads them in.
-        self.magma_executor_with_provider_configs(
-            template,
-            std::collections::BTreeMap::new(),
-        )
+        self.magma_executor_with_provider_configs(template, std::collections::BTreeMap::new())
     }
 
     /// Build a magma-backed `IacExecutor` for this CR with
@@ -520,7 +517,7 @@ impl ControllerState {
             template_name,
             state_name,
             // tofu-format bytes so magma + tofu read the same state.
-            backend_shape:   BackendShape::Tofu,
+            backend_shape: BackendShape::Tofu,
             plan_checkpoint: true,
             // Bounded work per apply cycle (MAGMA-OPERATOR-BACKEND.md
             // §II-ter / M0.16). A cycle that spends its quantum yields and
@@ -536,14 +533,14 @@ impl ControllerState {
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
                 .or(Some(120)),
-            preflight_laws:  true,
-            drift_policy:    magma_drift::DriftPolicy::conservative_default(),
-            audit_log_path:  None,
+            preflight_laws: true,
+            drift_policy: magma_drift::DriftPolicy::conservative_default(),
+            audit_log_path: None,
             // When the artifact store is wired (DB pool live), the
             // magma path runs fully DB-backed + zero-disk: rendered
             // config / plan / bundle in Postgres, the state+bundle
             // apply commit atomic. None → workspace-dir disk fallback.
-            artifact_store:  self.artifact_store.clone(),
+            artifact_store: self.artifact_store.clone(),
             // spec.providerCredentials resolved into ConfigureProvider
             // config-objects. Forwarded into magma's ApplyContext at
             // apply/destroy so providers whose creds live ONLY in
@@ -634,11 +631,7 @@ impl ControllerState {
                 // objects. On the magma path this is the ONLY place the
                 // provider gets its credentials (rio renders no provider
                 // block, so the rendered-config loop forwards nothing).
-                let provider_configs = match template
-                    .spec
-                    .provider_credentials
-                    .as_ref()
-                {
+                let provider_configs = match template.spec.provider_credentials.as_ref() {
                     Some(creds) => {
                         crate::controller::template::provider_creds::resolve_provider_configs(
                             creds, template, self,
@@ -674,9 +667,12 @@ impl ControllerState {
         };
         let exec = self.executor_for_checked_with_creds(template).await?;
         Ok(match exec.name() {
-            "magma" => Arc::new(MagmaWorkspaceRunner::new(exec, self.artifact_store.clone(), self.executor_timeout))
-                as Arc<dyn WorkspaceRunner>,
-            _       => Arc::new(TofuWorkspaceRunner::new(exec)) as Arc<dyn WorkspaceRunner>,
+            "magma" => Arc::new(MagmaWorkspaceRunner::new(
+                exec,
+                self.artifact_store.clone(),
+                self.executor_timeout,
+            )) as Arc<dyn WorkspaceRunner>,
+            _ => Arc::new(TofuWorkspaceRunner::new(exec)) as Arc<dyn WorkspaceRunner>,
         })
     }
 
@@ -705,9 +701,12 @@ impl ControllerState {
             // the DB-backed zero-disk path and skips the `magma-bundle.json`
             // disk read (the bundle lives in Postgres). Mirrors how
             // `magma_executor_for` wires `MagmaExecutorConfig.artifact_store`.
-            "magma" => Arc::new(MagmaWorkspaceRunner::new(exec, self.artifact_store.clone(), self.executor_timeout))
-                as Arc<dyn WorkspaceRunner>,
-            _       => Arc::new(TofuWorkspaceRunner::new(exec)) as Arc<dyn WorkspaceRunner>,
+            "magma" => Arc::new(MagmaWorkspaceRunner::new(
+                exec,
+                self.artifact_store.clone(),
+                self.executor_timeout,
+            )) as Arc<dyn WorkspaceRunner>,
+            _ => Arc::new(TofuWorkspaceRunner::new(exec)) as Arc<dyn WorkspaceRunner>,
         }
     }
 
@@ -761,7 +760,9 @@ impl ControllerState {
         // overlapping `RollingUpdate` pair) can never both mutate the
         // same template's cloud resources at once. See the field doc on
         // `ControllerState::state_lock`.
-        self.state_lock = Some(Arc::new(crate::backend::StateLock::new(Arc::clone(&shared))));
+        self.state_lock = Some(Arc::new(crate::backend::StateLock::new(Arc::clone(
+            &shared,
+        ))));
         // `db_pool` wraps the pool itself; reuse the same Arc'd pool.
         self.db_pool = Some(Arc::new(RwLock::new((*shared).clone())));
         self

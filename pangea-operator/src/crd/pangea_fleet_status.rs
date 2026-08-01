@@ -261,8 +261,7 @@ mod tests {
         // sidecar tool reads the CR with a partial JSON view.
         let s = PangeaFleetStatusStatus::default();
         let j = serde_json::to_string(&s).expect("serialize");
-        let back: PangeaFleetStatusStatus =
-            serde_json::from_str(&j).expect("deserialize");
+        let back: PangeaFleetStatusStatus = serde_json::from_str(&j).expect("deserialize");
         // Compare via debug repr — `Condition` (in conditions vec) doesn't
         // impl PartialEq fleet-wide, so we can't use `assert_eq!`.
         assert_eq!(format!("{:?}", s), format!("{:?}", back));

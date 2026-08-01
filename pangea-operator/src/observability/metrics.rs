@@ -1,8 +1,8 @@
 //! Prometheus metrics for the Pangea Operator.
 
 use prometheus::{
-    Histogram, HistogramOpts, HistogramVec,
-    IntCounter, IntCounterVec, IntGauge, IntGaugeVec, Opts, Registry,
+    Histogram, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge, IntGaugeVec, Opts,
+    Registry,
 };
 
 /// Prometheus metrics for the Pangea Operator.
@@ -50,7 +50,6 @@ pub struct Metrics {
     // to a few hundred templates per cluster. The decision/action/risk
     // labels are bounded enums (3-4 values each).
     // -----------------------------------------------------------------
-
     /// Per-resource policy decisions emitted during plan evaluation.
     /// Labels: template, namespace, decision (autoApply|requireApproval|refuse).
     /// Use to alert on unexpected `refuse` rates or to track audit-mode
@@ -164,7 +163,6 @@ pub struct Metrics {
     // series stays under ~5k per metric — comfortable for a single
     // Prometheus shard.
     // -----------------------------------------------------------------
-
     /// Number of PackerBuild CRs by phase.
     /// Labels: namespace, name, phase
     /// Used by alert: PackerBuildFailed.
@@ -209,7 +207,6 @@ pub struct Metrics {
     //     under contention it grows linearly with depth × per-compile
     //     duration.
     // -----------------------------------------------------------------
-
     /// Instantaneous depth of the magnus dispatcher queue (mpsc channel
     /// to the ruby owner thread). Bumped before every send, decremented
     /// when the owner picks up the request. With one owner thread, a
@@ -240,7 +237,6 @@ pub struct Metrics {
     // Cardinality: O(templates × distinct_results). The result label
     // is bounded (3 values), so growth is linear in templates only.
     // -----------------------------------------------------------------
-
     /// Counter incremented once per output-binding per apply cycle.
     /// Labels: template, namespace, result (published|output_missing|errored).
     /// Use to alert on `errored` rates (RBAC misconfig in target ns) or
@@ -269,7 +265,6 @@ pub struct Metrics {
     // policy metrics above. The `phase` label on the counter is a
     // bounded enum (Succeeded|Failed). Safe to a few hundred templates.
     // -----------------------------------------------------------------
-
     /// Total magma apply runs, by template + terminal phase.
     /// Labels: template, namespace, phase (Succeeded|Failed).
     /// `Succeeded` = the apply's lifecycle FSM reached `Stable` with
@@ -522,10 +517,7 @@ impl Metrics {
         .expect("metric can be created");
 
         let packer_builds_by_phase = IntGaugeVec::new(
-            Opts::new(
-                "pangea_packer_builds_by_phase",
-                "PackerBuild CRs by phase",
-            ),
+            Opts::new("pangea_packer_builds_by_phase", "PackerBuild CRs by phase"),
             &["target_namespace", "name", "phase"],
         )
         .expect("metric can be created");
@@ -540,10 +532,7 @@ impl Metrics {
         .expect("metric can be created");
 
         let ami_tests_by_phase = IntGaugeVec::new(
-            Opts::new(
-                "pangea_ami_tests_by_phase",
-                "AmiTest CRs by phase",
-            ),
+            Opts::new("pangea_ami_tests_by_phase", "AmiTest CRs by phase"),
             &["target_namespace", "name", "phase"],
         )
         .expect("metric can be created");
@@ -758,8 +747,7 @@ impl Metrics {
         // `let _ =` swallow is safe and keeps `new()` infallible.
         #[cfg(target_os = "linux")]
         {
-            let process_collector =
-                prometheus::process_collector::ProcessCollector::for_self();
+            let process_collector = prometheus::process_collector::ProcessCollector::for_self();
             let _ = registry.register(Box::new(process_collector));
         }
 
@@ -864,10 +852,7 @@ impl Metrics {
     /// in lowercase ("compiling", "initializing", "planning",
     /// "applying", "destroying", "import"). Stable label values
     /// keep dashboards / alerts queries consistent.
-    pub fn record_phase_duration(
-        &self,
-        phase: &str,
-    ) -> prometheus::HistogramTimer {
+    pub fn record_phase_duration(&self, phase: &str) -> prometheus::HistogramTimer {
         self.reconciliation_duration_seconds
             .with_label_values(&[phase])
             .start_timer()
@@ -898,13 +883,7 @@ impl Metrics {
     /// overwritten each apply); the two counters are monotonic. Called
     /// from `record_reconcile_cycle` whenever a magma bundle yields an
     /// apply outcome. tofu cycles never call this.
-    pub fn record_magma_apply(
-        &self,
-        template: &str,
-        namespace: &str,
-        applied: u64,
-        failed: u64,
-    ) {
+    pub fn record_magma_apply(&self, template: &str, namespace: &str, applied: u64, failed: u64) {
         let phase = if failed == 0 { "Succeeded" } else { "Failed" };
         self.magma_apply_total
             .with_label_values(&[template, namespace, phase])
@@ -1001,10 +980,7 @@ impl Metrics {
     /// (no transitions ⇒ no `.inc()` ⇒ no data). The fleet-status controller
     /// already lists every template each tick — this turns that list into a
     /// truthful current-state gauge.
-    pub fn set_templates_by_phase(
-        &self,
-        counts: &std::collections::HashMap<String, i64>,
-    ) {
+    pub fn set_templates_by_phase(&self, counts: &std::collections::HashMap<String, i64>) {
         for phase in crate::crd::Phase::ALL {
             let key = phase.to_string();
             let v = counts.get(&key).copied().unwrap_or(0);
@@ -1044,38 +1020,92 @@ impl Metrics {
     }
 
     /// Bump the PackerBuild phase gauge.
-    pub fn set_packer_build_phase(&self, namespace: &str, name: &str, phase: &crate::crd::PackerBuildPhase) {
+    pub fn set_packer_build_phase(
+        &self,
+        namespace: &str,
+        name: &str,
+        phase: &crate::crd::PackerBuildPhase,
+    ) {
         Self::set_phase_gauge(
             &self.packer_builds_by_phase,
-            namespace, name, phase,
-            &["Pending","Compiling","Validating","Building","Extracting","Ready","Failed"],
+            namespace,
+            name,
+            phase,
+            &[
+                "Pending",
+                "Compiling",
+                "Validating",
+                "Building",
+                "Extracting",
+                "Ready",
+                "Failed",
+            ],
         );
     }
 
     /// Bump the ImagePipeline phase gauge.
-    pub fn set_image_pipeline_phase(&self, namespace: &str, name: &str, phase: &crate::crd::ImagePipelinePhase) {
+    pub fn set_image_pipeline_phase(
+        &self,
+        namespace: &str,
+        name: &str,
+        phase: &crate::crd::ImagePipelinePhase,
+    ) {
         Self::set_phase_gauge(
             &self.image_pipelines_by_phase,
-            namespace, name, phase,
-            &["Pending","Building","Testing","Planning","AwaitingApproval","Applying","Verifying","Completed","Failed","RollingBack"],
+            namespace,
+            name,
+            phase,
+            &[
+                "Pending",
+                "Building",
+                "Testing",
+                "Planning",
+                "AwaitingApproval",
+                "Applying",
+                "Verifying",
+                "Completed",
+                "Failed",
+                "RollingBack",
+            ],
         );
     }
 
     /// Bump the AmiTest phase gauge.
-    pub fn set_ami_test_phase(&self, namespace: &str, name: &str, phase: &crate::crd::AmiTestPhase) {
+    pub fn set_ami_test_phase(
+        &self,
+        namespace: &str,
+        name: &str,
+        phase: &crate::crd::AmiTestPhase,
+    ) {
         Self::set_phase_gauge(
             &self.ami_tests_by_phase,
-            namespace, name, phase,
-            &["Pending","Resolving","Running","Passed","Failed","Cleaning"],
+            namespace,
+            name,
+            phase,
+            &[
+                "Pending",
+                "Resolving",
+                "Running",
+                "Passed",
+                "Failed",
+                "Cleaning",
+            ],
         );
     }
 
     /// Bump the ComplianceSchedule phase gauge.
-    pub fn set_compliance_schedule_phase(&self, namespace: &str, name: &str, phase: &crate::crd::ComplianceSchedulePhase) {
+    pub fn set_compliance_schedule_phase(
+        &self,
+        namespace: &str,
+        name: &str,
+        phase: &crate::crd::ComplianceSchedulePhase,
+    ) {
         Self::set_phase_gauge(
             &self.compliance_schedules_by_phase,
-            namespace, name, phase,
-            &["Idle","Running","Compliant","NonCompliant","Error"],
+            namespace,
+            name,
+            phase,
+            &["Idle", "Running", "Compliant", "NonCompliant", "Error"],
         );
     }
 
@@ -1251,8 +1281,14 @@ mod tests {
     #[test]
     fn test_templates_by_phase_gauge() {
         let metrics = Metrics::new();
-        metrics.templates_by_phase.with_label_values(&["Ready"]).set(5);
-        metrics.templates_by_phase.with_label_values(&["Failed"]).set(1);
+        metrics
+            .templates_by_phase
+            .with_label_values(&["Ready"])
+            .set(5);
+        metrics
+            .templates_by_phase
+            .with_label_values(&["Failed"])
+            .set(1);
 
         let output = metrics.gather();
         assert!(output.contains("pangea_templates_by_phase"));
@@ -1276,9 +1312,18 @@ mod tests {
     #[test]
     fn test_reconciliation_errors_counter() {
         let metrics = Metrics::new();
-        metrics.reconciliation_errors_total.with_label_values(&["kube_error"]).inc();
-        metrics.reconciliation_errors_total.with_label_values(&["timeout"]).inc();
-        metrics.reconciliation_errors_total.with_label_values(&["timeout"]).inc();
+        metrics
+            .reconciliation_errors_total
+            .with_label_values(&["kube_error"])
+            .inc();
+        metrics
+            .reconciliation_errors_total
+            .with_label_values(&["timeout"])
+            .inc();
+        metrics
+            .reconciliation_errors_total
+            .with_label_values(&["timeout"])
+            .inc();
 
         let output = metrics.gather();
         assert!(output.contains("pangea_reconciliation_errors_total"));
@@ -1296,7 +1341,10 @@ mod tests {
     #[test]
     fn test_histogram_records_observation() {
         let metrics = Metrics::new();
-        metrics.reconciliation_duration_seconds.with_label_values(&["Planning"]).observe(1.5);
+        metrics
+            .reconciliation_duration_seconds
+            .with_label_values(&["Planning"])
+            .observe(1.5);
         metrics.compilation_duration_seconds.observe(0.3);
 
         let output = metrics.gather();
@@ -1385,8 +1433,17 @@ mod tests {
     #[test]
     fn test_stuck_resources_gauge() {
         let metrics = Metrics::new();
-        metrics.stuck_resources.with_label_values(&["t1", "ns"]).set(7);
-        assert_eq!(metrics.stuck_resources.with_label_values(&["t1", "ns"]).get(), 7);
+        metrics
+            .stuck_resources
+            .with_label_values(&["t1", "ns"])
+            .set(7);
+        assert_eq!(
+            metrics
+                .stuck_resources
+                .with_label_values(&["t1", "ns"])
+                .get(),
+            7
+        );
     }
 
     // ── U3: phase-gauge helper coverage ──
@@ -1419,7 +1476,8 @@ mod tests {
         metrics.set_image_pipeline_phase("ns", "pipe1", &ImagePipelinePhase::AwaitingApproval);
         let g = &metrics.image_pipelines_by_phase;
         assert_eq!(
-            g.with_label_values(&["ns", "pipe1", "AwaitingApproval"]).get(),
+            g.with_label_values(&["ns", "pipe1", "AwaitingApproval"])
+                .get(),
             1
         );
         assert_eq!(g.with_label_values(&["ns", "pipe1", "Completed"]).get(), 0);
@@ -1502,7 +1560,10 @@ mod tests {
         metrics.compile_request_seconds.observe(0.123);
         metrics.compile_request_seconds.observe(0.456);
         metrics.compile_request_seconds.observe(2.5);
-        assert_eq!(metrics.compile_request_seconds.get_sample_count(), initial + 3);
+        assert_eq!(
+            metrics.compile_request_seconds.get_sample_count(),
+            initial + 3
+        );
         // Sum is the cumulative observed seconds.
         assert!(metrics.compile_request_seconds.get_sample_sum() > 3.0);
     }
@@ -1602,12 +1663,34 @@ mod tests {
         counts.insert("Ready".to_string(), 7);
         counts.insert("Drifted".to_string(), 2);
         metrics.set_templates_by_phase(&counts);
-        assert_eq!(metrics.templates_by_phase.with_label_values(&["Ready"]).get(), 7);
-        assert_eq!(metrics.templates_by_phase.with_label_values(&["Drifted"]).get(), 2);
+        assert_eq!(
+            metrics
+                .templates_by_phase
+                .with_label_values(&["Ready"])
+                .get(),
+            7
+        );
+        assert_eq!(
+            metrics
+                .templates_by_phase
+                .with_label_values(&["Drifted"])
+                .get(),
+            2
+        );
         // Every other phase is explicitly 0 (a series exists, not absent).
-        for absent in ["Pending", "Compiling", "Planning", "Applying", "Failed", "Destroying"] {
+        for absent in [
+            "Pending",
+            "Compiling",
+            "Planning",
+            "Applying",
+            "Failed",
+            "Destroying",
+        ] {
             assert_eq!(
-                metrics.templates_by_phase.with_label_values(&[absent]).get(),
+                metrics
+                    .templates_by_phase
+                    .with_label_values(&[absent])
+                    .get(),
                 0,
                 "phase {absent} must be reset to 0"
             );
@@ -1617,11 +1700,20 @@ mod tests {
         next.insert("Failed".to_string(), 1);
         metrics.set_templates_by_phase(&next);
         assert_eq!(
-            metrics.templates_by_phase.with_label_values(&["Ready"]).get(),
+            metrics
+                .templates_by_phase
+                .with_label_values(&["Ready"])
+                .get(),
             0,
             "an emptied phase must reset to 0, not hold its prior count"
         );
-        assert_eq!(metrics.templates_by_phase.with_label_values(&["Failed"]).get(), 1);
+        assert_eq!(
+            metrics
+                .templates_by_phase
+                .with_label_values(&["Failed"])
+                .get(),
+            1
+        );
     }
 
     #[test]
@@ -1636,11 +1728,17 @@ mod tests {
         metrics.record_magma_apply("t1", "ns1", 1494, 14);
         // Gauge now reflects the real apply, not the seed's 0.
         assert_eq!(
-            metrics.magma_resources_failed.with_label_values(&["t1", "ns1"]).get(),
+            metrics
+                .magma_resources_failed
+                .with_label_values(&["t1", "ns1"])
+                .get(),
             14
         );
         assert_eq!(
-            metrics.magma_resources_applied.with_label_values(&["t1", "ns1"]).get(),
+            metrics
+                .magma_resources_applied
+                .with_label_values(&["t1", "ns1"])
+                .get(),
             1494
         );
         // The Succeeded counter was seeded with inc_by(0); a Failed
@@ -1671,10 +1769,7 @@ mod tests {
         // on a per-template metric here.
         let metrics = Metrics::new();
         metrics.seed_template("t1", "ns1");
-        metrics
-            .settled
-            .with_label_values(&["t1", "ns1"])
-            .set(1);
+        metrics.settled.with_label_values(&["t1", "ns1"]).set(1);
         let text = metrics.gather();
         // Per-template metrics carry `target_namespace`, never a bare
         // `namespace` label.

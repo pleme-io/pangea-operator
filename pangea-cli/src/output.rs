@@ -183,10 +183,7 @@ pub fn print_plan(plan: &PlanResult, format: OutputFormat) -> Result<()> {
     match format {
         OutputFormat::Table => {
             if plan.has_changes {
-                println!(
-                    "\n{}\n",
-                    "Plan: Changes detected".yellow().bold()
-                );
+                println!("\n{}\n", "Plan: Changes detected".yellow().bold());
                 println!(
                     "  {} {} to add",
                     format!("+{}", plan.added).green(),
@@ -221,12 +218,21 @@ pub fn print_plan(plan: &PlanResult, format: OutputFormat) -> Result<()> {
 }
 
 /// Print a template detail.
-pub fn print_template_detail(template: &InfrastructureTemplate, format: OutputFormat) -> Result<()> {
+pub fn print_template_detail(
+    template: &InfrastructureTemplate,
+    format: OutputFormat,
+) -> Result<()> {
     match format {
         OutputFormat::Table => {
             println!("\n{}", "Template Details".bold());
-            println!("  Namespace:       {}", template.namespace.clone().unwrap_or_default());
-            println!("  Name:            {}", template.name.clone().unwrap_or_default());
+            println!(
+                "  Namespace:       {}",
+                template.namespace.clone().unwrap_or_default()
+            );
+            println!(
+                "  Name:            {}",
+                template.name.clone().unwrap_or_default()
+            );
             println!("  Phase:           {}", format_phase(template.phase));
             println!("  Pangea NS:       {}", template.pangea_namespace);
             println!("  Auto Approve:    {}", template.auto_approve);

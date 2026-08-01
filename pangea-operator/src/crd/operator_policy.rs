@@ -437,11 +437,7 @@ impl WorkspaceSuspend {
     }
 
     /// Lookup helper: returns the entry for a template if present.
-    pub fn template_entry(
-        &self,
-        namespace: &str,
-        name: &str,
-    ) -> Option<&WorkspaceSuspendEntry> {
+    pub fn template_entry(&self, namespace: &str, name: &str) -> Option<&WorkspaceSuspendEntry> {
         self.templates.get(&Self::template_key(namespace, name))
     }
 
@@ -508,7 +504,10 @@ mod tests {
         assert_eq!(ControllerKind::Template.name(), "template");
         assert_eq!(ControllerKind::WorkspaceCatalog.name(), "workspaceCatalog");
         assert_eq!(ControllerKind::ArchitectureGem.name(), "architectureGem");
-        assert_eq!(ControllerKind::ComplianceBinding.name(), "complianceBinding");
+        assert_eq!(
+            ControllerKind::ComplianceBinding.name(),
+            "complianceBinding"
+        );
         assert_eq!(ControllerKind::ImagePipeline.name(), "imagePipeline");
     }
 

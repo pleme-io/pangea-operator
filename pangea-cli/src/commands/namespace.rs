@@ -39,34 +39,35 @@ pub async fn execute(
             let namespace = client.get_namespace(&name).await?;
 
             match namespace {
-                Some(ns) => {
-                    match format {
-                        OutputFormat::Table => {
-                            println!("\nNamespace: {}", ns.name.clone().unwrap_or_default());
-                            println!("  Backend Type:    {}", ns.backend_type);
-                            println!(
-                                "  Database Host:   {}",
-                                ns.database_host.clone().unwrap_or_default()
-                            );
-                            println!(
-                                "  Database Name:   {}",
-                                ns.database_name.clone().unwrap_or_default()
-                            );
-                            println!(
-                                "  Schema Name:     {}",
-                                ns.schema_name.clone().unwrap_or_default()
-                            );
-                            println!("  Ready:           {}", if ns.is_ready { "Yes" } else { "No" });
-                            println!("  Template Count:  {}", ns.template_count);
-                        }
-                        OutputFormat::Json => {
-                            println!("{}", serde_json::to_string_pretty(&ns)?);
-                        }
-                        OutputFormat::Yaml => {
-                            println!("{}", serde_yaml::to_string(&ns)?);
-                        }
+                Some(ns) => match format {
+                    OutputFormat::Table => {
+                        println!("\nNamespace: {}", ns.name.clone().unwrap_or_default());
+                        println!("  Backend Type:    {}", ns.backend_type);
+                        println!(
+                            "  Database Host:   {}",
+                            ns.database_host.clone().unwrap_or_default()
+                        );
+                        println!(
+                            "  Database Name:   {}",
+                            ns.database_name.clone().unwrap_or_default()
+                        );
+                        println!(
+                            "  Schema Name:     {}",
+                            ns.schema_name.clone().unwrap_or_default()
+                        );
+                        println!(
+                            "  Ready:           {}",
+                            if ns.is_ready { "Yes" } else { "No" }
+                        );
+                        println!("  Template Count:  {}", ns.template_count);
                     }
-                }
+                    OutputFormat::Json => {
+                        println!("{}", serde_json::to_string_pretty(&ns)?);
+                    }
+                    OutputFormat::Yaml => {
+                        println!("{}", serde_yaml::to_string(&ns)?);
+                    }
+                },
                 None => {
                     eprintln!("Namespace not found: {}", name);
                     std::process::exit(1);

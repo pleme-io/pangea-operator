@@ -26,8 +26,8 @@ use std::time::Duration;
 use tracing::{debug, error, info, instrument, warn};
 
 use super::{
-    conditions_for_suspended, create_condition, ControllerState,
-    DEFAULT_REQUEUE_INTERVAL, SHORT_REQUEUE_INTERVAL,
+    conditions_for_suspended, create_condition, ControllerState, DEFAULT_REQUEUE_INTERVAL,
+    SHORT_REQUEUE_INTERVAL,
 };
 
 /// Controller for InfrastructureFlow resources.
@@ -127,7 +127,8 @@ async fn reconcile_flow(
         );
         if !already_set {
             let patch = serde_json::json!({ "status": { "conditions": new_conditions } });
-            let _ = crate::controller::status_patch::patch_status(&*flow, &state.client, patch).await;
+            let _ =
+                crate::controller::status_patch::patch_status(&*flow, &state.client, patch).await;
         } else {
             debug!("Suspended flow conditions already set; skipping status patch (avoids self-trigger watch loop)");
         }
@@ -147,7 +148,8 @@ async fn reconcile_flow(
 
     // Collect current step statuses from managed templates
     let namespace = flow.namespace().unwrap_or_default();
-    let template_api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
+    let template_api: Api<InfrastructureTemplate> =
+        Api::namespaced(state.client.clone(), &namespace);
     let mut step_statuses: BTreeMap<String, FlowStepStatus> = BTreeMap::new();
     let mut step_outputs: BTreeMap<String, BTreeMap<String, serde_json::Value>> = BTreeMap::new();
     let mut ready_count = 0u32;
@@ -157,7 +159,12 @@ async fn reconcile_flow(
 
     for step_name in &order {
         let template_name = flow.template_name_for_step(step_name);
-        let step = flow.spec.steps.iter().find(|s| &s.name == step_name).unwrap();
+        let step = flow
+            .spec
+            .steps
+            .iter()
+            .find(|s| &s.name == step_name)
+            .unwrap();
 
         // Check dependencies
         let deps_ready = step.depends_on.iter().all(|dep| {
@@ -190,15 +197,18 @@ async fn reconcile_flow(
                 // Progressing is the default — derived from the final
                 // ready_count + any_failed at the bottom of this fn.
 
-                step_statuses.insert(step_name.clone(), FlowStepStatus {
-                    phase: Some(phase.to_string()),
-                    outputs,
-                    template_name: Some(template_name.clone()),
-                    dependencies_ready: deps_ready,
-                    last_error: template.status.as_ref().and_then(|s| s.last_error.clone()),
-                    state: None,
-                    warmed_up: false,
-                });
+                step_statuses.insert(
+                    step_name.clone(),
+                    FlowStepStatus {
+                        phase: Some(phase.to_string()),
+                        outputs,
+                        template_name: Some(template_name.clone()),
+                        dependencies_ready: deps_ready,
+                        last_error: template.status.as_ref().and_then(|s| s.last_error.clone()),
+                        state: None,
+                        warmed_up: false,
+                    },
+                );
             }
             Ok(None) => {
                 // Template doesn't exist yet — create it if deps are ready
@@ -209,15 +219,21 @@ async fn reconcile_flow(
                             Ok(resolved) => Some(resolved),
                             Err(e) => {
                                 warn!(step = step_name, error = %e, "Failed to resolve variables");
-                                step_statuses.insert(step_name.clone(), FlowStepStatus {
-                                    phase: Some("Pending".into()),
-                                    outputs: None,
-                                    template_name: None,
-                                    dependencies_ready: true,
-                                    last_error: Some(format!("Variable resolution failed: {}", e)),
-                                    state: None,
-                                    warmed_up: false,
-                                });
+                                step_statuses.insert(
+                                    step_name.clone(),
+                                    FlowStepStatus {
+                                        phase: Some("Pending".into()),
+                                        outputs: None,
+                                        template_name: None,
+                                        dependencies_ready: true,
+                                        last_error: Some(format!(
+                                            "Variable resolution failed: {}",
+                                            e
+                                        )),
+                                        state: None,
+                                        warmed_up: false,
+                                    },
+                                );
                                 continue;
                             }
                         }
@@ -229,7 +245,10 @@ async fn reconcile_flow(
                     let source = if let Some(ref src) = step.template_ref.source {
                         src.clone()
                     } else {
-                        warn!(step = step_name, "Step has no source and no existing template");
+                        warn!(
+                            step = step_name,
+                            "Step has no source and no existing template"
+                        );
                         continue;
                     };
 
@@ -249,13 +268,18 @@ async fn reconcile_flow(
                             // rationale as the other None-defaulted fields
                             // below.
                             spec_approved_plan_hash: None,
-                            refresh_interval: step.refresh_interval.clone().unwrap_or_else(|| "10m".into()),
+                            refresh_interval: step
+                                .refresh_interval
+                                .clone()
+                                .unwrap_or_else(|| "10m".into()),
                             suspend: false,
                             // Flow-spawned templates inherit the operator-wide
                             // executor default. Per-CR overrides happen on
                             // operator-authored templates only (M0.12).
                             executor: None,
-                            destroy_protection: step.destroy_protection.unwrap_or(flow.spec.destroy_protection),
+                            destroy_protection: step
+                                .destroy_protection
+                                .unwrap_or(flow.spec.destroy_protection),
                             retry_policy: None,
                             provider_credentials: None,
                             compliance_profiles: vec![],
@@ -277,8 +301,22 @@ async fn reconcile_flow(
 
                     match template_api.create(&PostParams::default(), &template).await {
                         Ok(_) => {
-                            info!(step = step_name, template = template_name, "Created template for flow step");
-                            record_flow_event(&flow, &state, EventType::Normal, "StepCreated", &format!("Created template {} for step {}", template_name, step_name)).await;
+                            info!(
+                                step = step_name,
+                                template = template_name,
+                                "Created template for flow step"
+                            );
+                            record_flow_event(
+                                &flow,
+                                &state,
+                                EventType::Normal,
+                                "StepCreated",
+                                &format!(
+                                    "Created template {} for step {}",
+                                    template_name, step_name
+                                ),
+                            )
+                            .await;
                         }
                         Err(e) => {
                             warn!(step = step_name, error = %e, "Failed to create template");
@@ -286,15 +324,22 @@ async fn reconcile_flow(
                     }
                 }
 
-                step_statuses.insert(step_name.clone(), FlowStepStatus {
-                    phase: Some("Pending".into()),
-                    outputs: None,
-                    template_name: if deps_ready { Some(template_name) } else { None },
-                    dependencies_ready: deps_ready,
-                    last_error: None,
-                    state: None,
-                    warmed_up: false,
-                });
+                step_statuses.insert(
+                    step_name.clone(),
+                    FlowStepStatus {
+                        phase: Some("Pending".into()),
+                        outputs: None,
+                        template_name: if deps_ready {
+                            Some(template_name)
+                        } else {
+                            None
+                        },
+                        dependencies_ready: deps_ready,
+                        last_error: None,
+                        state: None,
+                        warmed_up: false,
+                    },
+                );
             }
             Err(e) => {
                 warn!(step = step_name, error = %e, "Failed to get template");
@@ -387,10 +432,8 @@ fn flow_status_needs_patch(
     let prev_conditions: &[crate::crd::Condition] =
         prev.map(|s| s.conditions.as_slice()).unwrap_or(&[]);
 
-    let conditions_match = crate::controller::status::conditions_observably_equal(
-        prev_conditions,
-        new_conditions,
-    );
+    let conditions_match =
+        crate::controller::status::conditions_observably_equal(prev_conditions, new_conditions);
 
     !conditions_match
         || prev_phase != Some(new_phase)
@@ -411,7 +454,10 @@ fn toposort(steps: &[crate::crd::FlowStep]) -> std::result::Result<Vec<String>, 
         adj.entry(step.name.clone()).or_default();
         for dep in &step.depends_on {
             if !step_names.contains(dep) {
-                return Err(format!("Step '{}' depends on unknown step '{}'", step.name, dep));
+                return Err(format!(
+                    "Step '{}' depends on unknown step '{}'",
+                    step.name, dep
+                ));
             }
             adj.entry(dep.clone()).or_default().push(step.name.clone());
             *in_degree.entry(step.name.clone()).or_insert(0) += 1;
@@ -509,11 +555,7 @@ async fn record_flow_event(
     }
 }
 
-fn error_policy(
-    _obj: Arc<InfrastructureFlow>,
-    error: &Error,
-    ctx: Arc<ControllerState>,
-) -> Action {
+fn error_policy(_obj: Arc<InfrastructureFlow>, error: &Error, ctx: Arc<ControllerState>) -> Action {
     crate::controller::error_policy::run_error_policy(
         &ctx.metrics,
         crate::crd::ControllerKind::Flow,
@@ -529,7 +571,10 @@ mod tests {
     fn step(name: &str, deps: &[&str]) -> crate::crd::FlowStep {
         crate::crd::FlowStep {
             name: name.into(),
-            template_ref: crate::crd::FlowTemplateRef { name: None, source: None },
+            template_ref: crate::crd::FlowTemplateRef {
+                name: None,
+                source: None,
+            },
             depends_on: deps.iter().map(|s| s.to_string()).collect(),
             variables: None,
             auto_approve: None,
@@ -549,8 +594,15 @@ mod tests {
             // Stale on purpose — the gate must compare semantically
             // and not be tricked by old timestamps.
             last_transition_time: chrono::TimeZone::with_ymd_and_hms(
-                &chrono::Utc, 2025, 1, 1, 0, 0, 0
-            ).unwrap(),
+                &chrono::Utc,
+                2025,
+                1,
+                1,
+                0,
+                0,
+                0,
+            )
+            .unwrap(),
         }
     }
 
@@ -584,7 +636,14 @@ mod tests {
         // Same generation, but phase regresses Ready → Progressing.
         let new_conditions = flow_conditions(FlowPhase::Progressing);
         assert!(
-            flow_status_needs_patch(Some(&prev), FlowPhase::Progressing, 3, 2, &new_conditions, 5),
+            flow_status_needs_patch(
+                Some(&prev),
+                FlowPhase::Progressing,
+                3,
+                2,
+                &new_conditions,
+                5
+            ),
             "phase change must force a PATCH even if conditions slot in semantically"
         );
     }
@@ -616,11 +675,17 @@ mod tests {
         let prev = ready_status(5);
         let new_conditions = flow_conditions(FlowPhase::Progressing);
         assert!(
-            flow_status_needs_patch(Some(&prev), FlowPhase::Progressing, 3, 2, &new_conditions, 5),
+            flow_status_needs_patch(
+                Some(&prev),
+                FlowPhase::Progressing,
+                3,
+                2,
+                &new_conditions,
+                5
+            ),
             "ready_count change must force a PATCH"
         );
     }
-
 
     #[test]
     fn test_toposort_simple() {
@@ -631,7 +696,12 @@ mod tests {
 
     #[test]
     fn test_toposort_parallel() {
-        let steps = vec![step("a", &[]), step("b", &["a"]), step("c", &["a"]), step("d", &["b", "c"])];
+        let steps = vec![
+            step("a", &[]),
+            step("b", &["a"]),
+            step("c", &["a"]),
+            step("d", &["b", "c"]),
+        ];
         let order = toposort(&steps).unwrap();
         assert_eq!(order[0], "a");
         assert_eq!(order[3], "d");
@@ -714,7 +784,13 @@ mod tests {
 
     #[test]
     fn test_flow_conditions_all_phases() {
-        for phase in [FlowPhase::Pending, FlowPhase::Progressing, FlowPhase::Ready, FlowPhase::Failed, FlowPhase::Destroying] {
+        for phase in [
+            FlowPhase::Pending,
+            FlowPhase::Progressing,
+            FlowPhase::Ready,
+            FlowPhase::Failed,
+            FlowPhase::Destroying,
+        ] {
             let conditions = flow_conditions(phase);
             assert_eq!(conditions.len(), 2);
             assert_eq!(conditions[0].r#type, "Ready");

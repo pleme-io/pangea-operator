@@ -1,7 +1,7 @@
 //! Infrastructure template types.
 
-use serde::{Deserialize, Serialize};
 use crate::{DateTime, Phase};
+use serde::{Deserialize, Serialize};
 
 /// Resource counts for a template.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -179,7 +179,10 @@ mod tests {
     #[test]
     fn test_has_pending_changes_added() {
         let tmpl = InfrastructureTemplate {
-            resource_counts: ResourceCounts { added: 1, ..Default::default() },
+            resource_counts: ResourceCounts {
+                added: 1,
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert!(tmpl.has_pending_changes());
@@ -188,7 +191,10 @@ mod tests {
     #[test]
     fn test_has_pending_changes_changed() {
         let tmpl = InfrastructureTemplate {
-            resource_counts: ResourceCounts { changed: 1, ..Default::default() },
+            resource_counts: ResourceCounts {
+                changed: 1,
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert!(tmpl.has_pending_changes());
@@ -197,7 +203,10 @@ mod tests {
     #[test]
     fn test_has_pending_changes_destroyed() {
         let tmpl = InfrastructureTemplate {
-            resource_counts: ResourceCounts { destroyed: 1, ..Default::default() },
+            resource_counts: ResourceCounts {
+                destroyed: 1,
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert!(tmpl.has_pending_changes());
@@ -217,7 +226,12 @@ mod tests {
             auto_approve: true,
             suspended: false,
             last_applied_at: Some(DateTime("2024-01-01T00:00:00Z".to_string())),
-            resource_counts: ResourceCounts { total: 10, added: 2, changed: 1, destroyed: 0 },
+            resource_counts: ResourceCounts {
+                total: 10,
+                added: 2,
+                changed: 1,
+                destroyed: 0,
+            },
             plan_summary: Some("2 to add, 1 to change".to_string()),
             last_error: None,
             failure_count: 0,

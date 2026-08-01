@@ -144,7 +144,9 @@ impl Default for FailurePolicy {
 }
 
 /// Lifecycle phase of an AmiTest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, Default,
+)]
 pub enum AmiTestPhase {
     /// Initial state, waiting to be processed.
     #[default]
@@ -162,7 +164,9 @@ pub enum AmiTestPhase {
 }
 
 /// Phase of a single test suite.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, Default,
+)]
 pub enum SuitePhase {
     /// Waiting for dependencies.
     #[default]

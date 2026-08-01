@@ -142,7 +142,9 @@ pub struct MapSectionSpec {
 }
 
 /// Key transformation strategy for hash keys in the synthesized output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, Default,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum KeyTransform {
     /// No transformation — keys pass through as-is.
@@ -167,7 +169,9 @@ pub enum KeyTransform {
 // ---------------------------------------------------------------------------
 
 /// Lifecycle phase of a SynthesizerFormat.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Display, Default,
+)]
 pub enum SynthesizerFormatPhase {
     /// Validated and ready for use.
     #[default]
@@ -266,6 +270,9 @@ mod tests {
     // std `#[derive(Default)]` + `#[default]`.
     #[test]
     fn synthesizer_format_phase_default_is_ready() {
-        assert_eq!(SynthesizerFormatPhase::default(), SynthesizerFormatPhase::Ready);
+        assert_eq!(
+            SynthesizerFormatPhase::default(),
+            SynthesizerFormatPhase::Ready
+        );
     }
 }

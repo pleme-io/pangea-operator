@@ -49,7 +49,9 @@
 //! safety net (task #120/#131), but unlike that net (opt-in via
 //! `spec.destroyProtection`), this floor is unconditional.
 
-use crate::crd::{DriftAction, DriftDetail, PolicyDecision, PolicyEvaluation, PolicyRule, RiskLevel};
+use crate::crd::{
+    DriftAction, DriftDetail, PolicyDecision, PolicyEvaluation, PolicyRule, RiskLevel,
+};
 use regex::Regex;
 use tracing::warn;
 
@@ -144,11 +146,7 @@ pub fn evaluate(
                     // (RequireApproval/Refuse) is left exactly as
                     // configured — the floor only ever raises, never
                     // lowers, the operator's own explicit stance.
-                    let resource_type = d
-                        .address
-                        .split('.')
-                        .next()
-                        .unwrap_or(d.address.as_str());
+                    let resource_type = d.address.split('.').next().unwrap_or(d.address.as_str());
                     if fallback == PolicyDecision::AutoApply
                         && is_protected_resource_type(resource_type)
                         && is_destructive_action(&d.action)
@@ -286,7 +284,10 @@ impl<'a> CompiledRule<'a> {
             );
         }
 
-        Self { rule, address_regexes }
+        Self {
+            rule,
+            address_regexes,
+        }
     }
 
     fn matches(&self, d: &DriftDetail) -> bool {
@@ -296,12 +297,12 @@ impl<'a> CompiledRule<'a> {
         if !m.resource_types.is_empty() {
             // DriftDetail.address is `<type>.<name>` (or `<type>.<name>[idx]`).
             // Extract the type prefix once.
-            let resource_type = d
-                .address
-                .split('.')
-                .next()
-                .unwrap_or(d.address.as_str());
-            if !m.resource_types.iter().any(|g| glob_match(g, resource_type)) {
+            let resource_type = d.address.split('.').next().unwrap_or(d.address.as_str());
+            if !m
+                .resource_types
+                .iter()
+                .any(|g| glob_match(g, resource_type))
+            {
                 return false;
             }
         }
@@ -313,7 +314,11 @@ impl<'a> CompiledRule<'a> {
             if self.address_regexes.is_empty() {
                 return false;
             }
-            if !self.address_regexes.iter().any(|re| re.is_match(&d.address)) {
+            if !self
+                .address_regexes
+                .iter()
+                .any(|re| re.is_match(&d.address))
+            {
                 return false;
             }
         }
@@ -507,7 +512,12 @@ mod tests {
 
     #[test]
     fn protected_resource_delete_floors_to_require_approval_when_unconfigured() {
-        let drifts = vec![drift("cloudflare_zone.quero_cloud", "delete", "high", vec![])];
+        let drifts = vec![drift(
+            "cloudflare_zone.quero_cloud",
+            "delete",
+            "high",
+            vec![],
+        )];
         let out = evaluate(&[], None, &drifts);
         assert_eq!(
             out.aggregate,
@@ -594,7 +604,12 @@ mod tests {
         // deleting a single DNS record (routine) is unaffected, matching
         // the pre-existing empty_rules_default_autoapply behavior.
         assert!(!is_protected_resource_type("cloudflare_dns_record"));
-        let drifts = vec![drift("cloudflare_dns_record.scratch", "delete", "low", vec![])];
+        let drifts = vec![drift(
+            "cloudflare_dns_record.scratch",
+            "delete",
+            "low",
+            vec![],
+        )];
         let out = evaluate(&[], None, &drifts);
         assert_eq!(out.aggregate, PolicyDecision::AutoApply);
     }
@@ -704,7 +719,11 @@ mod tests {
         let rules = vec![rule(
             "allow-dns",
             PolicyDecision::AutoApply,
-            vec!["cloudflare_dns_record"], vec![], vec![], vec![], vec![],
+            vec!["cloudflare_dns_record"],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
         )];
         let drifts = vec![drift("cloudflare_dns_record.foo", "update", "low", vec![])];
         let out = evaluate(&rules, Some(PolicyDecision::RequireApproval), &drifts);
@@ -714,10 +733,15 @@ mod tests {
 
     #[test]
     fn refuse_rule_blocks_aggregate() {
-        let rules = vec![
-            rule("no-zone-deletes", PolicyDecision::Refuse,
-                 vec!["cloudflare_zone"], vec![], vec!["delete"], vec![], vec![]),
-        ];
+        let rules = vec![rule(
+            "no-zone-deletes",
+            PolicyDecision::Refuse,
+            vec!["cloudflare_zone"],
+            vec![],
+            vec!["delete"],
+            vec![],
+            vec![],
+        )];
         let drifts = vec![
             drift("cloudflare_zone.main", "delete", "high", vec![]),
             drift("cloudflare_dns_record.foo", "create", "low", vec![]),
@@ -726,15 +750,23 @@ mod tests {
         assert_eq!(out.aggregate, PolicyDecision::Refuse);
         assert_eq!(out.evaluation.refuse_count, 1);
         assert_eq!(out.evaluation.auto_apply_count, 1);
-        assert_eq!(out.evaluation.refused_addresses, vec!["cloudflare_zone.main"]);
+        assert_eq!(
+            out.evaluation.refused_addresses,
+            vec!["cloudflare_zone.main"]
+        );
     }
 
     #[test]
     fn require_approval_rule_dominates_autoapply() {
-        let rules = vec![
-            rule("approve-dns-deletes", PolicyDecision::RequireApproval,
-                 vec!["cloudflare_dns_record"], vec![], vec!["delete"], vec![], vec![]),
-        ];
+        let rules = vec![rule(
+            "approve-dns-deletes",
+            PolicyDecision::RequireApproval,
+            vec!["cloudflare_dns_record"],
+            vec![],
+            vec!["delete"],
+            vec![],
+            vec![],
+        )];
         let drifts = vec![
             drift("cloudflare_dns_record.foo", "delete", "high", vec![]),
             drift("cloudflare_dns_record.bar", "create", "low", vec![]),
@@ -748,31 +780,58 @@ mod tests {
     #[test]
     fn first_matching_rule_wins() {
         let rules = vec![
-            rule("first", PolicyDecision::Refuse,
-                 vec!["cloudflare_*"], vec![], vec![], vec![], vec![]),
-            rule("second", PolicyDecision::AutoApply,
-                 vec!["cloudflare_dns_record"], vec![], vec![], vec![], vec![]),
+            rule(
+                "first",
+                PolicyDecision::Refuse,
+                vec!["cloudflare_*"],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+            ),
+            rule(
+                "second",
+                PolicyDecision::AutoApply,
+                vec!["cloudflare_dns_record"],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+            ),
         ];
         let drifts = vec![drift("cloudflare_dns_record.foo", "delete", "high", vec![])];
         let out = evaluate(&rules, None, &drifts);
         assert_eq!(out.aggregate, PolicyDecision::Refuse);
-        assert_eq!(out.annotated_drifts[0].matched_policy.as_deref(), Some("first"));
+        assert_eq!(
+            out.annotated_drifts[0].matched_policy.as_deref(),
+            Some("first")
+        );
     }
 
     #[test]
     fn address_regex_matches() {
-        let rules = vec![
-            rule("rio-dns-only", PolicyDecision::AutoApply,
-                 vec![], vec![r"^cloudflare_dns_record\.rio-.*"],
-                 vec![], vec![], vec![]),
-        ];
+        let rules = vec![rule(
+            "rio-dns-only",
+            PolicyDecision::AutoApply,
+            vec![],
+            vec![r"^cloudflare_dns_record\.rio-.*"],
+            vec![],
+            vec![],
+            vec![],
+        )];
         let drifts = vec![
             drift("cloudflare_dns_record.rio-edge", "create", "low", vec![]),
             drift("cloudflare_dns_record.other-edge", "create", "low", vec![]),
         ];
         let out = evaluate(&rules, Some(PolicyDecision::RequireApproval), &drifts);
-        assert_eq!(out.annotated_drifts[0].matched_policy.as_deref(), Some("rio-dns-only"));
-        assert_eq!(out.annotated_drifts[1].matched_policy.as_deref(), Some("<default>"));
+        assert_eq!(
+            out.annotated_drifts[0].matched_policy.as_deref(),
+            Some("rio-dns-only")
+        );
+        assert_eq!(
+            out.annotated_drifts[1].matched_policy.as_deref(),
+            Some("<default>")
+        );
         assert_eq!(out.aggregate, PolicyDecision::RequireApproval);
     }
 
@@ -780,23 +839,35 @@ mod tests {
     fn invalid_regex_does_not_match_silently() {
         // Pattern is broken; rule must NOT fire (we never want a typo
         // to flip the decision to a more permissive one).
-        let rules = vec![
-            rule("bad-regex", PolicyDecision::AutoApply,
-                 vec![], vec!["[unclosed"],
-                 vec![], vec![], vec![]),
-        ];
+        let rules = vec![rule(
+            "bad-regex",
+            PolicyDecision::AutoApply,
+            vec![],
+            vec!["[unclosed"],
+            vec![],
+            vec![],
+            vec![],
+        )];
         let drifts = vec![drift("cloudflare_dns_record.foo", "delete", "high", vec![])];
         let out = evaluate(&rules, Some(PolicyDecision::Refuse), &drifts);
         assert_eq!(out.aggregate, PolicyDecision::Refuse);
-        assert_eq!(out.annotated_drifts[0].matched_policy.as_deref(), Some("<default>"));
+        assert_eq!(
+            out.annotated_drifts[0].matched_policy.as_deref(),
+            Some("<default>")
+        );
     }
 
     #[test]
     fn risk_level_match() {
-        let rules = vec![
-            rule("approve-high-risk", PolicyDecision::RequireApproval,
-                 vec![], vec![], vec![], vec!["high"], vec![]),
-        ];
+        let rules = vec![rule(
+            "approve-high-risk",
+            PolicyDecision::RequireApproval,
+            vec![],
+            vec![],
+            vec![],
+            vec!["high"],
+            vec![],
+        )];
         let drifts = vec![
             drift("cloudflare_dns_record.foo", "delete", "high", vec![]),
             drift("cloudflare_dns_record.bar", "update", "low", vec!["ttl"]),
@@ -814,7 +885,11 @@ mod tests {
     fn unrecognized_wire_values_flags_only_the_bad_entries() {
         assert_eq!(
             unrecognized_wire_values(
-                &["create".to_string(), "Delete".to_string(), "update".to_string()],
+                &[
+                    "create".to_string(),
+                    "Delete".to_string(),
+                    "update".to_string()
+                ],
                 DriftAction::parse_wire,
             ),
             vec!["Delete".to_string()],
@@ -922,11 +997,15 @@ mod tests {
 
     #[test]
     fn attribute_match_with_glob() {
-        let rules = vec![
-            rule("approve-secret-rotation", PolicyDecision::RequireApproval,
-                 vec![], vec![], vec![], vec![],
-                 vec!["secret*", "api_token"]),
-        ];
+        let rules = vec![rule(
+            "approve-secret-rotation",
+            PolicyDecision::RequireApproval,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec!["secret*", "api_token"],
+        )];
         let drifts = vec![
             drift("svc.foo", "update", "low", vec!["secret_key", "ttl"]),
             drift("svc.bar", "update", "low", vec!["ttl"]),
@@ -934,21 +1013,26 @@ mod tests {
         ];
         let out = evaluate(&rules, None, &drifts);
         assert_eq!(out.evaluation.require_approval_count, 2); // foo + baz
-        assert_eq!(out.evaluation.auto_apply_count, 1);      // bar
+        assert_eq!(out.evaluation.auto_apply_count, 1); // bar
     }
 
     #[test]
     fn match_clauses_are_anded() {
         // Rule fires only when type AND action AND risk all match.
-        let rules = vec![
-            rule("strict", PolicyDecision::Refuse,
-                 vec!["cloudflare_zone"], vec![], vec!["delete"], vec!["high"], vec![]),
-        ];
+        let rules = vec![rule(
+            "strict",
+            PolicyDecision::Refuse,
+            vec!["cloudflare_zone"],
+            vec![],
+            vec!["delete"],
+            vec!["high"],
+            vec![],
+        )];
         let drifts = vec![
-            drift("cloudflare_zone.main", "delete", "high", vec![]),  // matches all 3 -> refuse
-            drift("cloudflare_zone.alt",  "update", "high", vec![]),  // wrong action -> default (non-destructive, unaffected by the floor)
-            drift("cloudflare_zone.other","delete", "low",  vec![]),  // wrong risk -> default, but a protected-type delete -> floors to RequireApproval
-            drift("aws_vpc.x",            "delete", "high", vec![]),  // wrong type -> default, but ALSO a protected-type delete -> floors to RequireApproval
+            drift("cloudflare_zone.main", "delete", "high", vec![]), // matches all 3 -> refuse
+            drift("cloudflare_zone.alt", "update", "high", vec![]), // wrong action -> default (non-destructive, unaffected by the floor)
+            drift("cloudflare_zone.other", "delete", "low", vec![]), // wrong risk -> default, but a protected-type delete -> floors to RequireApproval
+            drift("aws_vpc.x", "delete", "high", vec![]), // wrong type -> default, but ALSO a protected-type delete -> floors to RequireApproval
         ];
         let out = evaluate(&rules, None, &drifts);
         assert_eq!(out.evaluation.refuse_count, 1);
@@ -964,10 +1048,15 @@ mod tests {
 
     #[test]
     fn refused_addresses_capped_at_ten() {
-        let rules = vec![
-            rule("refuse-all", PolicyDecision::Refuse,
-                 vec![], vec![], vec![], vec![], vec![]),
-        ];
+        let rules = vec![rule(
+            "refuse-all",
+            PolicyDecision::Refuse,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+        )];
         let drifts: Vec<DriftDetail> = (0..15)
             .map(|i| drift(&format!("aws_vpc.x{}", i), "create", "low", vec![]))
             .collect();
@@ -980,7 +1069,15 @@ mod tests {
     fn is_configured_truth_table() {
         assert!(!is_configured(&[], None));
         assert!(is_configured(&[], Some(PolicyDecision::AutoApply)));
-        let r = vec![rule("x", PolicyDecision::AutoApply, vec![], vec![], vec![], vec![], vec![])];
+        let r = vec![rule(
+            "x",
+            PolicyDecision::AutoApply,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+        )];
         assert!(is_configured(&r, None));
         assert!(is_configured(&r, Some(PolicyDecision::Refuse)));
     }

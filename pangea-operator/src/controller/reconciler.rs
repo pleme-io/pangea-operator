@@ -270,7 +270,10 @@ impl SourceFreshState {
     /// established at-HEAD (or there is no git edge to track).
     #[must_use]
     pub fn permits_ready(self) -> bool {
-        matches!(self, SourceFreshState::Fresh | SourceFreshState::NotApplicable)
+        matches!(
+            self,
+            SourceFreshState::Fresh | SourceFreshState::NotApplicable
+        )
     }
 }
 
@@ -319,11 +322,9 @@ pub fn conditions_for_phase(
         (Phase::Ready, _) => "Infrastructure is up to date".into(),
         (Phase::Drifted, _) => "Infrastructure drift detected".into(),
         (Phase::Failed, _) => "Operation failed".into(),
-        (Phase::CompileBlocked, _) => {
-            "Source HEAD does not compile — retrying on backoff; \
+        (Phase::CompileBlocked, _) => "Source HEAD does not compile — retrying on backoff; \
              resumes automatically when a compiling commit lands"
-                .into()
-        }
+            .into(),
         (Phase::Pending, _) => "Waiting to be processed".into(),
         (Phase::Destroying, _) => "Infrastructure is being destroyed".into(),
         (phase, _) => format!("{} in progress", phase),
@@ -355,9 +356,24 @@ pub fn conditions_for_phase(
 /// Generate conditions for a suspended template.
 pub fn conditions_for_suspended() -> Vec<crate::crd::Condition> {
     vec![
-        create_condition("Ready", false, "Suspended", "Template reconciliation is suspended"),
-        create_condition("Reconciling", false, "Suspended", "Template reconciliation is suspended"),
-        create_condition("DriftDetected", false, "Suspended", "Template reconciliation is suspended"),
+        create_condition(
+            "Ready",
+            false,
+            "Suspended",
+            "Template reconciliation is suspended",
+        ),
+        create_condition(
+            "Reconciling",
+            false,
+            "Suspended",
+            "Template reconciliation is suspended",
+        ),
+        create_condition(
+            "DriftDetected",
+            false,
+            "Suspended",
+            "Template reconciliation is suspended",
+        ),
     ]
 }
 
@@ -384,15 +400,30 @@ mod tests {
     #[test]
     fn next_requeue_maps_each_outcome_to_its_cooldown() {
         let c = RequeueCooldowns::default();
-        assert_eq!(next_requeue(RequeueOutcome::Progressing, &c), SHORT_REQUEUE_INTERVAL);
-        assert_eq!(next_requeue(RequeueOutcome::TransientError, &c), ERROR_REQUEUE_INTERVAL);
-        assert_eq!(next_requeue(RequeueOutcome::Steady, &c), DEFAULT_REQUEUE_INTERVAL);
+        assert_eq!(
+            next_requeue(RequeueOutcome::Progressing, &c),
+            SHORT_REQUEUE_INTERVAL
+        );
+        assert_eq!(
+            next_requeue(RequeueOutcome::TransientError, &c),
+            ERROR_REQUEUE_INTERVAL
+        );
+        assert_eq!(
+            next_requeue(RequeueOutcome::Steady, &c),
+            DEFAULT_REQUEUE_INTERVAL
+        );
     }
 
     #[test]
     fn requeue_outcome_from_retryable_matches_tiered_backoff_classification() {
-        assert_eq!(RequeueOutcome::from_retryable(true), RequeueOutcome::TransientError);
-        assert_eq!(RequeueOutcome::from_retryable(false), RequeueOutcome::Steady);
+        assert_eq!(
+            RequeueOutcome::from_retryable(true),
+            RequeueOutcome::TransientError
+        );
+        assert_eq!(
+            RequeueOutcome::from_retryable(false),
+            RequeueOutcome::Steady
+        );
     }
 
     #[test]
@@ -493,13 +524,24 @@ mod tests {
     #[test]
     fn test_next_phase_failure_always_returns_failed() {
         for phase in [
-            Phase::Pending, Phase::Verifying, Phase::Verified,
-            Phase::Compiling, Phase::Initializing,
-            Phase::Planning, Phase::Applying, Phase::Ready,
-            Phase::Drifted, Phase::Failed, Phase::Destroying,
+            Phase::Pending,
+            Phase::Verifying,
+            Phase::Verified,
+            Phase::Compiling,
+            Phase::Initializing,
+            Phase::Planning,
+            Phase::Applying,
+            Phase::Ready,
+            Phase::Drifted,
+            Phase::Failed,
+            Phase::Destroying,
         ] {
-            assert_eq!(next_phase(phase, false), Phase::Failed,
-                "Phase {:?} with failure should go to Failed", phase);
+            assert_eq!(
+                next_phase(phase, false),
+                Phase::Failed,
+                "Phase {:?} with failure should go to Failed",
+                phase
+            );
         }
     }
 
@@ -555,7 +597,8 @@ mod tests {
 
     #[test]
     fn test_conditions_for_phase_compiling() {
-        let conditions = conditions_for_phase(Phase::Compiling, None, SourceFreshState::NotApplicable);
+        let conditions =
+            conditions_for_phase(Phase::Compiling, None, SourceFreshState::NotApplicable);
         assert_eq!(conditions[0].r#type, "Ready");
         assert_eq!(conditions[0].status, "False");
         assert_eq!(conditions[1].r#type, "Reconciling");
@@ -574,7 +617,11 @@ mod tests {
 
     #[test]
     fn test_conditions_for_phase_failed_with_error() {
-        let conditions = conditions_for_phase(Phase::Failed, Some("tofu plan failed"), SourceFreshState::Fresh);
+        let conditions = conditions_for_phase(
+            Phase::Failed,
+            Some("tofu plan failed"),
+            SourceFreshState::Fresh,
+        );
         assert_eq!(conditions[0].status, "False");
         assert_eq!(conditions[0].reason, "Failed");
         assert_eq!(conditions[0].message, "tofu plan failed");
@@ -582,7 +629,8 @@ mod tests {
 
     #[test]
     fn test_conditions_for_phase_pending() {
-        let conditions = conditions_for_phase(Phase::Pending, None, SourceFreshState::NotApplicable);
+        let conditions =
+            conditions_for_phase(Phase::Pending, None, SourceFreshState::NotApplicable);
         assert_eq!(conditions[0].status, "False"); // Not Ready
         assert_eq!(conditions[1].status, "False"); // Not Reconciling
         assert_eq!(conditions[2].status, "False"); // No drift
@@ -600,16 +648,25 @@ mod tests {
 
     #[test]
     fn test_conditions_for_phase_active_phases_reconciling() {
-        for phase in [Phase::Compiling, Phase::Initializing, Phase::Planning, Phase::Applying] {
+        for phase in [
+            Phase::Compiling,
+            Phase::Initializing,
+            Phase::Planning,
+            Phase::Applying,
+        ] {
             let conditions = conditions_for_phase(phase, None, SourceFreshState::NotApplicable);
-            assert_eq!(conditions[1].status, "True",
-                "Phase {:?} should have Reconciling=True", phase);
+            assert_eq!(
+                conditions[1].status, "True",
+                "Phase {:?} should have Reconciling=True",
+                phase
+            );
         }
     }
 
     #[test]
     fn test_conditions_for_phase_custom_error_overrides_message() {
-        let conditions = conditions_for_phase(Phase::Ready, Some("override msg"), SourceFreshState::Fresh);
+        let conditions =
+            conditions_for_phase(Phase::Ready, Some("override msg"), SourceFreshState::Fresh);
         assert_eq!(conditions[0].message, "override msg");
     }
 

@@ -10,8 +10,8 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex};
 
 use super::backend::{
-    ArchListing, BackendError, CompileAnyRequest, CompileAnyResult, CompileRequest,
-    CompileResult, CompilerBackend, FixtureOutcome, GemSource, SmokeRequest, SourceKind,
+    ArchListing, BackendError, CompileAnyRequest, CompileAnyResult, CompileRequest, CompileResult,
+    CompilerBackend, FixtureOutcome, GemSource, SmokeRequest, SourceKind,
 };
 use super::gem_cache::GemCache;
 use super::owner::RubyRequest;
@@ -120,8 +120,7 @@ impl CompilerBackend for EmbeddedCompilerBackend {
             SourceKind::Ruby => {}
             SourceKind::Lisp => {
                 return Err(BackendError::Ruby(
-                    "source.kind=Lisp not yet implemented (terreno M2; theory/TERRENO.md)"
-                        .into(),
+                    "source.kind=Lisp not yet implemented (terreno M2; theory/TERRENO.md)".into(),
                 ));
             }
             SourceKind::Wasm => {
@@ -269,10 +268,7 @@ impl CompilerBackend for EmbeddedCompilerBackend {
         .await
     }
 
-    async fn compile_any(
-        &self,
-        _req: CompileAnyRequest,
-    ) -> Result<CompileAnyResult, BackendError> {
+    async fn compile_any(&self, _req: CompileAnyRequest) -> Result<CompileAnyResult, BackendError> {
         Err(BackendError::Ruby(
             "embedded /compile-any not yet implemented (M8.4); set PANGEA_COMPILER_BACKEND=http"
                 .into(),

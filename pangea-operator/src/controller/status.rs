@@ -60,13 +60,13 @@ pub trait ConditionLike {
 /// Otherwise keep `new`'s timestamp.
 ///
 /// Pure function — no I/O, no side effects, deterministic.
-pub fn merge_condition_transitions<C: ConditionLike + Clone>(
-    prev: &[C],
-    new: Vec<C>,
-) -> Vec<C> {
+pub fn merge_condition_transitions<C: ConditionLike + Clone>(prev: &[C], new: Vec<C>) -> Vec<C> {
     new.into_iter()
         .map(|mut n| {
-            if let Some(p) = prev.iter().find(|p| p.condition_type() == n.condition_type()) {
+            if let Some(p) = prev
+                .iter()
+                .find(|p| p.condition_type() == n.condition_type())
+            {
                 if p.status() == n.status()
                     && p.reason() == n.reason()
                     && p.message() == n.message()
@@ -206,16 +206,34 @@ mod tests {
     }
     impl ConditionLike for TestCond {
         type Time = i32;
-        fn condition_type(&self) -> &str { &self.typ }
-        fn status(&self) -> &str { &self.status }
-        fn reason(&self) -> &str { &self.reason }
-        fn message(&self) -> &str { &self.message }
-        fn last_transition_time(&self) -> &i32 { &self.ts }
-        fn set_last_transition_time(&mut self, t: i32) { self.ts = t; }
+        fn condition_type(&self) -> &str {
+            &self.typ
+        }
+        fn status(&self) -> &str {
+            &self.status
+        }
+        fn reason(&self) -> &str {
+            &self.reason
+        }
+        fn message(&self) -> &str {
+            &self.message
+        }
+        fn last_transition_time(&self) -> &i32 {
+            &self.ts
+        }
+        fn set_last_transition_time(&mut self, t: i32) {
+            self.ts = t;
+        }
     }
 
     fn cond(typ: &str, status: &str, reason: &str, msg: &str, ts: i32) -> TestCond {
-        TestCond { typ: typ.into(), status: status.into(), reason: reason.into(), message: msg.into(), ts }
+        TestCond {
+            typ: typ.into(),
+            status: status.into(),
+            reason: reason.into(),
+            message: msg.into(),
+            ts,
+        }
     }
 
     #[test]

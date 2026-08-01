@@ -85,83 +85,91 @@ async fn apply_reactive_policy(
     let prior_status = template.status.clone().unwrap_or_default();
     let prior_reason = prior_status.last_escalation_reason.clone();
 
-    let (healthy_status, healthy_reason, healthy_message, escalated_at, escalation_reason, suspend_now) =
-        match &escalation {
-            Escalation::Healthy => (
-                "True",
-                "NoEscalations".to_string(),
-                "no reactive policies have fired".to_string(),
-                prior_status.last_escalated_at,
-                None::<String>,
-                false,
-            ),
-            Escalation::Triggered { action, reason, message, routing } => {
-                // Debounce: only emit event + log + routing-deliver
-                // when the reason is new (or no prior). State-change-
-                // driven, not every-reconcile — keeps ntfy from
-                // pinging every 5min while the bad state persists.
-                let is_new = prior_reason.as_deref() != Some(reason.as_str());
-                if is_new {
-                    emit_escalation_log(
-                        &name,
-                        &namespace,
-                        *action,
-                        reason,
-                        message,
-                        routing.as_ref(),
-                    );
-                    let action_label = match action {
-                        ReactiveAction::Alert => "Alert",
-                        ReactiveAction::Suspend => "Suspend",
-                        ReactiveAction::Page => "Page",
-                    };
-                    let event_msg =
-                        format!("[{action_label}] reason={reason}: {message}");
-                    record_event(
-                        template,
-                        state,
-                        EventType::Warning,
-                        "ReactivePolicyTriggered",
-                        &event_msg,
-                    )
-                    .await;
-                    // Real routing delivery — ntfy now, Slack +
-                    // GitHub stubbed. Best-effort; failures log but
-                    // don't propagate.
-                    let title = format!(
-                        "[pangea] {action_label}: {namespace}/{name}",
-                        namespace = namespace,
-                        name = name
-                    );
-                    state
-                        .routing_client
-                        .deliver(*action, &title, &event_msg, routing.as_ref())
-                        .await;
-                }
-                (
-                    "False",
-                    reason.clone(),
-                    message.clone(),
-                    Some(now),
-                    Some(reason.clone()),
-                    matches!(action, ReactiveAction::Suspend),
+    let (
+        healthy_status,
+        healthy_reason,
+        healthy_message,
+        escalated_at,
+        escalation_reason,
+        suspend_now,
+    ) = match &escalation {
+        Escalation::Healthy => (
+            "True",
+            "NoEscalations".to_string(),
+            "no reactive policies have fired".to_string(),
+            prior_status.last_escalated_at,
+            None::<String>,
+            false,
+        ),
+        Escalation::Triggered {
+            action,
+            reason,
+            message,
+            routing,
+        } => {
+            // Debounce: only emit event + log + routing-deliver
+            // when the reason is new (or no prior). State-change-
+            // driven, not every-reconcile — keeps ntfy from
+            // pinging every 5min while the bad state persists.
+            let is_new = prior_reason.as_deref() != Some(reason.as_str());
+            if is_new {
+                emit_escalation_log(
+                    &name,
+                    &namespace,
+                    *action,
+                    reason,
+                    message,
+                    routing.as_ref(),
+                );
+                let action_label = match action {
+                    ReactiveAction::Alert => "Alert",
+                    ReactiveAction::Suspend => "Suspend",
+                    ReactiveAction::Page => "Page",
+                };
+                let event_msg = format!("[{action_label}] reason={reason}: {message}");
+                record_event(
+                    template,
+                    state,
+                    EventType::Warning,
+                    "ReactivePolicyTriggered",
+                    &event_msg,
                 )
+                .await;
+                // Real routing delivery — ntfy now, Slack +
+                // GitHub stubbed. Best-effort; failures log but
+                // don't propagate.
+                let title = format!(
+                    "[pangea] {action_label}: {namespace}/{name}",
+                    namespace = namespace,
+                    name = name
+                );
+                state
+                    .routing_client
+                    .deliver(*action, &title, &event_msg, routing.as_ref())
+                    .await;
             }
-        };
+            (
+                "False",
+                reason.clone(),
+                message.clone(),
+                Some(now),
+                Some(reason.clone()),
+                matches!(action, ReactiveAction::Suspend),
+            )
+        }
+    };
 
     // Patch only the fields that may have changed.
     let mut conditions = prior_status.conditions.clone();
     // Drop any prior `Healthy` condition; emit a fresh one (preserve
     // transition time when status+reason+message all match).
-    let prior_healthy = conditions
-        .iter()
-        .find(|c| c.r#type == "Healthy")
-        .cloned();
+    let prior_healthy = conditions.iter().find(|c| c.r#type == "Healthy").cloned();
     conditions.retain(|c| c.r#type != "Healthy");
     let healthy_transition = match prior_healthy {
-        Some(p) if p.status == healthy_status
-            && p.reason == healthy_reason
-            && p.message == healthy_message =>
+        Some(p)
+            if p.status == healthy_status
+                && p.reason == healthy_reason
+                && p.message == healthy_message =>
         {
             p.last_transition_time
         }
@@ -222,8 +230,7 @@ async fn apply_reactive_policy(
             "lastEscalationReason": escalation_reason,
         }
     });
-    crate::controller::status_patch::patch_status(template, &state.client, patch)
-    .await?;
+    crate::controller::status_patch::patch_status(template, &state.client, patch).await?;
 
     // Self-heal: when the worst trigger is a PhaseTimeout for a
     // non-terminal phase, force the phase to Failed so the next
@@ -258,8 +265,8 @@ async fn apply_reactive_policy(
     // Planning cycle already re-emits the `PlanPending` reminder event
     // every reconcile, so the human is not left without a signal.
     if let Escalation::Triggered { reason, .. } = &escalation {
-        let is_new_phase_timeout = prior_reason.as_deref() != Some(reason.as_str())
-            && reason.starts_with("PhaseTimeout:");
+        let is_new_phase_timeout =
+            prior_reason.as_deref() != Some(reason.as_str()) && reason.starts_with("PhaseTimeout:");
         if is_new_phase_timeout {
             if let Some(current_phase) = template.status.as_ref().and_then(|s| s.phase) {
                 if phase_is_force_resettable(current_phase) {
@@ -628,11 +635,21 @@ mod tests {
         // And because the value flips true → false, the diff-gate must
         // NOT suppress the PATCH — the clear has to reach the cluster.
         let prev = InfrastructureTemplateStatus {
-            conditions: vec![cond("Healthy", "True", "NoEscalations", "no reactive policies have fired")],
+            conditions: vec![cond(
+                "Healthy",
+                "True",
+                "NoEscalations",
+                "no reactive policies have fired",
+            )],
             auto_suspended: true, // prior park
             ..Default::default()
         };
-        let new_cond = vec![cond("Healthy", "True", "NoEscalations", "no reactive policies have fired")];
+        let new_cond = vec![cond(
+            "Healthy",
+            "True",
+            "NoEscalations",
+            "no reactive policies have fired",
+        )];
         assert!(
             !reactive_policy_status_unchanged(&prev, &new_cond, None, new_auto_suspended, None, None),
             "clearing autoSuspended true → false must force a PATCH so the park lift reaches the cluster"
@@ -676,7 +693,12 @@ mod tests {
 
     fn healthy_status() -> InfrastructureTemplateStatus {
         InfrastructureTemplateStatus {
-            conditions: vec![cond("Healthy", "True", "NoEscalations", "no reactive policies have fired")],
+            conditions: vec![cond(
+                "Healthy",
+                "True",
+                "NoEscalations",
+                "no reactive policies have fired",
+            )],
             verified_blocked_since: None,
             auto_suspended: false,
             last_escalated_at: None,
@@ -688,7 +710,12 @@ mod tests {
     #[test]
     fn reactive_steady_state_skips_patch() {
         let prev = healthy_status();
-        let new_cond = vec![cond("Healthy", "True", "NoEscalations", "no reactive policies have fired")];
+        let new_cond = vec![cond(
+            "Healthy",
+            "True",
+            "NoEscalations",
+            "no reactive policies have fired",
+        )];
         assert!(
             reactive_policy_status_unchanged(&prev, &new_cond, None, false, None, None),
             "must NOT patch when nothing observable changed (timestamp-only churn case)"
@@ -698,7 +725,12 @@ mod tests {
     #[test]
     fn reactive_healthy_to_alert_must_patch() {
         let prev = healthy_status();
-        let new_cond = vec![cond("Healthy", "False", "PhaseTimeout", "stuck in Compiling for 30m")];
+        let new_cond = vec![cond(
+            "Healthy",
+            "False",
+            "PhaseTimeout",
+            "stuck in Compiling for 30m",
+        )];
         let now = chrono::Utc.with_ymd_and_hms(2026, 5, 7, 0, 0, 0).unwrap();
         assert!(
             !reactive_policy_status_unchanged(
@@ -716,7 +748,12 @@ mod tests {
     #[test]
     fn reactive_auto_suspend_flip_must_patch() {
         let prev = healthy_status();
-        let new_cond = vec![cond("Healthy", "False", "ConsecutiveFailures", "5 consecutive failures")];
+        let new_cond = vec![cond(
+            "Healthy",
+            "False",
+            "ConsecutiveFailures",
+            "5 consecutive failures",
+        )];
         let now = chrono::Utc.with_ymd_and_hms(2026, 5, 7, 0, 0, 0).unwrap();
         assert!(
             !reactive_policy_status_unchanged(
@@ -734,7 +771,12 @@ mod tests {
     #[test]
     fn reactive_verified_blocked_clock_advance_must_patch() {
         let prev = healthy_status();
-        let new_cond = vec![cond("Healthy", "True", "NoEscalations", "no reactive policies have fired")];
+        let new_cond = vec![cond(
+            "Healthy",
+            "True",
+            "NoEscalations",
+            "no reactive policies have fired",
+        )];
         let blocked = chrono::Utc.with_ymd_and_hms(2026, 5, 7, 0, 0, 0).unwrap();
         assert!(
             !reactive_policy_status_unchanged(

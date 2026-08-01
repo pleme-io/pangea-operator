@@ -226,7 +226,10 @@ impl Plan {
                 ChangeType::NoOp => {}
             }
 
-            *summary.changes_by_type.entry(change.resource_type.clone()).or_insert(0) += 1;
+            *summary
+                .changes_by_type
+                .entry(change.resource_type.clone())
+                .or_insert(0) += 1;
         }
 
         summary.total = self.resource_changes.len() as u32;
@@ -397,10 +400,7 @@ impl PlanSummary {
             return "No changes".to_string();
         }
 
-        format!(
-            "+{} ~{} -{}",
-            self.added, self.changed, self.destroyed
-        )
+        format!("+{} ~{} -{}", self.added, self.changed, self.destroyed)
     }
 }
 
@@ -415,7 +415,8 @@ mod tests {
             "resource_changes": [],
             "output_changes": {},
             "configuration": {}
-        }).to_string()
+        })
+        .to_string()
     }
 
     fn plan_json_with_changes() -> String {
@@ -461,7 +462,8 @@ mod tests {
             ],
             "output_changes": {},
             "configuration": {}
-        }).to_string()
+        })
+        .to_string()
     }
 
     #[test]
@@ -562,7 +564,10 @@ mod tests {
         let summary = plan.summary();
         assert_eq!(*summary.changes_by_type.get("aws_vpc").unwrap(), 1);
         assert_eq!(*summary.changes_by_type.get("aws_subnet").unwrap(), 1);
-        assert_eq!(*summary.changes_by_type.get("aws_security_group").unwrap(), 1);
+        assert_eq!(
+            *summary.changes_by_type.get("aws_security_group").unwrap(),
+            1
+        );
         assert_eq!(*summary.changes_by_type.get("aws_instance").unwrap(), 1);
         assert_eq!(*summary.changes_by_type.get("aws_s3_bucket").unwrap(), 1);
     }
@@ -572,10 +577,10 @@ mod tests {
         let plan = Plan::from_json(&plan_json_with_changes()).unwrap();
         let creates = plan.resources_to_create();
         let names: Vec<&str> = creates.iter().map(|r| r.name.as_str()).collect();
-        assert!(names.contains(&"main"));  // create
-        assert!(names.contains(&"web"));   // replace includes create
+        assert!(names.contains(&"main")); // create
+        assert!(names.contains(&"web")); // replace includes create
         assert!(!names.contains(&"public")); // update only
-        assert!(!names.contains(&"old"));    // delete only
+        assert!(!names.contains(&"old")); // delete only
     }
 
     #[test]
@@ -583,8 +588,8 @@ mod tests {
         let plan = Plan::from_json(&plan_json_with_changes()).unwrap();
         let destroys = plan.resources_to_destroy();
         let names: Vec<&str> = destroys.iter().map(|r| r.name.as_str()).collect();
-        assert!(names.contains(&"old"));   // delete
-        assert!(names.contains(&"web"));   // replace includes delete
+        assert!(names.contains(&"old")); // delete
+        assert!(names.contains(&"web")); // replace includes delete
         assert!(!names.contains(&"main")); // create only
     }
 
@@ -636,7 +641,8 @@ mod tests {
                 }
             },
             "configuration": {}
-        }).to_string();
+        })
+        .to_string();
         let plan = Plan::from_json(&json).unwrap();
         assert_eq!(plan.output_changes.len(), 1);
         assert!(plan.output_changes.contains_key("vpc_id"));
@@ -655,7 +661,10 @@ mod tests {
             details.iter().map(|d| (d.address.as_str(), d)).collect();
         assert_eq!(by_addr.get("aws_vpc.main").unwrap().action, "create");
         assert_eq!(by_addr.get("aws_subnet.public").unwrap().action, "update");
-        assert_eq!(by_addr.get("aws_security_group.old").unwrap().action, "delete");
+        assert_eq!(
+            by_addr.get("aws_security_group.old").unwrap().action,
+            "delete"
+        );
         assert_eq!(by_addr.get("aws_instance.web").unwrap().action, "replace");
     }
 
@@ -668,8 +677,11 @@ mod tests {
 
         // VPC delete/replace → high (stateful keyword match)
         assert_eq!(by_addr.get("aws_vpc.main").unwrap().risk, "low"); // create-only
-        // SG delete on a non-stateful resource → medium
-        assert_eq!(by_addr.get("aws_security_group.old").unwrap().risk, "medium");
+                                                                      // SG delete on a non-stateful resource → medium
+        assert_eq!(
+            by_addr.get("aws_security_group.old").unwrap().risk,
+            "medium"
+        );
     }
 
     #[test]
@@ -695,11 +707,15 @@ mod tests {
                     "after":  { "name": "new", "ttl": 120, "kept": "same" }
                 }
             }]
-        }).to_string();
+        })
+        .to_string();
         let plan = Plan::from_json(&json).unwrap();
         let details = plan.drift_details(50);
         assert_eq!(details.len(), 1);
-        assert_eq!(details[0].attributes, vec!["name".to_string(), "ttl".to_string()]);
+        assert_eq!(
+            details[0].attributes,
+            vec!["name".to_string(), "ttl".to_string()]
+        );
         assert!(!details[0].attributes.contains(&"kept".to_string()));
     }
 }

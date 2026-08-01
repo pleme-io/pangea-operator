@@ -2,7 +2,10 @@
 
 use anyhow::{Context, Result};
 use cynic::{http::ReqwestExt, MutationBuilder, Operation, QueryBuilder};
-use reqwest::{header::{HeaderMap, HeaderValue, AUTHORIZATION}, Client};
+use reqwest::{
+    header::{HeaderMap, HeaderValue, AUTHORIZATION},
+    Client,
+};
 
 use crate::schema::*;
 
@@ -193,7 +196,10 @@ impl PangeaClient {
 }
 
 /// Parse a template reference (namespace/name or just name).
-pub fn parse_template_ref(reference: &str, default_namespace: Option<&str>) -> Result<(String, String)> {
+pub fn parse_template_ref(
+    reference: &str,
+    default_namespace: Option<&str>,
+) -> Result<(String, String)> {
     if let Some((ns, name)) = reference.split_once('/') {
         Ok((ns.to_string(), name.to_string()))
     } else if let Some(ns) = default_namespace {

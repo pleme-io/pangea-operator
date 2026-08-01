@@ -77,7 +77,11 @@ fn step_kind() -> JobKindId {
 }
 
 fn step_id(name: &str) -> JobId {
-    JobId { scope: JobScope::Global, kind: step_kind(), subject: JobSubject::Pinned(name.to_string()) }
+    JobId {
+        scope: JobScope::Global,
+        kind: step_kind(),
+        subject: JobSubject::Pinned(name.to_string()),
+    }
 }
 
 fn step_name(id: &JobId) -> Option<String> {
@@ -113,7 +117,10 @@ impl<'a> FlowScheduler<'a> {
         for step in steps {
             dag.ensure_node(step_id(&step.name));
             for dep in &step.depends_on {
-                dependents.entry(dep.clone()).or_default().push(step.name.clone());
+                dependents
+                    .entry(dep.clone())
+                    .or_default()
+                    .push(step.name.clone());
                 // Edge direction: upstream (dep) → downstream (step) — matches
                 // `Dag::predecessors(step)` returning step's direct upstreams.
                 dag.add_edge(step_id(dep), step_id(&step.name));
@@ -123,7 +130,14 @@ impl<'a> FlowScheduler<'a> {
         let depths = Self::compute_depths(&dag);
         let critical_set = Self::compute_critical_path(&dag, &depths);
 
-        Self { steps, statuses, parallelism, dependents, depths, critical_set }
+        Self {
+            steps,
+            statuses,
+            parallelism,
+            dependents,
+            depths,
+            critical_set,
+        }
     }
 
     /// Get the current state of a step.
@@ -145,7 +159,9 @@ impl<'a> FlowScheduler<'a> {
                     return false;
                 }
                 // All dependencies must be Ready
-                step.depends_on.iter().all(|dep| self.step_state(dep) == StepState::Ready)
+                step.depends_on
+                    .iter()
+                    .all(|dep| self.step_state(dep) == StepState::Ready)
             })
             .collect()
     }
@@ -166,13 +182,10 @@ impl<'a> FlowScheduler<'a> {
                     .iter()
                     .any(|dep| self.step_state(dep) == StepState::Running);
                 // No dependencies have Failed or been Cancelled
-                let none_failed = step
-                    .depends_on
-                    .iter()
-                    .all(|dep| {
-                        let s = self.step_state(dep);
-                        s != StepState::Failed && s != StepState::Cancelled
-                    });
+                let none_failed = step.depends_on.iter().all(|dep| {
+                    let s = self.step_state(dep);
+                    s != StepState::Failed && s != StepState::Cancelled
+                });
                 any_running && none_failed
             })
             .collect()
@@ -289,7 +302,11 @@ impl<'a> FlowScheduler<'a> {
         let mut path = HashSet::new();
 
         // Find the deepest node (end of critical path)
-        let deepest = depths.iter().filter(|(_, &d)| d == max_depth).map(|(name, _)| name.clone()).next();
+        let deepest = depths
+            .iter()
+            .filter(|(_, &d)| d == max_depth)
+            .map(|(name, _)| name.clone())
+            .next();
 
         if let Some(mut current) = deepest {
             path.insert(current.clone());
@@ -361,7 +378,10 @@ mod tests {
     fn step(name: &str, deps: &[&str]) -> FlowStep {
         FlowStep {
             name: name.into(),
-            template_ref: FlowTemplateRef { name: None, source: None },
+            template_ref: FlowTemplateRef {
+                name: None,
+                source: None,
+            },
             depends_on: deps.iter().map(|s| s.to_string()).collect(),
             variables: None,
             auto_approve: None,
@@ -470,7 +490,7 @@ mod tests {
         let steps = vec![
             step("a", &[]),
             step("b", &["a"]),
-            step("c", &[]),  // independent root
+            step("c", &[]),    // independent root
             step("d", &["c"]), // depends only on c
         ];
         let mut statuses = BTreeMap::new();
@@ -545,17 +565,29 @@ mod tests {
 
     #[test]
     fn test_step_state_from_phase_cancelled() {
-        assert_eq!(StepState::from_phase(Some("Cancelled")), StepState::Cancelled);
+        assert_eq!(
+            StepState::from_phase(Some("Cancelled")),
+            StepState::Cancelled
+        );
     }
 
     #[test]
     fn test_step_state_from_phase_warming_up() {
-        assert_eq!(StepState::from_phase(Some("WarmingUp")), StepState::WarmingUp);
+        assert_eq!(
+            StepState::from_phase(Some("WarmingUp")),
+            StepState::WarmingUp
+        );
     }
 
     #[test]
     fn test_step_state_from_phase_running_phases() {
-        for phase in ["Compiling", "Initializing", "Planning", "Applying", "Destroying"] {
+        for phase in [
+            "Compiling",
+            "Initializing",
+            "Planning",
+            "Applying",
+            "Destroying",
+        ] {
             assert_eq!(
                 StepState::from_phase(Some(phase)),
                 StepState::Running,
@@ -567,7 +599,10 @@ mod tests {
 
     #[test]
     fn test_step_state_from_phase_unknown_maps_to_running() {
-        assert_eq!(StepState::from_phase(Some("SomeUnknown")), StepState::Running);
+        assert_eq!(
+            StepState::from_phase(Some("SomeUnknown")),
+            StepState::Running
+        );
     }
 
     #[test]
@@ -612,17 +647,13 @@ mod tests {
 
     #[test]
     fn test_cascade_failure_skips_running_steps() {
-        let steps = vec![
-            step("a", &[]),
-            step("b", &["a"]),
-            step("c", &["a"]),
-        ];
+        let steps = vec![step("a", &[]), step("b", &["a"]), step("c", &["a"])];
         let mut statuses = BTreeMap::new();
         statuses.insert("b".into(), status("Planning")); // Running
         let sched = FlowScheduler::new(&steps, &statuses, 3);
         let cancelled = sched.cascade_failure("a");
         assert!(!cancelled.contains(&"b".to_string())); // Running, not cascaded
-        assert!(cancelled.contains(&"c".to_string()));  // Pending, cascaded
+        assert!(cancelled.contains(&"c".to_string())); // Pending, cascaded
     }
 
     #[test]
@@ -690,7 +721,10 @@ mod tests {
         let sched = FlowScheduler::new(&steps, &statuses, 2);
         // No stack overflow reaching this line is the primary assertion.
         assert!(sched.depths.is_empty(), "a cycle yields no computed depths");
-        assert!(sched.critical_set.is_empty(), "no critical path over an unresolved cycle");
+        assert!(
+            sched.critical_set.is_empty(),
+            "no critical path over an unresolved cycle"
+        );
         // Both steps are blocked on each other (neither's dependency is ever
         // Ready), so nothing is ready to schedule — but computing that must
         // not panic or hang.

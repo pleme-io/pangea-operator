@@ -153,9 +153,15 @@ mod tests {
     #[test]
     fn test_phase_serde_roundtrip() {
         for phase in [
-            Phase::Pending, Phase::Compiling, Phase::Initializing,
-            Phase::Planning, Phase::Applying, Phase::Ready,
-            Phase::Drifted, Phase::Failed, Phase::Destroying,
+            Phase::Pending,
+            Phase::Compiling,
+            Phase::Initializing,
+            Phase::Planning,
+            Phase::Applying,
+            Phase::Ready,
+            Phase::Drifted,
+            Phase::Failed,
+            Phase::Destroying,
         ] {
             let json = serde_json::to_string(&phase).unwrap();
             let back: Phase = serde_json::from_str(&json).unwrap();
@@ -181,9 +187,15 @@ mod tests {
     #[test]
     fn test_phase_is_active_and_terminal_mutually_exclusive() {
         for phase in [
-            Phase::Pending, Phase::Compiling, Phase::Initializing,
-            Phase::Planning, Phase::Applying, Phase::Ready,
-            Phase::Drifted, Phase::Failed, Phase::Destroying,
+            Phase::Pending,
+            Phase::Compiling,
+            Phase::Initializing,
+            Phase::Planning,
+            Phase::Applying,
+            Phase::Ready,
+            Phase::Drifted,
+            Phase::Failed,
+            Phase::Destroying,
         ] {
             assert!(
                 !(phase.is_active() && phase.is_terminal()),

@@ -6,8 +6,8 @@ pub mod bounded_writer;
 mod metrics;
 mod tracing_setup;
 
-pub use metrics::{ActiveReconcileGuard, Metrics};
 pub use bounded_writer::{Bound, BoundedMakeWriter, ClipStats};
+pub use metrics::{ActiveReconcileGuard, Metrics};
 pub use tracing_setup::init_tracing;
 
 use axum::{http::StatusCode, routing::get, Router};
@@ -126,9 +126,9 @@ pub async fn run_health_server(
     info!(%addr, "Starting health/metrics server");
 
     let listener = TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await.map_err(|e| {
-        crate::error::Error::Io(std::io::Error::new(std::io::ErrorKind::Other, e))
-    })?;
+    axum::serve(listener, app)
+        .await
+        .map_err(|e| crate::error::Error::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
 
     Ok(())
 }

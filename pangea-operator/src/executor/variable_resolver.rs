@@ -67,7 +67,13 @@ fn resolve_value(
             let resolved = resolve_string(s, step_outputs)?;
             // If the entire string was a single reference, preserve the original JSON type
             let refs = extract_references(s);
-            if refs.len() == 1 && s.trim() == format!("{{{{ steps.{}.outputs.{} }}}}", refs[0].step_name, refs[0].output_key) {
+            if refs.len() == 1
+                && s.trim()
+                    == format!(
+                        "{{{{ steps.{}.outputs.{} }}}}",
+                        refs[0].step_name, refs[0].output_key
+                    )
+            {
                 // Single reference — return the raw value (preserves arrays, objects, numbers)
                 if let Some(outputs) = step_outputs.get(&refs[0].step_name) {
                     if let Some(val) = outputs.get(&refs[0].output_key) {
@@ -78,10 +84,8 @@ fn resolve_value(
             Ok(serde_json::Value::String(resolved))
         }
         serde_json::Value::Array(arr) => {
-            let resolved: Result<Vec<_>> = arr
-                .iter()
-                .map(|v| resolve_value(v, step_outputs))
-                .collect();
+            let resolved: Result<Vec<_>> =
+                arr.iter().map(|v| resolve_value(v, step_outputs)).collect();
             Ok(serde_json::Value::Array(resolved?))
         }
         serde_json::Value::Object(obj) => {
@@ -122,7 +126,10 @@ fn resolve_string(
             other => other.to_string(),
         };
 
-        let pattern = format!("{{{{ steps.{}.outputs.{} }}}}", reference.step_name, reference.output_key);
+        let pattern = format!(
+            "{{{{ steps.{}.outputs.{} }}}}",
+            reference.step_name, reference.output_key
+        );
         result = result.replace(&pattern, &replacement);
     }
 
@@ -208,33 +215,53 @@ fn resolve_string_with_context(s: &str, ctx: &ResolutionContext) -> Result<Strin
     // Resolve output references: {{ steps.NAME.outputs.KEY }}
     for reference in extract_references(s) {
         let outputs = ctx.outputs.get(&reference.step_name).ok_or_else(|| {
-            Error::Config(format!("Step '{}' not found in context", reference.step_name))
+            Error::Config(format!(
+                "Step '{}' not found in context",
+                reference.step_name
+            ))
         })?;
         let value = outputs.get(&reference.output_key).ok_or_else(|| {
-            Error::Config(format!("Output '{}' not found in step '{}'", reference.output_key, reference.step_name))
+            Error::Config(format!(
+                "Output '{}' not found in step '{}'",
+                reference.output_key, reference.step_name
+            ))
         })?;
         let replacement = match value {
             serde_json::Value::String(s) => s.clone(),
             other => other.to_string(),
         };
-        let pattern = format!("{{{{ steps.{}.outputs.{} }}}}", reference.step_name, reference.output_key);
+        let pattern = format!(
+            "{{{{ steps.{}.outputs.{} }}}}",
+            reference.step_name, reference.output_key
+        );
         result = result.replace(&pattern, &replacement);
     }
 
     // Resolve state references: {{ steps.NAME.state.TYPE.RESNAME.ATTR }}
     for state_ref in extract_state_references(s) {
         let state = ctx.states.get(&state_ref.step_name).ok_or_else(|| {
-            Error::Config(format!("State for step '{}' not available", state_ref.step_name))
+            Error::Config(format!(
+                "State for step '{}' not available",
+                state_ref.step_name
+            ))
         })?;
 
         // Navigate: values.root_module.resources[type=TYPE, name=RESNAME].values.ATTR
-        let value = resolve_state_attribute(state, &state_ref.resource_type, &state_ref.resource_name, &state_ref.attribute)
-            .ok_or_else(|| {
-                Error::Config(format!(
-                    "State attribute {}.{}.{} not found in step '{}'",
-                    state_ref.resource_type, state_ref.resource_name, state_ref.attribute, state_ref.step_name
-                ))
-            })?;
+        let value = resolve_state_attribute(
+            state,
+            &state_ref.resource_type,
+            &state_ref.resource_name,
+            &state_ref.attribute,
+        )
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "State attribute {}.{}.{} not found in step '{}'",
+                state_ref.resource_type,
+                state_ref.resource_name,
+                state_ref.attribute,
+                state_ref.step_name
+            ))
+        })?;
 
         let replacement = match value {
             serde_json::Value::String(s) => s.clone(),
@@ -242,7 +269,10 @@ fn resolve_string_with_context(s: &str, ctx: &ResolutionContext) -> Result<Strin
         };
         let pattern = format!(
             "{{{{ steps.{}.state.{}.{}.{} }}}}",
-            state_ref.step_name, state_ref.resource_type, state_ref.resource_name, state_ref.attribute
+            state_ref.step_name,
+            state_ref.resource_type,
+            state_ref.resource_name,
+            state_ref.attribute
         );
         result = result.replace(&pattern, &replacement);
     }
@@ -322,7 +352,10 @@ mod tests {
     fn make_outputs() -> BTreeMap<String, BTreeMap<String, serde_json::Value>> {
         let mut step_a = BTreeMap::new();
         step_a.insert("vpc_id".into(), serde_json::json!("vpc-abc123"));
-        step_a.insert("subnet_ids".into(), serde_json::json!(["subnet-1", "subnet-2"]));
+        step_a.insert(
+            "subnet_ids".into(),
+            serde_json::json!(["subnet-1", "subnet-2"]),
+        );
 
         let mut outputs = BTreeMap::new();
         outputs.insert("step-a".into(), step_a);
@@ -333,7 +366,10 @@ mod tests {
     fn test_resolve_simple_reference() {
         let outputs = make_outputs();
         let mut vars = BTreeMap::new();
-        vars.insert("vpc".into(), serde_json::json!("{{ steps.step-a.outputs.vpc_id }}"));
+        vars.insert(
+            "vpc".into(),
+            serde_json::json!("{{ steps.step-a.outputs.vpc_id }}"),
+        );
 
         let resolved = resolve_step_references(&vars, &outputs).unwrap();
         assert_eq!(resolved["vpc"], serde_json::json!("vpc-abc123"));
@@ -343,7 +379,10 @@ mod tests {
     fn test_resolve_missing_step() {
         let outputs = make_outputs();
         let mut vars = BTreeMap::new();
-        vars.insert("x".into(), serde_json::json!("{{ steps.missing.outputs.foo }}"));
+        vars.insert(
+            "x".into(),
+            serde_json::json!("{{ steps.missing.outputs.foo }}"),
+        );
 
         assert!(resolve_step_references(&vars, &outputs).is_err());
     }
@@ -352,7 +391,10 @@ mod tests {
     fn test_resolve_missing_output() {
         let outputs = make_outputs();
         let mut vars = BTreeMap::new();
-        vars.insert("x".into(), serde_json::json!("{{ steps.step-a.outputs.missing }}"));
+        vars.insert(
+            "x".into(),
+            serde_json::json!("{{ steps.step-a.outputs.missing }}"),
+        );
 
         assert!(resolve_step_references(&vars, &outputs).is_err());
     }
@@ -373,9 +415,18 @@ mod tests {
     fn test_unresolved_dependencies() {
         let outputs = make_outputs();
         let mut vars = BTreeMap::new();
-        vars.insert("a".into(), serde_json::json!("{{ steps.step-a.outputs.vpc_id }}"));
-        vars.insert("b".into(), serde_json::json!("{{ steps.step-b.outputs.endpoint }}"));
-        vars.insert("c".into(), serde_json::json!("{{ steps.step-c.outputs.arn }}"));
+        vars.insert(
+            "a".into(),
+            serde_json::json!("{{ steps.step-a.outputs.vpc_id }}"),
+        );
+        vars.insert(
+            "b".into(),
+            serde_json::json!("{{ steps.step-b.outputs.endpoint }}"),
+        );
+        vars.insert(
+            "c".into(),
+            serde_json::json!("{{ steps.step-c.outputs.arn }}"),
+        );
 
         let missing = unresolved_dependencies(&vars, &outputs);
         assert_eq!(missing.len(), 2);
@@ -406,8 +457,14 @@ mod tests {
         ctx.states.insert("vpc-step".into(), state);
 
         let mut vars = BTreeMap::new();
-        vars.insert("vpc_id".into(), serde_json::json!("{{ steps.vpc-step.state.aws_vpc.main.id }}"));
-        vars.insert("cidr".into(), serde_json::json!("{{ steps.vpc-step.state.aws_vpc.main.cidr_block }}"));
+        vars.insert(
+            "vpc_id".into(),
+            serde_json::json!("{{ steps.vpc-step.state.aws_vpc.main.id }}"),
+        );
+        vars.insert(
+            "cidr".into(),
+            serde_json::json!("{{ steps.vpc-step.state.aws_vpc.main.cidr_block }}"),
+        );
 
         let resolved = resolve_with_context(&vars, &ctx).unwrap();
         assert_eq!(resolved["vpc_id"], serde_json::json!("vpc-12345"));
@@ -426,7 +483,9 @@ mod tests {
 
     #[test]
     fn test_extract_multiple_references() {
-        let refs = extract_references("prefix {{ steps.a.outputs.x }} middle {{ steps.b.outputs.y }} suffix");
+        let refs = extract_references(
+            "prefix {{ steps.a.outputs.x }} middle {{ steps.b.outputs.y }} suffix",
+        );
         assert_eq!(refs.len(), 2);
         assert_eq!(refs[0].step_name, "a");
         assert_eq!(refs[0].output_key, "x");
@@ -456,10 +515,13 @@ mod tests {
     fn test_resolve_nested_json_objects() {
         let outputs = make_outputs();
         let mut vars = BTreeMap::new();
-        vars.insert("config".into(), serde_json::json!({
-            "vpc": "{{ steps.step-a.outputs.vpc_id }}",
-            "static": "value"
-        }));
+        vars.insert(
+            "config".into(),
+            serde_json::json!({
+                "vpc": "{{ steps.step-a.outputs.vpc_id }}",
+                "static": "value"
+            }),
+        );
 
         let resolved = resolve_step_references(&vars, &outputs).unwrap();
         let config = &resolved["config"];
@@ -471,10 +533,10 @@ mod tests {
     fn test_resolve_array_values() {
         let outputs = make_outputs();
         let mut vars = BTreeMap::new();
-        vars.insert("list".into(), serde_json::json!([
-            "{{ steps.step-a.outputs.vpc_id }}",
-            "static"
-        ]));
+        vars.insert(
+            "list".into(),
+            serde_json::json!(["{{ steps.step-a.outputs.vpc_id }}", "static"]),
+        );
 
         let resolved = resolve_step_references(&vars, &outputs).unwrap();
         let list = resolved["list"].as_array().unwrap();
@@ -500,7 +562,10 @@ mod tests {
     fn test_unresolved_dependencies_empty_when_all_resolved() {
         let outputs = make_outputs();
         let mut vars = BTreeMap::new();
-        vars.insert("vpc".into(), serde_json::json!("{{ steps.step-a.outputs.vpc_id }}"));
+        vars.insert(
+            "vpc".into(),
+            serde_json::json!("{{ steps.step-a.outputs.vpc_id }}"),
+        );
 
         let missing = unresolved_dependencies(&vars, &outputs);
         assert!(missing.is_empty());
@@ -510,8 +575,14 @@ mod tests {
     fn test_unresolved_dependencies_deduplicates() {
         let outputs = BTreeMap::new();
         let mut vars = BTreeMap::new();
-        vars.insert("a".into(), serde_json::json!("{{ steps.missing.outputs.x }}"));
-        vars.insert("b".into(), serde_json::json!("{{ steps.missing.outputs.y }}"));
+        vars.insert(
+            "a".into(),
+            serde_json::json!("{{ steps.missing.outputs.x }}"),
+        );
+        vars.insert(
+            "b".into(),
+            serde_json::json!("{{ steps.missing.outputs.y }}"),
+        );
 
         let missing = unresolved_dependencies(&vars, &outputs);
         assert_eq!(missing.len(), 1);
@@ -522,7 +593,10 @@ mod tests {
     fn test_resolve_with_context_missing_state() {
         let ctx = ResolutionContext::default();
         let mut vars = BTreeMap::new();
-        vars.insert("x".into(), serde_json::json!("{{ steps.net.state.aws_vpc.main.id }}"));
+        vars.insert(
+            "x".into(),
+            serde_json::json!("{{ steps.net.state.aws_vpc.main.id }}"),
+        );
 
         let result = resolve_with_context(&vars, &ctx);
         assert!(result.is_err());
@@ -541,7 +615,10 @@ mod tests {
         ctx.states.insert("net".into(), state);
 
         let mut vars = BTreeMap::new();
-        vars.insert("x".into(), serde_json::json!("{{ steps.net.state.aws_vpc.nonexistent.id }}"));
+        vars.insert(
+            "x".into(),
+            serde_json::json!("{{ steps.net.state.aws_vpc.nonexistent.id }}"),
+        );
 
         let result = resolve_with_context(&vars, &ctx);
         assert!(result.is_err());
@@ -571,8 +648,14 @@ mod tests {
         ctx.outputs = step_outputs;
 
         let mut vars = BTreeMap::new();
-        vars.insert("from_output".into(), serde_json::json!("{{ steps.net.outputs.vpc_id }}"));
-        vars.insert("from_state".into(), serde_json::json!("{{ steps.net.state.aws_vpc.main.id }}"));
+        vars.insert(
+            "from_output".into(),
+            serde_json::json!("{{ steps.net.outputs.vpc_id }}"),
+        );
+        vars.insert(
+            "from_state".into(),
+            serde_json::json!("{{ steps.net.state.aws_vpc.main.id }}"),
+        );
 
         let resolved = resolve_with_context(&vars, &ctx).unwrap();
         assert_eq!(resolved["from_output"], "vpc-output-456");
@@ -602,9 +685,10 @@ mod tests {
     fn test_resolve_string_interpolation_embedded_in_text() {
         let outputs = make_outputs();
         let mut vars = BTreeMap::new();
-        vars.insert("url".into(), serde_json::json!(
-            "https://{{ steps.step-a.outputs.vpc_id }}.example.com"
-        ));
+        vars.insert(
+            "url".into(),
+            serde_json::json!("https://{{ steps.step-a.outputs.vpc_id }}.example.com"),
+        );
 
         let resolved = resolve_step_references(&vars, &outputs).unwrap();
         assert_eq!(resolved["url"], "https://vpc-abc123.example.com");

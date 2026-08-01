@@ -55,8 +55,6 @@ pub async fn update_phase(
     phase: Phase,
     state: &ControllerState,
 ) -> Result<()> {
-
-
     let mut status = template.status.clone().unwrap_or_default();
     let phase_changed = status.phase != Some(phase);
     // lifecycle M1 — impose the typed FSM as the live authority. Validate this
@@ -120,8 +118,7 @@ pub async fn update_phase(
     }
     let patch = serde_json::json!({ "status": status_patch });
 
-    crate::controller::status_patch::patch_status(template, &state.client, patch)
-    .await?;
+    crate::controller::status_patch::patch_status(template, &state.client, patch).await?;
 
     // NOTE: `pangea_templates_by_phase` is a FLEET gauge set by the
     // fleet-status controller (`set_templates_by_phase`, reset-then-set over
@@ -142,8 +139,6 @@ pub async fn update_phase_with_error(
     error_msg: &str,
     state: &ControllerState,
 ) -> Result<()> {
-
-
     let mut status = template.status.clone().unwrap_or_default();
     let phase_changed = status.phase != Some(phase);
     // lifecycle M1 — impose the typed FSM as the live authority. Validate this
@@ -186,8 +181,7 @@ pub async fn update_phase_with_error(
     }
     let patch = serde_json::json!({ "status": status_patch });
 
-    crate::controller::status_patch::patch_status(template, &state.client, patch)
-    .await?;
+    crate::controller::status_patch::patch_status(template, &state.client, patch).await?;
 
     // Post-reconcile pipeline — single ordered entry point for hooks
     // that fire AFTER status is patched. Today's pipeline runs the
@@ -306,8 +300,7 @@ pub async fn update_plan_status(
         Utc::now(),
     );
 
-    crate::controller::status_patch::patch_status(template, &state.client, patch)
-    .await?;
+    crate::controller::status_patch::patch_status(template, &state.client, patch).await?;
 
     Ok(())
 }
@@ -333,8 +326,7 @@ pub async fn update_apply_status(
 
     let patch = serde_json::json!({ "status": status });
 
-    crate::controller::status_patch::patch_status(template, &state.client, patch)
-    .await?;
+    crate::controller::status_patch::patch_status(template, &state.client, patch).await?;
 
     Ok(())
 }
@@ -401,8 +393,7 @@ pub async fn update_compiled_revision(
         }
     });
 
-    crate::controller::status_patch::patch_status(template, &state.client, patch)
-    .await?;
+    crate::controller::status_patch::patch_status(template, &state.client, patch).await?;
 
     Ok(())
 }
@@ -505,24 +496,46 @@ mod freshness_patch_tests {
         // THE rio fix: a failed probe still bumps lastFreshnessCheckAt and
         // does NOT write observedHeadRevision — so it can't silently freeze.
         let now = Utc::now();
-        let patch = build_freshness_patch(Some("abc"), Some(now - Duration::minutes(40)), &ObservationOutcome::Unobserved, now)
-            .expect("a stale attempt must patch the timestamp");
+        let patch = build_freshness_patch(
+            Some("abc"),
+            Some(now - Duration::minutes(40)),
+            &ObservationOutcome::Unobserved,
+            now,
+        )
+        .expect("a stale attempt must patch the timestamp");
         let st = &patch["status"];
-        assert!(st.get("lastFreshnessCheckAt").is_some(), "attempt clock advances");
-        assert!(st.get("observedHeadRevision").is_none(), "head untouched on a failed probe");
+        assert!(
+            st.get("lastFreshnessCheckAt").is_some(),
+            "attempt clock advances"
+        );
+        assert!(
+            st.get("observedHeadRevision").is_none(),
+            "head untouched on a failed probe"
+        );
     }
 
     #[test]
     fn observed_unchanged_recent_skips_to_avoid_churn() {
         let now = Utc::now();
-        assert!(build_freshness_patch(Some("abc"), Some(now - Duration::seconds(5)), &ObservationOutcome::Observed("abc".into()), now).is_none());
+        assert!(build_freshness_patch(
+            Some("abc"),
+            Some(now - Duration::seconds(5)),
+            &ObservationOutcome::Observed("abc".into()),
+            now
+        )
+        .is_none());
     }
 
     #[test]
     fn observed_changed_writes_head_and_clock() {
         let now = Utc::now();
-        let patch = build_freshness_patch(Some("abc"), Some(now - Duration::seconds(5)), &ObservationOutcome::Observed("def".into()), now)
-            .expect("HEAD advance must patch");
+        let patch = build_freshness_patch(
+            Some("abc"),
+            Some(now - Duration::seconds(5)),
+            &ObservationOutcome::Observed("def".into()),
+            now,
+        )
+        .expect("HEAD advance must patch");
         assert_eq!(patch["status"]["observedHeadRevision"], "def");
         assert!(patch["status"].get("lastFreshnessCheckAt").is_some());
     }
@@ -530,7 +543,13 @@ mod freshness_patch_tests {
     #[test]
     fn unobserved_too_recent_skips() {
         let now = Utc::now();
-        assert!(build_freshness_patch(Some("abc"), Some(now - Duration::seconds(5)), &ObservationOutcome::Unobserved, now).is_none());
+        assert!(build_freshness_patch(
+            Some("abc"),
+            Some(now - Duration::seconds(5)),
+            &ObservationOutcome::Unobserved,
+            now
+        )
+        .is_none());
     }
 }
 
@@ -559,8 +578,12 @@ fn build_settling_status_patch(
 
     let cycles = outcome.cycle_count();
     let stuck_addresses: Vec<String> = match outcome {
-        SettlingOutcome::StuckByFingerprint { stuck_addresses, .. }
-        | SettlingOutcome::StuckByCount { stuck_addresses, .. } => stuck_addresses.clone(),
+        SettlingOutcome::StuckByFingerprint {
+            stuck_addresses, ..
+        }
+        | SettlingOutcome::StuckByCount {
+            stuck_addresses, ..
+        } => stuck_addresses.clone(),
         _ => Vec::new(),
     };
 
@@ -576,7 +599,11 @@ fn build_settling_status_patch(
             "Reconciling".to_string(),
             format!("Drift detected; reconciling (cycle {}).", cycles),
         ),
-        SettlingOutcome::StuckByFingerprint { cycles, fingerprint, .. } => (
+        SettlingOutcome::StuckByFingerprint {
+            cycles,
+            fingerprint,
+            ..
+        } => (
             "False",
             "StuckByFingerprint".to_string(),
             format!(
@@ -693,8 +720,7 @@ pub async fn update_settling_status(
         return Ok(());
     };
 
-    crate::controller::status_patch::patch_status(template, &state.client, patch)
-    .await?;
+    crate::controller::status_patch::patch_status(template, &state.client, patch).await?;
 
     Ok(())
 }
@@ -764,8 +790,7 @@ pub async fn update_drift_check_timestamp(
         }
     });
 
-    crate::controller::status_patch::patch_status(template, &state.client, patch)
-    .await?;
+    crate::controller::status_patch::patch_status(template, &state.client, patch).await?;
 
     Ok(())
 }
@@ -778,8 +803,6 @@ pub async fn update_pending_plan_hash(
     plan_hash: &str,
     state: &ControllerState,
 ) -> Result<()> {
-
-
     let patch = serde_json::json!({
         "status": {
             "pendingPlanHash": plan_hash,
@@ -787,8 +810,7 @@ pub async fn update_pending_plan_hash(
         }
     });
 
-    crate::controller::status_patch::patch_status(template, &state.client, patch)
-    .await?;
+    crate::controller::status_patch::patch_status(template, &state.client, patch).await?;
 
     Ok(())
 }
@@ -1087,7 +1109,10 @@ mod tests {
              got: {status_obj:?}"
         );
         // The fields it DOES own must still be present.
-        assert_eq!(status_obj.get("planSummary").and_then(|v| v.as_str()), Some("2 to add"));
+        assert_eq!(
+            status_obj.get("planSummary").and_then(|v| v.as_str()),
+            Some("2 to add")
+        );
         assert!(status_obj.contains_key("lastPlannedAt"));
         assert!(status_obj.contains_key("driftDetails"));
     }
@@ -1156,7 +1181,10 @@ mod tests {
     #[test]
     fn settled_message_without_revision_keeps_legacy_wording() {
         let msg = settled_message(None, None);
-        assert!(msg.contains("desired state matches actual state"), "got: {msg}");
+        assert!(
+            msg.contains("desired state matches actual state"),
+            "got: {msg}"
+        );
     }
 
     // ── freshness_check_too_recent throttle ──────────────────────
@@ -1164,8 +1192,17 @@ mod tests {
 
     #[test]
     fn freshness_check_throttle_mirrors_drift_check_shape() {
-        assert!(!freshness_check_too_recent(None, t(0)), "first check must patch");
-        assert!(freshness_check_too_recent(Some(t(0)), t(15)), "15s later skips");
-        assert!(!freshness_check_too_recent(Some(t(0)), t(30)), "30s later patches");
+        assert!(
+            !freshness_check_too_recent(None, t(0)),
+            "first check must patch"
+        );
+        assert!(
+            freshness_check_too_recent(Some(t(0)), t(15)),
+            "15s later skips"
+        );
+        assert!(
+            !freshness_check_too_recent(Some(t(0)), t(30)),
+            "30s later patches"
+        );
     }
 }

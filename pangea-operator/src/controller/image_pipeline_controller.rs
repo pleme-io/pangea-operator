@@ -6,11 +6,10 @@
 //! the plan → approve → apply → verify cycle.
 
 use crate::crd::{
-    AmiSource, AmiTest, AmiTestPhase, AmiTestSpec, ApprovalModeKind,
-    ImagePipeline, ImagePipelinePhase,
-    InfrastructureTemplate, PackerBuild, PackerBuildPhase, PackerBuildSpec, Phase,
-    PipelineBuildStatus, PipelineDeployStatus, PipelineTestStatus,
-    PipelineVerificationStatus, HealthCheckResult,
+    AmiSource, AmiTest, AmiTestPhase, AmiTestSpec, ApprovalModeKind, HealthCheckResult,
+    ImagePipeline, ImagePipelinePhase, InfrastructureTemplate, PackerBuild, PackerBuildPhase,
+    PackerBuildSpec, Phase, PipelineBuildStatus, PipelineDeployStatus, PipelineTestStatus,
+    PipelineVerificationStatus,
 };
 use crate::error::Error;
 
@@ -155,8 +154,13 @@ async fn reconcile_image_pipeline(
         Ok(a) => Ok(a),
         Err(e) => {
             warn!(error = %e, "ImagePipeline reconciliation error");
-            let _ = update_phase(&pipeline, ImagePipelinePhase::Failed, Some(&e.to_string()), &state)
-                .await;
+            let _ = update_phase(
+                &pipeline,
+                ImagePipelinePhase::Failed,
+                Some(&e.to_string()),
+                &state,
+            )
+            .await;
             Ok(Action::requeue(ERROR_REQUEUE_INTERVAL))
         }
     }
@@ -319,15 +323,10 @@ async fn handle_testing(
     if existing.is_none() {
         // Create child AmiTest CR
         let at_spec = AmiTestSpec {
-            ami_source: AmiSource::PackerBuildRef {
-                name: build_name,
-            },
+            ami_source: AmiSource::PackerBuildRef { name: build_name },
             suites: test_spec.suites.clone(),
             provider_credentials: test_spec.provider_credentials.clone(),
-            failure_policy: test_spec
-                .failure_policy
-                .clone()
-                .unwrap_or_default(),
+            failure_policy: test_spec.failure_policy.clone().unwrap_or_default(),
             test_runner_image: None,
             suspend: false,
         };
@@ -372,10 +371,7 @@ async fn handle_testing(
     match at_phase {
         AmiTestPhase::Passed => {
             info!("All test suites passed");
-            let summary = at
-                .status
-                .as_ref()
-                .and_then(|s| s.suite_summary.clone());
+            let summary = at.status.as_ref().and_then(|s| s.suite_summary.clone());
 
             let test_status = PipelineTestStatus {
                 ami_test_ref: test_name,
@@ -417,8 +413,7 @@ async fn handle_planning(
         .unwrap_or(&namespace);
     let template_name = &deploy.target_template_ref.name;
 
-    let it_api: Api<InfrastructureTemplate> =
-        Api::namespaced(state.client.clone(), template_ns);
+    let it_api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), template_ns);
 
     // Read current template to capture previous AMI for rollback
     let template = it_api.get(template_name).await.map_err(Error::Kube)?;
@@ -447,7 +442,11 @@ async fn handle_planning(
     });
 
     it_api
-        .patch(template_name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+        .patch(
+            template_name,
+            &PatchParams::apply("pangea-operator"),
+            &Patch::Merge(&patch),
+        )
         .await
         .map_err(Error::Kube)?;
 
@@ -559,8 +558,7 @@ async fn handle_applying(
         .unwrap_or(&namespace);
     let template_name = &deploy.target_template_ref.name;
 
-    let it_api: Api<InfrastructureTemplate> =
-        Api::namespaced(state.client.clone(), template_ns);
+    let it_api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), template_ns);
 
     let template = it_api.get(template_name).await.map_err(Error::Kube)?;
 
@@ -754,8 +752,7 @@ async fn handle_rolling_back(
         .unwrap_or(&namespace);
     let template_name = &deploy.target_template_ref.name;
 
-    let it_api: Api<InfrastructureTemplate> =
-        Api::namespaced(state.client.clone(), template_ns);
+    let it_api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), template_ns);
 
     // Patch the variable back to the previous AMI
     let patch = serde_json::json!({
@@ -767,7 +764,11 @@ async fn handle_rolling_back(
     });
 
     it_api
-        .patch(template_name, &PatchParams::apply("pangea-operator"), &Patch::Merge(&patch))
+        .patch(
+            template_name,
+            &PatchParams::apply("pangea-operator"),
+            &Patch::Merge(&patch),
+        )
         .await
         .map_err(Error::Kube)?;
 
@@ -787,10 +788,7 @@ async fn handle_rolling_back(
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn should_rollback(
-    pipeline: &ImagePipeline,
-    trigger: &crate::crd::RollbackTrigger,
-) -> bool {
+fn should_rollback(pipeline: &ImagePipeline, trigger: &crate::crd::RollbackTrigger) -> bool {
     pipeline
         .spec
         .deploy
@@ -798,9 +796,10 @@ fn should_rollback(
         .as_ref()
         .map(|rb| {
             rb.enabled
-                && rb.auto_rollback_on.iter().any(|t| {
-                    std::mem::discriminant(t) == std::mem::discriminant(trigger)
-                })
+                && rb
+                    .auto_rollback_on
+                    .iter()
+                    .any(|t| std::mem::discriminant(t) == std::mem::discriminant(trigger))
         })
         .unwrap_or(false)
 }
@@ -945,7 +944,9 @@ async fn run_health_check(check: &crate::crd::HealthCheck) -> HealthCheckResult 
     }
 }
 
-fn owner_reference(pipeline: &ImagePipeline) -> k8s_openapi::apimachinery::pkg::apis::meta::v1::OwnerReference {
+fn owner_reference(
+    pipeline: &ImagePipeline,
+) -> k8s_openapi::apimachinery::pkg::apis::meta::v1::OwnerReference {
     k8s_openapi::apimachinery::pkg::apis::meta::v1::OwnerReference {
         api_version: "pangea.pleme.io/v1alpha1".to_string(),
         kind: "ImagePipeline".to_string(),
@@ -984,7 +985,11 @@ async fn update_phase(
 
     // Set timestamps
     if phase == ImagePipelinePhase::Building
-        && pipeline.status.as_ref().and_then(|s| s.started_at).is_none()
+        && pipeline
+            .status
+            .as_ref()
+            .and_then(|s| s.started_at)
+            .is_none()
     {
         patch["status"]["startedAt"] = serde_json::json!(Utc::now());
     }
@@ -1085,11 +1090,7 @@ async fn remove_finalizer(
         .map_err(Error::Kube)
 }
 
-fn error_policy(
-    _pipeline: Arc<ImagePipeline>,
-    error: &Error,
-    ctx: Arc<ControllerState>,
-) -> Action {
+fn error_policy(_pipeline: Arc<ImagePipeline>, error: &Error, ctx: Arc<ControllerState>) -> Action {
     use crate::controller::error_policy::{run_error_policy, tiered_backoff};
     run_error_policy(
         &ctx.metrics,
@@ -1261,7 +1262,8 @@ mod tests {
                         "amiVariable": "ami_id"
                     }
                 }
-            })).unwrap();
+            }))
+            .unwrap();
             p.metadata.finalizers = finalizers;
             p
         }
@@ -1270,6 +1272,8 @@ mod tests {
         // With our finalizer → true.
         assert!(has_finalizer(&fake(Some(vec![FINALIZER_NAME.to_string()]))));
         // With only some other finalizer → false.
-        assert!(!has_finalizer(&fake(Some(vec!["other.io/finalizer".to_string()]))));
+        assert!(!has_finalizer(&fake(Some(vec![
+            "other.io/finalizer".to_string()
+        ]))));
     }
 }

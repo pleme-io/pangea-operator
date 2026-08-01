@@ -80,13 +80,7 @@ use std::hash::Hash;
 /// every pangea CRD).
 pub fn filtered_controller<K>(client: Client) -> Controller<K>
 where
-    K: Resource<DynamicType = ()>
-        + Clone
-        + DeserializeOwned
-        + Debug
-        + Send
-        + Sync
-        + 'static,
+    K: Resource<DynamicType = ()> + Clone + DeserializeOwned + Debug + Send + Sync + 'static,
     K::DynamicType: Eq + Hash + Clone + Default,
 {
     let api: Api<K> = Api::all(client);

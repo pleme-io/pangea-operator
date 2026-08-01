@@ -194,10 +194,7 @@ pub trait CompilerBackend: Send + Sync {
     /// Equivalent of `POST /compile-any` (synthesizer-driven).
     /// Used by both packer builds (`format = Some("packer")`) and the
     /// SynthesizerFormat CRD (`format_definition = Some(spec)`).
-    async fn compile_any(
-        &self,
-        req: CompileAnyRequest,
-    ) -> Result<CompileAnyResult, BackendError>;
+    async fn compile_any(&self, req: CompileAnyRequest) -> Result<CompileAnyResult, BackendError>;
 
     /// Render a `PangeaDashboard`'s inline Ruby into a Grafana
     /// dashboard JSON **string**.
@@ -283,7 +280,10 @@ mod tests {
     #[test]
     fn source_kind_unknown_kind_fails_to_deserialize() {
         let bad = serde_json::from_str::<SourceKind>("\"Quantum\"");
-        assert!(bad.is_err(), "unknown SourceKind must error, not silently default");
+        assert!(
+            bad.is_err(),
+            "unknown SourceKind must error, not silently default"
+        );
     }
 
     // ── Payload shape coverage ──
@@ -367,7 +367,10 @@ mod tests {
         async fn compile(&self, _: CompileRequest) -> Result<CompileResult, BackendError> {
             Err(BackendError::NotInitialized)
         }
-        async fn compile_any(&self, _: CompileAnyRequest) -> Result<CompileAnyResult, BackendError> {
+        async fn compile_any(
+            &self,
+            _: CompileAnyRequest,
+        ) -> Result<CompileAnyResult, BackendError> {
             Err(BackendError::NotInitialized)
         }
     }

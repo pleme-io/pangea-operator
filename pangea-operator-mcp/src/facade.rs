@@ -47,9 +47,19 @@ pub trait PangeaStore: Send + Sync {
     async fn get_template(&self, namespace: &str, name: &str) -> Result<Value, StoreError>;
     /// Force a reconcile by stamping a reconcile-request annotation (a metadata
     /// change the controller's watch fires on) — the `flux reconcile` analog.
-    async fn reconcile_template(&self, namespace: &str, name: &str, nonce: &str) -> Result<(), StoreError>;
+    async fn reconcile_template(
+        &self,
+        namespace: &str,
+        name: &str,
+        nonce: &str,
+    ) -> Result<(), StoreError>;
     /// Patch `spec.suspend` to pause/resume reconciliation of one template.
-    async fn set_template_suspend(&self, namespace: &str, name: &str, suspend: bool) -> Result<(), StoreError>;
+    async fn set_template_suspend(
+        &self,
+        namespace: &str,
+        name: &str,
+        suspend: bool,
+    ) -> Result<(), StoreError>;
     /// List WorkspaceCatalogs (cluster-scoped) with their verify status.
     async fn list_workspaces(&self) -> Result<Vec<Value>, StoreError>;
     /// List ArchitectureGems with their load phase (a not-Loaded gem blocks
@@ -57,10 +67,16 @@ pub trait PangeaStore: Send + Sync {
     async fn list_gems(&self) -> Result<Vec<Value>, StoreError>;
     /// Roll-restart the operator Deployment (stamp the standard
     /// `kubectl.kubernetes.io/restartedAt` pod-template annotation).
-    async fn restart_operator(&self, namespace: &str, deployment: &str, nonce: &str) -> Result<(), StoreError>;
+    async fn restart_operator(
+        &self,
+        namespace: &str,
+        deployment: &str,
+        nonce: &str,
+    ) -> Result<(), StoreError>;
     /// The operator Deployment status — replicas/ready/available + conditions
     /// (is the controller even up?).
-    async fn operator_status(&self, namespace: &str, deployment: &str) -> Result<Value, StoreError>;
+    async fn operator_status(&self, namespace: &str, deployment: &str)
+        -> Result<Value, StoreError>;
 }
 
 /// Live implementation over a kube [`Client`] (in-cluster or kubeconfig).
@@ -72,7 +88,9 @@ impl KubeStore {
     /// In-cluster (sidecar) or local-kubeconfig client — same `from_env`
     /// contract breathe-mcp uses.
     pub async fn from_env() -> Result<Self, StoreError> {
-        Ok(Self { client: Client::try_default().await? })
+        Ok(Self {
+            client: Client::try_default().await?,
+        })
     }
 
     pub fn new(client: Client) -> Self {
@@ -125,7 +143,10 @@ fn summarize(obj: &DynamicObject) -> Value {
 #[async_trait]
 impl PangeaStore for KubeStore {
     async fn list_templates(&self, namespace: Option<&str>) -> Result<Vec<Value>, StoreError> {
-        let list = self.templates_api(namespace).list(&ListParams::default()).await?;
+        let list = self
+            .templates_api(namespace)
+            .list(&ListParams::default())
+            .await?;
         Ok(list.items.iter().map(summarize).collect())
     }
 
@@ -134,7 +155,12 @@ impl PangeaStore for KubeStore {
         Ok(serde_json::to_value(obj)?)
     }
 
-    async fn reconcile_template(&self, namespace: &str, name: &str, nonce: &str) -> Result<(), StoreError> {
+    async fn reconcile_template(
+        &self,
+        namespace: &str,
+        name: &str,
+        nonce: &str,
+    ) -> Result<(), StoreError> {
         let patch = json!({
             "metadata": { "annotations": { "pangea.pleme.io/reconcile-requested-at": nonce } }
         });
@@ -144,7 +170,12 @@ impl PangeaStore for KubeStore {
         Ok(())
     }
 
-    async fn set_template_suspend(&self, namespace: &str, name: &str, suspend: bool) -> Result<(), StoreError> {
+    async fn set_template_suspend(
+        &self,
+        namespace: &str,
+        name: &str,
+        suspend: bool,
+    ) -> Result<(), StoreError> {
         let patch = json!({ "spec": { "suspend": suspend } });
         self.templates_api(Some(namespace))
             .patch(name, &PatchParams::default(), &Patch::Merge(&patch))
@@ -188,18 +219,28 @@ impl PangeaStore for KubeStore {
             .collect())
     }
 
-    async fn restart_operator(&self, namespace: &str, deployment: &str, nonce: &str) -> Result<(), StoreError> {
+    async fn restart_operator(
+        &self,
+        namespace: &str,
+        deployment: &str,
+        nonce: &str,
+    ) -> Result<(), StoreError> {
         let api: Api<Deployment> = Api::namespaced(self.client.clone(), namespace);
         let patch = json!({
             "spec": { "template": { "metadata": { "annotations": {
                 "kubectl.kubernetes.io/restartedAt": nonce
             } } } }
         });
-        api.patch(deployment, &PatchParams::default(), &Patch::Merge(&patch)).await?;
+        api.patch(deployment, &PatchParams::default(), &Patch::Merge(&patch))
+            .await?;
         Ok(())
     }
 
-    async fn operator_status(&self, namespace: &str, deployment: &str) -> Result<Value, StoreError> {
+    async fn operator_status(
+        &self,
+        namespace: &str,
+        deployment: &str,
+    ) -> Result<Value, StoreError> {
         let api: Api<Deployment> = Api::namespaced(self.client.clone(), namespace);
         let d = api.get(deployment).await?;
         let status = d.status.unwrap_or_default();

@@ -187,13 +187,34 @@ mod magma_projection_tests {
 
     #[test]
     fn action_projection_is_total_and_matches_universal_folding() {
-        assert_eq!(PlanAction::from(&magma_types::Action::Create), PlanAction::Create);
-        assert_eq!(PlanAction::from(&magma_types::Action::NoOp), PlanAction::NoOp);
-        assert_eq!(PlanAction::from(&magma_types::Action::Read), PlanAction::Read);
-        assert_eq!(PlanAction::from(&magma_types::Action::Update), PlanAction::Update);
-        assert_eq!(PlanAction::from(&magma_types::Action::Replace), PlanAction::Replace);
-        assert_eq!(PlanAction::from(&magma_types::Action::Delete), PlanAction::Delete);
-        assert_eq!(PlanAction::from(&magma_types::Action::Forget), PlanAction::Delete);
+        assert_eq!(
+            PlanAction::from(&magma_types::Action::Create),
+            PlanAction::Create
+        );
+        assert_eq!(
+            PlanAction::from(&magma_types::Action::NoOp),
+            PlanAction::NoOp
+        );
+        assert_eq!(
+            PlanAction::from(&magma_types::Action::Read),
+            PlanAction::Read
+        );
+        assert_eq!(
+            PlanAction::from(&magma_types::Action::Update),
+            PlanAction::Update
+        );
+        assert_eq!(
+            PlanAction::from(&magma_types::Action::Replace),
+            PlanAction::Replace
+        );
+        assert_eq!(
+            PlanAction::from(&magma_types::Action::Delete),
+            PlanAction::Delete
+        );
+        assert_eq!(
+            PlanAction::from(&magma_types::Action::Forget),
+            PlanAction::Delete
+        );
         assert_eq!(
             PlanAction::from(&magma_types::Action::CreateThenDelete),
             PlanAction::Replace

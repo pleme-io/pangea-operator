@@ -10,18 +10,18 @@
 
 pub mod ami_test;
 pub mod architecture_gem;
+pub mod compliance_binding;
+pub mod compliance_schedule;
+pub mod image_pipeline;
 mod infrastructure_flow;
 pub mod infrastructure_template;
-pub mod image_pipeline;
 pub mod operator_policy;
 mod packer_build;
-mod pangea_namespace;
-pub mod synthesizer_format;
-pub mod compliance_schedule;
-pub mod compliance_binding;
 pub mod pangea_dashboard;
 pub mod pangea_fleet_status;
+mod pangea_namespace;
 pub mod reconciliation_loop;
+pub mod synthesizer_format;
 pub mod workspace_catalog;
 
 pub use reconciliation_loop::{
@@ -36,12 +36,12 @@ pub use infrastructure_template::{
     ActionDistribution, AwsCredentials, BundleRef, CloudflareCredentials, ComplianceStatus,
     Condition, ConfigMapRef, ConflictKind, ConflictResolution, ConflictResolutionPolicy,
     ConflictRule, CycleSummary, DriftAction, DriftDetail, GitHubCredentials, GitRepositoryRef,
-    ImportPolicy, InfrastructureTemplate, InfrastructureTemplateSpec,
-    InfrastructureTemplateStatus, Outcome, OutputBinding, OutputSecretRef, Phase, PolicyDecision,
-    PolicyEvaluation, PolicyMatch, PolicyRule, PorkbunCredentials, ProfileResult,
-    ProviderCredentials, ProviderKind, ReconcileCycle, ResourceOutcome, ResourceSummary,
-    RetryPolicy, RiskLevel, SecretFileRef, SecretRef, SettlingExhaustionAction, SettlingPolicy,
-    SeverityRollup, TemplateObjectRef, TemplateSource, VariableRef,
+    ImportPolicy, InfrastructureTemplate, InfrastructureTemplateSpec, InfrastructureTemplateStatus,
+    Outcome, OutputBinding, OutputSecretRef, Phase, PolicyDecision, PolicyEvaluation, PolicyMatch,
+    PolicyRule, PorkbunCredentials, ProfileResult, ProviderCredentials, ProviderKind,
+    ReconcileCycle, ResourceOutcome, ResourceSummary, RetryPolicy, RiskLevel, SecretFileRef,
+    SecretRef, SettlingExhaustionAction, SettlingPolicy, SeverityRollup, TemplateObjectRef,
+    TemplateSource, VariableRef,
 };
 
 // Re-export InfrastructureFlow types
@@ -98,8 +98,8 @@ pub use architecture_gem::{
 
 // Re-export WorkspaceCatalog types (M3 — hierarchical policy cascade)
 pub use workspace_catalog::{
-    WorkspaceCatalog, WorkspaceCatalogSpec, WorkspaceCatalogStatus,
-    WorkspacePolicy, WorkspaceSource,
+    WorkspaceCatalog, WorkspaceCatalogSpec, WorkspaceCatalogStatus, WorkspacePolicy,
+    WorkspaceSource,
 };
 
 // Re-export SynthesizerFormat types
@@ -110,18 +110,17 @@ pub use synthesizer_format::{
 
 // Re-export OperatorPolicy types — fleet-wide kill-switch primitive.
 pub use operator_policy::{
-    ControllerKind, ControllerSuspend, OperatorPolicy, OperatorPolicySpec,
-    OperatorPolicyStatus, SuspensionDecision, SuspensionSource, WorkspaceState,
-    WorkspaceSuspend, WorkspaceSuspendEntry, OPERATOR_POLICY_SINGLETON,
+    ControllerKind, ControllerSuspend, OperatorPolicy, OperatorPolicySpec, OperatorPolicyStatus,
+    SuspensionDecision, SuspensionSource, WorkspaceState, WorkspaceSuspend, WorkspaceSuspendEntry,
+    OPERATOR_POLICY_SINGLETON,
 };
 
 // Re-export PangeaFleetStatus types — operator-driven fleet
 // aggregation singleton.
 pub use pangea_fleet_status::{
-    ArchitectureGemTracking, ComplianceBindingTracking, PangeaFleetStatus,
-    PangeaFleetStatusSpec, PangeaFleetStatusStatus, PangeaNamespaceTracking,
-    PhaseHistogramTracking, TemplateTracking, WorkspaceCatalogTracking,
-    PANGEA_FLEET_STATUS_SINGLETON,
+    ArchitectureGemTracking, ComplianceBindingTracking, PangeaFleetStatus, PangeaFleetStatusSpec,
+    PangeaFleetStatusStatus, PangeaNamespaceTracking, PhaseHistogramTracking, TemplateTracking,
+    WorkspaceCatalogTracking, PANGEA_FLEET_STATUS_SINGLETON,
 };
 
 // Re-export ImagePipeline types
@@ -185,14 +184,12 @@ pub fn generate_crds() -> String {
 
     crds.push_str("---\n");
     crds.push_str(
-        &serde_yaml::to_string(&PackerBuild::crd())
-            .expect("Failed to serialize PackerBuild CRD"),
+        &serde_yaml::to_string(&PackerBuild::crd()).expect("Failed to serialize PackerBuild CRD"),
     );
 
     crds.push_str("---\n");
     crds.push_str(
-        &serde_yaml::to_string(&AmiTest::crd())
-            .expect("Failed to serialize AmiTest CRD"),
+        &serde_yaml::to_string(&AmiTest::crd()).expect("Failed to serialize AmiTest CRD"),
     );
 
     crds.push_str("---\n");
@@ -297,19 +294,49 @@ mod tests {
     #[test]
     fn test_generate_crds_contains_all_resources() {
         let crds = generate_crds();
-        assert!(crds.contains("InfrastructureTemplate"), "Missing InfrastructureTemplate CRD");
-        assert!(crds.contains("PangeaNamespace"), "Missing PangeaNamespace CRD");
-        assert!(crds.contains("InfrastructureFlow"), "Missing InfrastructureFlow CRD");
+        assert!(
+            crds.contains("InfrastructureTemplate"),
+            "Missing InfrastructureTemplate CRD"
+        );
+        assert!(
+            crds.contains("PangeaNamespace"),
+            "Missing PangeaNamespace CRD"
+        );
+        assert!(
+            crds.contains("InfrastructureFlow"),
+            "Missing InfrastructureFlow CRD"
+        );
         assert!(crds.contains("PackerBuild"), "Missing PackerBuild CRD");
         assert!(crds.contains("AmiTest"), "Missing AmiTest CRD");
         assert!(crds.contains("ImagePipeline"), "Missing ImagePipeline CRD");
-        assert!(crds.contains("SynthesizerFormat"), "Missing SynthesizerFormat CRD");
-        assert!(crds.contains("ComplianceSchedule"), "Missing ComplianceSchedule CRD");
-        assert!(crds.contains("ComplianceBinding"), "Missing ComplianceBinding CRD");
-        assert!(crds.contains("PangeaDashboard"), "Missing PangeaDashboard CRD");
-        assert!(crds.contains("ArchitectureGem"), "Missing ArchitectureGem CRD");
-        assert!(crds.contains("WorkspaceCatalog"), "Missing WorkspaceCatalog CRD");
-        assert!(crds.contains("OperatorPolicy"), "Missing OperatorPolicy CRD");
+        assert!(
+            crds.contains("SynthesizerFormat"),
+            "Missing SynthesizerFormat CRD"
+        );
+        assert!(
+            crds.contains("ComplianceSchedule"),
+            "Missing ComplianceSchedule CRD"
+        );
+        assert!(
+            crds.contains("ComplianceBinding"),
+            "Missing ComplianceBinding CRD"
+        );
+        assert!(
+            crds.contains("PangeaDashboard"),
+            "Missing PangeaDashboard CRD"
+        );
+        assert!(
+            crds.contains("ArchitectureGem"),
+            "Missing ArchitectureGem CRD"
+        );
+        assert!(
+            crds.contains("WorkspaceCatalog"),
+            "Missing WorkspaceCatalog CRD"
+        );
+        assert!(
+            crds.contains("OperatorPolicy"),
+            "Missing OperatorPolicy CRD"
+        );
     }
 
     #[test]
@@ -322,7 +349,12 @@ mod tests {
                 continue;
             }
             let parsed: Result<serde_yaml::Value, _> = serde_yaml::from_str(trimmed);
-            assert!(parsed.is_ok(), "Invalid YAML in CRD document {}: {:?}", count, parsed.err());
+            assert!(
+                parsed.is_ok(),
+                "Invalid YAML in CRD document {}: {:?}",
+                count,
+                parsed.err()
+            );
             count += 1;
         }
         // 15 CRD kinds (see src/crd/*.rs): the 14 originals + reconciliation_loop
@@ -517,8 +549,10 @@ mod tests {
             if trimmed.is_empty() {
                 continue;
             }
-            assert!(trimmed.contains("apiextensions.k8s.io"),
-                "CRD document missing apiextensions.k8s.io");
+            assert!(
+                trimmed.contains("apiextensions.k8s.io"),
+                "CRD document missing apiextensions.k8s.io"
+            );
         }
     }
 }

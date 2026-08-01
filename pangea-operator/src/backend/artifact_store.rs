@@ -39,8 +39,8 @@
 //! [`Error::StateBackend`] instead of feeding garbage into the plan /
 //! apply / bundle pipeline.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use sqlx::{PgPool, Postgres, Transaction};
 use tracing::{debug, info};
@@ -112,7 +112,10 @@ pub struct ArtifactStore {
 impl ArtifactStore {
     /// Build an artifact store over a shared pool.
     pub fn new(pool: Arc<PgPool>) -> Self {
-        Self { pool, ensured: Arc::new(AtomicBool::new(false)) }
+        Self {
+            pool,
+            ensured: Arc::new(AtomicBool::new(false)),
+        }
     }
 
     /// Self-heal the durable-artifact table on the first op that needs
@@ -231,7 +234,10 @@ impl ArtifactStore {
         .map_err(Error::Database)?;
 
         debug!(
-            schema, template, kind, content_hash,
+            schema,
+            template,
+            kind,
+            content_hash,
             source_revision = source_revision.unwrap_or("(none)"),
             bytes = bytes.len(),
             "artifact stored"
@@ -297,8 +303,14 @@ impl ArtifactStore {
         source_revision: Option<&str>,
     ) -> Result<String> {
         let bytes = serde_json::to_vec(value).map_err(Error::Serialization)?;
-        self.put(schema, template, kind::RENDERED_CONFIG, &bytes, source_revision)
-            .await
+        self.put(
+            schema,
+            template,
+            kind::RENDERED_CONFIG,
+            &bytes,
+            source_revision,
+        )
+        .await
     }
 
     /// Read the compile→plan rendered terraform JSON. `Ok(None)` when
@@ -354,11 +366,7 @@ impl ArtifactStore {
     /// receipt reader can derive its `CycleArtifact` / `ApplyOutcome`
     /// from Postgres instead of a pod-local `magma-bundle.json`.
     /// `Ok(None)` when no bundle has been persisted yet.
-    pub async fn get_bundle_bytes(
-        &self,
-        schema: &str,
-        template: &str,
-    ) -> Result<Option<Vec<u8>>> {
+    pub async fn get_bundle_bytes(&self, schema: &str, template: &str) -> Result<Option<Vec<u8>>> {
         self.get(schema, template, kind::BUNDLE).await
     }
 
@@ -415,8 +423,7 @@ impl ArtifactStore {
         self.ensure_tofu_states_table(artifact_schema, artifact_template)
             .await?;
 
-        let mut tx: Transaction<'_, Postgres> =
-            self.pool.begin().await.map_err(Error::Database)?;
+        let mut tx: Transaction<'_, Postgres> = self.pool.begin().await.map_err(Error::Database)?;
 
         // (a) upsert the state row into the live OpenTofu states table.
         //     Identical SQL to TofuPgStateBackend::save_state so the
@@ -706,11 +713,7 @@ impl ArtifactStore {
     /// recompute once. This is the revision half of the plan-reuse
     /// check; the bytes come from [`get_plan`]. Mirrors
     /// [`get_rendered_config_revision`].
-    pub async fn get_plan_revision(
-        &self,
-        schema: &str,
-        template: &str,
-    ) -> Result<Option<String>> {
+    pub async fn get_plan_revision(&self, schema: &str, template: &str) -> Result<Option<String>> {
         self.ensure_ready().await?;
         let row: Option<(Option<String>,)> = sqlx::query_as(
             r#"
@@ -805,8 +808,12 @@ mod tests {
         // the `.states` suffix — `ensure_tofu_states_table` qualifies
         // `<schema>.states`, so they MUST agree byte-for-byte.
         let schema =
-            ArtifactStore::live_state_schema("pangea_cloudflare-pleme", "cloudflare-pleme").unwrap();
-        assert_eq!(schema, "\"pangea_cloudflare-pleme_cloudflare-pleme_states\"");
+            ArtifactStore::live_state_schema("pangea_cloudflare-pleme", "cloudflare-pleme")
+                .unwrap();
+        assert_eq!(
+            schema,
+            "\"pangea_cloudflare-pleme_cloudflare-pleme_states\""
+        );
         let table =
             ArtifactStore::live_state_table("pangea_cloudflare-pleme", "cloudflare-pleme").unwrap();
         assert_eq!(table, format!("{schema}.states"));

@@ -69,13 +69,14 @@ pub async fn write_secret_files(
 
         let ns = sf.secret_ref.namespace.as_deref().unwrap_or(&default_ns);
         let secret_api: Api<Secret> = Api::namespaced(state.client.clone(), ns);
-        let secret = secret_api
-            .get(&sf.secret_ref.name)
-            .await
-            .map_err(|_| Error::SecretNotFound {
-                namespace: ns.to_string(),
-                name: sf.secret_ref.name.clone(),
-            })?;
+        let secret =
+            secret_api
+                .get(&sf.secret_ref.name)
+                .await
+                .map_err(|_| Error::SecretNotFound {
+                    namespace: ns.to_string(),
+                    name: sf.secret_ref.name.clone(),
+                })?;
 
         let data = secret.data.as_ref().ok_or_else(|| {
             Error::Config(format!(

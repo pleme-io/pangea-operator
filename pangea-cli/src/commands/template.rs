@@ -114,7 +114,10 @@ pub async fn execute(
             }
         }
 
-        TemplateCommands::Get { template, namespace } => {
+        TemplateCommands::Get {
+            template,
+            namespace,
+        } => {
             let (ns, name) = parse_template_ref(&template, namespace.as_deref())?;
             let template = client.get_template(&ns, &name).await?;
 
@@ -127,11 +130,17 @@ pub async fn execute(
             }
         }
 
-        TemplateCommands::Apply { template, namespace } => {
+        TemplateCommands::Apply {
+            template,
+            namespace,
+        } => {
             apply(client, &template, namespace.as_deref(), format).await?;
         }
 
-        TemplateCommands::Approve { template, namespace } => {
+        TemplateCommands::Approve {
+            template,
+            namespace,
+        } => {
             approve(client, &template, namespace.as_deref(), format).await?;
         }
 
@@ -164,21 +173,30 @@ pub async fn execute(
             output::print_template_detail(&result, format)?;
         }
 
-        TemplateCommands::Suspend { template, namespace } => {
+        TemplateCommands::Suspend {
+            template,
+            namespace,
+        } => {
             let (ns, name) = parse_template_ref(&template, namespace.as_deref())?;
             let result = client.suspend(&ns, &name, true).await?;
             println!("{}", format!("Suspended {}/{}", ns, name).yellow());
             output::print_template_detail(&result, format)?;
         }
 
-        TemplateCommands::Resume { template, namespace } => {
+        TemplateCommands::Resume {
+            template,
+            namespace,
+        } => {
             let (ns, name) = parse_template_ref(&template, namespace.as_deref())?;
             let result = client.suspend(&ns, &name, false).await?;
             println!("{}", format!("Resumed {}/{}", ns, name).green());
             output::print_template_detail(&result, format)?;
         }
 
-        TemplateCommands::Unlock { template, namespace } => {
+        TemplateCommands::Unlock {
+            template,
+            namespace,
+        } => {
             let (ns, name) = parse_template_ref(&template, namespace.as_deref())?;
             let success = client.unlock(&ns, &name).await?;
             if success {
@@ -202,10 +220,7 @@ pub async fn apply(
 ) -> Result<()> {
     let (ns, name) = parse_template_ref(template, namespace)?;
     let result = client.apply(&ns, &name).await?;
-    println!(
-        "{}",
-        format!("Triggered apply for {}/{}", ns, name).green()
-    );
+    println!("{}", format!("Triggered apply for {}/{}", ns, name).green());
     output::print_template_detail(&result, format)?;
     Ok(())
 }

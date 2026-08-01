@@ -75,11 +75,17 @@ impl DependencyResolution {
 /// `unresolved_templates` (deduped, sorted — deterministic). Type-preserving:
 /// a JSON object/array output is injected as-is, not stringified.
 #[must_use]
-pub fn resolve_dependency_vars(refs: &BTreeMap<String, DepRef>, upstream: &UpstreamOutputs) -> DependencyResolution {
+pub fn resolve_dependency_vars(
+    refs: &BTreeMap<String, DepRef>,
+    upstream: &UpstreamOutputs,
+) -> DependencyResolution {
     let mut out = DependencyResolution::default();
     let mut unresolved = std::collections::BTreeSet::new();
     for (var_name, dep) in refs {
-        match upstream.get(&dep.template).and_then(|o| o.get(&dep.output_key)) {
+        match upstream
+            .get(&dep.template)
+            .and_then(|o| o.get(&dep.output_key))
+        {
             Some(val) => {
                 out.resolved.insert(var_name.clone(), val.clone());
             }
@@ -101,7 +107,8 @@ pub fn resolve_dependency_vars(refs: &BTreeMap<String, DepRef>, upstream: &Upstr
 /// cross-template run-all DAG (P3) is built from.
 #[must_use]
 pub fn dependency_edges(refs: &BTreeMap<String, DepRef>) -> Vec<String> {
-    let set: std::collections::BTreeSet<&str> = refs.values().map(|d| d.template.as_str()).collect();
+    let set: std::collections::BTreeSet<&str> =
+        refs.values().map(|d| d.template.as_str()).collect();
     set.into_iter().map(String::from).collect()
 }
 
@@ -114,7 +121,14 @@ mod tests {
         pairs
             .iter()
             .map(|(var, tpl, key, mock)| {
-                ((*var).to_string(), DepRef { template: (*tpl).to_string(), output_key: (*key).to_string(), mock: mock.clone() })
+                (
+                    (*var).to_string(),
+                    DepRef {
+                        template: (*tpl).to_string(),
+                        output_key: (*key).to_string(),
+                        mock: mock.clone(),
+                    },
+                )
             })
             .collect()
     }
@@ -122,7 +136,14 @@ mod tests {
     fn upstream(pairs: &[(&str, &[(&str, Value)])]) -> UpstreamOutputs {
         pairs
             .iter()
-            .map(|(tpl, outs)| ((*tpl).to_string(), outs.iter().map(|(k, v)| ((*k).to_string(), v.clone())).collect()))
+            .map(|(tpl, outs)| {
+                (
+                    (*tpl).to_string(),
+                    outs.iter()
+                        .map(|(k, v)| ((*k).to_string(), v.clone()))
+                        .collect(),
+                )
+            })
             .collect()
     }
 
@@ -132,10 +153,20 @@ mod tests {
             ("vpc_id", "vpc", "vpc_id", None),
             ("subnets", "vpc", "private_subnets", None),
         ]);
-        let up = upstream(&[("vpc", &[("vpc_id", json!("vpc-123")), ("private_subnets", json!(["a", "b"]))])]);
+        let up = upstream(&[(
+            "vpc",
+            &[
+                ("vpc_id", json!("vpc-123")),
+                ("private_subnets", json!(["a", "b"])),
+            ],
+        )]);
         let res = resolve_dependency_vars(&r, &up);
         assert_eq!(res.resolved["vpc_id"], json!("vpc-123"));
-        assert_eq!(res.resolved["subnets"], json!(["a", "b"]), "array output preserved, not stringified");
+        assert_eq!(
+            res.resolved["subnets"],
+            json!(["a", "b"]),
+            "array output preserved, not stringified"
+        );
         assert!(res.fully_satisfied(), "all real → apply-safe");
         assert!(res.unresolved_templates.is_empty());
     }
@@ -147,8 +178,14 @@ mod tests {
         let res = resolve_dependency_vars(&r, &up);
         assert_eq!(res.mocked["vpc_id"], json!("vpc-mock"));
         assert!(res.resolved.is_empty());
-        assert!(res.unresolved_templates.is_empty(), "mock satisfies the plan gate");
-        assert!(!res.fully_satisfied(), "mocked ⇒ NOT apply-safe (must wait for the real output)");
+        assert!(
+            res.unresolved_templates.is_empty(),
+            "mock satisfies the plan gate"
+        );
+        assert!(
+            !res.fully_satisfied(),
+            "mocked ⇒ NOT apply-safe (must wait for the real output)"
+        );
         assert_eq!(res.all_variables()["vpc_id"], json!("vpc-mock"));
     }
 
@@ -162,7 +199,11 @@ mod tests {
         let up = upstream(&[("beta", &[("k", json!(1))])]); // only beta ready
         let res = resolve_dependency_vars(&r, &up);
         assert_eq!(res.resolved["b"], json!(1));
-        assert_eq!(res.unresolved_templates, vec!["alpha".to_string()], "alpha missing+no-mock, deduped");
+        assert_eq!(
+            res.unresolved_templates,
+            vec!["alpha".to_string()],
+            "alpha missing+no-mock, deduped"
+        );
         assert!(!res.fully_satisfied());
     }
 
@@ -173,7 +214,11 @@ mod tests {
             ("b", "vpc", "cidr", None),
             ("c", "iam", "role", None),
         ]);
-        assert_eq!(dependency_edges(&r), vec!["iam".to_string(), "vpc".to_string()], "deduped + sorted");
+        assert_eq!(
+            dependency_edges(&r),
+            vec!["iam".to_string(), "vpc".to_string()],
+            "deduped + sorted"
+        );
     }
 
     #[test]

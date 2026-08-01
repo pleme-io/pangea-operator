@@ -1,8 +1,8 @@
 //! PostgreSQL connection management.
 
+use super::Credentials;
 use crate::crd::PostgresBackendConfig;
 use crate::error::{Error, Result};
-use super::Credentials;
 
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
 use sqlx::PgPool;
@@ -14,7 +14,10 @@ pub struct PostgresBackend;
 
 impl PostgresBackend {
     /// Connect to PostgreSQL with the given configuration.
-    pub async fn connect(config: &PostgresBackendConfig, credentials: Credentials) -> Result<PgPool> {
+    pub async fn connect(
+        config: &PostgresBackendConfig,
+        credentials: Credentials,
+    ) -> Result<PgPool> {
         let ssl_mode = parse_ssl_mode(&config.ssl_mode)?;
 
         let mut connect_options = PgConnectOptions::new()
@@ -127,29 +130,68 @@ mod tests {
 
     #[test]
     fn test_parse_ssl_mode() {
-        assert!(matches!(parse_ssl_mode("disable").unwrap(), PgSslMode::Disable));
-        assert!(matches!(parse_ssl_mode("require").unwrap(), PgSslMode::Require));
-        assert!(matches!(parse_ssl_mode("verify-full").unwrap(), PgSslMode::VerifyFull));
+        assert!(matches!(
+            parse_ssl_mode("disable").unwrap(),
+            PgSslMode::Disable
+        ));
+        assert!(matches!(
+            parse_ssl_mode("require").unwrap(),
+            PgSslMode::Require
+        ));
+        assert!(matches!(
+            parse_ssl_mode("verify-full").unwrap(),
+            PgSslMode::VerifyFull
+        ));
         assert!(parse_ssl_mode("invalid").is_err());
     }
 
     #[test]
     fn test_parse_ssl_mode_all_variants() {
-        assert!(matches!(parse_ssl_mode("disable").unwrap(), PgSslMode::Disable));
+        assert!(matches!(
+            parse_ssl_mode("disable").unwrap(),
+            PgSslMode::Disable
+        ));
         assert!(matches!(parse_ssl_mode("allow").unwrap(), PgSslMode::Allow));
-        assert!(matches!(parse_ssl_mode("prefer").unwrap(), PgSslMode::Prefer));
-        assert!(matches!(parse_ssl_mode("require").unwrap(), PgSslMode::Require));
-        assert!(matches!(parse_ssl_mode("verify-ca").unwrap(), PgSslMode::VerifyCa));
-        assert!(matches!(parse_ssl_mode("verify_ca").unwrap(), PgSslMode::VerifyCa));
-        assert!(matches!(parse_ssl_mode("verify-full").unwrap(), PgSslMode::VerifyFull));
-        assert!(matches!(parse_ssl_mode("verify_full").unwrap(), PgSslMode::VerifyFull));
+        assert!(matches!(
+            parse_ssl_mode("prefer").unwrap(),
+            PgSslMode::Prefer
+        ));
+        assert!(matches!(
+            parse_ssl_mode("require").unwrap(),
+            PgSslMode::Require
+        ));
+        assert!(matches!(
+            parse_ssl_mode("verify-ca").unwrap(),
+            PgSslMode::VerifyCa
+        ));
+        assert!(matches!(
+            parse_ssl_mode("verify_ca").unwrap(),
+            PgSslMode::VerifyCa
+        ));
+        assert!(matches!(
+            parse_ssl_mode("verify-full").unwrap(),
+            PgSslMode::VerifyFull
+        ));
+        assert!(matches!(
+            parse_ssl_mode("verify_full").unwrap(),
+            PgSslMode::VerifyFull
+        ));
     }
 
     #[test]
     fn test_parse_ssl_mode_case_insensitive() {
-        assert!(matches!(parse_ssl_mode("REQUIRE").unwrap(), PgSslMode::Require));
-        assert!(matches!(parse_ssl_mode("Disable").unwrap(), PgSslMode::Disable));
-        assert!(matches!(parse_ssl_mode("VERIFY-FULL").unwrap(), PgSslMode::VerifyFull));
+        assert!(matches!(
+            parse_ssl_mode("REQUIRE").unwrap(),
+            PgSslMode::Require
+        ));
+        assert!(matches!(
+            parse_ssl_mode("Disable").unwrap(),
+            PgSslMode::Disable
+        ));
+        assert!(matches!(
+            parse_ssl_mode("VERIFY-FULL").unwrap(),
+            PgSslMode::VerifyFull
+        ));
     }
 
     #[test]

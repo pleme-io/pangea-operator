@@ -35,7 +35,7 @@
 //! what policies apply?" use `policy_cascade`.
 
 use crate::controller::operator_policy_cache::OperatorPolicyCache;
-use crate::controller::{ControllerState, policy_gate};
+use crate::controller::{policy_gate, ControllerState};
 use crate::crd::ControllerKind;
 use kube::runtime::controller::Action;
 
@@ -88,9 +88,7 @@ pub fn run_for_template(
     template_name: &str,
     parent_catalog_name: Option<&str>,
 ) -> PreReconcileDecision {
-    if let Some(action) =
-        policy_gate::check_operator_policy(state, ControllerKind::Template)
-    {
+    if let Some(action) = policy_gate::check_operator_policy(state, ControllerKind::Template) {
         return PreReconcileDecision::SkipWith(action);
     }
     if let Some(action) = policy_gate::check_template_workspace_policy(
@@ -179,8 +177,7 @@ mod tests {
     fn cache_pipeline_proceeds_when_policy_is_permissive() {
         // Default-allow cache + arbitrary controller → no skip.
         let cache = OperatorPolicyCache::new_permissive();
-        let decision =
-            run_for_controller_with_cache(&cache, ControllerKind::ArchitectureGem);
+        let decision = run_for_controller_with_cache(&cache, ControllerKind::ArchitectureGem);
         assert!(matches!(decision, PreReconcileDecision::Proceed));
     }
 
@@ -192,8 +189,7 @@ mod tests {
             global_suspend_reason: Some("review pass".into()),
             ..Default::default()
         });
-        let decision =
-            run_for_controller_with_cache(&cache, ControllerKind::WorkspaceCatalog);
+        let decision = run_for_controller_with_cache(&cache, ControllerKind::WorkspaceCatalog);
         assert!(
             matches!(decision, PreReconcileDecision::SkipWith(_)),
             "expected SkipWith when globalSuspend=true"

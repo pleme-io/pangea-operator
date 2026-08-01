@@ -10,11 +10,7 @@ use crate::executor::packer;
 use chrono::Utc;
 use futures::StreamExt;
 use k8s_openapi::api::core::v1::ConfigMap;
-use kube::{
-    api::Api,
-    runtime::controller::Action,
-    ResourceExt,
-};
+use kube::{api::Api, runtime::controller::Action, ResourceExt};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -179,8 +175,8 @@ async fn reconcile_packer_build(
         Err(e) => {
             warn!(error = %e, "PackerBuild reconciliation error");
             let err_msg = e.to_string();
-            let _ = update_phase_with_error(&build, PackerBuildPhase::Failed, &err_msg, &state)
-                .await;
+            let _ =
+                update_phase_with_error(&build, PackerBuildPhase::Failed, &err_msg, &state).await;
             Ok(Action::requeue(ERROR_REQUEUE_INTERVAL))
         }
     }
@@ -198,9 +194,7 @@ async fn handle_pending(
 
     // Validate that at least one source is specified
     let source = &build.spec.source;
-    if source.inline.is_none()
-        && source.config_map_ref.is_none()
-        && source.git_repository.is_none()
+    if source.inline.is_none() && source.config_map_ref.is_none() && source.git_repository.is_none()
     {
         return Err(Error::InvalidSource(
             "PackerBuild source must specify inline, configMapRef, or gitRepository".into(),
@@ -230,30 +224,31 @@ async fn handle_compiling(
     let content = resolve_source(build, state).await?;
 
     // Detect if content is already JSON or needs compilation
-    let packer_json = if content.trim_start().starts_with('{') || content.trim_start().starts_with('[') {
-        // Already compiled JSON — use directly
-        info!("Source is pre-compiled Packer JSON");
-        content
-    } else {
-        // Ruby DSL — dispatch via the CompilerBackend trait.
-        // /compile-packer collapses to /compile-any with format=packer.
-        info!("Compiling Ruby DSL via compiler backend");
-        let variables: HashMap<String, serde_json::Value> =
-            build.spec.variables.clone().into_iter().collect();
+    let packer_json =
+        if content.trim_start().starts_with('{') || content.trim_start().starts_with('[') {
+            // Already compiled JSON — use directly
+            info!("Source is pre-compiled Packer JSON");
+            content
+        } else {
+            // Ruby DSL — dispatch via the CompilerBackend trait.
+            // /compile-packer collapses to /compile-any with format=packer.
+            info!("Compiling Ruby DSL via compiler backend");
+            let variables: HashMap<String, serde_json::Value> =
+                build.spec.variables.clone().into_iter().collect();
 
-        let compile_result = state
-            .compiler_backend
-            .compile_any(crate::ruby::CompileAnyRequest {
-                source: content,
-                variables,
-                format: Some("packer".to_string()),
-                format_definition: None,
-            })
-            .await
-            .map_err(|e| Error::Compilation(format!("Compile failed: {e}")))?;
+            let compile_result = state
+                .compiler_backend
+                .compile_any(crate::ruby::CompileAnyRequest {
+                    source: content,
+                    variables,
+                    format: Some("packer".to_string()),
+                    format_definition: None,
+                })
+                .await
+                .map_err(|e| Error::Compilation(format!("Compile failed: {e}")))?;
 
-        compile_result.output_json
-    };
+            compile_result.output_json
+        };
 
     // Ensure manifest post-processor is present
     let packer_json = ensure_manifest_post_processor(&packer_json, &build.spec.manifest_path)?;
@@ -281,10 +276,7 @@ async fn handle_validating(
         .await?;
 
     // Init first (download required plugins)
-    let init_result = state
-        .packer_executor
-        .init(&workspace.path, &[])
-        .await?;
+    let init_result = state.packer_executor.init(&workspace.path, &[]).await?;
 
     if !init_result.success {
         return Err(Error::PackerExecution(format!(
@@ -377,15 +369,19 @@ async fn handle_extracting(
     let ami_region = packer::parse_packer_manifest_region(&manifest_path)?;
 
     // Read raw manifest for status
-    let raw_manifest = tokio::fs::read_to_string(&manifest_path)
-        .await
-        .ok();
+    let raw_manifest = tokio::fs::read_to_string(&manifest_path).await.ok();
 
     info!(ami = %ami_id, region = ?ami_region, "AMI extracted from manifest");
 
     // Update status with AMI ID and transition to Ready
-    update_status_with_ami(build, &ami_id, ami_region.as_deref(), raw_manifest.as_deref(), state)
-        .await?;
+    update_status_with_ami(
+        build,
+        &ami_id,
+        ami_region.as_deref(),
+        raw_manifest.as_deref(),
+        state,
+    )
+    .await?;
 
     Ok(Action::requeue(DEFAULT_REQUEUE_INTERVAL))
 }
@@ -445,8 +441,8 @@ fn ensure_manifest_post_processor(
     json_str: &str,
     manifest_path: &str,
 ) -> std::result::Result<String, Error> {
-    let mut json: serde_json::Value =
-        serde_json::from_str(json_str).map_err(|e| Error::Compilation(format!("Invalid Packer JSON: {}", e)))?;
+    let mut json: serde_json::Value = serde_json::from_str(json_str)
+        .map_err(|e| Error::Compilation(format!("Invalid Packer JSON: {}", e)))?;
 
     // Check if post-processors array has a manifest entry
     let has_manifest = json
@@ -653,11 +649,7 @@ async fn remove_finalizer(
 // Error policy
 // ---------------------------------------------------------------------------
 
-fn error_policy(
-    _build: Arc<PackerBuild>,
-    error: &Error,
-    ctx: Arc<ControllerState>,
-) -> Action {
+fn error_policy(_build: Arc<PackerBuild>, error: &Error, ctx: Arc<ControllerState>) -> Action {
     use crate::controller::error_policy::{run_error_policy, tiered_backoff};
     run_error_policy(
         &ctx.metrics,
@@ -714,7 +706,8 @@ mod tests {
             "kind": "PackerBuild",
             "metadata": { "name": "x" },
             "spec": { "source": { "raw": "" } }
-        })).unwrap();
+        }))
+        .unwrap();
         b.metadata.finalizers = finalizers;
         b
     }
@@ -722,8 +715,12 @@ mod tests {
     #[test]
     fn has_finalizer_detects_canonical_name() {
         assert!(!has_finalizer(&fake_build(None)));
-        assert!(has_finalizer(&fake_build(Some(vec![FINALIZER_NAME.to_string()]))));
-        assert!(!has_finalizer(&fake_build(Some(vec!["unrelated/finalizer".to_string()]))));
+        assert!(has_finalizer(&fake_build(Some(vec![
+            FINALIZER_NAME.to_string()
+        ]))));
+        assert!(!has_finalizer(&fake_build(Some(vec![
+            "unrelated/finalizer".to_string()
+        ]))));
     }
 
     #[test]

@@ -365,10 +365,16 @@ mod tests {
         // The verbatim live rio failure string.
         let reason = "locate provider \"cloudflare\": no .terraform/providers \
                       dir under workspace \"/var/pangea/workspaces/rio\" — run `init` first";
-        let a = classify(reason, "cloudflare_dns_record.rio-grafana-quero-cloud-cname", "create");
+        let a = classify(
+            reason,
+            "cloudflare_dns_record.rio-grafana-quero-cloud-cname",
+            "create",
+        );
         assert_eq!(
             a,
-            ApplyAnomaly::ProviderUnavailable { provider: "cloudflare".into() }
+            ApplyAnomaly::ProviderUnavailable {
+                provider: "cloudflare".into()
+            }
         );
         // Tier-honest (FIX 4): the runtime reaction Holds — the operator can't
         // stage a not-yet-baked provider at runtime; a baked provider makes
@@ -384,20 +390,20 @@ mod tests {
         let a = classify(reason, "github_repository.galho", "create");
         assert_eq!(
             a,
-            ApplyAnomaly::ProviderUnavailable { provider: "github".into() }
+            ApplyAnomaly::ProviderUnavailable {
+                provider: "github".into()
+            }
         );
     }
 
     #[test]
     fn provider_name_recovered_from_address_when_reason_has_no_quote() {
-        let a = classify(
-            "no .terraform/providers dir",
-            "aws_iam_role.bar",
-            "create",
-        );
+        let a = classify("no .terraform/providers dir", "aws_iam_role.bar", "create");
         assert_eq!(
             a,
-            ApplyAnomaly::ProviderUnavailable { provider: "aws".into() }
+            ApplyAnomaly::ProviderUnavailable {
+                provider: "aws".into()
+            }
         );
     }
 
@@ -460,7 +466,11 @@ mod tests {
 
     #[test]
     fn classifies_429_rate_limit() {
-        let a = classify("HTTP 429: API rate limit exceeded", "github_repository.a", "create");
+        let a = classify(
+            "HTTP 429: API rate limit exceeded",
+            "github_repository.a",
+            "create",
+        );
         assert_eq!(a, ApplyAnomaly::RateLimited);
         assert_eq!(a.mode(), RemediationMode::Decaying);
     }
@@ -585,7 +595,9 @@ mod tests {
         let a = classify(reason, "weird_thing.x", "create");
         assert_eq!(
             a,
-            ApplyAnomaly::Unclassified { reason: reason.to_string() }
+            ApplyAnomaly::Unclassified {
+                reason: reason.to_string()
+            }
         );
         // Unclassified holds (never an infinite silent retry).
         assert_eq!(a.mode(), RemediationMode::Hold);
@@ -614,16 +626,25 @@ mod tests {
         // Realized-Hold: import is a stub; not-yet-baked provider needs an
         // image rebuild; auth denial + unclassified never self-converge.
         assert_eq!(
-            ObjectExistsUntracked { address: "github_repository.x".into(), action: "create".into() }
-                .mode(),
+            ObjectExistsUntracked {
+                address: "github_repository.x".into(),
+                action: "create".into()
+            }
+            .mode(),
             RemediationMode::Hold
         );
         assert_eq!(
-            ProviderUnavailable { provider: "cloudflare".into() }.mode(),
+            ProviderUnavailable {
+                provider: "cloudflare".into()
+            }
+            .mode(),
             RemediationMode::Hold
         );
         assert_eq!(PermissionDenied.mode(), RemediationMode::Hold);
-        assert_eq!(Unclassified { reason: "x".into() }.mode(), RemediationMode::Hold);
+        assert_eq!(
+            Unclassified { reason: "x".into() }.mode(),
+            RemediationMode::Hold
+        );
     }
 
     #[test]
