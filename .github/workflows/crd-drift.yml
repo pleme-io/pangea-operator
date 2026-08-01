@@ -81,11 +81,23 @@ jobs:
       # `/usr/bin/python3: No module named pip` — a self-hosted-runner
       # assumption that only ever held on a GitHub-hosted image.
       - name: Put a Nix-provided python3 (with PyYAML) on PATH
-        run: >-
-          echo "$(nix build --no-link --print-out-paths --impure --expr
-          'with (builtins.getFlake "nixpkgs").legacyPackages.${builtins.currentSystem};
-           python3.withPackages (ps: [ ps.pyyaml ])')/bin"
-          >> "$GITHUB_PATH"
+        # NOTE the shape: capture, VERIFY, then publish. The obvious
+        # one-liner `echo "$(nix build ...)/bin" >> "$GITHUB_PATH"` is a
+        # silent failure -- if the build fails, the substitution is empty,
+        # the step echoes a bare "/bin", and it EXITS 0. That is exactly what
+        # happened on run 30692421818: this step reported success and the
+        # drift gate then died on "FATAL: PyYAML required", two steps apart
+        # with nothing red in between.
+        run: |
+          set -euo pipefail
+          out=$(nix build --no-link --print-out-paths --impure --expr \
+            'with (builtins.getFlake "nixpkgs").legacyPackages.${builtins.currentSystem};
+             python3.withPackages (ps: [ ps.pyyaml ])')
+          test -n "$out" && test -x "$out/bin/python3"
+          # Prove the thing we actually need, here, where the failure is
+          # attributable -- not two steps later inside someone else's script.
+          "$out/bin/python3" -c 'import yaml; print("pyyaml", yaml.__version__)'
+          echo "$out/bin" >> "$GITHUB_PATH"
 
       - name: CRD drift gate
         run: |
