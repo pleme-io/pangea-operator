@@ -809,9 +809,16 @@ async fn dispatch_template_phase(
     // pool) is at cap we DEFER: requeue in the same phase, never drop the
     // work; the next tick retries. The permit is RAII — held across
     // handler.handle and freed on any exit (Ok OR Err), so an errored
-    // expensive phase never leaks a slot. At current fleet scale the
-    // generous defaults make this a no-op; it becomes load-bearing only
-    // when ready work exceeds budget. See `ControllerState.workspace_budgets`.
+    // expensive phase never leaks a slot.
+    //
+    // This comment used to say the defaults made the gate "a no-op at current
+    // fleet scale". That is no longer true and was measured false on
+    // 2026-08-01: camelot carries 14 templates against `global: 8`, and a
+    // template stuck RETRYING an expensive phase holds its permit for the whole
+    // attempt. Several such retriers exhaust the pool, and the big slow
+    // workspace loses every race. Per-scope fairness does not prevent this —
+    // it bounds one scope to 2, but N wedged scopes still fill the global 8.
+    // See `ControllerState.workspace_budgets`.
     if matches!(
         current_phase,
         Phase::Compiling | Phase::Planning | Phase::Applying
@@ -825,10 +832,38 @@ async fn dispatch_template_phase(
                 state
                     .metrics
                     .record_admission_deferred(&scope, &phase_label);
-                tracing::debug!(
+                // WARN, not DEBUG.
+                //
+                // This was `debug!` while the operator ships `RUST_LOG=
+                // pangea_operator=info`, so a deferred template produced
+                // ZERO output: its phase froze, no controller lines appeared,
+                // and the pod sat idle. That is indistinguishable from a dead
+                // controller, and on 2026-08-01 it cost about an hour of
+                // misdiagnosis — reading a frozen `pleme-io-opensource` as a
+                // wedge, when the operator was working exactly as designed and
+                // simply could not say so.
+                //
+                // Deferral is rare BY DESIGN (only when ready work exceeds the
+                // pool), so warn-level is not noise. If it becomes noisy, that
+                // is the signal, not the problem.
+                //
+                // The two denials need different fixes, so they are named
+                // apart: a full GLOBAL pool means some other scope is holding
+                // slots — go find it; a full PER-SCOPE slice means this scope
+                // already has all the work it is allowed.
+                let caps = state.workspace_budgets.caps();
+                let global_full = state.workspace_budgets.global_saturated();
+                tracing::warn!(
                     scope = %scope,
                     phase = %current_phase,
-                    "workspace concurrency budget exhausted; deferring expensive phase (will retry next tick)"
+                    scope_in_flight = state.workspace_budgets.in_flight(&scope),
+                    scope_cap = caps.per_scope,
+                    global_in_flight = state.workspace_budgets.total_in_flight(),
+                    global_cap = caps.global,
+                    denied_by = if global_full { "global pool" } else { "per-scope slice" },
+                    "admission denied; deferring expensive phase (will retry next tick). \
+                     A template deferred repeatedly looks identical to a stalled one — \
+                     if this repeats, find which scopes hold the slots."
                 );
                 Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
             }

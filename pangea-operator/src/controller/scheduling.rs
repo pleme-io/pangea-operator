@@ -320,6 +320,20 @@ impl FairBudget {
         t.running_scope(&JobScope::Workspace(scope.to_string())) as usize
     }
 
+    /// The admission caps in force, so a caller can report saturation as
+    /// `in_flight / cap` rather than making a reader look them up.
+    pub fn caps(&self) -> BudgetConfig {
+        self.cfg
+    }
+
+    /// Is the GLOBAL pool full? Distinguishes the two reasons a scope is
+    /// denied, which need different fixes: a full global pool means some other
+    /// scope is holding slots (find it), while a full per-scope slice means
+    /// this scope already has all the work it is allowed.
+    pub fn global_saturated(&self) -> bool {
+        self.total_in_flight() >= self.cfg.global
+    }
+
     pub fn total_in_flight(&self) -> usize {
         self.tree
             .lock()
