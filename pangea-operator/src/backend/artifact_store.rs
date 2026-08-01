@@ -43,7 +43,21 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use sqlx::{PgPool, Postgres, Transaction};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
+// `warn` is imported under the SAME cfg as its only call site (the
+// `executor_magma` block below), not unconditionally. The crate is
+// `#![deny(unused_imports)]`, and crd-drift.yml builds with
+// `--no-default-features` — which drops `executor_magma`, leaving `warn`
+// unused and turning a lint into a hard build failure. That kept crd-drift
+// red on every commit from at least 2026-07-30 to 2026-08-01 while the
+// default-features builds stayed green, so nothing on the main path
+// disagreed.
+//
+// Tying the import to the cfg its use lives under makes the two unable to
+// drift: adding a `warn!` outside the block fails to compile rather than
+// silently re-breaking the no-default-features build.
+#[cfg(feature = "executor_magma")]
+use tracing::warn;
 
 use crate::backend::schema::is_valid_identifier;
 use crate::error::{Error, Result};
