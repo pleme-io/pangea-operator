@@ -808,7 +808,11 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
                     );
                     carried = Some(cursor);
                 }
-                CycleOutcome::Stalled { cursor, stats, .. } => {
+                CycleOutcome::Stalled {
+                    cursor,
+                    stats,
+                    partial,
+                } => {
                     // Persist even here: the frontier is real work, and the
                     // operator should resume from it once the prologue or the
                     // quantum changes.
@@ -817,7 +821,7 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
                         .await?;
                     return Err(Error::MagmaExecution(format!(
                         "apply stalled after {cycles} cycle(s): {}. stats={stats:?}",
-                        diagnose_stall(&stats)
+                        diagnose_stall(&stats, &partial.failed)
                     )));
                 }
             }
@@ -2294,7 +2298,143 @@ where
 /// distinguishing signal is cheap: a prologue that genuinely does not fit
 /// leaves no room to attempt anything, whereas nodes that fail attempt work
 /// and complete none of it.
-fn diagnose_stall(stats: &magma_apply::CycleStats) -> String {
+/// Render the DISTINCT provider errors behind a stall, inline.
+///
+/// This exists because the message it feeds used to end with "look at the
+/// provider errors for those nodes" — and there was nowhere to look. The
+/// per-node reasons are carried on `ApplyOutcome::failed` all the way to the
+/// stall arm, and the call site then dropped them on the floor with a `..`
+/// pattern. So the operator's own diagnostic instructed the reader to consult
+/// evidence it had just discarded. Measured 2026-08-01 on
+/// camelot-eks-shaar-concentrator: 20/20 nodes failed, and neither the CR
+/// status nor any log line named a single cause.
+///
+/// Deduplicated on purpose: 20 nodes failing the same way is ONE fact, and
+/// printing it twenty times buries it. The count carries the multiplicity.
+/// Capped so a pathological plan cannot produce an unreadable status field.
+fn fmt_provider_errors(failed: &[magma_apply::FailedChange]) -> String {
+    use std::collections::BTreeMap;
+    if failed.is_empty() {
+        // Worth stating rather than rendering nothing: "no failures recorded"
+        // alongside "all nodes failed" is itself a bug report about the
+        // engine, and a silent empty string would hide that contradiction.
+        return " No per-node failure reasons were recorded, which contradicts                 the counts above — suspect the apply engine, not the provider."
+            .to_string();
+    }
+    let mut by_reason: BTreeMap<&str, (usize, &magma_apply::FailedChange)> = BTreeMap::new();
+    for f in failed {
+        let e = by_reason.entry(f.reason.as_str()).or_insert((0, f));
+        e.0 += 1;
+    }
+    let total_distinct = by_reason.len();
+    let mut out = format!(" Provider errors ({total_distinct} distinct):");
+    for (reason, (count, sample)) in by_reason.iter().take(3) {
+        let reason = reason.trim();
+        let reason = if reason.len() > 400 {
+            format!("{}…", &reason[..400])
+        } else {
+            reason.to_string()
+        };
+        out.push_str(&format!(
+            " [x{count}, e.g. {} {:?}] {reason};",
+            sample.address, sample.action
+        ));
+    }
+    if total_distinct > 3 {
+        out.push_str(&format!(" (+{} more distinct)", total_distinct - 3));
+    }
+    out
+}
+
+#[cfg(test)]
+mod stall_provider_error_tests {
+    use super::*;
+    use magma_apply::FailedChange;
+    use magma_types::{Action, ModulePath, ResourceAddress, ResourceKind, ResourceTypeId};
+
+    fn addr(name: &str) -> ResourceAddress {
+        ResourceAddress {
+            module: ModulePath(vec![]),
+            kind: ResourceKind::Managed,
+            type_id: ResourceTypeId("aws_ssm_parameter".to_string()),
+            name: name.to_string(),
+            key: None,
+        }
+    }
+
+    fn fail(name: &str, reason: &str) -> FailedChange {
+        FailedChange {
+            address: addr(name),
+            action: Action::Create,
+            reason: reason.to_string(),
+        }
+    }
+
+    /// The regression this whole change exists for: the stall message used to
+    /// end with "look at the provider errors for those nodes" while the caller
+    /// discarded them, so there was nowhere to look. Measured 2026-08-01 on
+    /// camelot-eks-shaar-concentrator — 20/20 failed, zero causes recorded
+    /// anywhere.
+    #[test]
+    fn stall_message_prints_the_provider_errors_instead_of_pointing_at_them() {
+        let stats = magma_apply::CycleStats {
+            nodes_attempted: 20,
+            nodes_completed: 0,
+            nodes_remaining: 20,
+            nodes_failed: 20,
+            ..Default::default()
+        };
+        let failed: Vec<FailedChange> = (0..20)
+            .map(|i| {
+                fail(
+                    &format!("p{i}"),
+                    "AccessDenied: not authorized to perform ssm:PutParameter",
+                )
+            })
+            .collect();
+
+        let msg = diagnose_stall(&stats, &failed);
+
+        assert!(
+            msg.contains("AccessDenied"),
+            "the actual provider error must be IN the message, got: {msg}"
+        );
+        assert!(
+            !msg.contains("look at the provider errors"),
+            "must not send the reader somewhere with nothing to read, got: {msg}"
+        );
+        // Deduplicated: 20 identical failures are ONE fact plus a count.
+        assert!(
+            msg.contains("1 distinct") && msg.contains("x20"),
+            "identical reasons must collapse to one entry with a count, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn distinct_reasons_are_capped_but_the_remainder_is_declared() {
+        let stats = magma_apply::CycleStats {
+            nodes_attempted: 5,
+            nodes_completed: 0,
+            nodes_remaining: 5,
+            nodes_failed: 5,
+            ..Default::default()
+        };
+        let failed: Vec<FailedChange> = (0..5)
+            .map(|i| fail(&format!("p{i}"), &format!("distinct error number {i}")))
+            .collect();
+
+        let msg = diagnose_stall(&stats, &failed);
+        assert!(msg.contains("5 distinct"), "got: {msg}");
+        // Capped at 3 shown, and the truncation is STATED rather than silent —
+        // a hidden cap is how "covered everything" gets believed.
+        assert!(
+            msg.contains("+2 more distinct"),
+            "cap must be declared, got: {msg}"
+        );
+    }
+}
+
+fn diagnose_stall(stats: &magma_apply::CycleStats, failed: &[magma_apply::FailedChange]) -> String {
     let quantum_ms = stats.quantum_ms.unwrap_or(0);
 
     // The original hypothesis, now only claimed when it is actually true.
@@ -2321,8 +2461,12 @@ fn diagnose_stall(stats: &magma_apply::CycleStats) -> String {
         return format!(
             "all {} attempted node(s) failed and {} completed ({} still remaining), so \
              retrying unchanged cannot converge. This is a per-resource apply failure, \
-             not a scheduling problem: look at the provider errors for those nodes.{}",
-            stats.nodes_attempted, stats.nodes_completed, stats.nodes_remaining, budget
+             not a scheduling problem.{}{}",
+            stats.nodes_attempted,
+            stats.nodes_completed,
+            stats.nodes_remaining,
+            budget,
+            fmt_provider_errors(failed),
         );
     }
 
@@ -4156,7 +4300,14 @@ mod stall_diagnosis_tests {
             node_rpc_ms_total: 9038,
             ..Default::default()
         };
-        let msg = diagnose_stall(&stats);
+        let msg = diagnose_stall(&stats, &[]);
+        // With NO recorded reasons, the message must SAY the counts contradict
+        // each other rather than render nothing — an empty failure list beside
+        // "all 9 failed" is a bug in the engine, and silence would hide it.
+        assert!(
+            msg.contains("contradicts"),
+            "an empty failure list beside a nonzero failure count must be called out, got: {msg}"
+        );
 
         assert!(
             msg.contains("all 9 attempted node(s) failed"),
@@ -4182,7 +4333,7 @@ mod stall_diagnosis_tests {
             nodes_attempted: 0,
             ..Default::default()
         };
-        let msg = diagnose_stall(&stats);
+        let msg = diagnose_stall(&stats, &[]);
         assert!(msg.contains("prologue"), "got: {msg}");
         assert!(
             msg.contains("PANGEA_MAGMA_APPLY_QUANTUM_SECS"),
@@ -4201,7 +4352,7 @@ mod stall_diagnosis_tests {
             max_wave_width: 0,
             ..Default::default()
         };
-        let msg = diagnose_stall(&stats);
+        let msg = diagnose_stall(&stats, &[]);
         assert!(msg.contains("no node was attempted"), "got: {msg}");
         assert!(
             !msg.contains("PANGEA_MAGMA_APPLY_QUANTUM_SECS"),
@@ -4221,7 +4372,7 @@ mod stall_diagnosis_tests {
             nodes_remaining: 2,
             ..Default::default()
         };
-        let msg = diagnose_stall(&stats);
+        let msg = diagnose_stall(&stats, &[]);
         assert!(
             msg.contains("not covered by the known stall shapes"),
             "got: {msg}"
