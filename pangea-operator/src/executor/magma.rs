@@ -1274,6 +1274,14 @@ fn planned_changes_from_magma_plan(
 ) -> Vec<PlannedChange> {
     use crate::executor::plan_change::{PlanAction, ResourceKindClass};
     let state_map = state_resolution_map(state);
+    // What THIS PLAN will name each resource, for a parent that does not exist
+    // in state yet — built by magma so the prepass and magma's own apply loop
+    // cannot disagree about the shape `derive` expects (see
+    // `natural_id::declared_map`). Without it, a composite id whose parent is
+    // being created in the same plan falls back to the parent's RESOURCE name,
+    // which every underscore-sanitized name (`tag_forge` vs `tag-forge`) gets
+    // wrong — the id is then marked non-exact and adoption correctly refuses it.
+    let declared_map = magma_apply::natural_id::declared_map(&plan.resource_changes);
     plan.resource_changes
         .iter()
         .map(|rc| PlannedChange {
@@ -1281,7 +1289,7 @@ fn planned_changes_from_magma_plan(
             action: PlanAction::from(&rc.action),
             after: rc.after.clone(),
             kind: ResourceKindClass::from(&rc.address.kind),
-            import_id: derive_import_id(rc, &state_map),
+            import_id: derive_import_id(rc, &state_map, &declared_map),
         })
         .collect()
 }
@@ -1347,6 +1355,7 @@ fn state_resolution_map(
 fn derive_import_id(
     rc: &magma_types::ResourceChange,
     state_map: &std::collections::HashMap<String, serde_json::Value>,
+    declared_map: &std::collections::HashMap<String, serde_json::Value>,
 ) -> Option<crate::executor::plan_change::DerivedImportId> {
     use crate::executor::plan_change::DerivedImportId;
     if rc.action != magma_types::Action::Create {
@@ -1357,9 +1366,11 @@ fn derive_import_id(
     // happened and there is no second, resolved view to offer. `derive`
     // reads the raw side for `ParentName` components either way — that is
     // the only side that still says WHICH parent a reference points at.
-    magma_apply::natural_id::derive(rc, rc.after.as_ref(), state_map).map(|i| DerivedImportId {
-        id: i.id,
-        exact: i.confidence.is_exact(),
+    magma_apply::natural_id::derive(rc, rc.after.as_ref(), state_map, declared_map).map(|i| {
+        DerivedImportId {
+            id: i.id,
+            exact: i.confidence.is_exact(),
+        }
     })
 }
 
@@ -2005,6 +2016,11 @@ where
                 before: r.instances.first().map(|i| i.attributes.clone()),
                 after: None,
                 reasons: vec![magma_types::ChangeReason::DeletedResource],
+                // Meta-arguments are declared on a CONFIG block, and this is a
+                // synthetic destroy-everything plan built from STATE — there is
+                // no config here to carry any. Empty is the accurate value, not
+                // a placeholder.
+                meta: magma_types::ResourceMeta::default(),
             })
             .collect();
         let plan = magma_types::Plan {
@@ -3389,6 +3405,7 @@ mod tests {
                     before: None,
                     after: Some(json!({ "name": "breathe" })),
                     reasons: vec![magma_types::ChangeReason::NewResource],
+                    meta: Default::default(),
                 },
                 // A data source read — must NOT appear in discovery.
                 magma_types::ResourceChange {
@@ -3397,6 +3414,7 @@ mod tests {
                     before: None,
                     after: Some(json!({ "login": "me" })),
                     reasons: vec![],
+                    meta: Default::default(),
                 },
             ],
             output_changes: vec![],
@@ -3479,6 +3497,7 @@ mod tests {
             before: None,
             after: Some(after),
             reasons: vec![magma_types::ChangeReason::NewResource],
+            meta: Default::default(),
         }
     }
 
