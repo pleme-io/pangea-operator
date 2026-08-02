@@ -3,7 +3,7 @@
 use crate::backend::{BackendConfigGenerator, Credentials, StateBackend};
 use crate::crd::{
     DriftDetail, InfrastructureTemplate, InfrastructureTemplateSpec, InfrastructureTemplateStatus,
-    PangeaNamespace, Phase, PolicyDecision, ResourceSummary,
+    PangeaNamespace, Phase, PolicyDecision, ResolvedDialect, ResourceSummary,
 };
 use crate::error::{Error, Result};
 use crate::executor::{evaluate_policy, policy_is_configured, Plan, PlanAction, PlannedChange};
@@ -976,6 +976,39 @@ pub(crate) async fn handle_compiling_internal(
     handle_compiling(template, state).await
 }
 
+/// Internal marker prefixing a `gitRepository` body, standing in for
+/// "the compiler must `load` this PATH" rather than "here is the source".
+/// Never author content — `\0` cannot appear in a Ruby file the git arm
+/// read, nor in JSON, nor in anything a ConfigMap or `inline` can carry.
+const GIT_SOURCE_SENTINEL: &str = "\0PATH\0";
+
+/// Separates the template path from the cloned tree's `lib/` dir inside
+/// a [`GIT_SOURCE_SENTINEL`] body.
+const GIT_RUBYLIB_SEPARATOR: &str = "\0RUBYLIB\0";
+
+/// The front end [`handle_compiling`] will hand this body to.
+///
+/// A named function rather than an inline `match` so that the *wiring* —
+/// "the CR's declared `spec.dialect` decides, not the body's first byte"
+/// — is the thing the tests exercise. Asserting only on
+/// [`Dialect::resolve`] would leave the field-is-actually-read step
+/// uncovered, which is how a correct fix can pass a whole suite while
+/// being wired to nothing.
+///
+/// The one thing a declared dialect may NOT override is the
+/// [`GIT_SOURCE_SENTINEL`]: that body is an internal marker naming a path
+/// on disk, not author content, so it can only ever go to the Ruby front
+/// end. Honouring `dialect: json` there would push the raw
+/// `"\0PATH\0/…"` string downstream as if it were Terraform JSON — a bad
+/// state this field would otherwise have created, so it is refused at the
+/// one place that can see both facts.
+fn compile_front_end(template: &InfrastructureTemplate, content: &str) -> ResolvedDialect {
+    if content.starts_with(GIT_SOURCE_SENTINEL) {
+        return ResolvedDialect::Ruby;
+    }
+    template.spec.dialect.resolve(content)
+}
+
 #[tracing::instrument(skip_all, name = "handle_compiling")]
 async fn handle_compiling(
     template: &InfrastructureTemplate,
@@ -1127,7 +1160,7 @@ async fn handle_compiling(
         // composer copy instead of an image-baked path-gem. Cuts
         // pangea-architectures out of the image's grammar layer.
         format!(
-            "\0PATH\0{}\0RUBYLIB\0{}",
+            "{GIT_SOURCE_SENTINEL}{}{GIT_RUBYLIB_SEPARATOR}{}",
             template_path.to_string_lossy(),
             repo_dir.join("lib").to_string_lossy(),
         )
@@ -1144,175 +1177,179 @@ async fn handle_compiling(
         compiled_revision = Some(content_revision(&content));
     }
 
-    // Distinguish three modes:
-    //   1. content starts with `{` → already-rendered Terraform JSON, use as-is.
-    //   2. content starts with `\0PATH\0` → gitRepository sentinel; the compile
-    //      request uses `template_path` mode so the compiler `load`s the file
-    //      from the shared workspaces emptyDir with CWD set to the workspace
-    //      dir. Preserves __dir__ + require_relative semantics for canonical
-    //      Pangea workspace patterns.
-    //   3. otherwise → inline / configMap source, send as `source` string
-    //      (legacy eval mode in the compiler).
-    let terraform_json = if content.trim_start().starts_with('{') {
-        // Already JSON — use directly
-        content
-    } else {
-        // Ruby DSL — dispatch via the CompilerBackend trait. Pre-M8.2
-        // this was a direct reqwest to the compiler sidecar; now the
-        // backend chooses HTTP-or-embedded.
-        // CONFIG INHERITANCE CASCADE (P1, Terragrunt `root.hcl`/`include` parity):
-        // the effective variables are the deep-merge of the outer scopes' defaults
-        // and the template's own — `PangeaNamespace.defaultVariables` (outermost)
-        // → `WorkspaceCatalog.variables` → `template.spec.variables` (innermost,
-        // wins per key; nested objects merge recursively). A template inherits
-        // fleet/workspace defaults and overrides only what it needs. Lookups are
-        // best-effort: a missing namespace/workspace simply contributes no layer
-        // (behaviour-preserving for templates with no parent).
-        let ns_defaults = {
-            let pns_api: kube::Api<crate::crd::PangeaNamespace> =
-                kube::Api::all(state.client.clone());
-            pns_api
-                .get_opt(&template.spec.pangea_namespace)
+    // Which front end gets this body. Until 2026-08-01 this was a byte
+    // sniff written inline here — `content.trim_start().starts_with('{')`
+    // — which is now the `Dialect::Auto` arm of a typed, author-declarable
+    // field. See [`compile_front_end`] for what the CR can override and
+    // what it cannot.
+    //
+    // Within the Ruby arm the compile request still splits two ways:
+    // a `\0PATH\0` sentinel body becomes `template_path` mode (the
+    // compiler `load`s the file from the shared workspaces emptyDir with
+    // CWD set to the workspace dir, preserving __dir__ +
+    // require_relative for canonical Pangea workspace patterns), and
+    // anything else is sent as a `source` string.
+    let terraform_json = match compile_front_end(template, &content) {
+        // Already Terraform JSON — no compilation step.
+        ResolvedDialect::Json => content,
+        ResolvedDialect::Ruby => {
+            // Ruby DSL — dispatch via the CompilerBackend trait. Pre-M8.2
+            // this was a direct reqwest to the compiler sidecar; now the
+            // backend chooses HTTP-or-embedded.
+            // CONFIG INHERITANCE CASCADE (P1, Terragrunt `root.hcl`/`include` parity):
+            // the effective variables are the deep-merge of the outer scopes' defaults
+            // and the template's own — `PangeaNamespace.defaultVariables` (outermost)
+            // → `WorkspaceCatalog.variables` → `template.spec.variables` (innermost,
+            // wins per key; nested objects merge recursively). A template inherits
+            // fleet/workspace defaults and overrides only what it needs. Lookups are
+            // best-effort: a missing namespace/workspace simply contributes no layer
+            // (behaviour-preserving for templates with no parent).
+            let ns_defaults = {
+                let pns_api: kube::Api<crate::crd::PangeaNamespace> =
+                    kube::Api::all(state.client.clone());
+                pns_api
+                    .get_opt(&template.spec.pangea_namespace)
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|ns| ns.spec.default_variables)
+                    .unwrap_or_default()
+            };
+            let ws_defaults =
+                crate::controller::workspace_catalog_controller::parent_catalog_for_template(
+                    &state.client,
+                    template,
+                )
                 .await
                 .ok()
                 .flatten()
-                .and_then(|ns| ns.spec.default_variables)
-                .unwrap_or_default()
-        };
-        let ws_defaults =
-            crate::controller::workspace_catalog_controller::parent_catalog_for_template(
-                &state.client,
-                template,
-            )
-            .await
-            .ok()
-            .flatten()
-            .and_then(|wsc| wsc.spec.variables)
-            .unwrap_or_default();
-        let template_vars = template.spec.variables.clone().unwrap_or_default();
-        let mut variables = crate::controller::config_cascade::resolve_variables(&[
-            &ns_defaults,
-            &ws_defaults,
-            &template_vars,
-        ]);
+                .and_then(|wsc| wsc.spec.variables)
+                .unwrap_or_default();
+            let template_vars = template.spec.variables.clone().unwrap_or_default();
+            let mut variables = crate::controller::config_cascade::resolve_variables(&[
+                &ns_defaults,
+                &ws_defaults,
+                &template_vars,
+            ]);
 
-        // CROSS-TEMPLATE DEPENDENCY + OUTPUTS (P2/P3, Terragrunt
-        // `dependency.<x>.outputs` + `run-all`): resolve `spec.variableRefs`
-        // against upstream templates' `status.outputs`, then inject the values
-        // as variables (deps win over inherited defaults — they're the innermost
-        // intent). If an upstream isn't Ready and has no `mockOutput`, this is
-        // the run-all GATE: requeue until the upstream converges, exactly as
-        // `terragrunt run-all` blocks a unit on its dependencies.
-        if let Some(refs) = &template.spec.variable_refs {
-            if !refs.is_empty() {
-                let resolution = resolve_template_dependencies(refs, template, state).await;
-                if !resolution.unresolved_templates.is_empty() {
-                    info!(
-                        unresolved = ?resolution.unresolved_templates,
-                        "run-all gate: waiting on upstream template outputs (no value yet, no mock) — requeueing"
-                    );
-                    return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
-                }
-                for (k, v) in resolution.all_variables() {
-                    variables.insert(k, v);
-                }
-            }
-        }
-
-        // Plus every key from any providerCredentials secret —
-        // Pangea workspace templates use `ENV.fetch('CF_API_TOKEN')`
-        // etc. for provider config, which the compiler installs into
-        // ENV around eval. The convention is that secret data keys
-        // ARE the env var names (so the secret has `CF_API_TOKEN`,
-        // `CF_ACCOUNT_ID`, … verbatim). Operator-side naming
-        // transforms would re-introduce the kind of brittle wiring
-        // we just stripped out elsewhere.
-        //
-        // Iteration is exhaustive over `ProviderCredentials` via
-        // `iter_secret_refs()` — adding a new provider field to the
-        // CRD without updating the iterator's destructuring pattern
-        // is a Rust compile error. This typed contract supersedes
-        // the silent failure mode that shipped GitHubCredentials in
-        // 92f2f74 without env-var injection.
-        if let Some(provider_creds) = template.spec.provider_credentials.as_ref() {
-            for (provider_kind, sref) in provider_creds.iter_secret_refs() {
-                let ns = sref
-                    .namespace
-                    .clone()
-                    .or_else(|| template.namespace())
-                    .unwrap_or_default();
-                let secret_api: Api<Secret> = Api::namespaced(state.client.clone(), &ns);
-                let secret =
-                    secret_api
-                        .get(&sref.name)
-                        .await
-                        .map_err(|_| Error::SecretNotFound {
-                            namespace: ns.clone(),
-                            name: sref.name.clone(),
-                        })?;
-                debug!(
-                    provider = provider_kind.name(),
-                    secret_namespace = %ns,
-                    secret_name = %sref.name,
-                    "Loaded provider credentials secret"
-                );
-                if let Some(data) = &secret.data {
-                    for (k, v) in data.iter() {
-                        let val = String::from_utf8_lossy(&v.0).to_string();
-                        variables
-                            .entry(k.clone())
-                            .or_insert(serde_json::Value::String(val));
+            // CROSS-TEMPLATE DEPENDENCY + OUTPUTS (P2/P3, Terragrunt
+            // `dependency.<x>.outputs` + `run-all`): resolve `spec.variableRefs`
+            // against upstream templates' `status.outputs`, then inject the values
+            // as variables (deps win over inherited defaults — they're the innermost
+            // intent). If an upstream isn't Ready and has no `mockOutput`, this is
+            // the run-all GATE: requeue until the upstream converges, exactly as
+            // `terragrunt run-all` blocks a unit on its dependencies.
+            if let Some(refs) = &template.spec.variable_refs {
+                if !refs.is_empty() {
+                    let resolution = resolve_template_dependencies(refs, template, state).await;
+                    if !resolution.unresolved_templates.is_empty() {
+                        info!(
+                            unresolved = ?resolution.unresolved_templates,
+                            "run-all gate: waiting on upstream template outputs (no value yet, no mock) — requeueing"
+                        );
+                        return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
+                    }
+                    for (k, v) in resolution.all_variables() {
+                        variables.insert(k, v);
                     }
                 }
             }
-        }
 
-        let compile_request = if let Some(path) = content.strip_prefix("\0PATH\0") {
-            // gitRepository — let the compiler load the file from disk
-            // so it sees its workspace siblings, and prepend the
-            // cloned tree's `lib/` to $LOAD_PATH so `require
-            // 'pangea/architectures'` resolves to the cloned composer
-            // copy (not an image-baked path-gem).
-            let (template_path, rubylib_paths) = match path.split_once("\0RUBYLIB\0") {
-                Some((tp, rl)) => (tp.to_string(), vec![rl.to_string()]),
-                None => (path.to_string(), Vec::<String>::new()),
+            // Plus every key from any providerCredentials secret —
+            // Pangea workspace templates use `ENV.fetch('CF_API_TOKEN')`
+            // etc. for provider config, which the compiler installs into
+            // ENV around eval. The convention is that secret data keys
+            // ARE the env var names (so the secret has `CF_API_TOKEN`,
+            // `CF_ACCOUNT_ID`, … verbatim). Operator-side naming
+            // transforms would re-introduce the kind of brittle wiring
+            // we just stripped out elsewhere.
+            //
+            // Iteration is exhaustive over `ProviderCredentials` via
+            // `iter_secret_refs()` — adding a new provider field to the
+            // CRD without updating the iterator's destructuring pattern
+            // is a Rust compile error. This typed contract supersedes
+            // the silent failure mode that shipped GitHubCredentials in
+            // 92f2f74 without env-var injection.
+            if let Some(provider_creds) = template.spec.provider_credentials.as_ref() {
+                for (provider_kind, sref) in provider_creds.iter_secret_refs() {
+                    let ns = sref
+                        .namespace
+                        .clone()
+                        .or_else(|| template.namespace())
+                        .unwrap_or_default();
+                    let secret_api: Api<Secret> = Api::namespaced(state.client.clone(), &ns);
+                    let secret =
+                        secret_api
+                            .get(&sref.name)
+                            .await
+                            .map_err(|_| Error::SecretNotFound {
+                                namespace: ns.clone(),
+                                name: sref.name.clone(),
+                            })?;
+                    debug!(
+                        provider = provider_kind.name(),
+                        secret_namespace = %ns,
+                        secret_name = %sref.name,
+                        "Loaded provider credentials secret"
+                    );
+                    if let Some(data) = &secret.data {
+                        for (k, v) in data.iter() {
+                            let val = String::from_utf8_lossy(&v.0).to_string();
+                            variables
+                                .entry(k.clone())
+                                .or_insert(serde_json::Value::String(val));
+                        }
+                    }
+                }
+            }
+
+            let compile_request = if let Some(path) = content.strip_prefix(GIT_SOURCE_SENTINEL) {
+                // gitRepository — let the compiler load the file from disk
+                // so it sees its workspace siblings, and prepend the
+                // cloned tree's `lib/` to $LOAD_PATH so `require
+                // 'pangea/architectures'` resolves to the cloned composer
+                // copy (not an image-baked path-gem).
+                let (template_path, rubylib_paths) = match path.split_once(GIT_RUBYLIB_SEPARATOR) {
+                    Some((tp, rl)) => (tp.to_string(), vec![rl.to_string()]),
+                    None => (path.to_string(), Vec::<String>::new()),
+                };
+                crate::ruby::CompileRequest {
+                    template_path: Some(template_path),
+                    rubylib_paths,
+                    variables: variables.clone().into_iter().collect(),
+                    template_name: template.spec.template_name.clone(),
+                    source: None,
+                }
+            } else {
+                // inline / configMapRef — eval the string in a virtual binding.
+                crate::ruby::CompileRequest {
+                    source: Some(content.clone()),
+                    variables: variables.clone().into_iter().collect(),
+                    template_name: template.spec.template_name.clone(),
+                    template_path: None,
+                    rubylib_paths: Vec::new(),
+                }
             };
-            crate::ruby::CompileRequest {
-                template_path: Some(template_path),
-                rubylib_paths,
-                variables: variables.clone().into_iter().collect(),
-                template_name: template.spec.template_name.clone(),
-                source: None,
-            }
-        } else {
-            // inline / configMapRef — eval the string in a virtual binding.
-            crate::ruby::CompileRequest {
-                source: Some(content.clone()),
-                variables: variables.clone().into_iter().collect(),
-                template_name: template.spec.template_name.clone(),
-                template_path: None,
-                rubylib_paths: Vec::new(),
-            }
-        };
 
-        let compile_result = match state.compiler_backend.compile(compile_request).await {
-            Ok(r) => r,
-            Err(e) => {
-                // Compile failure path — increment the per-template
-                // consecutive-failure counter and escalate if we hit
-                // the settling threshold. Without this, templates
-                // like `pleme-io-opensource` (missing gem) sit in
-                // Compiling cycleCount=0 indefinitely because the
-                // cycle counter only advances after a complete
-                // plan→apply, which never reaches. (A residual
-                // dual-load lands here too — `BackendError::DualLoad`
-                // — and rides the same ladder, LOUD by construction.)
-                handle_compile_failure(template, state, &e.to_string()).await?;
-                return Err(Error::Compilation(format!("Compile failed: {e}")));
-            }
-        };
+            let compile_result = match state.compiler_backend.compile(compile_request).await {
+                Ok(r) => r,
+                Err(e) => {
+                    // Compile failure path — increment the per-template
+                    // consecutive-failure counter and escalate if we hit
+                    // the settling threshold. Without this, templates
+                    // like `pleme-io-opensource` (missing gem) sit in
+                    // Compiling cycleCount=0 indefinitely because the
+                    // cycle counter only advances after a complete
+                    // plan→apply, which never reaches. (A residual
+                    // dual-load lands here too — `BackendError::DualLoad`
+                    // — and rides the same ladder, LOUD by construction.)
+                    handle_compile_failure(template, state, &e.to_string()).await?;
+                    return Err(Error::Compilation(format!("Compile failed: {e}")));
+                }
+            };
 
-        compile_result.terraform_json
+            compile_result.terraform_json
+        }
     };
 
     // Persist the compile→plan rendered-config handoff.
@@ -6605,7 +6642,7 @@ mod plan_approval_hash_tests {
 #[cfg(test)]
 mod is_plan_approved_tests {
     use super::{is_plan_approved, InfrastructureTemplateSpec, InfrastructureTemplateStatus};
-    use crate::crd::TemplateSource;
+    use crate::crd::{Dialect, TemplateSource};
 
     fn spec_with(approved: Option<&str>) -> InfrastructureTemplateSpec {
         InfrastructureTemplateSpec {
@@ -6614,6 +6651,7 @@ mod is_plan_approved_tests {
                 config_map_ref: None,
                 git_repository: None,
             },
+            dialect: Dialect::Auto,
             pangea_namespace: "test".to_string(),
             template_name: None,
             variables: None,
@@ -7597,7 +7635,8 @@ mod state_continuity_breach_tests {
         Duration, EventType, FailedRetryDecision, InfrastructureTemplate, EXHAUSTED_RETRY_INTERVAL,
     };
     use crate::crd::{
-        InfrastructureTemplateSpec, InfrastructureTemplateStatus, RetryPolicy, TemplateSource,
+        Dialect, InfrastructureTemplateSpec, InfrastructureTemplateStatus, RetryPolicy,
+        TemplateSource,
     };
 
     fn default_test_spec() -> InfrastructureTemplateSpec {
@@ -7607,6 +7646,7 @@ mod state_continuity_breach_tests {
                 config_map_ref: None,
                 git_repository: None,
             },
+            dialect: Dialect::Auto,
             pangea_namespace: "test".to_string(),
             template_name: None,
             variables: None,
@@ -8618,5 +8658,109 @@ mod anomaly_reaction_tests {
             suggested_import_hint("github_repository.galho"),
             "<natural-id>"
         );
+    }
+}
+
+/// [`compile_front_end`] — the WIRING between `spec.dialect` and the
+/// compile dispatch in `handle_compiling`.
+///
+/// Deliberately separate from the `Dialect::resolve` suite in
+/// `crd::infrastructure_template`. Those tests prove the decision is
+/// right; these prove the decision is the one actually consulted. A
+/// resolver that is correct and read by nobody passes its own tests.
+#[cfg(test)]
+mod compile_front_end_tests {
+    use super::{compile_front_end, GIT_RUBYLIB_SEPARATOR, GIT_SOURCE_SENTINEL};
+    use crate::crd::{
+        Dialect, InfrastructureTemplate, InfrastructureTemplateSpec, ResolvedDialect,
+        TemplateSource,
+    };
+
+    const RUBY_BODY: &str = "Pangea.template :vpc do\nend\n";
+    const JSON_BODY: &str = r#"{"resource":{}}"#;
+
+    fn template_declaring(dialect: Dialect) -> InfrastructureTemplate {
+        InfrastructureTemplate::new(
+            "t",
+            InfrastructureTemplateSpec {
+                source: TemplateSource {
+                    inline: Some(String::new()),
+                    config_map_ref: None,
+                    git_repository: None,
+                },
+                dialect,
+                pangea_namespace: "camelot".to_string(),
+                template_name: None,
+                variables: None,
+                spec_approved_plan_hash: None,
+                auto_approve: false,
+                refresh_interval: "5m".to_string(),
+                suspend: false,
+                executor: None,
+                destroy_protection: false,
+                variable_refs: None,
+                retry_policy: None,
+                provider_credentials: None,
+                compliance_profiles: vec![],
+                policies: vec![],
+                default_decision: None,
+                settling_policy: None,
+                reactive_policy: None,
+                import_policy: None,
+                import_hints: Default::default(),
+                output_bindings: Vec::new(),
+                conflict_policy: None,
+                secret_files: Vec::new(),
+            },
+        )
+    }
+
+    #[test]
+    fn the_declared_dialect_is_what_gets_read() {
+        // A Ruby body declared `json` must route to Json, and a JSON body
+        // declared `ruby` must route to Ruby. Both directions, because a
+        // wiring that only reads the field in the case where the guess
+        // agreed with it is not wired at all.
+        assert_eq!(
+            compile_front_end(&template_declaring(Dialect::Json), RUBY_BODY),
+            ResolvedDialect::Json
+        );
+        assert_eq!(
+            compile_front_end(&template_declaring(Dialect::Ruby), JSON_BODY),
+            ResolvedDialect::Ruby
+        );
+    }
+
+    #[test]
+    fn an_undeclared_template_still_gets_the_old_guess() {
+        // The back-compat line, asserted through the wiring rather than
+        // through the resolver, so a default that stops being `auto`
+        // fails here too.
+        let t = template_declaring(Dialect::default());
+        assert_eq!(compile_front_end(&t, JSON_BODY), ResolvedDialect::Json);
+        assert_eq!(compile_front_end(&t, RUBY_BODY), ResolvedDialect::Ruby);
+    }
+
+    #[test]
+    fn the_git_sentinel_outranks_any_declared_dialect() {
+        // A gitRepository body is "\0PATH\0<file>\0RUBYLIB\0<lib>" — a
+        // path for the compiler to `load`, not source. Honouring
+        // `dialect: json` here would ship that raw marker downstream as
+        // Terraform JSON, a bad state that did not exist before this
+        // field and must not be created by it.
+        let sentinel = [
+            GIT_SOURCE_SENTINEL,
+            "/w/_repo/main.rb",
+            GIT_RUBYLIB_SEPARATOR,
+            "/w/_repo/lib",
+        ]
+        .concat();
+        for declared in [Dialect::Auto, Dialect::Ruby, Dialect::Json] {
+            assert_eq!(
+                compile_front_end(&template_declaring(declared), &sentinel),
+                ResolvedDialect::Ruby,
+                "a git-sourced body must reach the Ruby front end whatever {declared:?} says"
+            );
+        }
     }
 }

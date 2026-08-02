@@ -35,13 +35,13 @@ pub use architecture_gem::{
 pub use infrastructure_template::{
     ActionDistribution, AwsCredentials, BundleRef, CloudflareCredentials, ComplianceStatus,
     Condition, ConfigMapRef, ConflictKind, ConflictResolution, ConflictResolutionPolicy,
-    ConflictRule, CycleSummary, DriftAction, DriftDetail, GitHubCredentials, GitRepositoryRef,
-    ImportPolicy, InfrastructureTemplate, InfrastructureTemplateSpec, InfrastructureTemplateStatus,
-    Outcome, OutputBinding, OutputSecretRef, Phase, PolicyDecision, PolicyEvaluation, PolicyMatch,
-    PolicyRule, PorkbunCredentials, ProfileResult, ProviderCredentials, ProviderKind,
-    ReconcileCycle, ResourceOutcome, ResourceSummary, RetryPolicy, RiskLevel, SecretFileRef,
-    SecretRef, SettlingExhaustionAction, SettlingPolicy, SeverityRollup, TemplateObjectRef,
-    TemplateSource, VariableRef,
+    ConflictRule, CycleSummary, Dialect, DriftAction, DriftDetail, GitHubCredentials,
+    GitRepositoryRef, ImportPolicy, InfrastructureTemplate, InfrastructureTemplateSpec,
+    InfrastructureTemplateStatus, Outcome, OutputBinding, OutputSecretRef, Phase, PolicyDecision,
+    PolicyEvaluation, PolicyMatch, PolicyRule, PorkbunCredentials, ProfileResult,
+    ProviderCredentials, ProviderKind, ReconcileCycle, ResolvedDialect, ResourceOutcome,
+    ResourceSummary, RetryPolicy, RiskLevel, SecretFileRef, SecretRef, SettlingExhaustionAction,
+    SettlingPolicy, SeverityRollup, TemplateObjectRef, TemplateSource, VariableRef,
 };
 
 // Re-export InfrastructureFlow types

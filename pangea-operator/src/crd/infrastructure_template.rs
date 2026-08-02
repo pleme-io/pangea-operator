@@ -40,6 +40,14 @@ pub struct InfrastructureTemplateSpec {
     /// Source of the infrastructure template.
     pub source: TemplateSource,
 
+    /// The language the template body is authored in. See [`Dialect`].
+    ///
+    /// Defaults to `auto`, which is byte-for-byte the behaviour every
+    /// existing CR already gets, so adding this field changes nothing
+    /// until an author sets it.
+    #[serde(default)]
+    pub dialect: Dialect,
+
     /// Pangea namespace for state isolation.
     /// This determines the PostgreSQL schema used for state storage.
     #[serde(rename = "pangeaNamespace")]
@@ -412,6 +420,89 @@ pub struct TemplateSource {
     /// Reference to a Git repository containing the template.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_repository: Option<GitRepositoryRef>,
+}
+
+/// The language an [`InfrastructureTemplate`]'s body is authored in.
+///
+/// ## Why this field exists
+///
+/// Before it, the front end was chosen by sniffing the body's first
+/// non-whitespace byte in `handle_compiling`: `{` meant already-rendered
+/// Terraform JSON, and *everything else* went to the Ruby evaluator.
+/// Nothing in the repo named the concept — `rg -i dialect` returned zero
+/// hits — so an HCL or Helm body was never rejected. It was silently
+/// handed to Ruby and failed further downstream wearing a Ruby error,
+/// which describes the evaluator's confusion rather than the author's
+/// mistake.
+///
+/// ## Why it is an enum and not an `Option<String>`
+///
+/// Deliberately NOT the shape `spec.executor` uses
+/// (`executor/backend_select.rs:29-43`). That field is an untyped
+/// `Option<String>` run through a parser whose `_ => None` arm falls
+/// through to the next layer, so `executor: mgma` is not an error — it
+/// quietly selects the operator-wide default and the author is never
+/// told the typo did nothing. A typo must not be indistinguishable from
+/// silence, so the same pattern is not copied here.
+///
+/// As a fieldless enum this renders an `enum:` constraint into the
+/// generated CRD schema, so an unknown value is refused by the API
+/// server at admission and the object is never stored
+/// (parse-time-rejected). Inside the operator the type cannot hold an
+/// unknown dialect at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Dialect {
+    /// Decide from the body: a body whose first non-whitespace byte is
+    /// `{` is already-rendered Terraform JSON, anything else is Ruby.
+    ///
+    /// THE DEFAULT, and byte-for-byte what the operator did before this
+    /// field existed. No CR in the fleet carries a `dialect`, so this is
+    /// what all of them keep getting; a heuristic that is named and
+    /// overridable is strictly better than one that is invisible.
+    /// Declaring `ruby` or `json` opts out of the guess entirely.
+    #[default]
+    Auto,
+    /// Pangea Ruby DSL — compiled through the `CompilerBackend`.
+    Ruby,
+    /// Already-rendered Terraform JSON — passed through untouched.
+    Json,
+}
+
+/// The front end a template body is actually handed to.
+///
+/// [`Dialect::Auto`] has no representative here on purpose: it is a
+/// *strategy* for picking a front end, not a front end. Resolution is
+/// therefore total, and "treated `Auto` as if it were a destination" is
+/// a compile error instead of a runtime branch that has to guess.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolvedDialect {
+    /// Compile through the `CompilerBackend` (embedded magnus or the
+    /// HTTP sidecar).
+    Ruby,
+    /// Use the body as Terraform JSON with no compilation step.
+    Json,
+}
+
+impl Dialect {
+    /// The front end this body goes to.
+    pub fn resolve(self, body: &str) -> ResolvedDialect {
+        match self {
+            Dialect::Ruby => ResolvedDialect::Ruby,
+            Dialect::Json => ResolvedDialect::Json,
+            // The pre-existing sniff, preserved exactly — same
+            // `trim_start().starts_with('{')` test, same verdict — so
+            // that every CR without a `dialect` compiles down the same
+            // path it did before this type existed.
+            Dialect::Auto => {
+                if body.trim_start().starts_with('{') {
+                    ResolvedDialect::Json
+                } else {
+                    ResolvedDialect::Ruby
+                }
+            }
+        }
+    }
 }
 
 /// Reference to a ConfigMap key.
@@ -2172,5 +2263,158 @@ mod tests {
     #[test]
     fn phase_default_is_pending() {
         assert_eq!(Phase::default(), Phase::Pending);
+    }
+}
+
+/// `spec.dialect` — the typed replacement for the first-byte sniff that
+/// used to pick a compile front end.
+///
+/// The suite has to hold three separate lines at once, because relaxing
+/// any one of them silently restores a different half of the old bug:
+/// existing CRs must keep compiling exactly as they did, an explicit
+/// declaration must beat the guess, and a dialect we cannot execute must
+/// be refused rather than quietly evaluated as Ruby.
+#[cfg(test)]
+mod dialect_tests {
+    use super::*;
+    use kube::CustomResourceExt;
+
+    /// Bodies chosen to span every shape the sniff can see: real Ruby, a
+    /// JSON object with and without leading whitespace, and the two
+    /// almost-JSON cases (a JSON array, a Ruby hash literal on line one)
+    /// where a first-byte guess has always been a guess.
+    const RUBY_BODY: &str = "Pangea.template :vpc do\n  resource :aws_vpc\nend\n";
+    const JSON_BODY: &str = r#"{"resource":{"aws_vpc":{}}}"#;
+    const JSON_BODY_INDENTED: &str = "\n  {\"resource\":{}}";
+
+    // ── the default reproduces the old behaviour exactly ─────────────
+
+    #[test]
+    fn an_absent_dialect_field_deserializes_to_auto() {
+        // Every InfrastructureTemplate in the fleet predates this field.
+        // If this stops holding, all of them change compile path at once.
+        let spec: InfrastructureTemplateSpec = serde_json::from_value(serde_json::json!({
+            "source": { "inline": "Pangea.template :x do end" },
+            "pangeaNamespace": "camelot",
+        }))
+        .expect("a CR with no dialect must still deserialize");
+        assert_eq!(spec.dialect, Dialect::Auto);
+        assert_eq!(Dialect::default(), Dialect::Auto);
+    }
+
+    #[test]
+    fn auto_reproduces_the_byte_sniff_verbatim() {
+        // The pre-2026-08-01 expression, kept here as the oracle rather
+        // than restated as an expectation: if `resolve` and the sniff
+        // ever disagree on any body, this fails.
+        let old_sniff = |body: &str| {
+            if body.trim_start().starts_with('{') {
+                ResolvedDialect::Json
+            } else {
+                ResolvedDialect::Ruby
+            }
+        };
+        for body in [
+            RUBY_BODY,
+            JSON_BODY,
+            JSON_BODY_INDENTED,
+            "",
+            "   ",
+            "[1,2,3]",
+            "{ ruby: :hash }",
+            "# a comment\n{}",
+        ] {
+            assert_eq!(
+                Dialect::Auto.resolve(body),
+                old_sniff(body),
+                "auto must not change the verdict for {body:?}"
+            );
+        }
+    }
+
+    // ── an explicit declaration beats the guess ──────────────────────
+
+    #[test]
+    fn an_explicit_dialect_overrides_what_the_body_looks_like() {
+        // This is the whole point of the field: the author's declaration
+        // wins over the heuristic, in BOTH directions. A guess that can
+        // never be overridden is the bug wearing a type.
+        assert_eq!(Dialect::Ruby.resolve(JSON_BODY), ResolvedDialect::Ruby);
+        assert_eq!(Dialect::Json.resolve(RUBY_BODY), ResolvedDialect::Json);
+        // …and it agrees with the guess when the guess was right.
+        assert_eq!(Dialect::Ruby.resolve(RUBY_BODY), ResolvedDialect::Ruby);
+        assert_eq!(Dialect::Json.resolve(JSON_BODY), ResolvedDialect::Json);
+    }
+
+    // ── an unknown dialect is refused, not defaulted ─────────────────
+
+    #[test]
+    fn an_unknown_dialect_is_refused_at_parse_time() {
+        // The failure mode this field exists to remove. `hcl` and `helm`
+        // are the bodies that were being handed to the Ruby evaluator;
+        // they must now fail to parse rather than resolve to anything.
+        //
+        // Contrast `spec.executor` (executor/backend_select.rs:29-43),
+        // whose `_ => None` arm makes `mgma` indistinguishable from
+        // saying nothing at all. Nothing here may fall through.
+        for unknown in [
+            "\"hcl\"",
+            "\"helm\"",
+            "\"terraform\"",
+            "\"kustomize\"",
+            "\"rb\"",
+            "\"\"",
+            // Case matters: `rename_all = "lowercase"` means the wire
+            // form is exactly `ruby`, and a near-miss is still a miss.
+            "\"Ruby\"",
+            "\"JSON\"",
+            "\"AUTO\"",
+        ] {
+            assert!(
+                serde_json::from_str::<Dialect>(unknown).is_err(),
+                "{unknown} must be refused, not silently resolved"
+            );
+        }
+    }
+
+    #[test]
+    fn the_three_executable_dialects_round_trip_on_the_wire() {
+        for (wire, value) in [
+            ("\"auto\"", Dialect::Auto),
+            ("\"ruby\"", Dialect::Ruby),
+            ("\"json\"", Dialect::Json),
+        ] {
+            assert_eq!(serde_json::from_str::<Dialect>(wire).unwrap(), value);
+            assert_eq!(serde_json::to_string(&value).unwrap(), wire);
+        }
+    }
+
+    #[test]
+    fn the_crd_schema_pins_the_dialect_enum_for_the_api_server() {
+        // Where the rejection actually happens for a real CR: the
+        // generated OpenAPI schema. Without an `enum:` constraint on this
+        // property the API server accepts `dialect: hcl`, stores it, and
+        // the operator only fails later on deserialize — which is a
+        // reconcile error instead of an admission error, and a much worse
+        // place to learn about a typo.
+        let crd = InfrastructureTemplate::crd();
+        let schema = serde_json::to_value(&crd).expect("crd serializes");
+        let dialect = schema["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]
+            ["spec"]["properties"]["dialect"]
+            .clone();
+        assert!(
+            !dialect.is_null(),
+            "the CRD must carry a `dialect` property at all"
+        );
+        let variants = dialect["enum"]
+            .as_array()
+            .unwrap_or_else(|| panic!("`dialect` must be schema-constrained, got: {dialect}"));
+        let mut names: Vec<&str> = variants.iter().filter_map(|v| v.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(
+            names,
+            ["auto", "json", "ruby"],
+            "the admission-time allowlist must be exactly the dialects we can execute"
+        );
     }
 }

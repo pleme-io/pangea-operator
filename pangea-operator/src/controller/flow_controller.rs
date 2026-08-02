@@ -5,7 +5,7 @@
 //! execution order and output references resolved between steps.
 
 use crate::crd::{
-    FlowPhase, FlowStepStatus, InfrastructureFlow, InfrastructureFlowStatus,
+    Dialect, FlowPhase, FlowStepStatus, InfrastructureFlow, InfrastructureFlowStatus,
     InfrastructureTemplate, InfrastructureTemplateSpec, Phase,
 };
 use crate::error::{Error, Result};
@@ -256,6 +256,14 @@ async fn reconcile_flow(
                         &template_name,
                         InfrastructureTemplateSpec {
                             source,
+                            // A flow step carries a body but not a
+                            // declared language, so a spawned template
+                            // gets `auto` — the same guess these
+                            // templates have always been compiled under.
+                            // Propagating a real dialect means adding one
+                            // to `FlowStep` first; until then, guessing
+                            // is what the step actually said.
+                            dialect: Dialect::Auto,
                             pangea_namespace: flow.spec.pangea_namespace.clone(),
                             template_name: None,
                             variables,
