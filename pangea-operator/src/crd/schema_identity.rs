@@ -63,10 +63,47 @@
 //!
 //! Phase 2: `template_schema_name` resolves the referenced
 //! `PangeaNamespace` and honours its real `schemaPrefix`, so a
-//! non-default prefix stops being silently ignored. That is a
-//! BEHAVIOUR change (it moves where state is read) and needs its own
-//! migration, which is exactly why it is not in this commit — but it is
-//! now a one-function change instead of a seven-site change.
+//! non-default prefix stops being silently ignored.
+//!
+//! **Correction, measured 2026-08-02: Phase 2 is NOT a one-function
+//! change.** That claim was written from the seven call sites that had
+//! been unified, and it is wrong. Resolving the prefix needs the
+//! `PangeaNamespace` CR, i.e. an apiserver read, and two of the nine
+//! call sites are SYNC with no client in hand:
+//!
+//!   * `template_controller::magma_state_key` — sync, template-only.
+//!     Its three callers are async; this one is mechanical.
+//!   * `ControllerState::magma_executor_with_provider_configs`
+//!     (`controller/mod.rs`) — **the blocker**. It is sync, and it is
+//!     reached from the sync executor-routing chokepoint
+//!     (`executor_for` / `executor_for_checked` / `executor_runner_for`
+//!     / `magma_executor_for`). Making it async ripples into eight call
+//!     sites plus the sync predicates `is_durable_state_backend` and
+//!     `state_continuity_breach` — turning pure predicates into
+//!     I/O-performing async fns — and forces a decision on what an
+//!     apiserver failure does to an executor construction that is
+//!     infallible today. Falling back to the default prefix there is
+//!     the silent wrong-address bug; propagating an error puts a new
+//!     failure mode on the hottest path in the operator.
+//!
+//! And Phase 2 is **all-or-nothing**: plumbing the real prefix at the
+//! seven async sites while `magma_executor_for` keeps the hardcoded one
+//! makes the two derivations DIVERGE for a non-default prefix — the
+//! artifact store reading `tf_ns` while magma's state backend reads
+//! `pangea_ns`. That is strictly worse than today, where both are
+//! consistently wrong.
+//!
+//! The two viable destinations, neither of which is a no-op:
+//!
+//!   1. **Reflector.** Put a `reflector::Store<PangeaNamespace>` on
+//!      `ControllerState`, seeded before the controllers start. Every
+//!      signature stays sync, the read is local, there is no cold-start
+//!      window. Costs a new watch + a startup barrier.
+//!   2. **Async-ify the chokepoint.** Mechanical but wide, and it makes
+//!      building an executor depend on the apiserver.
+//!
+//! Until one of those lands, a non-default `schemaPrefix` is REFUSED
+//! rather than silently half-honoured — see [`template_side_can_honour`].
 //!
 //! Phase 3: a `SchemaName` newtype whose only constructor lives here,
 //! threaded through `StateStore` / `ArtifactStore` / the lock helpers, so
@@ -111,10 +148,69 @@ pub fn schema_name_for_namespace(namespace_name: &str) -> String {
 /// This MUST agree with `PangeaNamespace::schema_name()` for the
 /// referenced namespace, or a template writes state where nothing reads
 /// it. Today they agree because every live `PangeaNamespace` uses the
-/// default prefix; Phase 2 makes them agree by construction.
+/// default prefix — and, since 2026-08-02, because
+/// [`template_side_can_honour`] refuses a namespace that would break the
+/// agreement rather than letting it break silently.
 #[must_use]
 pub fn template_schema_name(template: &InfrastructureTemplate) -> String {
     schema_name_for_namespace(&template.spec.pangea_namespace)
+}
+
+/// The prefix a `PangeaNamespace` declares — `spec.backend.pg.schemaPrefix`,
+/// or [`DEFAULT_SCHEMA_PREFIX`] when the CR has no `pg` block.
+///
+/// The ONE place that reads the field. `PangeaNamespace::schema_name()`
+/// used to inline it; a second reader would be a second opinion about
+/// what "the namespace's prefix" means, which is the shape of bug this
+/// module exists to prevent.
+#[must_use]
+pub fn namespace_schema_prefix(namespace: &crate::crd::PangeaNamespace) -> &str {
+    namespace
+        .spec
+        .backend
+        .pg
+        .as_ref()
+        .map_or(DEFAULT_SCHEMA_PREFIX, |pg| pg.schema_prefix.as_str())
+}
+
+/// Can the TEMPLATE side address state under this prefix?
+///
+/// Only for the default. [`template_schema_name`] takes a
+/// `spec.pangeaNamespace` **string**, never the CR, so it cannot observe
+/// a declared prefix — see the Phase 2 note in the module doc for why
+/// that is not a one-function fix.
+///
+/// # What this predicate is for
+///
+/// A `PangeaNamespace` declaring `schemaPrefix: tf_` used to be accepted
+/// and then half-honoured: `namespace_controller` created and reported
+/// `tf_myns`, while every template wrote its state to `pangea_myns`
+/// (auto-created by `ArtifactStore::ensure_tofu_states_table`). Nothing
+/// failed. The operator's own `status.schemaName` named a schema no
+/// template used, and the field read as respected.
+///
+/// A silent half-honour is worse than either honouring or refusing, so
+/// `namespace_controller::validate_backend` refuses. When Phase 2 lands,
+/// this predicate and its call site go away — that deletion IS the
+/// done-condition.
+///
+/// # Tier
+///
+/// **Only-mitigated** — a runtime `Err` on a reconcile, not a type. The
+/// CRD schema still accepts any string and nothing prevents the CR
+/// being written; there is no admission webhook. And because
+/// `validate_backend` runs BEFORE `establish_backend`, the refusal
+/// surfaces as a reconcile error + `ERROR_REQUEUE_INTERVAL` retry —
+/// the same shape as the existing "pg backend requires pg
+/// configuration" refusal — NOT as a `status` condition. So it is loud
+/// in logs and metrics, and silent in `kubectl get pns`.
+///
+/// That is the honest floor, not the destination. Making it
+/// unrepresentable means either a CRD-level enum for the prefix or, far
+/// better, Phase 2 — at which point the whole predicate is deleted.
+#[must_use]
+pub fn template_side_can_honour(prefix: &str) -> bool {
+    prefix == DEFAULT_SCHEMA_PREFIX
 }
 
 #[cfg(test)]
@@ -215,6 +311,106 @@ mod tests {
             // And equals the pre-unification literal, through the CR.
             assert_eq!(template_schema_name(&t), format!("pangea_{ns}"));
         }
+    }
+
+    /// Build a `PangeaNamespace` with a pg backend declaring `prefix`.
+    /// Deserialized from a minimal document rather than a struct
+    /// literal, for the same reason
+    /// `template_schema_name_reads_spec_pangea_namespace` does it: the
+    /// test must not become the duplication it guards.
+    fn pg_namespace(name: &str, prefix: &str) -> crate::crd::PangeaNamespace {
+        let spec: crate::crd::PangeaNamespaceSpec = serde_json::from_value(serde_json::json!({
+            "backend": {
+                "type": "pg",
+                "pg": {
+                    "host": "pangea-state-rw.pangea-system.svc",
+                    "database": "pangea_state",
+                    "schemaPrefix": prefix,
+                    "secretRef": { "name": "pangea-state-app" },
+                },
+            },
+        }))
+        .expect("minimal PangeaNamespaceSpec must deserialize");
+        crate::crd::PangeaNamespace::new(name, spec)
+    }
+
+    /// **THE PHASE 2 NO-OP PROOF.**
+    ///
+    /// The live shapes on camelot-eks, read 2026-08-02: two
+    /// `PangeaNamespace`s, `camelot` and `pleme-io-opensource`, both
+    /// `backend.type: pg`, both with `schemaPrefix: pangea_` set
+    /// EXPLICITLY in the CR (not left to the serde default).
+    ///
+    /// For those two, the namespace-side derivation (which honours the
+    /// declared prefix) and the template-side derivation (which assumes
+    /// the default) produce byte-identical strings. That is what makes
+    /// plumbing the real prefix a no-op *today* — and it is the thing to
+    /// re-check before Phase 2 lands, because it is a dated fact about
+    /// the cluster, not a property of the code.
+    ///
+    /// If this test ever fails, do not "fix" it: a live namespace has
+    /// acquired a prefix the template side cannot see, and its state is
+    /// being addressed from two places.
+    #[test]
+    fn live_namespaces_derive_identically_from_both_sides() {
+        const LIVE: &[&str] = &["camelot", "pleme-io-opensource"];
+        for name in LIVE {
+            let ns = pg_namespace(name, DEFAULT_SCHEMA_PREFIX);
+            assert_eq!(
+                namespace_schema_prefix(&ns),
+                DEFAULT_SCHEMA_PREFIX,
+                "live namespace {name} is expected to declare the default prefix"
+            );
+            assert_eq!(
+                ns.schema_name(),
+                schema_name_for_namespace(name),
+                "namespace-side and template-side derivations diverged for {name} — \
+                 Phase 2 is NOT a no-op for this cluster any more"
+            );
+            // …and both equal the pre-unification literal.
+            assert_eq!(ns.schema_name(), format!("pangea_{name}"));
+        }
+    }
+
+    /// A namespace with no `pg` block still reports the default prefix —
+    /// the S3/local backends have no schema, and the accessor must not
+    /// invent one.
+    #[test]
+    fn namespace_without_pg_reports_the_default_prefix() {
+        let spec: crate::crd::PangeaNamespaceSpec = serde_json::from_value(serde_json::json!({
+            "backend": { "type": "local" },
+        }))
+        .expect("minimal PangeaNamespaceSpec must deserialize");
+        let ns = crate::crd::PangeaNamespace::new("local-ns", spec);
+        assert_eq!(namespace_schema_prefix(&ns), DEFAULT_SCHEMA_PREFIX);
+    }
+
+    /// The divergence the template side cannot see, made explicit: with
+    /// a non-default prefix the two derivations name DIFFERENT schemas.
+    /// This is the split-brain `template_side_can_honour` refuses.
+    #[test]
+    fn a_non_default_prefix_splits_the_two_derivations() {
+        let ns = pg_namespace("myns", "tf_");
+        assert_eq!(namespace_schema_prefix(&ns), "tf_");
+        assert_eq!(ns.schema_name(), "tf_myns");
+        // The template side cannot observe it — it only has the name.
+        assert_eq!(schema_name_for_namespace("myns"), "pangea_myns");
+        assert_ne!(
+            ns.schema_name(),
+            schema_name_for_namespace("myns"),
+            "if these ever agree, the predicate below is guarding nothing"
+        );
+        assert!(!template_side_can_honour(namespace_schema_prefix(&ns)));
+    }
+
+    #[test]
+    fn template_side_can_honour_exactly_the_default() {
+        assert!(template_side_can_honour(DEFAULT_SCHEMA_PREFIX));
+        assert!(template_side_can_honour("pangea_"));
+        assert!(!template_side_can_honour("tf_"));
+        assert!(!template_side_can_honour(""));
+        assert!(!template_side_can_honour("pangea"));
+        assert!(!template_side_can_honour("PANGEA_"));
     }
 
     /// The reintroduction gate.

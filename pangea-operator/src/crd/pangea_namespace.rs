@@ -324,16 +324,8 @@ impl PangeaNamespace {
     /// still assumes the default (see that module's Phase 2 note). Both
     /// agree today because every live `PangeaNamespace` uses the default.
     pub fn schema_name(&self) -> String {
-        let prefix = self
-            .spec
-            .backend
-            .pg
-            .as_ref()
-            .map(|pg| pg.schema_prefix.as_str())
-            .unwrap_or(crate::crd::schema_identity::DEFAULT_SCHEMA_PREFIX);
-
         crate::crd::schema_identity::schema_name(
-            prefix,
+            crate::crd::schema_identity::namespace_schema_prefix(self),
             self.metadata.name.as_deref().unwrap_or("default"),
         )
     }

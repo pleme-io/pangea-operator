@@ -247,6 +247,45 @@ fn validate_backend(namespace: &PangeaNamespace) -> Result<()> {
                     "PostgreSQL backend type requires 'pg' configuration".into(),
                 ));
             }
+
+            // A `schemaPrefix` the template side cannot observe is
+            // refused, not half-honoured.
+            //
+            // `PangeaNamespace::schema_name()` reads the declared
+            // prefix; `crd::schema_identity::template_schema_name` —
+            // which keys every template's state, rendered config,
+            // bundles and mutation lock — takes only the namespace NAME
+            // and assumes the default. With a non-default prefix this
+            // controller would create and report `<prefix><ns>` while
+            // every template silently wrote its state to
+            // `pangea_<ns>` (auto-created by
+            // `ArtifactStore::ensure_tofu_states_table`). Nothing
+            // failed, `status.schemaName` named a schema no template
+            // used, and the field read as respected.
+            //
+            // Refusing is strictly safer than that, and it cannot fire
+            // on the live fleet: both PangeaNamespaces on camelot-eks
+            // declare `pangea_` explicitly (counted 2026-08-02, pinned
+            // in `schema_identity::tests::live_namespaces_derive_identically_from_both_sides`).
+            //
+            // DELETE THIS when Phase 2 lands — see the Phase 2 note in
+            // `crd::schema_identity`. The deletion is the
+            // done-condition, not an afterthought.
+            let prefix = crate::crd::schema_identity::namespace_schema_prefix(namespace);
+            if !crate::crd::schema_identity::template_side_can_honour(prefix) {
+                let ns_name = namespace.metadata.name.as_deref().unwrap_or("default");
+                return Err(Error::Config(format!(
+                    "spec.backend.pg.schemaPrefix is {prefix:?}, but the template side \
+                     of this operator can only address the default prefix {default:?}. \
+                     Accepting it would put this namespace's schema at {declared:?} while \
+                     every InfrastructureTemplate wrote its state to {actual:?} — a split \
+                     the operator cannot detect at runtime. Use the default prefix, or land \
+                     Phase 2 of crd::schema_identity.",
+                    default = crate::crd::schema_identity::DEFAULT_SCHEMA_PREFIX,
+                    declared = namespace.schema_name(),
+                    actual = crate::crd::schema_identity::schema_name_for_namespace(ns_name),
+                )));
+            }
         }
         BackendType::S3 => {
             if namespace.spec.backend.s3.is_none() {
@@ -809,6 +848,90 @@ mod deep_tests {
 
     #[test]
     fn local_backend_requires_no_extra_config() {
+        let n = ns(BackendConfig {
+            r#type: BackendType::Local,
+            pg: None,
+            s3: None,
+        });
+        assert!(validate_backend(&n).is_ok());
+    }
+
+    /// A pg namespace declaring `prefix`, in the shape the live CRs have.
+    fn pg_ns(name: &str, prefix: &str) -> PangeaNamespace {
+        let spec: crate::crd::PangeaNamespaceSpec = serde_json::from_value(serde_json::json!({
+            "backend": {
+                "type": "pg",
+                "pg": {
+                    "host": "pangea-state-rw.pangea-system.svc",
+                    "database": "pangea_state",
+                    "schemaPrefix": prefix,
+                    "secretRef": { "name": "pangea-state-app" },
+                },
+            },
+        }))
+        .expect("minimal PangeaNamespaceSpec must deserialize");
+        PangeaNamespace::new(name, spec)
+    }
+
+    /// The live shapes stay valid. Both camelot-eks `PangeaNamespace`s
+    /// declare `pangea_` explicitly (read 2026-08-02) — the new refusal
+    /// must not touch them.
+    #[test]
+    fn live_namespaces_still_validate() {
+        for name in ["camelot", "pleme-io-opensource"] {
+            assert!(
+                validate_backend(&pg_ns(name, "pangea_")).is_ok(),
+                "live namespace {name} must keep validating"
+            );
+        }
+    }
+
+    /// A pg namespace with no explicit prefix falls to the serde default
+    /// and is accepted.
+    #[test]
+    fn omitted_schema_prefix_defaults_and_validates() {
+        let spec: crate::crd::PangeaNamespaceSpec = serde_json::from_value(serde_json::json!({
+            "backend": {
+                "type": "pg",
+                "pg": {
+                    "host": "h",
+                    "database": "d",
+                    "secretRef": { "name": "s" },
+                },
+            },
+        }))
+        .expect("spec deserializes");
+        let n = PangeaNamespace::new("no-prefix", spec);
+        assert!(validate_backend(&n).is_ok());
+    }
+
+    /// The refusal. A prefix the template side cannot observe is a
+    /// split-brain, so it is rejected up front instead of being
+    /// half-honoured — and the message names BOTH addresses, so an
+    /// operator reading `status` can see exactly what would have split.
+    #[test]
+    fn non_default_schema_prefix_is_refused() {
+        let r = validate_backend(&pg_ns("myns", "tf_"));
+        let e = format!("{:?}", r.expect_err("a non-default prefix must be refused"));
+        assert!(e.contains("tf_myns"), "must name the declared schema: {e}");
+        assert!(
+            e.contains("pangea_myns"),
+            "must name the actual schema: {e}"
+        );
+        assert!(e.contains("schemaPrefix"), "must name the field: {e}");
+    }
+
+    /// An EMPTY prefix is the same class — it is not "no prefix", it is
+    /// a prefix of `""`, which addresses a bare `myns` schema.
+    #[test]
+    fn empty_schema_prefix_is_refused() {
+        assert!(validate_backend(&pg_ns("myns", "")).is_err());
+    }
+
+    /// The refusal is scoped to pg. S3/local namespaces have no schema
+    /// and must not be dragged into it.
+    #[test]
+    fn non_pg_backends_are_unaffected_by_the_prefix_gate() {
         let n = ns(BackendConfig {
             r#type: BackendType::Local,
             pg: None,
