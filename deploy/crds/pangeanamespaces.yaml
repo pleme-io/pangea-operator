@@ -6,7 +6,8 @@ metadata:
 spec:
   group: pangea.pleme.io
   names:
-    categories: []
+    categories:
+    - pangea
     kind: PangeaNamespace
     plural: pangeanamespaces
     shortNames:
@@ -211,10 +212,19 @@ spec:
                   type: string
                 description: Default tags to apply to all resources in this namespace.
                 type: object
+              defaultVariables:
+                additionalProperties: true
+                description: Namespace-default VARIABLES inherited by every template using this namespace — the OUTERMOST layer of the config-inheritance cascade (P1, Terragrunt `root.hcl` parity). Deep-merged under the workspace's and the template's variables (`controller::config_cascade`); a template inherits these fleet-wide defaults and overrides per key.
+                nullable: true
+                type: object
               description:
                 description: Description of this Pangea namespace.
                 nullable: true
                 type: string
+              suspend:
+                default: false
+                description: When true, the namespace controller skips reconciliation entirely — no schema provisioning, no backend health verification, no status updates. Use to temporarily quiesce a single namespace without affecting siblings. Compose with the cluster-scoped `OperatorPolicy/default` for fleet-wide pause.
+                type: boolean
             required:
             - backend
             type: object
