@@ -20,12 +20,47 @@
 //! bridge: magma reads tofu's real rows, so a magma `plan` matches tofu's
 //! plan (the parity gate) and a cut-over does not re-create anything.
 //!
-//! # Identifier quoting
+//! # Identifier quoting — ONE derivation, shared
 //!
 //! The schema name embeds namespace + template names, which contain
 //! hyphens (`pangea_cloudflare-pleme_cloudflare-pleme_states`), so it MUST
 //! be a double-quoted SQL identifier. Inputs are k8s object names
-//! (`[a-z0-9.-]`), but we defensively double any embedded `"`.
+//! (`[a-z0-9.-]`).
+//!
+//! That identifier is assembled by
+//! [`crate::backend::schema::tofu_state_table_ident`] and nowhere else.
+//! Until 2026-08-02 this module assembled it itself, byte-for-byte
+//! alongside `ArtifactStore::live_state_table` — the same address
+//! derived twice, and only the artifact-store copy ran the injection
+//! guard.
+//!
+//! ## What a rejection does at runtime
+//!
+//! [`TofuPgStateBackend::states_table`] is now fallible, so every
+//! `StateBackend` method on this type can return `Error::Config` before
+//! it touches the pool. That error is not new plumbing: all five methods
+//! already return `Result`, so it propagates exactly like a connection
+//! failure — up through the magma executor into the reconcile, landing
+//! on `status.lastError` and requeueing the template. **No state is read
+//! or written on that path**, which is the point: the previous code
+//! escaped the offending name and ran the query anyway.
+//!
+//! It cannot fire for the live fleet. A rejection needs a `(schema,
+//! template)` pair that still fails `is_valid_identifier` after
+//! `-`/`.` → `_`, i.e. a name carrying a quote, semicolon, whitespace or
+//! control byte, a name longer than 63 bytes, or one starting with a
+//! digit. Every template reconciling on camelot-eks on 2026-08-02 is
+//! lowercase, letter-initial and ≤40 bytes — pinned as a corpus in
+//! [`tests::every_live_pair_assembles`]. And a template that DID carry
+//! such a name was already failing on the production magma path, where
+//! `ArtifactStore::live_state_table` / `ensure_tofu_states_table` have
+//! always applied this guard: unification makes the two agree rather
+//! than one silently succeeding while the other refused.
+//!
+//! Honest tier: **only-mitigated**. This is a `Result::Err`, not an
+//! unrepresentable state — nothing stops a caller passing a bad `&str`.
+//! Phase 3 of `crd::schema_identity` (a `SchemaName` newtype) is what
+//! would make it parse-time-rejected.
 //!
 //! # Data column is TEXT
 //!
@@ -54,14 +89,21 @@ impl TofuPgStateBackend {
     }
 
     /// `"{schema}_{template}_states".states` — the OpenTofu pg-backend
-    /// table. The schema is double-quoted (it contains hyphens); the
-    /// `states` table name is a fixed, safe identifier.
-    fn states_table(schema_name: &str, template_name: &str) -> String {
-        let schema = format!("{schema_name}_{template_name}_states");
-        // Defensive: double any embedded quote so the identifier stays
-        // well-formed even for unexpected input.
-        let quoted = schema.replace('"', "\"\"");
-        format!("\"{quoted}\".states")
+    /// table.
+    ///
+    /// Assembly is NOT done here any more: it is
+    /// [`crate::backend::schema::tofu_state_table_ident`], the one
+    /// derivation this backend now shares with
+    /// `ArtifactStore::live_state_table`. See that function for why the
+    /// two were unified and what the previous divergence was.
+    ///
+    /// **This is why the function is now fallible.** The old local copy
+    /// only doubled embedded quotes; it never ran the injection guard.
+    /// The shared derivation does, so a `(schema, template)` pair that
+    /// carries a character no k8s object name can hold now returns
+    /// `Error::Config` instead of being escaped and queried.
+    fn states_table(schema_name: &str, template_name: &str) -> Result<String> {
+        crate::backend::schema::tofu_state_table_ident(schema_name, template_name)
     }
 }
 
@@ -73,7 +115,7 @@ impl StateBackend for TofuPgStateBackend {
         template_name: &str,
         state_name: &str,
     ) -> Result<Option<StateEntry>> {
-        let table = Self::states_table(schema_name, template_name);
+        let table = Self::states_table(schema_name, template_name)?;
         // `data` is TEXT in the OpenTofu pg backend; read as String.
         let query = format!("SELECT id, name, data FROM {table} WHERE name = $1 LIMIT 1");
 
@@ -119,7 +161,7 @@ impl StateBackend for TofuPgStateBackend {
         state_name: &str,
         data: &[u8],
     ) -> Result<i64> {
-        let table = Self::states_table(schema_name, template_name);
+        let table = Self::states_table(schema_name, template_name)?;
         // The state JSON is UTF-8; bind as &str into the TEXT column.
         let text = std::str::from_utf8(data)
             .map_err(|e| Error::Config(format!("state bytes are not valid UTF-8: {e}")))?;
@@ -154,7 +196,7 @@ impl StateBackend for TofuPgStateBackend {
         template_name: &str,
         state_name: &str,
     ) -> Result<bool> {
-        let table = Self::states_table(schema_name, template_name);
+        let table = Self::states_table(schema_name, template_name)?;
         let query = format!("DELETE FROM {table} WHERE name = $1");
         let result = sqlx::query(&query)
             .bind(state_name)
@@ -165,7 +207,7 @@ impl StateBackend for TofuPgStateBackend {
     }
 
     async fn list_states(&self, schema_name: &str, template_name: &str) -> Result<Vec<StateEntry>> {
-        let table = Self::states_table(schema_name, template_name);
+        let table = Self::states_table(schema_name, template_name)?;
         let query = format!("SELECT id, name, data FROM {table} ORDER BY id DESC");
         let rows: Vec<(i64, String, Option<String>)> = sqlx::query_as(&query)
             .fetch_all(self.pool.as_ref())
@@ -187,25 +229,116 @@ impl StateBackend for TofuPgStateBackend {
 mod tests {
     use super::*;
 
+    use crate::backend::ArtifactStore;
+
+    /// Every `(schema_name, template_name)` pair reconciling on
+    /// camelot-eks, counted 2026-08-02: 16 `InfrastructureTemplate`s
+    /// across the two `PangeaNamespace`s (`camelot`,
+    /// `pleme-io-opensource`). `schema_name` is
+    /// `crd::schema_identity::template_schema_name`'s output for each.
+    ///
+    /// This is the denominator for the "cannot fire live" claim in the
+    /// module doc. It is a dated snapshot: a template added after that
+    /// date is not in it.
+    const LIVE_PAIRS: &[(&str, &str)] = &[
+        ("pangea_camelot", "akeyless-dev-shaar-concentrator"),
+        ("pangea_camelot", "camelot-breathe-controller-iam"),
+        ("pangea_camelot", "camelot-eks"),
+        ("pangea_camelot", "camelot-eks-coredns-addon"),
+        ("pangea_camelot", "camelot-eks-flux-bootstrap"),
+        ("pangea_camelot", "camelot-eks-karpenter-controller-iam"),
+        ("pangea_camelot", "camelot-eks-karpenter-interruption"),
+        ("pangea_camelot", "camelot-eks-load-balancer-controller-iam"),
+        ("pangea_camelot", "camelot-eks-nacl-reassociate-fix"),
+        ("pangea_camelot", "camelot-eks-nacl-smtp-egress"),
+        ("pangea_camelot", "camelot-eks-node-subnets"),
+        ("pangea_camelot", "camelot-eks-shaar-concentrator"),
+        ("pangea_camelot", "camelot-eks-sui-nlb-sg"),
+        ("pangea_camelot", "camelot-eks-vpc-cni-addon"),
+        ("pangea_camelot", "camelot-rabbitmq-topology"),
+        ("pangea_pleme-io-opensource", "pleme-io-opensource"),
+    ];
+
     #[test]
     fn states_table_matches_opentofu_pg_layout() {
         // Verified live: pangea_cloudflare-pleme_cloudflare-pleme_states.states
         assert_eq!(
-            TofuPgStateBackend::states_table("pangea_cloudflare-pleme", "cloudflare-pleme"),
+            TofuPgStateBackend::states_table("pangea_cloudflare-pleme", "cloudflare-pleme")
+                .unwrap(),
             "\"pangea_cloudflare-pleme_cloudflare-pleme_states\".states"
         );
         // rio-architectures shared namespace
         assert_eq!(
-            TofuPgStateBackend::states_table("pangea_rio-infra", "rio-zot-cloudflare-tunnel"),
+            TofuPgStateBackend::states_table("pangea_rio-infra", "rio-zot-cloudflare-tunnel")
+                .unwrap(),
             "\"pangea_rio-infra_rio-zot-cloudflare-tunnel_states\".states"
         );
     }
 
+    /// **The anti-duplication gate.**
+    ///
+    /// The two derivations of `"{schema}_{template}_states".states` are
+    /// now one function. This pins that: if someone reintroduces a local
+    /// assembly here that differs from the artifact store's by a single
+    /// byte, the pair addresses two different Postgres schemas and the
+    /// atomic apply commits state where the plan will not find it.
+    ///
+    /// Corpus is the live pairs plus the hyphen/dot shapes a
+    /// normalization would mangle — the same shapes
+    /// `crd::schema_identity` guards.
     #[test]
-    fn embedded_quote_is_doubled() {
-        // Defensive identifier hygiene — a stray quote can't break out.
-        let t = TofuPgStateBackend::states_table("pangea_x\"y", "t");
-        assert_eq!(t, "\"pangea_x\"\"y_t_states\".states");
-        assert!(!t.contains("x\"y"), "raw quote must be escaped");
+    fn states_table_agrees_with_artifact_store() {
+        let extra: &[(&str, &str)] = &[
+            ("pangea_cloudflare-pleme", "cloudflare-pleme"),
+            ("pangea_rio-infra", "rio-zot-cloudflare-tunnel"),
+            ("pangea_a.b", "c.d"),
+            ("pangea_with-hyphen", "with.dot"),
+            ("pangea_under_score", "plain"),
+        ];
+        for (schema, template) in LIVE_PAIRS.iter().chain(extra) {
+            assert_eq!(
+                TofuPgStateBackend::states_table(schema, template).unwrap(),
+                ArtifactStore::live_state_table(schema, template).unwrap(),
+                "the state-table identifier diverged between the tofu backend and \
+                 the artifact store for {schema}/{template} — these address the SAME \
+                 live rows and MUST be byte-identical"
+            );
+        }
+    }
+
+    /// Every live pair assembles. This is the denominator behind the
+    /// module doc's "the new rejection cannot fire on the live fleet" —
+    /// asserted, not asserted-by-inspection.
+    #[test]
+    fn every_live_pair_assembles() {
+        assert_eq!(LIVE_PAIRS.len(), 16, "live corpus size, counted 2026-08-02");
+        for (schema, template) in LIVE_PAIRS {
+            let t = TofuPgStateBackend::states_table(schema, template);
+            assert!(
+                t.is_ok(),
+                "live pair {schema}/{template} must still assemble — a rejection here \
+                 is a production outage, not a guard doing its job"
+            );
+        }
+    }
+
+    /// The behaviour change, stated as a test rather than left implicit.
+    ///
+    /// This input used to be ACCEPTED here (escaped to
+    /// `"pangea_x""y_t_states".states` and queried) while
+    /// `ArtifactStore::live_state_table` refused it. Now both refuse.
+    #[test]
+    fn embedded_quote_is_rejected_by_both_derivations() {
+        assert!(TofuPgStateBackend::states_table("pangea_x\"y", "t").is_err());
+        assert!(ArtifactStore::live_state_table("pangea_x\"y", "t").is_err());
+    }
+
+    /// The rest of the injection corpus, now enforced on this side too.
+    #[test]
+    fn states_table_rejects_injection_attempts() {
+        assert!(TofuPgStateBackend::states_table("a; DROP TABLE x", "t").is_err());
+        assert!(TofuPgStateBackend::states_table("a b", "t").is_err());
+        assert!(TofuPgStateBackend::states_table("a", "t' OR '1'='1").is_err());
+        assert!(TofuPgStateBackend::states_table("a", "t; DROP SCHEMA public CASCADE").is_err());
     }
 }

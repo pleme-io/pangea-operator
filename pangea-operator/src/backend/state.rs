@@ -63,6 +63,19 @@ impl StateStore {
     /// `TofuPgStateBackend`'s folded `"{schema}_{template}_states".states`
     /// layout).
     ///
+    /// **Not a duplicate of the tofu state-table derivation — do not
+    /// "unify" it.** A 2026-08-02 diagnostic named this function as the
+    /// twin of `TofuPgStateBackend::states_table`; it is not. This emits
+    /// `"{schema}"."{template}_states"` — a table INSIDE the namespace
+    /// schema — while that one emits
+    /// `"{schema}_{template}_states".states`, a `states` table inside a
+    /// per-template folded schema. Different physical layouts, different
+    /// rows. The real duplicate was
+    /// `TofuPgStateBackend::states_table` vs
+    /// `ArtifactStore::live_state_table`, unified in
+    /// `backend::schema::tofu_state_table_ident`. Collapsing this one
+    /// into that would re-point `StateStore` at rows it does not own.
+    ///
     /// Same injection guard as `live_state_schema`: validate the
     /// sanitized projection (`-`/`.` → `_`) through [`is_valid_identifier`]
     /// — a name that still fails after that substitution carries a

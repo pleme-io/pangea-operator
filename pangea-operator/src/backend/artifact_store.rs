@@ -59,7 +59,7 @@ use tracing::{debug, info};
 #[cfg(feature = "executor_magma")]
 use tracing::warn;
 
-use crate::backend::schema::is_valid_identifier;
+use crate::backend::schema::{tofu_state_schema_ident, tofu_state_table_ident};
 use crate::error::{Error, Result};
 
 /// Artifact kind discriminator stored in the `kind` column. Four
@@ -509,47 +509,34 @@ impl ArtifactStore {
         Ok(())
     }
 
-    /// Assemble + validate the live OpenTofu state-table identifier for
-    /// a `(schema, template)` pair — the quoted
+    /// The live OpenTofu state-table identifier for a
+    /// `(schema, template)` pair — the quoted
     /// `"{schema}_{template}_states".states` form `TofuPgStateBackend`
-    /// reads. Gates the component identifiers through
-    /// [`is_valid_identifier`] (rejecting the leading/embedded chars an
-    /// injection would need) and defensively doubles any embedded quote.
+    /// reads.
     ///
-    /// k8s object names use `[a-z0-9.-]`; hyphens and dots are NOT valid
-    /// SQL identifier characters, which is exactly why the assembled
-    /// schema name is double-quoted. `is_valid_identifier` would reject
-    /// those names, so we validate the SANITIZED token (hyphens/dots →
-    /// underscores) purely as an injection guard, then quote the
-    /// original.
+    /// Assembly + the injection guard are
+    /// [`tofu_state_table_ident`](crate::backend::schema::tofu_state_table_ident),
+    /// which `TofuPgStateBackend` also calls. The two used to derive this
+    /// identifier independently and only THIS side ran the guard; see
+    /// that function for the unification and the k8s-name/quoting
+    /// rationale.
     pub fn live_state_table(schema_name: &str, template_name: &str) -> Result<String> {
-        let schema = Self::live_state_schema(schema_name, template_name)?;
-        Ok(format!("{schema}.states"))
+        tofu_state_table_ident(schema_name, template_name)
     }
 
-    /// Assemble + validate just the quoted OpenTofu pg-backend SCHEMA
-    /// identifier for a `(schema, template)` pair — the
-    /// `"{schema}_{template}_states"` form (no `.states` table suffix).
-    /// Used by [`ensure_tofu_states_table`] to `CREATE SCHEMA` and to
-    /// qualify the `states` table. Same injection guard as
-    /// [`live_state_table`]: validates the sanitized projection
-    /// (`-`/`.` → `_`) through [`is_valid_identifier`], then quotes the
-    /// original (k8s names carry hyphens/dots that must be double-quoted).
+    /// Just the quoted OpenTofu pg-backend SCHEMA identifier for a
+    /// `(schema, template)` pair — the `"{schema}_{template}_states"`
+    /// form (no `.states` table suffix). Used by
+    /// [`ensure_tofu_states_table`](Self::ensure_tofu_states_table) to
+    /// `CREATE SCHEMA` and to qualify the `states` table.
+    ///
+    /// Assembly + guard are
+    /// [`tofu_state_schema_ident`](crate::backend::schema::tofu_state_schema_ident).
     pub fn live_state_schema(schema_name: &str, template_name: &str) -> Result<String> {
-        // Injection guard on a sanitized projection: a name that still
-        // fails after `-`/`.` → `_` carries a character no k8s name can
-        // (quote, semicolon, whitespace, control) — refuse it.
-        let sanitize = |s: &str| s.replace(['-', '.'], "_");
-        if !is_valid_identifier(&sanitize(schema_name))
-            || !is_valid_identifier(&sanitize(template_name))
-        {
-            return Err(Error::Config(format!(
-                "invalid schema/template identifier for state table: {schema_name}/{template_name}"
-            )));
-        }
-        let schema = format!("{schema_name}_{template_name}_states");
-        let quoted = schema.replace('"', "\"\"");
-        Ok(format!("\"{quoted}\""))
+        // The assembly + guard live in `backend::schema`, which is also
+        // what `TofuPgStateBackend` calls — the two used to derive this
+        // identifier independently. See `tofu_state_schema_ident`.
+        tofu_state_schema_ident(schema_name, template_name)
     }
 
     /// Idempotently create the OpenTofu `pg`-backend schema + `states`
@@ -591,9 +578,10 @@ impl ArtifactStore {
     /// a lossless widening and the attached sequence stays valid, so the ALTER
     /// is a safe no-op once the column is already bigint.
     ///
-    /// Identifiers are gated through [`live_state_schema`] →
-    /// [`is_valid_identifier`] (the injection guard), so no caller input
-    /// can break out of the quoted schema identifier.
+    /// Identifiers are gated through
+    /// [`live_state_schema`](Self::live_state_schema) →
+    /// `schema::is_valid_identifier` (the injection guard), so no caller
+    /// input can break out of the quoted schema identifier.
     pub async fn ensure_tofu_states_table(
         &self,
         schema_name: &str,

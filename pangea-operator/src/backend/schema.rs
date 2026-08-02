@@ -152,14 +152,19 @@ impl SchemaManager {
 /// one canonical guard rather than re-implementing it — the SQL-injection
 /// defense lives in exactly one place.
 ///
-/// DELIBERATELY UNCHANGED. Three other call sites
-/// (`artifact_store::live_state_schema`, `live_state_table`,
+/// DELIBERATELY UNCHANGED. Three call sites
+/// ([`checked_quoted_ident`], [`tofu_state_schema_ident`],
 /// `state::qualified_state_table`) use this as their injection guard, by
 /// validating a SANITIZED projection of the name and then quoting the
 /// original. Widening this function to accept hyphens — which I tried
 /// first — silently removes the guard from all three, and their own tests
 /// caught it. Keep it strict; use [`checked_quoted_ident`] to accept a
 /// real-world name.
+///
+/// (Until 2026-08-02 this list named `artifact_store::live_state_schema`
+/// and `live_state_table` directly; both now route through
+/// [`tofu_state_schema_ident`], which is also what `TofuPgStateBackend`
+/// calls.)
 pub(crate) fn is_valid_identifier(name: &str) -> bool {
     if name.is_empty() || name.len() > 63 {
         return false;
@@ -221,6 +226,68 @@ pub(crate) fn checked_quoted_ident(name: &str) -> Result<String> {
         return Err(Error::Config(format!("Invalid schema name: {name}")));
     }
     Ok(format!("\"{}\"", name.replace('"', "\"\"")))
+}
+
+/// THE derivation of OpenTofu's `pg`-backend **schema** identifier for a
+/// `(namespace-schema, template)` pair — the quoted
+/// `"{schema}_{template}_states"` form.
+///
+/// # Why it lives here and not in either of its two callers
+///
+/// It had TWO independent implementations that both addressed the same
+/// live rows:
+///
+///   1. `ArtifactStore::live_state_schema` — validated, via the
+///      sanitized-projection guard below.
+///   2. `TofuPgStateBackend::states_table` — **unvalidated**. It skipped
+///      [`is_valid_identifier`] entirely and only doubled embedded
+///      quotes.
+///
+/// That is the worst shape a duplicate can take: one address, two
+/// different opinions about what may reach Postgres. They agreed on
+/// every real k8s name and disagreed only on the guard, so no test
+/// could ever catch the divergence by comparing outputs. Both callers
+/// now delegate here, and `states_table_agrees_with_artifact_store`
+/// (in `tofu_pg_state_backend`) pins that they cannot drift apart again.
+///
+/// The guard is [`checked_quoted_ident`]'s, applied per COMPONENT
+/// rather than to the assembled string: validate the sanitized
+/// projection (`-`/`.` → `_`) through [`is_valid_identifier`], then
+/// quote the ORIGINAL concatenation. k8s object names carry hyphens and
+/// dots, which are not legal in a bare SQL identifier — quoting is what
+/// makes them safe. The sanitized check is what refuses a name carrying
+/// a character no k8s name can hold (quote, semicolon, whitespace,
+/// control byte).
+///
+/// TYPED EMISSION note: the `format!`s here assemble a string IDENTITY
+/// that names live Postgres state, not syntax. See
+/// `crd::schema_identity` for the same carve-out and the same reason —
+/// rendering it differently is a data-addressing change, not a
+/// refactor.
+pub(crate) fn tofu_state_schema_ident(schema_name: &str, template_name: &str) -> Result<String> {
+    // Injection guard on a sanitized projection: a name that still
+    // fails after `-`/`.` → `_` carries a character no k8s name can —
+    // refuse it.
+    let sanitize = |s: &str| s.replace(['-', '.'], "_");
+    if !is_valid_identifier(&sanitize(schema_name))
+        || !is_valid_identifier(&sanitize(template_name))
+    {
+        return Err(Error::Config(format!(
+            "invalid schema/template identifier for state table: {schema_name}/{template_name}"
+        )));
+    }
+    let schema = format!("{schema_name}_{template_name}_states");
+    let quoted = schema.replace('"', "\"\"");
+    Ok(format!("\"{quoted}\""))
+}
+
+/// THE derivation of OpenTofu's `pg`-backend state **table** identifier
+/// — [`tofu_state_schema_ident`] qualified with the fixed `states`
+/// table. `"{schema}_{template}_states".states`, the identifier the
+/// live system reads.
+pub(crate) fn tofu_state_table_ident(schema_name: &str, template_name: &str) -> Result<String> {
+    let schema = tofu_state_schema_ident(schema_name, template_name)?;
+    Ok(format!("{schema}.states"))
 }
 
 #[cfg(test)]
