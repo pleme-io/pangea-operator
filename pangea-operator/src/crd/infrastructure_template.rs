@@ -31,7 +31,8 @@ use strum::{Display, EnumString};
     printcolumn = r#"{"name":"Updated","type":"integer","jsonPath":".status.lastCycle.summary.updated"}"#,
     printcolumn = r#"{"name":"Drifted","type":"integer","jsonPath":".status.lastCycle.summary.driftedUncorrected"}"#,
     printcolumn = r#"{"name":"Healthy","type":"string","jsonPath":".status.conditions[?(@.type=='Healthy')].status"}"#,
-    printcolumn = r#"{"name":"Suspended","type":"boolean","jsonPath":".status.autoSuspended"}"#,
+    printcolumn = r#"{"name":"Suspended","type":"boolean","jsonPath":".spec.suspend"}"#,
+    printcolumn = r#"{"name":"AutoSusp","type":"boolean","jsonPath":".status.autoSuspended"}"#,
     printcolumn = r#"{"name":"Protected","type":"boolean","jsonPath":".spec.destroyProtection"}"#,
     printcolumn = r#"{"name":"Age","type":"date","jsonPath":".metadata.creationTimestamp"}"#
 )]

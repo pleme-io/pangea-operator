@@ -299,6 +299,54 @@ mod tests {
         assert!(!crds.is_empty());
     }
 
+    /// An InfrastructureTemplate can be halted two independent ways:
+    /// the author sets `spec.suspend`, or a ReactivePolicy Suspend
+    /// escalation sets `status.autoSuspended`. Both halt reconcile, and
+    /// neither implies the other, so a single column cannot report
+    /// "is this template halted" — it can only report one of the two
+    /// and read as authoritative about both.
+    ///
+    /// Measured on camelot-eks 2026-08-02: `camelot-eks-sui-nlb-sg` had
+    /// `spec.suspend: true` and printed `SUSPENDED false`, because the
+    /// column was bound to `autoSuspended` (correctly false — the
+    /// breaker had not tripped). The template had been halted 31h and
+    /// the surface an operator scans first said otherwise.
+    ///
+    /// `Suspended` is also bound to `.spec.suspend` on ReconciliationLoop,
+    /// so this keeps one column name meaning one thing fleet-wide.
+    #[test]
+    fn infrastructure_template_prints_both_suspension_mechanisms() {
+        let crd = InfrastructureTemplate::crd();
+        let columns: Vec<(String, String)> = crd
+            .spec
+            .versions
+            .iter()
+            .flat_map(|v| v.additional_printer_columns.iter().flatten())
+            .map(|c| (c.name.clone(), c.json_path.clone()))
+            .collect();
+
+        let path_of = |name: &str| -> Option<&str> {
+            columns
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, p)| p.as_str())
+        };
+
+        assert_eq!(
+            path_of("Suspended"),
+            Some(".spec.suspend"),
+            "the author-set halt must be visible, and under the same \
+             column name ReconciliationLoop uses for the same field; \
+             columns were {columns:?}"
+        );
+        assert_eq!(
+            path_of("AutoSusp"),
+            Some(".status.autoSuspended"),
+            "the ReactivePolicy circuit breaker must stay visible \
+             alongside it, not be displaced by it; columns were {columns:?}"
+        );
+    }
+
     #[test]
     fn test_generate_crds_contains_all_resources() {
         let crds = generate_crds();
