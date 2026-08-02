@@ -946,7 +946,20 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
         for (name, pc) in &cfg.providers {
             let fields: serde_json::Map<String, serde_json::Value> =
                 pc.fields.clone().into_iter().collect();
-            rendered.insert(name.clone(), serde_json::Value::Object(fields));
+            // `cfg.providers` is keyed by the typed `ProviderInstance` since
+            // magma db764fa (provider aliases), so this plain-JSON map takes
+            // its string form rather than the key itself.
+            //
+            // CAVEAT, recorded rather than papered over: `name()` drops the
+            // alias, so two instances of one provider type differing ONLY by
+            // alias collapse to the same key and the last wins. That is what
+            // this map did before aliases existed (it was keyed by a bare type
+            // string), so it is not a regression — but neither is it
+            // alias-correct, and a multi-account estate expressed via aliases
+            // is exactly what db764fa exists to support. The fix needs a
+            // decision about the rendered JSON's shape, so it is not taken
+            // silently here.
+            rendered.insert(name.name().to_string(), serde_json::Value::Object(fields));
         }
 
         let mut out: BTreeMap<String, serde_json::Value> = BTreeMap::new();
