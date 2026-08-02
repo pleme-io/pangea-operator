@@ -263,13 +263,35 @@ impl GemCache {
 /// env var is set. Other URL shapes (SSH, non-GitHub HTTPS) pass
 /// through unchanged.
 ///
+/// The thin env-reading adapter over [`inject_token`]. All the
+/// behaviour is in the pure function; this only decides where the
+/// token comes from, so a test never has to reach for the process
+/// environment to exercise the rewrite.
+fn inject_github_token(url: &str) -> String {
+    inject_token(url, std::env::var("PANGEA_GEM_AUTH_TOKEN").ok().as_deref())
+}
+
+/// The rewrite itself, with the token as a PARAMETER.
+///
 /// The token is the standard GitHub-Apps pattern accepted by
 /// github.com — works for fine-grained PATs, classic PATs, and
 /// installation tokens. Rewriting at clone time avoids needing to
 /// configure git credential helpers in the container image.
-fn inject_github_token(url: &str) -> String {
-    let token = match std::env::var("PANGEA_GEM_AUTH_TOKEN") {
-        Ok(t) if !t.is_empty() => t,
+///
+/// Why the token is an argument rather than a `std::env::var` read:
+/// `std::env` is process-global, so two tests in this module setting
+/// and clearing the same `PANGEA_GEM_AUTH_TOKEN` key raced each
+/// other's reads under `cargo test`'s default parallel execution —
+/// `inject_github_token_passthrough_when_unset` would observe the
+/// token a sibling test had just set. No ordering inside a single test
+/// body can fix a race between different test threads. Same root cause
+/// and same structural fix as `controller/reconciler.rs`'s
+/// `clamp_reconcile_workers` (2026-07): the function under test no
+/// longer touches the environment, so for these tests there is nothing
+/// left to race.
+fn inject_token(url: &str, token: Option<&str>) -> String {
+    let token = match token {
+        Some(t) if !t.is_empty() => t,
         _ => return url.to_string(),
     };
     let prefix = "https://github.com/";
@@ -374,37 +396,87 @@ mod tests {
         assert!(cache.entry_dir(".hidden", "main").is_err());
     }
 
+    // ── Token injection ──────────────────────────────────────────
+    //
+    // These call the pure `inject_token` with a literal `Option<&str>`
+    // — no `std::env::set_var` / `remove_var`. See that function's doc
+    // for the race they used to lose: three tests mutating the one
+    // process-global `PANGEA_GEM_AUTH_TOKEN` key, so
+    // `..._passthrough_when_unset` intermittently read a token a
+    // sibling had set. A pass under those conditions was luck, not
+    // proof. The env is now reachable from exactly one test below,
+    // which holds a mutex.
+
     #[test]
-    fn inject_github_token_passthrough_when_unset() {
-        std::env::remove_var("PANGEA_GEM_AUTH_TOKEN");
+    fn inject_token_passthrough_when_absent() {
         let url = "https://github.com/pleme-io/pangea-architectures";
-        assert_eq!(inject_github_token(url), url);
+        assert_eq!(inject_token(url, None), url);
     }
 
     #[test]
-    fn inject_github_token_rewrites_when_set() {
-        std::env::set_var("PANGEA_GEM_AUTH_TOKEN", "ghp_test123");
+    fn inject_token_passthrough_when_empty() {
+        // An empty env var must behave as unset, not produce
+        // `https://x-access-token:@github.com/...`.
         let url = "https://github.com/pleme-io/pangea-architectures";
-        let out = inject_github_token(url);
+        assert_eq!(inject_token(url, Some("")), url);
+    }
+
+    #[test]
+    fn inject_token_rewrites_when_present() {
+        let url = "https://github.com/pleme-io/pangea-architectures";
         assert_eq!(
-            out,
+            inject_token(url, Some("ghp_test123")),
             "https://x-access-token:ghp_test123@github.com/pleme-io/pangea-architectures"
         );
-        std::env::remove_var("PANGEA_GEM_AUTH_TOKEN");
     }
 
     #[test]
-    fn inject_github_token_passes_through_ssh_and_non_github() {
-        std::env::set_var("PANGEA_GEM_AUTH_TOKEN", "ghp_test123");
+    fn inject_token_passes_through_ssh_and_non_github() {
         let ssh = "git@github.com:pleme-io/pangea-architectures.git";
-        assert_eq!(inject_github_token(ssh), ssh, "ssh URL should pass through");
+        assert_eq!(
+            inject_token(ssh, Some("ghp_test123")),
+            ssh,
+            "ssh URL should pass through"
+        );
         let other = "https://gitlab.com/foo/bar";
         assert_eq!(
-            inject_github_token(other),
+            inject_token(other, Some("ghp_test123")),
             other,
             "non-github should pass through"
         );
+    }
+
+    /// Guards the ONE test that mutates process env. Matches the
+    /// manual-mutex pattern already used for this reason in
+    /// `config.rs` and `controller/reconciler.rs` (no `serial_test`
+    /// dependency for a single test).
+    ///
+    /// A mutex is the right tool HERE and the wrong tool above: the
+    /// thing under test is precisely "does the wrapper read that env
+    /// key", so the global cannot be injected away — it is the
+    /// subject. It only serializes this test against itself; nothing
+    /// else in the module touches the key any more.
+    static ENV_VAR_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn inject_github_token_reads_the_real_env_var() {
+        let _guard = ENV_VAR_TEST_GUARD
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+        let url = "https://github.com/pleme-io/pangea-architectures";
+
         std::env::remove_var("PANGEA_GEM_AUTH_TOKEN");
+        assert_eq!(inject_github_token(url), url);
+
+        std::env::set_var("PANGEA_GEM_AUTH_TOKEN", "ghp_test123");
+        assert_eq!(
+            inject_github_token(url),
+            "https://x-access-token:ghp_test123@github.com/pleme-io/pangea-architectures"
+        );
+
+        std::env::remove_var("PANGEA_GEM_AUTH_TOKEN");
+        assert_eq!(inject_github_token(url), url);
     }
 
     #[test]
