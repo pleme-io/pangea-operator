@@ -370,6 +370,42 @@ impl ArtifactStore {
         self.get(schema, template, kind::BUNDLE).await
     }
 
+    /// How many of the current plan's changes the resumable apply
+    /// engine has completed and checkpointed — `ApplyCursor::len()`.
+    ///
+    /// This is the operator's **progress term**: monotonic within a plan
+    /// (the cursor's mutators are additive-only) and durable across pod
+    /// restarts, which is exactly what a "is this template alive or
+    /// wedged?" judgement needs and what a wall clock cannot supply.
+    /// Consumed by the post-reconcile progress sample that maintains
+    /// `status.applyCursorAdvancedAt`.
+    ///
+    /// Shares `get_apply_cursor`'s failure posture: an absent or
+    /// undecodable row is `Ok(None)` — "no reading", never an error. A
+    /// progress *sensor* that failed loudly would take a reconcile down
+    /// over a cache row; the honest answer is that we have no reading,
+    /// and the caller falls back to the wall clock.
+    ///
+    /// Feature-agnostic like `get_bundle_bytes`, for the same reason:
+    /// its two callers (the cycle-receipt writer and the reactive-policy
+    /// stage) are not feature-gated. Without `executor_magma` there is
+    /// no cursor to read, and `None` states that honestly rather than
+    /// fabricating a zero.
+    pub async fn apply_cursor_len(&self, schema: &str, template: &str) -> Result<Option<u64>> {
+        #[cfg(feature = "executor_magma")]
+        {
+            Ok(self
+                .get_apply_cursor(schema, template)
+                .await?
+                .map(|c| c.len() as u64))
+        }
+        #[cfg(not(feature = "executor_magma"))]
+        {
+            let _ = (schema, template);
+            Ok(None)
+        }
+    }
+
     // ── The atomic apply op ──────────────────────────────────────────
 
     /// **THE ATOMIC APPLY OP.** Persist the post-apply state row and the

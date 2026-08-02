@@ -33,6 +33,49 @@ pub async fn apply_reactive_policy_internal(
     apply_reactive_policy(template, state).await
 }
 
+/// Read the durable apply frontier for this template, or `None` when
+/// there is no reading to be had.
+///
+/// **Only while `phase == Applying`.** The cursor is written by the
+/// resumable apply engine and read by nothing else, so sampling it in
+/// any other phase would buy a stale number at the cost of an artifact
+/// row on every reconcile of every template. The status carries the
+/// last Applying-phase reading forward untouched (see
+/// `track_apply_progress`), which is what the next entry into Applying
+/// compares against.
+///
+/// `None` is the honest answer in four cases — not the Applying phase,
+/// no artifact store (the DB-less / unit-test path), no cursor row yet,
+/// or an unreadable row. All four fall the judgement back to the
+/// pre-existing wall clock rather than inventing liveness.
+async fn sample_apply_frontier(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+) -> Option<u64> {
+    if template.status.as_ref().and_then(|s| s.phase) != Some(crate::crd::Phase::Applying) {
+        return None;
+    }
+    let store = state.artifact_store.as_ref()?;
+    let schema_name = crate::crd::template_schema_name(template);
+    let name = template.name_any();
+    match store.apply_cursor_len(&schema_name, &name).await {
+        Ok(count) => count,
+        Err(e) => {
+            // A failed progress read must never fail the reconcile, and
+            // must never be coerced into "no progress" — that would
+            // convert a DB blip into a force-reset of live work.
+            tracing::warn!(
+                %e,
+                schema = %schema_name,
+                template = %name,
+                "apply-frontier sample failed; phase timeout falls back to the wall clock \
+                 this reconcile (non-fatal)"
+            );
+            None
+        }
+    }
+}
+
 /// Resolve the cascade, evaluate, and apply the worst escalation if
 /// any reactive policy fires. Patches `status.lastEscalatedAt`,
 /// `status.lastEscalationReason`, the `Healthy` condition, and (for
@@ -47,8 +90,8 @@ async fn apply_reactive_policy(
     state: &ControllerState,
 ) -> Result<()> {
     use crate::controller::reactive::{
-        emit_escalation_log, evaluate, track_verified_blocked, workspace_reactive_policy,
-        EffectiveReactivePolicy, Escalation,
+        emit_escalation_log, evaluate, track_apply_progress, track_verified_blocked,
+        workspace_reactive_policy, EffectiveReactivePolicy, Escalation,
     };
     use crate::crd::ReactiveAction;
 
@@ -66,12 +109,29 @@ async fn apply_reactive_policy(
         .as_ref()
         .and_then(|s| track_verified_blocked(s, now));
 
-    // Compose a synthetic template with verified_blocked_since set,
-    // so evaluate sees the freshest clock without us needing to
-    // patch first. (We patch after evaluate decides.)
+    // Track the apply frontier — the one PROGRESS term the phase-timeout
+    // judgement has. Must also run before evaluate, for the same reason
+    // the verified-blocked clock does: `check_phase_timeout` reads it.
+    let prior_count = template.status.as_ref().and_then(|s| s.apply_cursor_count);
+    let prior_advanced_at = template
+        .status
+        .as_ref()
+        .and_then(|s| s.apply_cursor_advanced_at);
+    let (new_cursor_count, new_cursor_advanced_at) = track_apply_progress(
+        prior_count,
+        prior_advanced_at,
+        sample_apply_frontier(template, state).await,
+        now,
+    );
+
+    // Compose a synthetic template with verified_blocked_since and the
+    // freshly-sampled frontier set, so evaluate sees the freshest clocks
+    // without us needing to patch first. (We patch after evaluate decides.)
     let mut tmpl_for_eval = template.clone();
     if let Some(s) = tmpl_for_eval.status.as_mut() {
         s.verified_blocked_since = new_blocked_since;
+        s.apply_cursor_count = new_cursor_count;
+        s.apply_cursor_advanced_at = new_cursor_advanced_at;
     }
 
     let escalation = evaluate(&tmpl_for_eval, &effective, now);
@@ -214,6 +274,8 @@ async fn apply_reactive_policy(
         new_auto_suspended,
         escalated_at,
         escalation_reason.as_deref(),
+        new_cursor_count,
+        new_cursor_advanced_at,
     ) {
         tracing::debug!(
             "ReactivePolicy: no observable status change; skipping patch (avoids self-trigger watch loop)"
@@ -228,6 +290,8 @@ async fn apply_reactive_policy(
             "autoSuspended": new_auto_suspended,
             "lastEscalatedAt": escalated_at,
             "lastEscalationReason": escalation_reason,
+            "applyCursorCount": new_cursor_count,
+            "applyCursorAdvancedAt": new_cursor_advanced_at,
         }
     });
     crate::controller::status_patch::patch_status(template, &state.client, patch).await?;
@@ -583,6 +647,8 @@ fn reactive_policy_status_unchanged(
     new_auto_suspended: bool,
     new_escalated_at: Option<chrono::DateTime<chrono::Utc>>,
     new_escalation_reason: Option<&str>,
+    new_cursor_count: Option<u64>,
+    new_cursor_advanced_at: Option<chrono::DateTime<chrono::Utc>>,
 ) -> bool {
     let conditions_unchanged = prior_status.conditions.len() == new_conditions.len()
         && prior_status
@@ -602,6 +668,16 @@ fn reactive_policy_status_unchanged(
         && prior_status.auto_suspended == new_auto_suspended
         && prior_status.last_escalated_at == new_escalated_at
         && prior_status.last_escalation_reason.as_deref() == new_escalation_reason
+        // The frontier pair is part of the observable status, so it has
+        // to gate the patch too — otherwise a template whose ONLY change
+        // this reconcile is "the apply advanced" never persists that
+        // fact, and the progress-aware timeout it feeds reads a stale
+        // `applyCursorAdvancedAt` forever. `track_apply_progress` only
+        // moves the timestamp when the count actually changed, so this
+        // adds no steady-state churn: a template not in Applying samples
+        // `None` and carries the prior pair through byte-identically.
+        && prior_status.apply_cursor_count == new_cursor_count
+        && prior_status.apply_cursor_advanced_at == new_cursor_advanced_at
 }
 
 #[cfg(test)]
@@ -651,7 +727,16 @@ mod tests {
             "no reactive policies have fired",
         )];
         assert!(
-            !reactive_policy_status_unchanged(&prev, &new_cond, None, new_auto_suspended, None, None),
+            !reactive_policy_status_unchanged(
+                &prev,
+                &new_cond,
+                None,
+                new_auto_suspended,
+                None,
+                None,
+                None,
+                None,
+            ),
             "clearing autoSuspended true → false must force a PATCH so the park lift reaches the cluster"
         );
     }
@@ -717,7 +802,7 @@ mod tests {
             "no reactive policies have fired",
         )];
         assert!(
-            reactive_policy_status_unchanged(&prev, &new_cond, None, false, None, None),
+            reactive_policy_status_unchanged(&prev, &new_cond, None, false, None, None, None, None,),
             "must NOT patch when nothing observable changed (timestamp-only churn case)"
         );
     }
@@ -740,6 +825,8 @@ mod tests {
                 false,
                 Some(now),
                 Some("PhaseTimeout"),
+                None,
+                None,
             ),
             "Healthy=True → False must force a PATCH"
         );
@@ -763,6 +850,8 @@ mod tests {
                 true, // suspend escalation fired
                 Some(now),
                 Some("ConsecutiveFailures"),
+                None,
+                None,
             ),
             "auto_suspended flip must force a PATCH"
         );
@@ -784,6 +873,8 @@ mod tests {
                 &new_cond,
                 Some(blocked), // started tracking verified-blocked
                 false,
+                None,
+                None,
                 None,
                 None,
             ),

@@ -216,6 +216,51 @@ fn check_failure(
     })
 }
 
+/// The most recent moment we have evidence the phase was doing real
+/// work — what `check_phase_timeout` actually measures from.
+///
+/// For every phase, entering it is evidence of life. For `Applying`
+/// there is a second, better witness: the durable apply frontier
+/// (`status.applyCursorAdvancedAt`, sampled from the `apply_cursor`
+/// artifact row the resumable engine checkpoints as it lands
+/// resources). Taking the LATER of the two is deliberate — it can only
+/// ever declare a template alive for longer, never shorter, than the
+/// pre-existing wall-clock rule. That is the safe direction here: a
+/// false "alive" costs one slow cycle, a false "wedged" force-resets
+/// real work (see `template::reactive_policy`'s force-reset).
+fn liveness_witness(
+    status: &crate::crd::InfrastructureTemplateStatus,
+    phase: Phase,
+    entered: DateTime<Utc>,
+) -> (DateTime<Utc>, &'static str) {
+    match (phase, status.apply_cursor_advanced_at) {
+        (Phase::Applying, Some(advanced)) if advanced > entered => {
+            (advanced, "applyCursorAdvancedAt")
+        }
+        _ => (entered, "phaseEnteredAt"),
+    }
+}
+
+/// Is this phase stuck? A phase times out when nothing has witnessed
+/// it making progress for longer than its threshold.
+///
+/// **Progress, not duration.** Before 2026-08-01 this compared
+/// `now - phaseEnteredAt` and nothing else, so it could not tell
+/// healthy-and-slow from wedged: the 846-repo / 2777-resource
+/// `pleme-io-opensource` workspace measured a 651s plan against a 600s
+/// bound on 2026-07-27 and was force-reset every cycle for the crime
+/// of being large. For `Applying` the operator now has a real progress
+/// term — the resumable engine's `ApplyCursor`, whose length is
+/// monotonic across reconciles — so the predicate measures from the
+/// last frontier advance instead. An apply that is still landing
+/// resources is alive however long it has taken; one whose frontier
+/// has not moved for the threshold is wedged.
+///
+/// This is a **better predicate, not an impossibility proof.** Nothing
+/// here makes a wedge unrepresentable — see the module tests and the
+/// `Compiling`/`Planning` arms below, which remain purely wall-clock
+/// because magma's plan is a single non-resumable call
+/// (`magma_plan::plan`) with no frontier to report.
 fn check_phase_timeout(
     status: &crate::crd::InfrastructureTemplateStatus,
     policy: &PhaseTimeoutPolicy,
@@ -232,20 +277,61 @@ fn check_phase_timeout(
     };
     let threshold = parse_duration(threshold_str)?;
     let chrono_threshold = ChronoDuration::from_std(threshold).ok()?;
-    if now.signed_duration_since(entered) < chrono_threshold {
+    let (since, witness) = liveness_witness(status, phase, entered);
+    if now.signed_duration_since(since) < chrono_threshold {
         return None;
     }
     Some(Trigger {
         action: policy.on_timeout,
         reason: format!("PhaseTimeout:{phase}"),
+        // Name the witness: an operator reading this event needs to
+        // know whether we judged by the clock or by the frontier, and
+        // for Applying whether a frontier was available at all.
         message: format!(
-            "stuck in phase {} for {}s (threshold: {})",
+            "no progress in phase {} for {}s measured from {} (threshold: {}; \
+             phase entered {}s ago, appliedCount: {})",
             phase,
+            now.signed_duration_since(since).num_seconds(),
+            witness,
+            threshold_str,
             now.signed_duration_since(entered).num_seconds(),
-            threshold_str
+            status
+                .apply_cursor_count
+                .map_or_else(|| "(none)".to_string(), |c| c.to_string()),
         ),
         routing: policy.routing.clone(),
     })
+}
+
+/// Fold a freshly-observed apply frontier size into the tracked
+/// `(applyCursorCount, applyCursorAdvancedAt)` pair. Pure; the caller
+/// does the artifact-store read and the status patch.
+///
+/// Three cases, and each errs toward calling the template ALIVE:
+///
+///   * **Not sampled** (`observed == None` — not the Applying phase, no
+///     artifact store, no cursor row yet, undecodable row) — carry the
+///     prior pair through untouched. The judgement then falls back to
+///     `phaseEnteredAt`, exactly the pre-existing wall-clock rule.
+///   * **Changed** — stamp `now`. A *decrease* stamps too: the cursor
+///     is plan-bound, so a smaller count means a different plan began
+///     applying, which is fresh work rather than a stall.
+///   * **Unchanged** — keep the prior timestamp, or stamp `now` if we
+///     have never observed this template before. Never back-date: the
+///     first sighting of a count tells us nothing about how long it
+///     has been sitting there, and guessing "a long time" would
+///     manufacture a wedge verdict out of no evidence.
+pub fn track_apply_progress(
+    prev_count: Option<u64>,
+    prev_advanced_at: Option<DateTime<Utc>>,
+    observed: Option<u64>,
+    now: DateTime<Utc>,
+) -> (Option<u64>, Option<DateTime<Utc>>) {
+    match observed {
+        None => (prev_count, prev_advanced_at),
+        Some(count) if prev_count != Some(count) => (Some(count), Some(now)),
+        Some(count) => (Some(count), prev_advanced_at.or(Some(now))),
+    }
 }
 
 fn check_verified_blocked(
@@ -639,5 +725,230 @@ mod tests {
             None,
         );
         assert!(line.contains("routing=(none)"));
+    }
+}
+
+/// Progress-aware phase-timeout tests.
+///
+/// The incident: on 2026-07-27 the 846-repo / 2777-resource
+/// `pleme-io-opensource` workspace on camelot-eks measured a 651s plan
+/// against a 600s bound. Every command was killed just short of
+/// completing, force-reset, and retried — `status.cycleCount` and the
+/// state serial both frozen at 35 — because the only question the
+/// operator knew how to ask was "how long has this phase lasted?".
+/// Healthy-and-slow and wedged answer that question identically.
+///
+/// `check_phase_timeout` now asks a second question for `Applying`:
+/// "has the durable apply frontier moved?". These tests pin BOTH
+/// directions of that answer, because a predicate that can only ever
+/// say "alive" is not a fix — it is the same blindness with the
+/// opposite sign.
+#[cfg(test)]
+mod apply_progress_tests {
+    use super::{evaluate, track_apply_progress, EffectiveReactivePolicy, Escalation};
+    use crate::crd::{InfrastructureTemplate, InfrastructureTemplateStatus, Phase};
+    use chrono::{DateTime, Duration as ChronoDuration, TimeZone, Utc};
+
+    fn now() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 8, 1, 12, 0, 0).unwrap()
+    }
+
+    /// A template in `Applying`, entered `entered_mins_ago` minutes ago,
+    /// whose frontier last advanced `advanced_mins_ago` minutes ago
+    /// (`None` = never observed advancing).
+    fn applying(
+        entered_mins_ago: i64,
+        advanced_mins_ago: Option<i64>,
+        count: Option<u64>,
+    ) -> InfrastructureTemplate {
+        let mut s = InfrastructureTemplateStatus {
+            phase: Some(Phase::Applying),
+            phase_entered_at: Some(now() - ChronoDuration::minutes(entered_mins_ago)),
+            apply_cursor_count: count,
+            ..Default::default()
+        };
+        s.apply_cursor_advanced_at = advanced_mins_ago.map(|m| now() - ChronoDuration::minutes(m));
+        let mut t: InfrastructureTemplate = serde_json::from_value(serde_json::json!({
+            "apiVersion": "pangea.pleme.io/v1alpha1",
+            "kind": "InfrastructureTemplate",
+            "metadata": { "name": "pleme-io-opensource", "namespace": "pleme-io-opensource" },
+            "spec": { "source": { "inline": "ignored" }, "pangeaNamespace": "test" }
+        }))
+        .unwrap();
+        t.status = Some(s);
+        t
+    }
+
+    // ── Direction 1: slow-but-advancing must NOT be reset ───────────
+
+    /// The load-bearing case. Default `applying` threshold is 30m; this
+    /// template has been applying for two HOURS — four times over the
+    /// bound — but landed a resource one minute ago. It is the healthiest
+    /// possible large workspace, and the pre-change predicate would have
+    /// force-reset it every cycle forever.
+    #[test]
+    fn slow_but_advancing_apply_is_alive() {
+        let t = applying(120, Some(1), Some(1_400));
+        assert_eq!(
+            evaluate(&t, &EffectiveReactivePolicy::default(), now()),
+            Escalation::Healthy,
+            "an apply still advancing its frontier is ALIVE however long it has taken — \
+             judging it by wall clock is the 2026-07-27 pleme-io-opensource wedge"
+        );
+    }
+
+    /// The frontier advanced 29 minutes ago against a 30m threshold —
+    /// inside the bound by one minute. Still alive. Pins that the
+    /// comparison is against the ADVANCE, not the phase entry (which is
+    /// two hours stale here).
+    #[test]
+    fn advance_just_inside_the_threshold_is_alive() {
+        let t = applying(120, Some(29), Some(1_400));
+        assert_eq!(
+            evaluate(&t, &EffectiveReactivePolicy::default(), now()),
+            Escalation::Healthy,
+        );
+    }
+
+    // ── Direction 2: genuinely stalled MUST be reset ────────────────
+
+    /// The other half of the truth table. Same two-hour apply, but the
+    /// frontier has not moved in 90 minutes — past the 30m bound. This
+    /// is a real wedge and MUST still trigger, or the change would have
+    /// traded one blindness for another.
+    #[test]
+    fn stalled_apply_still_triggers_phase_timeout() {
+        let t = applying(120, Some(90), Some(1_400));
+        match evaluate(&t, &EffectiveReactivePolicy::default(), now()) {
+            Escalation::Triggered {
+                reason, message, ..
+            } => {
+                assert_eq!(reason, "PhaseTimeout:Applying");
+                assert!(
+                    message.contains("applyCursorAdvancedAt"),
+                    "the event must name the witness it judged by; got: {message}"
+                );
+                assert!(
+                    message.contains("1400"),
+                    "the event must carry the frontier size so an operator can see \
+                     where it stopped; got: {message}"
+                );
+            }
+            other => panic!("a frontier stalled 90m past a 30m bound must trigger; got {other:?}"),
+        }
+    }
+
+    /// No frontier at all (tofu, DB-less, or an apply that has not
+    /// checkpointed yet) falls back to the pre-existing wall-clock rule
+    /// unchanged. Absence of a progress signal must not be read as
+    /// presence of progress.
+    #[test]
+    fn no_frontier_falls_back_to_wall_clock() {
+        let t = applying(120, None, None);
+        match evaluate(&t, &EffectiveReactivePolicy::default(), now()) {
+            Escalation::Triggered {
+                reason, message, ..
+            } => {
+                assert_eq!(reason, "PhaseTimeout:Applying");
+                assert!(
+                    message.contains("phaseEnteredAt"),
+                    "with no frontier the witness must be the phase clock; got: {message}"
+                );
+            }
+            other => panic!("wall-clock fallback must still trigger; got {other:?}"),
+        }
+    }
+
+    /// A stale `applyCursorAdvancedAt` left over from a PREVIOUS entry
+    /// into Applying must not shorten the window. `liveness_witness`
+    /// takes the later of the two, so an advance older than the phase
+    /// entry is ignored in favour of the phase entry.
+    #[test]
+    fn advance_older_than_phase_entry_is_ignored() {
+        // Entered Applying 5m ago; the last frontier advance was 3h ago
+        // (a previous plan's). Threshold is 30m — must be Healthy.
+        let t = applying(5, Some(180), Some(1_400));
+        assert_eq!(
+            evaluate(&t, &EffectiveReactivePolicy::default(), now()),
+            Escalation::Healthy,
+            "a pre-phase-entry advance must never make a fresh phase look stale"
+        );
+    }
+
+    /// Planning has no frontier — magma's `plan` is one non-resumable
+    /// call — so it stays purely wall-clock-judged. Pinned so a future
+    /// reader does not assume plan is covered.
+    #[test]
+    fn planning_is_still_wall_clock_judged() {
+        let mut t = applying(120, Some(1), Some(1_400));
+        if let Some(s) = t.status.as_mut() {
+            s.phase = Some(Phase::Planning);
+        }
+        match evaluate(&t, &EffectiveReactivePolicy::default(), now()) {
+            Escalation::Triggered {
+                reason, message, ..
+            } => {
+                assert_eq!(reason, "PhaseTimeout:Planning");
+                assert!(
+                    message.contains("phaseEnteredAt"),
+                    "planning must ignore the apply frontier entirely; got: {message}"
+                );
+            }
+            other => panic!("planning past 10m must still trigger; got {other:?}"),
+        }
+    }
+
+    // ── The tracker's truth table ───────────────────────────────────
+
+    #[test]
+    fn unsampled_frontier_carries_the_prior_pair_through() {
+        let earlier = now() - ChronoDuration::hours(1);
+        assert_eq!(
+            track_apply_progress(Some(7), Some(earlier), None, now()),
+            (Some(7), Some(earlier)),
+            "no reading must not disturb the record — the judgement falls back to the clock"
+        );
+    }
+
+    #[test]
+    fn a_growing_frontier_stamps_now() {
+        let earlier = now() - ChronoDuration::hours(1);
+        assert_eq!(
+            track_apply_progress(Some(7), Some(earlier), Some(8), now()),
+            (Some(8), Some(now())),
+        );
+    }
+
+    #[test]
+    fn a_shrinking_frontier_also_stamps_now() {
+        // The cursor is plan-bound: a smaller count means a NEW plan
+        // started applying. That is fresh work, not a stall.
+        let earlier = now() - ChronoDuration::hours(1);
+        assert_eq!(
+            track_apply_progress(Some(900), Some(earlier), Some(3), now()),
+            (Some(3), Some(now())),
+        );
+    }
+
+    #[test]
+    fn an_unchanged_frontier_keeps_the_prior_timestamp() {
+        let earlier = now() - ChronoDuration::hours(1);
+        assert_eq!(
+            track_apply_progress(Some(7), Some(earlier), Some(7), now()),
+            (Some(7), Some(earlier)),
+            "an unchanged count must not refresh the clock — that would make every \
+             stall look alive"
+        );
+    }
+
+    #[test]
+    fn a_first_observation_stamps_now_rather_than_back_dating() {
+        // We have never watched this template before. How long the count
+        // has been sitting at 7 is unknown; guessing "a long time" would
+        // manufacture a wedge verdict out of no evidence.
+        assert_eq!(
+            track_apply_progress(None, None, Some(7), now()),
+            (Some(7), Some(now())),
+        );
     }
 }

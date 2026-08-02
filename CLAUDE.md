@@ -130,6 +130,55 @@ every pass. If a workspace's phase durations approach these numbers, raise
 both together (and prefer sharding the workspace — one state boundary per
 template — over ever-growing static bounds).
 
+### `applying` is judged by PROGRESS; `compiling` / `planning` still by the clock
+
+Retuning those two numbers was never the fix — a bound that grows with the
+org is a bound you will outgrow again. Since 2026-08-01 the `applying`
+phase timeout measures from **the last time the apply frontier moved**, not
+from `phaseEnteredAt`:
+
+```
+since   = max(status.phaseEnteredAt, status.applyCursorAdvancedAt)
+wedged  = now - since >= phaseTimeout.applying
+```
+
+The frontier is `magma_apply::cursor::ApplyCursor::len()` — how many of the
+plan's changes the resumable engine has completed and checkpointed into
+`pangea_meta.artifacts(kind='apply_cursor')`. It is monotonic across
+reconciles and durable across pod restarts, which a wall clock is not. Two
+new status fields carry it (`controller/reactive.rs::liveness_witness` +
+`track_apply_progress`, sampled once per reconcile by
+`template/reactive_policy.rs::sample_apply_frontier` while and only while
+`phase == Applying`):
+
+| Field | Meaning |
+|---|---|
+| `status.applyCursorCount` | frontier size last observed |
+| `status.applyCursorAdvancedAt` | when that count last CHANGED |
+| `status.lastCycle.appliedCount` | frontier size when the receipt was written — what the engine *completed*, vs `summary`'s what the plan *intended* |
+
+So an apply that has run four hours but landed a resource a minute ago is
+**alive**; one whose frontier has not moved for the threshold is **wedged**.
+Same static 30m number, a predicate that can now tell the two apart.
+
+**Three honest limits, none of them rounded up.**
+
+1. **This is a better predicate, not an impossibility proof.** Nothing here
+   makes a wedge unrepresentable. Tier: *only-mitigated*.
+2. **Planning is NOT covered.** `apply_quantum_secs` is apply-only and
+   `magma_plan::plan` is one non-resumable call, so a plan has no partial
+   frontier to report and `PhaseTimeout:Planning` remains purely
+   wall-clock-judged — which is exactly the 651s shape of the 2026-07-27
+   wedge. Giving plan a frontier means making magma's planner resumable;
+   that is a magma change, not an operator one.
+3. **Absence of a signal is never read as presence of progress.** No cursor
+   (tofu, DB-less, first apply of a plan, unreadable row) falls back to the
+   pre-existing `phaseEnteredAt` rule. `liveness_witness` takes the LATER of
+   the two witnesses, so the change can only ever extend the window, never
+   shorten it. Deliberate: a false "alive" costs one slow cycle, a false
+   "wedged" force-resets real work (see `template/reactive_policy.rs`'s
+   force-reset, and its `is_awaiting_plan_approval` sibling guard).
+
 **Actions** (worst-action-wins on multi-trigger: Suspend > Page > Alert):
 - `Alert` — Warning event + `Healthy=False` condition + ntfy at
   default priority + structured log line. Reconcile loop continues.
@@ -175,6 +224,7 @@ status:
       imported: 0
       driftedUncorrected: 0
       failed: 0
+    appliedCount: 1              # frontier the engine actually completed
     outcomes:
       - address: cloudflare_workers_script.zuihitsu_webhook
         outcome: Updated         # Matched | Updated | Created | Destroyed
@@ -296,7 +346,10 @@ Pending → Verifying → Verified → Compiling → Initializing → Planning
 ```
 
 `status.phaseEnteredAt` bumps only on real transitions — that's what
-ReactivePolicy's `phaseTimeout` measures against.
+ReactivePolicy's `phaseTimeout` measures against for `Compiling` and
+`Planning`. `Applying` measures against `max(phaseEnteredAt,
+applyCursorAdvancedAt)` instead, so a slow-but-progressing apply is not
+mistaken for a wedged one — see the ReactivePolicy section above.
 
 ## Build
 

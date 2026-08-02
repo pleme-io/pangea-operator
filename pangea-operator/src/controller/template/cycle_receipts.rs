@@ -206,6 +206,11 @@ pub fn build_reconcile_cycle(
         bundle_ref,
         severity_rollup,
         lifecycle_phase,
+        // The apply frontier is an artifact-store read, and this
+        // function is pure by contract (see the doc comment above).
+        // `record_reconcile_cycle` — the only production caller, and
+        // the one already holding the store — fills it in.
+        applied_count: None,
     }
 }
 
@@ -469,7 +474,7 @@ pub async fn record_reconcile_cycle(
     // Does THIS cycle clear a stale lastError? See `cycle_is_clean`.
     let cycle_clean = cycle_is_clean(&result);
 
-    let new_cycle = build_reconcile_cycle(
+    let mut new_cycle = build_reconcile_cycle(
         next_cycle,
         started_at,
         drifts,
@@ -480,6 +485,27 @@ pub async fn record_reconcile_cycle(
         cycle_artifact,
         result,
     );
+
+    // How far the resumable apply engine actually got, from the durable
+    // frontier rather than from the plan's intent. Only magma has a
+    // cursor, and only the DB-backed path persists one — everywhere else
+    // the honest answer is `None`, never a fabricated zero. A read
+    // failure is already folded into `Ok(None)` by `apply_cursor_len`
+    // (a receipt field must never fail a reconcile).
+    if executor.name() == "magma" {
+        if let Some(store) = state.artifact_store.as_ref() {
+            let schema_name = crate::crd::template_schema_name(template);
+            match store.apply_cursor_len(&schema_name, &name).await {
+                Ok(count) => new_cycle.applied_count = count,
+                Err(e) => tracing::warn!(
+                    %e,
+                    schema = %schema_name,
+                    template = %name,
+                    "apply-cursor read failed in cycle receipt enrichment (non-fatal)"
+                ),
+            }
+        }
+    }
 
     // A clean cycle (no terminal error this cycle AND zero per-resource
     // failures) must CLEAR any stale lastError so the surfaced error

@@ -721,6 +721,27 @@ spec:
             description: Status of an InfrastructureTemplate.
             nullable: true
             properties:
+              applyCursorAdvancedAt:
+                description: |-
+                  When `applyCursorCount` was last observed to CHANGE — the liveness witness for the Applying phase.
+
+                  `ReactivePolicy.phaseTimeout.applying` measures from `max(phaseEnteredAt, applyCursorAdvancedAt)` rather than from `phaseEnteredAt` alone, so an apply that is slow but still landing resources is ALIVE however long it has taken, while one whose frontier has not moved for the threshold is wedged. See `controller::reactive::check_phase_timeout`.
+
+                  A *decrease* counts as an advance too: the cursor is plan-bound, so a smaller count means a new plan started applying — fresh work, not a stall.
+                format: date-time
+                nullable: true
+                type: string
+              applyCursorCount:
+                description: |-
+                  Size of the durable apply frontier the operator last observed — `magma_apply::cursor::ApplyCursor::len()`, i.e. how many of the current plan's changes the resumable engine has completed and checkpointed to `pangea_meta.artifacts(kind='apply_cursor')`.
+
+                  Sampled once per reconcile while `phase == Applying` (nowhere else — the read costs one artifact row, and no other phase has a cursor to read). `None` on the non-DB-backed path, before the first apply of a plan, or when the row is absent/undecodable.
+
+                  This is the operator's only *progress* term. Everything else in status is a clock; this is the quantity those clocks are supposed to be guarding.
+                format: uint64
+                minimum: 0.0
+                nullable: true
+                type: integer
               approvedPlanHash:
                 description: Hash of the approved plan. Set by the user to approve a pending plan. When this matches `pendingPlanHash`, the operator proceeds to apply.
                 nullable: true
@@ -970,6 +991,17 @@ spec:
                         minimum: 0.0
                         type: integer
                     type: object
+                  appliedCount:
+                    description: |-
+                      Size of the durable apply frontier when this receipt was written — `ApplyCursor::len()` for the plan the cycle ran.
+
+                      Distinct from `summary`: `summary` counts what the PLAN intended, this counts what the resumable engine actually completed and checkpointed, cumulatively across every reconcile that resumed the same plan. On a workspace whose apply spans several reconciles those two numbers diverge, and the gap is the answer to "how far did we actually get?".
+
+                      `None` for tofu cycles (no cursor), for the non-DB-backed path, and for cycles written before this field landed.
+                    format: uint64
+                    minimum: 0.0
+                    nullable: true
+                    type: integer
                   bundleRef:
                     description: |-
                       Reference to the `magma-bundle.json` artifact this cycle produced. Today the bundle lives in the operator pod's emptyDir at `/var/pangea/workspaces/<ns>/<name>/magma-bundle.json` and is only readable via `kubectl exec`. Carrying its `bundleId` + `sha256` here lets observers verify the bundle they fetched matches the cycle they read about. A follow-up slice publishes the bundle as a ConfigMap and extends this struct with `name`/`namespace` fields.

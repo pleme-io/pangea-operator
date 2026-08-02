@@ -1199,6 +1199,38 @@ pub struct InfrastructureTemplateStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phase_entered_at: Option<DateTime<Utc>>,
 
+    /// Size of the durable apply frontier the operator last observed —
+    /// `magma_apply::cursor::ApplyCursor::len()`, i.e. how many of the
+    /// current plan's changes the resumable engine has completed and
+    /// checkpointed to `pangea_meta.artifacts(kind='apply_cursor')`.
+    ///
+    /// Sampled once per reconcile while `phase == Applying` (nowhere
+    /// else — the read costs one artifact row, and no other phase has a
+    /// cursor to read). `None` on the non-DB-backed path, before the
+    /// first apply of a plan, or when the row is absent/undecodable.
+    ///
+    /// This is the operator's only *progress* term. Everything else in
+    /// status is a clock; this is the quantity those clocks are
+    /// supposed to be guarding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub apply_cursor_count: Option<u64>,
+
+    /// When `applyCursorCount` was last observed to CHANGE — the
+    /// liveness witness for the Applying phase.
+    ///
+    /// `ReactivePolicy.phaseTimeout.applying` measures from
+    /// `max(phaseEnteredAt, applyCursorAdvancedAt)` rather than from
+    /// `phaseEnteredAt` alone, so an apply that is slow but still
+    /// landing resources is ALIVE however long it has taken, while one
+    /// whose frontier has not moved for the threshold is wedged. See
+    /// `controller::reactive::check_phase_timeout`.
+    ///
+    /// A *decrease* counts as an advance too: the cursor is plan-bound,
+    /// so a smaller count means a new plan started applying — fresh
+    /// work, not a stall.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub apply_cursor_advanced_at: Option<DateTime<Utc>>,
+
     /// First time the `Verified` condition flipped to False. Used by
     /// ReactivePolicy.verifiedBlocked to detect templates whose gate
     /// has been blocked too long. Cleared when Verified flips back
@@ -1367,6 +1399,21 @@ pub struct ReconcileCycle {
     /// "where did this cycle stop?" without exec-reading the bundle.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lifecycle_phase: Option<String>,
+
+    /// Size of the durable apply frontier when this receipt was
+    /// written — `ApplyCursor::len()` for the plan the cycle ran.
+    ///
+    /// Distinct from `summary`: `summary` counts what the PLAN
+    /// intended, this counts what the resumable engine actually
+    /// completed and checkpointed, cumulatively across every reconcile
+    /// that resumed the same plan. On a workspace whose apply spans
+    /// several reconciles those two numbers diverge, and the gap is the
+    /// answer to "how far did we actually get?".
+    ///
+    /// `None` for tofu cycles (no cursor), for the non-DB-backed path,
+    /// and for cycles written before this field landed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applied_count: Option<u64>,
 }
 
 /// Per-cycle severity rollup — counts of resource changes per
