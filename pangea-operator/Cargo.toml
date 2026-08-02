@@ -75,43 +75,53 @@ shigoto-rank = { workspace = true }
 # In-process Ruby evaluator (feature-gated; see [features].embedded_ruby).
 pangea-ruby-eval = { path = "../pangea-ruby-eval", optional = true }
 
+# PINNED, and the pin is the point. These were `git =` with no `rev` while
+# `shigoto` three lines above was pinned, so a routine `cargo update` moved
+# the LIVE operator's IaC executor with nothing asking for it. Observed
+# 2026-08-02: both Cargo.lock and Cargo.gen.lock drifted 54c1307 -> 13e8485
+# unbidden during an unrelated change. Reverted before it shipped, but the
+# next lock refresh would have done it again.
+#
+# This rev is what camelot-eks is running. Bumping magma is now an explicit
+# commit that says so, which is the only safe shape for the component that
+# applies real cloud infrastructure.
 # Magma library suite (feature-gated; see [features].executor_magma).
 # Per theory/MAGMA-OPERATOR-BACKEND.md — every reconcile runs as
 # in-process Rust calls when MagmaExecutor is selected. Both
 # TofuExecutor and MagmaExecutor coexist; selection is per-CR.
-magma-backend          = { git = "https://github.com/pleme-io/magma", optional = true }
-magma-config           = { git = "https://github.com/pleme-io/magma", optional = true }
-magma-plan             = { git = "https://github.com/pleme-io/magma", optional = true }
-magma-apply            = { git = "https://github.com/pleme-io/magma", optional = true }
-magma-state            = { git = "https://github.com/pleme-io/magma", optional = true }
-magma-types            = { git = "https://github.com/pleme-io/magma", optional = true }
-magma-operator-backend = { git = "https://github.com/pleme-io/magma", optional = true }
+magma-backend          = { git = "https://github.com/pleme-io/magma", rev = "54c13078938e4742da823361e4164515272882d4", optional = true }
+magma-config           = { git = "https://github.com/pleme-io/magma", rev = "54c13078938e4742da823361e4164515272882d4", optional = true }
+magma-plan             = { git = "https://github.com/pleme-io/magma", rev = "54c13078938e4742da823361e4164515272882d4", optional = true }
+magma-apply            = { git = "https://github.com/pleme-io/magma", rev = "54c13078938e4742da823361e4164515272882d4", optional = true }
+magma-state            = { git = "https://github.com/pleme-io/magma", rev = "54c13078938e4742da823361e4164515272882d4", optional = true }
+magma-types            = { git = "https://github.com/pleme-io/magma", rev = "54c13078938e4742da823361e4164515272882d4", optional = true }
+magma-operator-backend = { git = "https://github.com/pleme-io/magma", rev = "54c13078938e4742da823361e4164515272882d4", optional = true }
 # Universal substrate law battery — used as preflight before plan/apply
 # so malformed workspaces fail loudly instead of reaching the live
 # backend. See theory/TESTING-SUBSTRATE.md.
-magma-test-laws        = { git = "https://github.com/pleme-io/magma", optional = true, features = ["preflight"] }
+magma-test-laws        = { git = "https://github.com/pleme-io/magma", rev = "54c13078938e4742da823361e4164515272882d4", optional = true, features = ["preflight"] }
 # Drift classification + DriftPolicy — every plan is classified per
 # the configured policy so operators can route AutoCorrect /
 # AutoCorrectWithAlert / RequireApproval / Refuse anomalies.
-magma-drift            = { git = "https://github.com/pleme-io/magma", optional = true }
+magma-drift            = { git = "https://github.com/pleme-io/magma", rev = "54c13078938e4742da823361e4164515272882d4", optional = true }
 # Universal Change / Plan / Action types (needed for drift conversion).
-magma-converge         = { git = "https://github.com/pleme-io/magma", optional = true }
+magma-converge         = { git = "https://github.com/pleme-io/magma", rev = "54c13078938e4742da823361e4164515272882d4", optional = true }
 # Typed compliance artifact — every reconcile produces a BLAKE3-attested
 # Bundle carrying plan + drift + lifecycle, written to disk between
 # plan and apply for compliance export + restart-safe handoff.
-magma-bundle           = { git = "https://github.com/pleme-io/magma", optional = true }
+magma-bundle           = { git = "https://github.com/pleme-io/magma", rev = "54c13078938e4742da823361e4164515272882d4", optional = true }
 # Lifecycle FSM — Idle -> Planning -> Approving -> Applying -> Verifying
 # -> Stable transitions tracked per reconcile so CR status reflects
 # phase, and bundles carry the full transition history.
-magma-fsm              = { git = "https://github.com/pleme-io/magma", optional = true }
+magma-fsm              = { git = "https://github.com/pleme-io/magma", rev = "54c13078938e4742da823361e4164515272882d4", optional = true }
 # In-memory Pangea Ruby gem dependency tree owner. M0 parses
 # Gemfile.lock + attests the closure; future M1-M5 materialize the
 # tree end-to-end so bundle install vanishes from operator startup.
-magma-rubygems         = { git = "https://github.com/pleme-io/magma", optional = true }
+magma-rubygems         = { git = "https://github.com/pleme-io/magma", rev = "54c13078938e4742da823361e4164515272882d4", optional = true }
 # BLAKE3-chained audit event stream + JsonLinesSink for durable
 # audit logs. Captured during plan/apply and threaded into
 # Bundle.audit per theory/CONVERGENCE-SUBSTRATE.md §IV.2.
-magma-stream           = { git = "https://github.com/pleme-io/magma", optional = true }
+magma-stream           = { git = "https://github.com/pleme-io/magma", rev = "54c13078938e4742da823361e4164515272882d4", optional = true }
 hex                    = { version = "0.4", optional = true }
 
 # Kubernetes

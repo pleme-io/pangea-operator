@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "35165a13bc69569c751d6fc2b4a5174c6994d0972ccf13cda76a890444bd2eaf",
+  "cargo_lock_sha256": "baca943ec699180a1c4be2086f3e97afd3875521982428e82fec0b344beb35ec",
   "manifest_sha256": {
     "Cargo.toml": "84287fd70317937d4d50908ac534a9ec1a75d78b59fe8f5586b841f85081f414",
     "pangea-cli/Cargo.toml": "ca2aab1f8bbb3576ab16e87da13f90adbdf0ad1abaad85d4eb55035ff11e2cba",
     "pangea-operator-mcp/Cargo.toml": "a1d5c3e03ec8073e6aabead01bed1962a05d23c93c43cda972539f2a7f46caf7",
-    "pangea-operator/Cargo.toml": "c519b3b8bbb14c8f739e684ac4b0b418782a770645e478ffbee79361280eb9a4",
+    "pangea-operator/Cargo.toml": "152814d3f52ecd74037e5c9875e1f6a59ea3ef0f10a7a29002da74c1445aca95",
     "pangea-ruby-eval/Cargo.toml": "5a64cec5dd2f83b31261d7c2c11f9caaa45d7b3a553dd1fd8796aa1ee1cfc00d",
     "pangea-types/Cargo.toml": "2230b8133bc7566ebfa8867396100d572b1467bffe421d187deed64aae4148ff"
   },
