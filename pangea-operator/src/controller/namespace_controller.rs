@@ -100,48 +100,141 @@ async fn reconcile_namespace(
     // Validate backend configuration
     validate_backend(&namespace)?;
 
-    // Verify backend connectivity. For Postgres this drives a REAL
-    // connection (liveness-probed with `SELECT 1`) over whichever route
-    // actually executes for this namespace — see
-    // [`verify_postgres_backend_with`]. The connected `BackendManager`
-    // is handed back and reused below for schema provisioning, so one
-    // reconcile tick pays for one connection, not two.
+    // Prove the backend, THEN publish what was proved. The ordering is
+    // the fix — see [`establish_backend`].
     let env = ControllerBackendEnv { state: &state };
-    let mut verified: Option<VerifiedBackend> = None;
-    let backend_ready: Result<bool> = match namespace.spec.backend.r#type {
-        BackendType::Pg => match verify_postgres_backend_with(&namespace, &env).await {
-            Ok(v) => {
-                info!(route = ?v.route, "PostgreSQL backend verified live");
-                verified = Some(v);
-                Ok(true)
-            }
-            Err(e) => Err(e),
-        },
-        BackendType::S3 => verify_s3_backend(&namespace).await,
-        BackendType::Local => Ok(true),
-    };
+    let readiness = establish_backend(&namespace, &env).await;
 
-    // Update status
-    let (ready, error_msg) = match backend_ready {
-        Ok(true) => (true, None),
-        Ok(false) => (false, Some("Backend verification pending".to_string())),
-        Err(e) => (false, Some(e.to_string())),
-    };
+    update_status(&namespace, &readiness, &state).await?;
 
-    update_status(&namespace, ready, error_msg, &state).await?;
-
-    if ready {
-        // Ensure PostgreSQL schema exists — reuses the connection
-        // established by `verify_postgres_backend_with` above.
-        // `verified` is `Some` exactly when the backend is Postgres AND
-        // the connectivity check succeeded, so this is unrepresentable
-        // without a live, verified connection.
-        if let Some(v) = verified.as_ref() {
-            ensure_schema(&namespace, &v.manager).await?;
-        }
+    if readiness.is_ready() {
         Ok(Action::requeue(DEFAULT_REQUEUE_INTERVAL))
     } else {
         Ok(Action::requeue(ERROR_REQUEUE_INTERVAL))
+    }
+}
+
+/// What a reconcile actually PROVED about a namespace's backend.
+///
+/// The schema name lives inside [`NamespaceReadiness::Ready`] rather than
+/// beside it, so the value that publishes a schema name is the same value
+/// that carries the proof the schema was created. There is no way to hand
+/// [`update_status`] a ready verdict and a schema name that came from
+/// different places.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NamespaceReadiness {
+    /// The backend answered, and its state schema exists.
+    Ready {
+        /// `Some` for Postgres, `None` for S3/local (which have no schema).
+        schema_name: Option<String>,
+    },
+    /// Something the readiness claim depends on did not hold. Carries the
+    /// reason so the CR says *why*, never just "false".
+    NotReady { reason: String },
+}
+
+impl NamespaceReadiness {
+    fn is_ready(&self) -> bool {
+        matches!(self, NamespaceReadiness::Ready { .. })
+    }
+}
+
+/// Verify the backend, provision its schema, and only then report ready.
+///
+/// # The bug this replaces
+///
+/// `reconcile_namespace` used to call `update_status(..., ready = true, …)`
+/// and *then* call `ensure_schema`. When `ensure_schema` failed — which it
+/// did on every reconcile for any namespace whose derived schema name the
+/// DDL layer refused — the CR had already published `backendReady: true`
+/// and `status.schemaName` for a schema that was never created. The `?` on
+/// the schema call then returned the error to the controller runtime, so
+/// nothing ever walked the status back: the false claim was written first
+/// and the failure went to a log line.
+///
+/// That field is not decorative. `fleet_status_controller::aggregate_pangea_namespaces`
+/// counts `backendReady` to answer "how many namespaces have a working
+/// backend", so the fleet reported healthy for a backend that did not
+/// exist — the readiness signal was inverted precisely for the namespaces
+/// that were broken.
+///
+/// # Why the fix is an ordering, not a check
+///
+/// A readiness field is a claim about work already done, so the only
+/// robust shape is to do the work first and let the claim be a report of
+/// it. Adding a second "did the schema work?" check after the fact would
+/// leave the same window open, just narrower.
+///
+/// Honest tier: this is **CI-gate-caught**, not unrepresentable. "The
+/// schema exists in Postgres" is a fact held by the database, not a value
+/// this process can own, so no type can make the bad pairing impossible —
+/// [`NamespaceReadiness`] only makes it a data dependency (a ready verdict
+/// has to be *constructed* past the provisioning step) and
+/// `namespace_readiness_tests` pins both directions.
+async fn establish_backend<E: NamespaceBackendEnv + ?Sized>(
+    namespace: &PangeaNamespace,
+    env: &E,
+) -> NamespaceReadiness {
+    // Verify connectivity. For Postgres this drives a REAL connection
+    // (liveness-probed with `SELECT 1`) over whichever route actually
+    // executes for this namespace — see [`verify_postgres_backend_with`].
+    // The connected `BackendManager` is handed back and reused for schema
+    // provisioning, so one reconcile tick pays for one connection.
+    let verified = match namespace.spec.backend.r#type {
+        BackendType::Pg => match verify_postgres_backend_with(namespace, env).await {
+            Ok(v) => {
+                info!(route = ?v.route, "PostgreSQL backend verified live");
+                Some(v)
+            }
+            Err(e) => {
+                return NamespaceReadiness::NotReady {
+                    reason: e.to_string(),
+                }
+            }
+        },
+        BackendType::S3 => match verify_s3_backend(namespace).await {
+            Ok(true) => None,
+            Ok(false) => {
+                return NamespaceReadiness::NotReady {
+                    reason: "Backend verification pending".to_string(),
+                }
+            }
+            Err(e) => {
+                return NamespaceReadiness::NotReady {
+                    reason: e.to_string(),
+                }
+            }
+        },
+        BackendType::Local => None,
+    };
+
+    // Provision the state schema BEFORE claiming ready. `verified` is
+    // `Some` exactly when the backend is Postgres and the connectivity
+    // check succeeded, so this cannot run without a live connection.
+    let Some(v) = verified else {
+        // S3 / local: nothing to provision and no schema to name.
+        return NamespaceReadiness::Ready { schema_name: None };
+    };
+
+    let schema_name = namespace.schema_name();
+    match env.ensure_schema(namespace, &v.manager).await {
+        Ok(()) => NamespaceReadiness::Ready {
+            schema_name: Some(schema_name),
+        },
+        Err(e) => {
+            // Loud, and it names the schema — an operator reading the CR
+            // has to be able to tell WHICH schema could not be created
+            // without going to the operator's logs.
+            error!(
+                schema_name = %schema_name,
+                error = %e,
+                "backend is reachable but its state schema could not be created; \
+                 reporting NOT ready (the state store is not usable yet)"
+            );
+            NamespaceReadiness::NotReady {
+                reason: format!("schema {schema_name} could not be created: {e}"),
+            }
+        }
     }
 }
 
@@ -272,6 +365,19 @@ trait NamespaceBackendEnv: Send + Sync {
     /// those credentials. Errors when the Secret is missing, malformed,
     /// or the database is unreachable.
     async fn connect_via_secret_ref(&self, namespace: &PangeaNamespace) -> Result<BackendManager>;
+
+    /// Create this namespace's state schema if it does not exist.
+    ///
+    /// On the seam rather than called directly by [`establish_backend`]
+    /// so the FAILING direction is testable. The ordering bug this file
+    /// fixes was invisible to the old suite for exactly that reason:
+    /// provisioning could only be exercised against a live Postgres, so
+    /// no test ever observed what the CR published when it failed.
+    async fn ensure_schema(
+        &self,
+        namespace: &PangeaNamespace,
+        manager: &BackendManager,
+    ) -> Result<()>;
 }
 
 /// Verify PostgreSQL backend connectivity over the route that actually
@@ -398,6 +504,14 @@ impl NamespaceBackendEnv for ControllerBackendEnv<'_> {
         // `PostgresBackend::connect` opens a pool AND executes a
         // `SELECT 1` liveness probe while establishing it.
         BackendManager::from_namespace(namespace, credentials).await
+    }
+
+    async fn ensure_schema(
+        &self,
+        namespace: &PangeaNamespace,
+        manager: &BackendManager,
+    ) -> Result<()> {
+        ensure_schema(namespace, manager).await
     }
 }
 
@@ -547,18 +661,24 @@ async fn ensure_schema(namespace: &PangeaNamespace, manager: &BackendManager) ->
 /// and starves the template/flow controllers.
 async fn update_status(
     namespace: &PangeaNamespace,
-    backend_ready: bool,
-    error: Option<String>,
+    readiness: &NamespaceReadiness,
     state: &ControllerState,
 ) -> Result<()> {
     let name = namespace.name_any();
     let api: Api<PangeaNamespace> = Api::all(state.client.clone());
 
     let now = chrono::Utc::now();
-    let schema_name = if namespace.uses_postgres() {
-        Some(namespace.schema_name())
-    } else {
-        None
+
+    // Both fields are read off ONE value, so `backendReady: true` and a
+    // published `schemaName` cannot come from different conclusions. On
+    // the not-ready branch `schema_name` is `None`, which — being
+    // `skip_serializing_if = "Option::is_none"` under a MERGE patch —
+    // omits the key rather than nulling it: a name published by an
+    // earlier successful reconcile is left alone, not silently erased,
+    // and simply stops being re-asserted while the namespace is broken.
+    let (backend_ready, schema_name, error) = match readiness {
+        NamespaceReadiness::Ready { schema_name } => (true, schema_name.clone(), None),
+        NamespaceReadiness::NotReady { reason } => (false, None, Some(reason.clone())),
     };
 
     let prev = namespace.status.as_ref();
@@ -953,27 +1073,33 @@ mod backend_probe_tests {
     /// Injectable stand-in for the two real routes. Each route is
     /// independently switchable between reachable and unreachable, which
     /// is what makes the both-directions assertions below non-vacuous.
-    struct MockEnv {
+    pub(super) struct MockEnv {
         pool_coordinates: Option<PgCoordinates>,
         pool_reachable: std::result::Result<(), Error>,
         secret_ref_reachable: std::result::Result<(), Error>,
+        /// `Some(reason)` makes `CREATE SCHEMA` fail. Independent of
+        /// reachability on purpose: the ordering bug lives exactly in the
+        /// combination "backend answers, schema creation fails", which is
+        /// unreachable if the two are welded together.
+        schema_failure: Option<String>,
     }
 
     impl MockEnv {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             Self {
                 pool_coordinates: None,
                 pool_reachable: Ok(()),
                 secret_ref_reachable: Ok(()),
+                schema_failure: None,
             }
         }
 
-        fn with_pool_at(mut self, c: PgCoordinates) -> Self {
+        pub(super) fn with_pool_at(mut self, c: PgCoordinates) -> Self {
             self.pool_coordinates = Some(c);
             self
         }
 
-        fn pool_unreachable(mut self, why: &str) -> Self {
+        pub(super) fn pool_unreachable(mut self, why: &str) -> Self {
             self.pool_reachable = Err(Error::StateBackend(why.to_string()));
             self
         }
@@ -983,6 +1109,11 @@ mod backend_probe_tests {
                 namespace: namespace.to_string(),
                 name: name.to_string(),
             });
+            self
+        }
+
+        pub(super) fn schema_creation_fails(mut self, why: &str) -> Self {
+            self.schema_failure = Some(why.to_string());
             self
         }
     }
@@ -1010,6 +1141,17 @@ mod backend_probe_tests {
             _namespace: &PangeaNamespace,
         ) -> Result<BackendManager> {
             replay(&self.secret_ref_reachable)
+        }
+
+        async fn ensure_schema(
+            &self,
+            _namespace: &PangeaNamespace,
+            _manager: &BackendManager,
+        ) -> Result<()> {
+            match &self.schema_failure {
+                None => Ok(()),
+                Some(why) => Err(Error::Config(why.clone())),
+            }
         }
     }
 
@@ -1178,5 +1320,169 @@ mod backend_probe_tests {
         assert!(verify_postgres_backend_with(&ns, &MockEnv::new())
             .await
             .is_err());
+    }
+
+    /// Fixture reuse for the readiness suite below, which needs the same
+    /// live camelot shape but drives the whole verify→provision→publish
+    /// sequence rather than just the probe.
+    pub(super) fn camelot_namespace_fixture() -> PangeaNamespace {
+        camelot_namespace()
+    }
+
+    pub(super) fn coords_fixture(host: &str, port: u16, database: &str) -> PgCoordinates {
+        coords(host, port, database)
+    }
+}
+
+/// [`establish_backend`] — readiness is published only after the thing it
+/// claims is true.
+///
+/// The suite the old code did not have. `backendReady` was set BEFORE
+/// `ensure_schema` ran, so the one state that mattered — backend
+/// reachable, schema creation failed — had no test and no way to be
+/// reached without a live Postgres. Every assertion here is about that
+/// combination or about not over-correcting it into the opposite lie.
+#[cfg(test)]
+mod namespace_readiness_tests {
+    use super::backend_probe_tests::{camelot_namespace_fixture, coords_fixture, MockEnv};
+    use super::{establish_backend, NamespaceReadiness};
+    use crate::crd::BackendType;
+
+    fn operator_pool_env() -> MockEnv {
+        MockEnv::new().with_pool_at(coords_fixture(
+            "pangea-database-rw.camelot.svc.cluster.local",
+            5432,
+            "pangea_state",
+        ))
+    }
+
+    // ── the regression ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn a_failed_schema_creation_is_never_published_as_ready() {
+        // THE BUG, pinned. The backend is perfectly reachable — the probe
+        // succeeds, exactly as it does on camelot-eks — and only the
+        // CREATE SCHEMA fails. The old ordering published
+        // `backendReady: true` here and then returned the error, so the
+        // fleet counted this namespace as having a working backend.
+        let ns = camelot_namespace_fixture();
+        let env = operator_pool_env().schema_creation_fails("Invalid schema name: pangea_x-y");
+
+        let readiness = establish_backend(&ns, &env).await;
+
+        assert!(
+            !matches!(readiness, NamespaceReadiness::Ready { .. }),
+            "a schema that was never created must not be reported ready: {readiness:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_failure_reason_names_the_schema_and_the_cause() {
+        // "Not ready" with no reason is only marginally better than the
+        // false positive — an operator still has to go read logs. The
+        // brief says keep the error path informative, so the reason must
+        // carry BOTH which schema and why.
+        let ns = camelot_namespace_fixture();
+        let env = operator_pool_env().schema_creation_fails("Invalid schema name: pangea_camelot");
+
+        match establish_backend(&ns, &env).await {
+            NamespaceReadiness::NotReady { reason } => {
+                assert!(
+                    reason.contains("pangea_camelot"),
+                    "the reason must name the schema that failed: {reason}"
+                );
+                assert!(
+                    reason.contains("Invalid schema name"),
+                    "the reason must carry the underlying cause: {reason}"
+                );
+            }
+            other => panic!("expected NotReady, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_not_ready_verdict_carries_no_schema_name_to_publish() {
+        // The other half of the false claim. `status.schemaName` named a
+        // schema that did not exist; the type now makes the name
+        // unreachable from a failed verdict, so `update_status` has
+        // nothing to publish.
+        let ns = camelot_namespace_fixture();
+        let env = operator_pool_env().schema_creation_fails("nope");
+
+        let readiness = establish_backend(&ns, &env).await;
+        // `Ready { schema_name }` is the ONLY variant with the field —
+        // there is no accessor to misuse on the failing branch.
+        assert_eq!(
+            readiness,
+            NamespaceReadiness::NotReady {
+                reason: "schema pangea_camelot could not be created: Configuration error: nope"
+                    .to_string()
+            }
+        );
+    }
+
+    // ── the other direction, so the gate is not vacuous ──────────────
+
+    #[tokio::test]
+    async fn a_reachable_backend_with_a_created_schema_is_ready_and_names_it() {
+        // Without this the fix could be "always report not ready", which
+        // is a worse signal than the bug. Readiness must stay reachable.
+        let ns = camelot_namespace_fixture();
+
+        assert_eq!(
+            establish_backend(&ns, &operator_pool_env()).await,
+            NamespaceReadiness::Ready {
+                schema_name: Some("pangea_camelot".to_string())
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_backend_never_reaches_the_schema_step() {
+        // Ordering in the other direction: a dead database must fail on
+        // connectivity and report THAT, not a schema error, and must not
+        // be rescued by a mock whose schema step happens to succeed.
+        let ns = camelot_namespace_fixture();
+        let env = MockEnv::new()
+            .with_pool_at(coords_fixture(
+                "pangea-database-rw.camelot.svc.cluster.local",
+                5432,
+                "pangea_state",
+            ))
+            .pool_unreachable("connection refused");
+
+        match establish_backend(&ns, &env).await {
+            NamespaceReadiness::NotReady { reason } => assert!(
+                reason.contains("connection refused"),
+                "the connectivity failure must be the reported reason: {reason}"
+            ),
+            other => panic!("expected NotReady, got {other:?}"),
+        }
+    }
+
+    // ── backends with no schema to provision ─────────────────────────
+
+    #[tokio::test]
+    async fn s3_and_local_backends_are_ready_without_a_schema_name() {
+        // Neither has a Postgres schema, so neither may publish one —
+        // and neither may be dragged into not-ready by a schema step
+        // that does not apply to it.
+        for backend in [BackendType::S3, BackendType::Local] {
+            let mut ns = camelot_namespace_fixture();
+            ns.spec.backend.r#type = backend;
+            ns.spec.backend.s3 = Some(crate::crd::S3BackendConfig {
+                bucket: "b".to_string(),
+                region: "us-east-2".to_string(),
+                key_prefix: None,
+                dynamodb_table: None,
+                secret_ref: None,
+            });
+
+            assert_eq!(
+                establish_backend(&ns, &MockEnv::new().schema_creation_fails("unreachable")).await,
+                NamespaceReadiness::Ready { schema_name: None },
+                "{backend:?} has no schema step to fail"
+            );
+        }
     }
 }
