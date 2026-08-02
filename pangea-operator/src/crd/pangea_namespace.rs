@@ -129,7 +129,7 @@ fn default_pg_port() -> u16 {
 }
 
 fn default_schema_prefix() -> String {
-    "pangea_".to_string()
+    crate::crd::schema_identity::DEFAULT_SCHEMA_PREFIX.to_string()
 }
 
 fn default_ssl_mode() -> String {
@@ -317,6 +317,12 @@ pub struct ResourceStats {
 
 impl PangeaNamespace {
     /// Get the PostgreSQL schema name for this namespace.
+    ///
+    /// Routes through [`crate::crd::schema_identity`] — the single
+    /// derivation. This is the only entry point that resolves the CR's
+    /// real `spec.backend.pg.schemaPrefix`; the template-side derivation
+    /// still assumes the default (see that module's Phase 2 note). Both
+    /// agree today because every live `PangeaNamespace` uses the default.
     pub fn schema_name(&self) -> String {
         let prefix = self
             .spec
@@ -324,12 +330,11 @@ impl PangeaNamespace {
             .pg
             .as_ref()
             .map(|pg| pg.schema_prefix.as_str())
-            .unwrap_or("pangea_");
+            .unwrap_or(crate::crd::schema_identity::DEFAULT_SCHEMA_PREFIX);
 
-        format!(
-            "{}{}",
+        crate::crd::schema_identity::schema_name(
             prefix,
-            self.metadata.name.as_deref().unwrap_or("default")
+            self.metadata.name.as_deref().unwrap_or("default"),
         )
     }
 

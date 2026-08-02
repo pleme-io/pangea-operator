@@ -227,6 +227,21 @@ operator. Source: `backend/artifact_store.rs`; theory:
 New durable datum → a typed Postgres structure, a content-addressed
 key, and an atomic writer; never a pod-disk file.
 
+**`schema_name` has exactly one derivation** —
+`crd::schema_identity::template_schema_name(template)`. It is the address
+of live state, so a second derivation means one code path reads a schema
+that does not hold what it thinks it does. It is deliberately a bare
+concatenation: live `_states` schemas carry hyphens and dots verbatim (the
+863-repo `pleme-io-opensource` workspace is one), so **normalizing the name
+would re-point every such template at an empty schema and plan a full
+re-create**. Injection safety belongs downstream, in
+`StateStore::qualified_state_table` / `ArtifactStore::live_state_schema`,
+which validate a sanitized *projection* and quote the original — never here.
+The template-side derivation still assumes the default `pangea_` prefix
+while `PangeaNamespace::schema_name()` honours `spec.…pg.schemaPrefix`;
+they agree today because every live namespace uses the default, and closing
+that gap for real is now a one-function change.
+
 ## importHints — adopt out-of-band cloud resources
 
 ```yaml
@@ -618,6 +633,10 @@ pangea-operator/src/
 │   └── …                                # other CRDs (flow, packer, ami, …)
 ├── crd/                    # all CRD type definitions
 │   ├── infrastructure_template.rs       # main author-facing CR
+│   ├── schema_identity.rs               # THE derivation of a namespace's
+│   │                                       PG schema name. Never hand-roll
+│   │                                       `format!("pangea_{…}")` — a test
+│   │                                       scans the crate for it
 │   ├── workspace_catalog.rs
 │   ├── architecture_gem.rs              # also home of shared types:
 │   │                                       ApprovalRouting, ReactivePolicy,

@@ -384,11 +384,12 @@ pub async fn record_reconcile_cycle(
     // On the magma DB-backed path the bundle lives in Postgres (the
     // artifact store), not on disk — fetch its bytes once and reuse for
     // both the cycle artifact and the apply-outcome metric below. Keys
-    // match `magma_executor_for`: schema = "pangea_{ns}", template name.
+    // match `magma_executor_for` by CONSTRUCTION now, not by promise:
+    // the schema comes from `crd::schema_identity`, the one derivation.
     let db_bundle_bytes: Option<Vec<u8>> = if executor.name() == "magma" {
         match state.artifact_store.as_ref() {
             Some(store) => {
-                let schema_name = format!("pangea_{}", template.spec.pangea_namespace);
+                let schema_name = crate::crd::template_schema_name(template);
                 // Don't swallow the typed BLAKE3 integrity-mismatch
                 // (`Error::StateBackend`) into a silent None — a corrupt
                 // / torn artifact row must be observable. Log it, then

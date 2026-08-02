@@ -1361,7 +1361,7 @@ async fn handle_compiling(
     // than a pod-local file. This is the zero-disk compile handoff: a
     // pod roll between Compiling and Planning no longer os-error-2-loops
     // on a missing `main.tf.json`. Keys MUST match `magma_executor_for`:
-    // schema = "pangea_{spec.pangeaNamespace}", template = name_any().
+    // schema = `crd::template_schema_name(template)`, template = name_any().
     // Per the org ★★ MAGMA-NATIVE EXECUTION directive.
     let magma_active = state.executor_for(template).name() == "magma";
     // The DB-backed magma path = magma active AND the artifact store is
@@ -1377,7 +1377,7 @@ async fn handle_compiling(
             let value: serde_json::Value = serde_json::from_str(&terraform_json).map_err(|e| {
                 Error::Compilation(format!("rendered terraform JSON is not valid JSON: {e}"))
             })?;
-            let schema_name = format!("pangea_{}", template.spec.pangea_namespace);
+            let schema_name = crate::crd::template_schema_name(template);
             let template_name = template.name_any();
             // Record the source revision this render was produced AT — the
             // git HEAD SHA (git sources) or the `cm:` content hash
@@ -2241,7 +2241,7 @@ async fn compiled_config_available(
         return Ok(false);
     }
 
-    let schema_name = format!("pangea_{}", template.spec.pangea_namespace);
+    let schema_name = crate::crd::template_schema_name(template);
     let store = state
         .artifact_store
         .as_ref()
@@ -2411,22 +2411,23 @@ fn plan_summary_and_drifts_from_artifact(
 }
 
 /// The `(schema_name, template_name)` pair magma's Postgres-backed
-/// artifacts AND state are keyed on for a given CR. MUST stay in sync
-/// with `ControllerState::magma_executor_with_provider_configs`'s own
-/// derivation (`controller/mod.rs`) — that function is what actually
-/// builds the `MagmaExecutor` that reads/writes state under this exact
-/// key (`schema_name = "pangea_{spec.pangeaNamespace}"`, `state_name =
-/// "default"`); reading with any other derivation would silently miss
-/// the row or read the wrong one. Collapses what was three independent
-/// hand-copies of `format!("pangea_{}", template.spec.pangea_namespace)`
-/// (`magma_executor_with_provider_configs`, `fetch_db_backed_cycle_artifact`,
-/// and now `current_state_fingerprint`) down to two — `mod.rs` lives in a
-/// different module and is left as a documented, cross-referenced
-/// duplicate rather than pulled in here, to keep this fix's blast radius
-/// contained to the approval-hash gap it closes.
+/// artifacts AND state are keyed on for a given CR.
+///
+/// The schema half is no longer derived here: it comes from
+/// `crd::schema_identity::template_schema_name`, the ONE derivation.
+/// Agreement with `ControllerState::magma_executor_with_provider_configs`
+/// (`controller/mod.rs`) — the function that actually builds the
+/// `MagmaExecutor` reading/writing state under this key — used to be a
+/// documented promise between two hand-copies of
+/// the `pangea_`-prefix literal; it is now the same call. Reading with a
+/// different derivation would silently miss the row or read the wrong
+/// one, which is why the literal has exactly one home.
+///
+/// `state_name` is `"default"` (OpenTofu's default workspace) and is
+/// supplied by the executor config, not by this key.
 fn magma_state_key(template: &InfrastructureTemplate) -> (String, String) {
     (
-        format!("pangea_{}", template.spec.pangea_namespace),
+        crate::crd::template_schema_name(template),
         template.name_any(),
     )
 }
@@ -3452,7 +3453,11 @@ async fn handle_applying(
     // `_state_lock_guard` holds the advisory lock for the rest of this
     // function via RAII — released on every return path (success,
     // error, or early return) by `LockGuard::drop`.
-    let schema_name = format!("pangea_{}", template.spec.pangea_namespace);
+    //
+    // The lock is keyed on the SAME schema the state rows live under, so
+    // it derives from the one place that derives it (`crd::schema_identity`)
+    // — a lock taken on a differently-derived name would guard nothing.
+    let schema_name = crate::crd::template_schema_name(template);
     let template_name = template.name_any();
     let _state_lock_guard = match acquire_mutation_lock(state, &schema_name, &template_name).await?
     {
@@ -5631,8 +5636,9 @@ async fn handle_destroying(
     // during a `RollingUpdate`, so without a second, independent guard
     // here two pods could both reach this dispatch for the SAME template
     // (see the doc on `ControllerState::state_lock`). Held for the rest
-    // of this function via RAII.
-    let schema_name = format!("pangea_{}", template.spec.pangea_namespace);
+    // of this function via RAII. Same one-derivation rule as
+    // `handle_applying` — see `crd::schema_identity`.
+    let schema_name = crate::crd::template_schema_name(template);
     let template_name = template.name_any();
     let _state_lock_guard = match acquire_mutation_lock(state, &schema_name, &template_name).await?
     {

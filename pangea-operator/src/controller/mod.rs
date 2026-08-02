@@ -498,14 +498,14 @@ impl ControllerState {
         // Per-CR state key. MUST match the keys tofu's pg backend
         // (BackendConfigGenerator) uses so magma reads tofu's SAME live
         // rows — no data migration:
-        //   * schema_name   = "pangea_{spec.pangeaNamespace}"
-        //                     (PangeaNamespace::schema_name(), default
-        //                      prefix "pangea_").
+        //   * schema_name   = crd::template_schema_name(template) —
+        //                     the ONE derivation (crd::schema_identity),
+        //                     which is `{default prefix}{pangeaNamespace}`.
         //   * template_name = the CR name (`name_any()`).
         //   * state_name    = "default" (OpenTofu default workspace).
         // TofuPgStateBackend turns these into the live OpenTofu pg
         // table `"{schema}_{template}_states".states` (verified live).
-        let schema_name = format!("pangea_{}", template.spec.pangea_namespace);
+        let schema_name = crate::crd::template_schema_name(template);
         let template_name = template.name_any();
         let state_name = "default".to_string();
 

@@ -21,6 +21,7 @@ pub mod pangea_dashboard;
 pub mod pangea_fleet_status;
 mod pangea_namespace;
 pub mod reconciliation_loop;
+pub mod schema_identity;
 pub mod synthesizer_format;
 pub mod workspace_catalog;
 
@@ -55,6 +56,13 @@ pub use pangea_namespace::{
     BackendConfig, BackendType, DefaultProviders, PangeaNamespace, PangeaNamespaceSpec,
     PangeaNamespaceStatus, PoolConfig, PostgresBackendConfig, PostgresSecretRef, ResourceStats,
     S3BackendConfig, S3SecretRef, SecretRef as ProviderSecretRef,
+};
+
+// The single derivation of a namespace's PostgreSQL schema identity.
+// Re-exported at `crd::` so a call site never has to reach for the
+// module path (and so the seven ex-hand-copies read as one import).
+pub use schema_identity::{
+    schema_name, schema_name_for_namespace, template_schema_name, DEFAULT_SCHEMA_PREFIX,
 };
 
 // Re-export PackerBuild types
