@@ -150,6 +150,17 @@ spec:
 
                   To actually destroy protected infrastructure, first set this to false, then delete the CR.
                 type: boolean
+              dialect:
+                default: auto
+                description: |-
+                  The language the template body is authored in. See [`Dialect`].
+
+                  Defaults to `auto`, which is byte-for-byte the behaviour every existing CR already gets, so adding this field changes nothing until an author sets it.
+                enum:
+                - auto
+                - ruby
+                - json
+                type: string
               executor:
                 description: |-
                   IaC backend to use for plan/apply on this CR. Accepts `tofu` (default — OpenTofu subprocess) or `magma` (in-process Rust library via the `executor_magma` feature). When unset, falls back to the operator-wide default from the `PANGEA_EXECUTOR` env var, then to `tofu`.
@@ -292,6 +303,26 @@ spec:
                 description: Provider credentials configuration.
                 nullable: true
                 properties:
+                  akeyless:
+                    description: 'Akeyless credentials configuration. Used by templates whose Ruby workspace declares an inline `provider :akeyless do api_key_login( access_id:, access_key:) end` block (e.g. workspaces/akeyless-dev-shaar-concentrator, added 2026-07-21 for Pangea::Architectures::ShaarAkeyless — Step 0 of theory/SHAAR-CAMELOT-BINDING.md §4). Ruby-side authority model, same as GitHub: the referenced Secret''s data keys (typically `AKEYLESS_ACCESS_ID` / `AKEYLESS_ACCESS_KEY` / optionally `AKEYLESS_API_GATEWAY`) are installed verbatim as env vars by the generic `iter_secret_refs` injection loop; the Ruby workspace reads them via `ENV.fetch(...)`. The operator never renders its own `provider "akeyless" { ... }` block.'
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the Akeyless access-id/access-key pair.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
                   aws:
                     description: AWS credentials configuration.
                     nullable: true
