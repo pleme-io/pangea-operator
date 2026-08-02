@@ -258,7 +258,6 @@ mod tests {
         assert!(!is_valid_identifier("has-dashes"));
     }
 
-    #[test]
     /// Covers the CALL SITE, not just the helper. The bug lived in the DDL
     /// string; asserting the helper alone left the wiring uncovered, which is
     /// how reverting the fix passed the whole suite.
