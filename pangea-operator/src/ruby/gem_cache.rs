@@ -110,8 +110,18 @@ impl GemCache {
     ) -> Result<GemEntry, GemCacheError> {
         let dir = self.entry_dir(name, git_ref)?;
         let lib_path = dir.join("lib");
+        let auth = GitAuth::github_from_env();
 
         if dir.is_dir() && dir.join(".git").exists() {
+            // Remediation for caches written by the previous code, which
+            // cloned from a URL carrying the token. Git persists a clone
+            // URL verbatim, so every such cache dir still holds a live PAT
+            // in `.git/config` — and the SHA-ref branch below returns
+            // without ever running git, so nothing else would clear it.
+            // Resetting origin to the declared URL is idempotent and costs
+            // one local git process.
+            scrub_persisted_credential(&dir, git_url).await;
+
             // Cache exists with a real .git. SHA refs are immutable —
             // return as-is. Mutable refs (branch/tag/etc.) re-fetch
             // from origin so the working tree tracks upstream HEAD.
@@ -130,7 +140,7 @@ impl GemCache {
             // Mutable ref — refresh from origin. Failures here fall
             // through to a fresh re-clone (defensive: better to
             // re-clone slowly than serve a stale gem).
-            match refresh_mutable_ref(&dir, git_ref).await {
+            match refresh_mutable_ref(&dir, git_ref, auth.as_ref()).await {
                 Ok(()) => {
                     info!(
                         name,
@@ -175,31 +185,31 @@ impl GemCache {
                 ))
             })?;
 
-        // Apply auth token to HTTPS GitHub URLs if PANGEA_GEM_AUTH_TOKEN
-        // is set in the env. Rewrites `https://github.com/...` to
-        // `https://x-access-token:$TOKEN@github.com/...` so private
-        // repo clones succeed. SSH URLs + non-GitHub URLs pass through.
-        let effective_url = inject_github_token(git_url);
-
         info!(
             name,
             git_ref,
-            url = git_url,  // log original (no token leak)
+            url = git_url,
             path = %dir.display(),
             "cloning gem"
         );
 
-        let output = Command::new("git")
-            .arg("clone")
+        // The URL is the declared one, unmodified. Authentication rides
+        // the environment (see `GitAuth`) precisely so it does NOT end up
+        // in this argv, and so git has nothing credential-shaped to
+        // persist into the clone's `.git/config`.
+        let mut cmd = Command::new("git");
+        cmd.arg("clone")
             .arg("--depth")
             .arg("1")
             .arg("--branch")
             .arg(git_ref)
-            .arg(&effective_url)
+            .arg(git_url)
             .arg(&dir)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+        GitAuth::apply(auth.as_ref(), &mut cmd);
+        let output = cmd
             .output()
             .await
             .map_err(|e| GemCacheError::Clone(format!("spawn git clone: {e}")))?;
@@ -218,13 +228,15 @@ impl GemCache {
             );
             // Clean partial clone.
             let _ = tokio::fs::remove_dir_all(&dir).await;
-            let clone = Command::new("git")
-                .arg("clone")
-                .arg(&effective_url)
+            let mut cmd = Command::new("git");
+            cmd.arg("clone")
+                .arg(git_url)
                 .arg(&dir)
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
+                .stderr(Stdio::piped());
+            GitAuth::apply(auth.as_ref(), &mut cmd);
+            let clone = cmd
                 .output()
                 .await
                 .map_err(|e| GemCacheError::Clone(format!("spawn git clone (full): {e}")))?;
@@ -258,47 +270,130 @@ impl GemCache {
     }
 }
 
-/// Rewrite `https://github.com/...` URLs to embed
-/// `x-access-token:$PANGEA_GEM_AUTH_TOKEN@github.com/...` when the
-/// env var is set. Other URL shapes (SSH, non-GitHub HTTPS) pass
-/// through unchanged.
+/// Git credentials delivered to a child `git` through the environment,
+/// via git's `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_<n>` /
+/// `GIT_CONFIG_VALUE_<n>` protocol (git >= 2.31).
 ///
-/// The thin env-reading adapter over [`inject_token`]. All the
-/// behaviour is in the pure function; this only decides where the
-/// token comes from, so a test never has to reach for the process
-/// environment to exercise the rewrite.
-fn inject_github_token(url: &str) -> String {
-    inject_token(url, std::env::var("PANGEA_GEM_AUTH_TOKEN").ok().as_deref())
+/// # Why not the URL any more
+///
+/// This module used to authenticate by rewriting
+/// `https://github.com/org/repo` into
+/// `https://x-access-token:$PANGEA_GEM_AUTH_TOKEN@github.com/org/repo`
+/// and passing that to `git clone`. That shape leaks the token twice:
+///
+///   - **argv.** `/proc/<pid>/cmdline` is world-readable, so the PAT was
+///     visible to every process in the container for the clone's
+///     lifetime.
+///   - **at rest, and this is the worse one.** Git persists a clone URL
+///     verbatim into `.git/config`. Every gem cache directory the
+///     operator ever populated therefore holds whatever token was live
+///     at clone time, indefinitely, on a volume nobody thinks of as
+///     credential storage. `pleme-io/tend` found exactly this shape
+///     fossilized in 25 repositories across two orgs on 2026-07-29 —
+///     three distinct tokens, one still valid.
+///
+/// Environment-scoped git config has neither property: it exists for
+/// the lifetime of one process and is written to no file.
+///
+/// # Why `basic`, not `bearer`
+///
+/// Bearer authenticates the GitHub REST API but not git-over-HTTPS —
+/// git ignores the rejected header and falls through to prompting for a
+/// username, which in a non-interactive container is a hang. This is
+/// documented from a measurement in `tend/src/secret.rs`, whose
+/// `GitConfigEnv` this is the local adaptation of. `x-access-token` is
+/// the conventional non-secret username for a token-as-password; GitHub
+/// ignores the username field.
+struct GitAuth {
+    entries: Vec<(String, String)>,
 }
 
-/// The rewrite itself, with the token as a PARAMETER.
+impl GitAuth {
+    /// Auth config for `https://github.com/`, carrying `secret` as a
+    /// Basic `Authorization` header.
+    fn github(secret: &cofre_secret::Secret) -> Self {
+        use base64::Engine as _;
+        // `expose()` at exactly one boundary, which is the point of the
+        // type: every other path to the plaintext is a compile error.
+        let encoded = base64::engine::general_purpose::STANDARD
+            .encode(format!("x-access-token:{}", secret.expose()));
+        Self {
+            entries: vec![(
+                "http.https://github.com/.extraheader".to_string(),
+                format!("AUTHORIZATION: basic {encoded}"),
+            )],
+        }
+    }
+
+    /// Read `PANGEA_GEM_AUTH_TOKEN`. `None` when unset or empty — an
+    /// empty env var is not a credential, and treating it as one turns a
+    /// clean unauthenticated clone of a public gem into a 401.
+    fn github_from_env() -> Option<Self> {
+        cofre_secret::Secret::from_env("PANGEA_GEM_AUTH_TOKEN")
+            .ok()
+            .map(|s| Self::github(&s))
+    }
+
+    /// The environment pairs git expects. Materialized separately from
+    /// [`Self::apply`] so tests can assert on the exact pairs.
+    fn env_pairs(&self) -> Vec<(String, String)> {
+        let mut pairs = Vec::with_capacity(self.entries.len() * 2 + 1);
+        pairs.push((
+            "GIT_CONFIG_COUNT".to_string(),
+            self.entries.len().to_string(),
+        ));
+        for (i, (key, value)) in self.entries.iter().enumerate() {
+            pairs.push((format!("GIT_CONFIG_KEY_{i}"), key.clone()));
+            pairs.push((format!("GIT_CONFIG_VALUE_{i}"), value.clone()));
+        }
+        pairs
+    }
+
+    /// Apply to a command, or leave it untouched when there is no
+    /// credential. Takes the `Option` so no call site can forget the
+    /// no-token case, and so an unauthenticated invocation is
+    /// byte-identical to one that never called this.
+    fn apply(auth: Option<&Self>, cmd: &mut Command) {
+        let Some(auth) = auth else { return };
+        for (k, v) in auth.env_pairs() {
+            cmd.env(k, v);
+        }
+    }
+}
+
+/// Reset a cached clone's `origin` to `git_url`, discarding any
+/// credential a previous code path embedded in it.
 ///
-/// The token is the standard GitHub-Apps pattern accepted by
-/// github.com — works for fine-grained PATs, classic PATs, and
-/// installation tokens. Rewriting at clone time avoids needing to
-/// configure git credential helpers in the container image.
-///
-/// Why the token is an argument rather than a `std::env::var` read:
-/// `std::env` is process-global, so two tests in this module setting
-/// and clearing the same `PANGEA_GEM_AUTH_TOKEN` key raced each
-/// other's reads under `cargo test`'s default parallel execution —
-/// `inject_github_token_passthrough_when_unset` would observe the
-/// token a sibling test had just set. No ordering inside a single test
-/// body can fix a race between different test threads. Same root cause
-/// and same structural fix as `controller/reconciler.rs`'s
-/// `clamp_reconcile_workers` (2026-07): the function under test no
-/// longer touches the environment, so for these tests there is nothing
-/// left to race.
-fn inject_token(url: &str, token: Option<&str>) -> String {
-    let token = match token {
-        Some(t) if !t.is_empty() => t,
-        _ => return url.to_string(),
-    };
-    let prefix = "https://github.com/";
-    if let Some(rest) = url.strip_prefix(prefix) {
-        format!("https://x-access-token:{token}@github.com/{rest}")
-    } else {
-        url.to_string()
+/// Best-effort and deliberately silent on failure: this is remediation
+/// of an old defect, not a precondition for serving the gem. A cache
+/// directory that cannot be rewritten still works — it is just still
+/// carrying the fossil, and the warn line says so.
+async fn scrub_persisted_credential(dir: &Path, git_url: &str) {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .arg("remote")
+        .arg("set-url")
+        .arg("origin")
+        .arg(git_url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await;
+    match out {
+        Ok(o) if o.status.success() => {}
+        Ok(o) => warn!(
+            path = %dir.display(),
+            stderr = %String::from_utf8_lossy(&o.stderr),
+            "could not reset cached remote URL; a credential embedded by an \
+             earlier clone may still be present in .git/config"
+        ),
+        Err(e) => warn!(
+            path = %dir.display(),
+            error = %e,
+            "could not spawn git to reset cached remote URL"
+        ),
     }
 }
 
@@ -315,12 +410,20 @@ fn is_sha_ref(r: &str) -> bool {
 
 /// Refresh a cached shallow clone to track upstream `<ref>`. Runs
 /// `git fetch --depth 1 origin <ref>` then `git reset --hard FETCH_HEAD`.
-/// Authenticates via the same PANGEA_GEM_AUTH_TOKEN injection the
-/// initial clone uses (the cached remote URL already carries it if
-/// the original clone was authed).
-async fn refresh_mutable_ref(dir: &Path, git_ref: &str) -> Result<(), GemCacheError> {
-    let fetch = Command::new("git")
-        .arg("-C")
+///
+/// `auth` is now a parameter rather than something inherited from the
+/// cached remote URL. It has to be: the fetch used to authenticate
+/// because the URL in `.git/config` still carried the token from clone
+/// time, which is the leak this module stopped producing. With the URL
+/// clean, an authenticated refresh only happens if the credential is
+/// handed to it here.
+async fn refresh_mutable_ref(
+    dir: &Path,
+    git_ref: &str,
+    auth: Option<&GitAuth>,
+) -> Result<(), GemCacheError> {
+    let mut cmd = Command::new("git");
+    cmd.arg("-C")
         .arg(dir)
         .arg("fetch")
         .arg("--depth")
@@ -329,7 +432,9 @@ async fn refresh_mutable_ref(dir: &Path, git_ref: &str) -> Result<(), GemCacheEr
         .arg(git_ref)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    GitAuth::apply(auth, &mut cmd);
+    let fetch = cmd
         .output()
         .await
         .map_err(|e| GemCacheError::Clone(format!("spawn git fetch: {e}")))?;
@@ -396,87 +501,125 @@ mod tests {
         assert!(cache.entry_dir(".hidden", "main").is_err());
     }
 
-    // ── Token injection ──────────────────────────────────────────
+    // ── Credential delivery ──────────────────────────────────────
     //
-    // These call the pure `inject_token` with a literal `Option<&str>`
-    // — no `std::env::set_var` / `remove_var`. See that function's doc
-    // for the race they used to lose: three tests mutating the one
-    // process-global `PANGEA_GEM_AUTH_TOKEN` key, so
-    // `..._passthrough_when_unset` intermittently read a token a
-    // sibling had set. A pass under those conditions was luck, not
-    // proof. The env is now reachable from exactly one test below,
-    // which holds a mutex.
+    // These replace the old `inject_token` suite, which asserted that a
+    // token was correctly interpolated into a clone URL — i.e. it pinned
+    // the defect in place. What matters now is the opposite property:
+    // the credential reaches git through the environment and appears in
+    // neither argv nor anything git will persist.
+    //
+    // Credential-SHAPED so the assertions exercise real matching, with
+    // an explicit marker so a scanner can tell it is a fixture. Same
+    // convention cofre-secret's own tests use.
+    const TOKEN: &str = "ghp_EXAMPLENOTAREALTOKENxxxxxxxxxxxxxxxx";
 
-    #[test]
-    fn inject_token_passthrough_when_absent() {
-        let url = "https://github.com/pleme-io/pangea-architectures";
-        assert_eq!(inject_token(url, None), url);
+    fn test_auth() -> GitAuth {
+        GitAuth::github(&cofre_secret::Secret::new(TOKEN).unwrap())
     }
 
+    /// Pins the exact config git needs. `basic` is NOT interchangeable
+    /// with `bearer` here — bearer does not authenticate git-over-HTTPS,
+    /// and git falls through to prompting, which in the operator's
+    /// container is a hang rather than an error.
     #[test]
-    fn inject_token_passthrough_when_empty() {
-        // An empty env var must behave as unset, not produce
-        // `https://x-access-token:@github.com/...`.
-        let url = "https://github.com/pleme-io/pangea-architectures";
-        assert_eq!(inject_token(url, Some("")), url);
-    }
-
-    #[test]
-    fn inject_token_rewrites_when_present() {
-        let url = "https://github.com/pleme-io/pangea-architectures";
+    fn github_auth_carries_a_basic_extraheader() {
+        use base64::Engine as _;
+        let pairs = test_auth().env_pairs();
+        assert_eq!(pairs[0], ("GIT_CONFIG_COUNT".into(), "1".into()));
         assert_eq!(
-            inject_token(url, Some("ghp_test123")),
-            "https://x-access-token:ghp_test123@github.com/pleme-io/pangea-architectures"
+            pairs[1],
+            (
+                "GIT_CONFIG_KEY_0".into(),
+                "http.https://github.com/.extraheader".into()
+            )
+        );
+        let expected =
+            base64::engine::general_purpose::STANDARD.encode(format!("x-access-token:{TOKEN}"));
+        assert_eq!(
+            pairs[2],
+            (
+                "GIT_CONFIG_VALUE_0".into(),
+                format!("AUTHORIZATION: basic {expected}")
+            )
         );
     }
 
+    /// The load-bearing property. Base64 is encoding, not concealment,
+    /// so neither the raw token nor its encoded form may appear in argv
+    /// — `/proc/<pid>/cmdline` is world-readable. And the URL git is
+    /// handed must be the declared one, because git copies a clone URL
+    /// verbatim into `.git/config` and keeps it forever.
     #[test]
-    fn inject_token_passes_through_ssh_and_non_github() {
-        let ssh = "git@github.com:pleme-io/pangea-architectures.git";
-        assert_eq!(
-            inject_token(ssh, Some("ghp_test123")),
-            ssh,
-            "ssh URL should pass through"
+    fn applying_auth_leaves_argv_and_the_clone_url_clean() {
+        use base64::Engine as _;
+        let url = "https://github.com/pleme-io/pangea-architectures";
+        let mut cmd = Command::new("git");
+        cmd.arg("clone").arg(url).arg("/tmp/dest");
+        GitAuth::apply(Some(&test_auth()), &mut cmd);
+
+        let encoded =
+            base64::engine::general_purpose::STANDARD.encode(format!("x-access-token:{TOKEN}"));
+        let argv = format!("{:?}", cmd.as_std().get_args().collect::<Vec<_>>());
+        assert!(!argv.contains(TOKEN), "raw token reached argv: {argv}");
+        assert!(
+            !argv.contains(&encoded),
+            "encoded token reached argv: {argv}"
         );
-        let other = "https://gitlab.com/foo/bar";
-        assert_eq!(
-            inject_token(other, Some("ghp_test123")),
-            other,
-            "non-github should pass through"
+        assert!(
+            !argv.contains("x-access-token:"),
+            "credential-bearing URL reached argv: {argv}"
         );
+        assert!(argv.contains(url), "declared URL missing from argv: {argv}");
+
+        let in_env = cmd
+            .as_std()
+            .get_envs()
+            .any(|(_, v)| v.is_some_and(|v| v.to_string_lossy().contains(&encoded)));
+        assert!(in_env, "credential did not reach the environment");
+    }
+
+    /// No credential must leave the command byte-identical to one that
+    /// never called `apply` — not `GIT_CONFIG_COUNT=0`, which git
+    /// accepts but which makes the unauthenticated path a different
+    /// path.
+    #[test]
+    fn no_auth_leaves_the_command_untouched() {
+        let mut cmd = Command::new("git");
+        GitAuth::apply(None, &mut cmd);
+        assert_eq!(cmd.as_std().get_envs().count(), 0);
     }
 
     /// Guards the ONE test that mutates process env. Matches the
-    /// manual-mutex pattern already used for this reason in
-    /// `config.rs` and `controller/reconciler.rs` (no `serial_test`
-    /// dependency for a single test).
-    ///
-    /// A mutex is the right tool HERE and the wrong tool above: the
-    /// thing under test is precisely "does the wrapper read that env
-    /// key", so the global cannot be injected away — it is the
-    /// subject. It only serializes this test against itself; nothing
-    /// else in the module touches the key any more.
+    /// manual-mutex pattern already used for this reason in `config.rs`
+    /// and `controller/reconciler.rs` (no `serial_test` dependency for a
+    /// single test). A mutex is the right tool here because the thing
+    /// under test is precisely "does the wrapper read that env key", so
+    /// the global cannot be injected away — it is the subject.
     static ENV_VAR_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
-    fn inject_github_token_reads_the_real_env_var() {
+    fn github_from_env_reads_the_real_env_var() {
         let _guard = ENV_VAR_TEST_GUARD
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
 
-        let url = "https://github.com/pleme-io/pangea-architectures";
-
         std::env::remove_var("PANGEA_GEM_AUTH_TOKEN");
-        assert_eq!(inject_github_token(url), url);
+        assert!(GitAuth::github_from_env().is_none());
 
-        std::env::set_var("PANGEA_GEM_AUTH_TOKEN", "ghp_test123");
+        // An empty var is not a credential: authenticating with it turns
+        // a clean public-gem clone into a 401.
+        std::env::set_var("PANGEA_GEM_AUTH_TOKEN", "");
+        assert!(GitAuth::github_from_env().is_none());
+
+        std::env::set_var("PANGEA_GEM_AUTH_TOKEN", TOKEN);
         assert_eq!(
-            inject_github_token(url),
-            "https://x-access-token:ghp_test123@github.com/pleme-io/pangea-architectures"
+            GitAuth::github_from_env().unwrap().env_pairs(),
+            test_auth().env_pairs()
         );
 
         std::env::remove_var("PANGEA_GEM_AUTH_TOKEN");
-        assert_eq!(inject_github_token(url), url);
+        assert!(GitAuth::github_from_env().is_none());
     }
 
     #[test]
@@ -536,13 +679,19 @@ mod tests {
         git_run(path, &["config", "user.email", "test@example.com"]).await;
         git_run(path, &["config", "user.name", "test"]).await;
         git_run(path, &["config", "commit.gpgsign", "false"]).await;
+        // Subjects below are descriptive, not "initial"/"update", because a
+        // pleme-io workstation carries a GLOBAL commit-msg hook (core.hooksPath,
+        // blackmatter.components.gitconfig.hooks.rejectSubjects) that refuses
+        // placeholder subjects. A hook the developer installed for their own
+        // repositories does not know this is a throwaway fixture, so it failed
+        // both of these tests on every such machine while passing in CI.
         let lib_dir = path.join("lib").join("test_gem");
         tokio::fs::create_dir_all(&lib_dir).await.unwrap();
         tokio::fs::write(lib_dir.join("marker.txt"), content)
             .await
             .unwrap();
         git_run(path, &["add", "-A"]).await;
-        git_run(path, &["commit", "-q", "-m", "initial"]).await;
+        git_run(path, &["commit", "-q", "-m", "fixture: seed the gem tree"]).await;
         let sha_out = TokioCommand::new("git")
             .arg("-C")
             .arg(path)
@@ -563,7 +712,7 @@ mod tests {
         .await
         .unwrap();
         git_run(remote, &["add", "-A"]).await;
-        git_run(remote, &["commit", "-q", "-m", "update"]).await;
+        git_run(remote, &["commit", "-q", "-m", "fixture: move the marker"]).await;
         let sha_out = TokioCommand::new("git")
             .arg("-C")
             .arg(remote)

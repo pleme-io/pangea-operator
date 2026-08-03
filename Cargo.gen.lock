@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "c97b0b7d7ab9b48e5363d9b4d651f41553821a6016700d92db2812596b39417c",
+  "cargo_lock_sha256": "9660fec8b476935153e15c3d857568d04eeaa692c6fe9f0f7eafe71c6fed088e",
   "manifest_sha256": {
-    "Cargo.toml": "84287fd70317937d4d50908ac534a9ec1a75d78b59fe8f5586b841f85081f414",
+    "Cargo.toml": "4f8347b12473640715487cc6face42780a829c5e00da363abadc60eade96ee26",
     "pangea-cli/Cargo.toml": "ca2aab1f8bbb3576ab16e87da13f90adbdf0ad1abaad85d4eb55035ff11e2cba",
     "pangea-operator-mcp/Cargo.toml": "a1d5c3e03ec8073e6aabead01bed1962a05d23c93c43cda972539f2a7f46caf7",
-    "pangea-operator/Cargo.toml": "2c6e906b3cfc9a9eb9f36664b851a09fef457b666f60956bc5ea4de33738125a",
+    "pangea-operator/Cargo.toml": "18dcfb3fe1847af9437b4f0894cb1b2485c356d8a5ea39bcdaf4edc3f2a01604",
     "pangea-ruby-eval/Cargo.toml": "5a64cec5dd2f83b31261d7c2c11f9caaa45d7b3a553dd1fd8796aa1ee1cfc00d",
     "pangea-types/Cargo.toml": "2230b8133bc7566ebfa8867396100d572b1467bffe421d187deed64aae4148ff"
   },
@@ -2848,6 +2848,16 @@
             "tree": "target"
           }
         ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "cofre-fs-0.1.0-4f70b8fa025f2b78b7ca062fb0feb31188a8d31a": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
+      },
+      "cofre-secret-0.1.0-4f70b8fa025f2b78b7ca062fb0feb31188a8d31a": {
+        "runtime_dependencies": [],
         "build_dependencies": [],
         "features": []
       },
@@ -12557,6 +12567,16 @@
             "tree": "target"
           },
           {
+            "name": "base64",
+            "package_key": "base64-0.22.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
             "name": "blake3",
             "package_key": "blake3-1.8.5",
             "kind": "normal",
@@ -12577,6 +12597,26 @@
             "uses_default_features": false,
             "optional": false,
             "target": "cfg(unix)",
+            "tree": "target"
+          },
+          {
+            "name": "cofre_fs",
+            "package_key": "cofre-fs-0.1.0-4f70b8fa025f2b78b7ca062fb0feb31188a8d31a",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "cofre_secret",
+            "package_key": "cofre-secret-0.1.0-4f70b8fa025f2b78b7ca062fb0feb31188a8d31a",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
             "tree": "target"
           },
           {
@@ -29861,6 +29901,12 @@
     "cmake-0.1.58": {
       "edition": "2021"
     },
+    "cofre-fs-0.1.0-4f70b8fa025f2b78b7ca062fb0feb31188a8d31a": {
+      "edition": "2024"
+    },
+    "cofre-secret-0.1.0-4f70b8fa025f2b78b7ca062fb0feb31188a8d31a": {
+      "edition": "2024"
+    },
     "colorchoice-1.0.5": {
       "edition": "2021"
     },
@@ -31492,6 +31538,8 @@
     }
   },
   "git_nar_sha256": {
+    "cofre-fs-0.1.0-4f70b8fa025f2b78b7ca062fb0feb31188a8d31a": "sha256-6zDJ/dwsxZgb3KL2RuZFWMfcsQqKp7XAJvDDJgiyzrA=",
+    "cofre-secret-0.1.0-4f70b8fa025f2b78b7ca062fb0feb31188a8d31a": "sha256-6zDJ/dwsxZgb3KL2RuZFWMfcsQqKp7XAJvDDJgiyzrA=",
     "gen-macros-0.1.32-e174470020226ca8e46a798210a59aba6088a953": "sha256-VmlO7fCgYj1O8XIcm+goVpIQEuikKx27JVyxxXiKlG4=",
     "gen-platform-0.1.32-e174470020226ca8e46a798210a59aba6088a953": "sha256-VmlO7fCgYj1O8XIcm+goVpIQEuikKx27JVyxxXiKlG4=",
     "gen-types-0.1.32-e174470020226ca8e46a798210a59aba6088a953": "sha256-VmlO7fCgYj1O8XIcm+goVpIQEuikKx27JVyxxXiKlG4=",

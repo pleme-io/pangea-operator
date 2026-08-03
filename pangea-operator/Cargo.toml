@@ -124,6 +124,14 @@ magma-rubygems         = { git = "https://github.com/pleme-io/magma", rev = "08b
 magma-stream           = { git = "https://github.com/pleme-io/magma", rev = "08b469efaf3e6d30cbdc50d546e82b6731b029f8", optional = true }
 hex                    = { version = "0.4", optional = true }
 
+# Credential handling. See the workspace manifest for why each exists;
+# the call sites are backend::config (providers.tf.json), controller::
+# template_controller (the git askpass password file) and ruby::gem_cache
+# (the gem-clone PAT).
+cofre-fs = { workspace = true }
+cofre-secret = { workspace = true }
+base64 = { workspace = true }
+
 # Kubernetes
 kube = { workspace = true, features = ["runtime", "client"] }
 k8s-openapi.workspace = true

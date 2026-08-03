@@ -1478,11 +1478,16 @@ async fn git_auth_env(
                     .map(|v| String::from_utf8_lossy(&v.0).to_string())
                     .unwrap_or_else(|| "git".to_string());
                 let password = String::from_utf8_lossy(&token.0).to_string();
-                // Write credentials to separate files (avoids shell injection)
+                // Write credentials to separate files (avoids shell injection).
+                //
+                // `_git_pass` holds the PAT, so it is created at 0600 by
+                // `open(2)` rather than at 0644-and-chmod'ed. The username is
+                // not a credential and stays an ordinary file.
                 workspace.write_file("_git_user", &username).await?;
-                workspace.write_file("_git_pass", &password).await?;
+                workspace
+                    .write_secret_file("_git_pass", &password, 0o600)
+                    .await?;
                 // GIT_ASKPASS script reads from files — no interpolation
-                let askpass_script = workspace.path.join("_git_askpass.sh");
                 let user_path = workspace.path.join("_git_user");
                 let pass_path = workspace.path.join("_git_pass");
                 let script_content = format!(
@@ -1490,17 +1495,14 @@ async fn git_auth_env(
                     user_path.display(),
                     pass_path.display(),
                 );
-                workspace
-                    .write_file("_git_askpass.sh", &script_content)
+                // 0700 at creation. The previous form wrote the script then
+                // chmod'ed it with the result discarded — a failed chmod left
+                // a non-executable GIT_ASKPASS and git fell through to
+                // prompting, which is the hang this function's tail comment
+                // was added to prevent.
+                let askpass_script = workspace
+                    .write_secret_file("_git_askpass.sh", &script_content, 0o700)
                     .await?;
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ = std::fs::set_permissions(
-                        &askpass_script,
-                        std::fs::Permissions::from_mode(0o700),
-                    );
-                }
                 env_vars.push((
                     "GIT_ASKPASS".to_string(),
                     askpass_script.to_string_lossy().to_string(),

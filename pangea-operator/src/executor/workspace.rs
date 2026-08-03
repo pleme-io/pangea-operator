@@ -289,6 +289,26 @@ impl Workspace {
         Ok(file_path)
     }
 
+    /// Write a file whose content is a credential.
+    ///
+    /// The difference from [`Self::write_file`] is `mode`, and that the
+    /// mode comes from `open(2)` rather than a `chmod` afterwards — a
+    /// later `chmod` cannot retroactively close the window in which the
+    /// file was world-readable. Use this for anything the operator
+    /// process should be the only reader of; `write_file` stays the right
+    /// call for the ordinary workspace artifacts (`main.tf.json`,
+    /// rendered plans, logs).
+    pub async fn write_secret_file(
+        &self,
+        filename: &str,
+        content: &str,
+        mode: u32,
+    ) -> Result<PathBuf> {
+        let file_path = self.path.join(filename);
+        cofre_fs::write_secret(&file_path, content.as_bytes(), mode).map_err(|e| Error::Io(e))?;
+        Ok(file_path)
+    }
+
     /// Write JSON content to a file in the workspace.
     pub async fn write_json(&self, filename: &str, value: &serde_json::Value) -> Result<PathBuf> {
         let content = serde_json::to_string_pretty(value).map_err(|e| Error::Serialization(e))?;

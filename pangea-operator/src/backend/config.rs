@@ -173,8 +173,19 @@ impl BackendConfigGenerator {
         let content = serde_json::to_string_pretty(&config)
             .map_err(|e| crate::error::Error::Serialization(e))?;
 
-        tokio::fs::write(&config_path, content)
-            .await
+        // This file carries live cloud credentials — the AWS access key,
+        // secret key and session token, the Cloudflare API token, the
+        // Porkbun key pair. `tokio::fs::write` creates at 0666 & ~umask,
+        // which on the operator image (umask 022) is a 0644 file holding
+        // an AWS secret key for as long as the workspace lives. cofre-fs
+        // sets the mode in the same syscall that creates the file, so
+        // there is no interval in which it is readable by anyone else.
+        //
+        // Synchronous inside an async fn deliberately: this is one small
+        // write plus its fsync, and the alternative (spawn_blocking over a
+        // borrowed path) buys nothing on a reconcile-latency budget
+        // measured in seconds.
+        cofre_fs::write_secret(&config_path, content.as_bytes(), 0o600)
             .map_err(|e| crate::error::Error::Io(e))?;
 
         debug!(?config_path, "Provider configuration written");

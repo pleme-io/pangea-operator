@@ -44,6 +44,24 @@ shigoto-dag = { git = "https://github.com/pleme-io/shigoto", rev = "e4e4c92b7327
 shigoto-budget = { git = "https://github.com/pleme-io/shigoto", rev = "e4e4c92b7327de197e492fe8cb7589f4d04c9309" }
 shigoto-rank = { git = "https://github.com/pleme-io/shigoto", rev = "e4e4c92b7327de197e492fe8cb7589f4d04c9309" }
 
+# Credential handling.
+#
+# cofre-fs: a secret file gets its mode from open(2) rather than a chmod
+# afterwards, so there is no interval in which it is world-readable.
+# cofre-secret: a credential type that does not implement AsRef<OsStr>, so
+# `Command::arg(secret)` is a compile error rather than a review comment.
+#
+# Both are dependency-free. Rev-pinned for the same reason as shigoto and
+# magma above: an unpinned `git =` lets a routine `cargo update` move the
+# live operator's credential handling with nothing asking for it.
+cofre-fs = { git = "https://github.com/pleme-io/cofre", rev = "4f70b8fa025f2b78b7ca062fb0feb31188a8d31a" }
+cofre-secret = { git = "https://github.com/pleme-io/cofre", rev = "4f70b8fa025f2b78b7ca062fb0feb31188a8d31a" }
+
+# Base64 — encodes the `Authorization: basic` value of the git credential
+# header that carries the gem-cache PAT through the environment. Already in
+# the tree transitively; declared here because it is now used directly.
+base64 = "0.22"
+
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

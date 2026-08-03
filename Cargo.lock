@@ -725,6 +725,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cofre-fs"
+version = "0.1.0"
+source = "git+https://github.com/pleme-io/cofre?rev=4f70b8fa025f2b78b7ca062fb0feb31188a8d31a#4f70b8fa025f2b78b7ca062fb0feb31188a8d31a"
+
+[[package]]
+name = "cofre-secret"
+version = "0.1.0"
+source = "git+https://github.com/pleme-io/cofre?rev=4f70b8fa025f2b78b7ca062fb0feb31188a8d31a#4f70b8fa025f2b78b7ca062fb0feb31188a8d31a"
+
+[[package]]
 name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3321,8 +3331,11 @@ dependencies = [
  "async-graphql-axum",
  "async-trait",
  "axum 0.8.9",
+ "base64",
  "blake3",
  "chrono",
+ "cofre-fs",
+ "cofre-secret",
  "cron",
  "derive_builder",
  "figment",
