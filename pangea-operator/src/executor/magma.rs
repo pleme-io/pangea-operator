@@ -3165,8 +3165,16 @@ mod tests {
              resolution reads from it)"
         );
         assert_eq!(
+            // Keyed by the typed `ProviderInstance` since magma db764fa
+            // (provider aliases), so a bare `"aws"` no longer indexes it.
+            // Looked up by `name()` rather than by constructing the default
+            // instance: what this test asserts is that the aws credentials
+            // arrived at all, which is true of whichever instance carries
+            // them.
             ctx.provider_configs
-                .get("aws")
+                .iter()
+                .find(|(instance, _)| instance.name() == "aws")
+                .map(|(_, v)| v)
                 .and_then(|v| v.get("access_key"))
                 .and_then(|v| v.as_str()),
             Some("AKIA_FAKE"),
