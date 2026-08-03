@@ -119,6 +119,22 @@ fn classify_kind(error_text: &str) -> ConflictKind {
     } else if t.contains("already exists")
         || t.contains("name already")
         || t.contains("already been taken")
+        // GitHub does NOT say "already exists" when a TEAM name collides. It
+        // says `422 Validation Failed [{Resource:Team Field:data
+        // Code:unprocessable Message:Name must be unique for this org}]`,
+        // which matched none of the phrasings above and so classified as
+        // `Other` — meaning import-on-conflict never even considered it.
+        //
+        // Measured 2026-08-03 on `pleme-io-opensource`: `github_team.developers`
+        // and `github_team.mathscape` both exist on GitHub, both were planned
+        // as Create, both 422'd every cycle. Worse, the failure CASCADES —
+        // dependents interpolate `${github_team.developers.id}`, the id is
+        // never known, and the literal is sent as a URL path:
+        // `GET /orgs/pleme-io/teams/$%7Bgithub_team.developers.id%7D → 404`.
+        // Nine nodes attempted, nine failed, zero completed, apply stalled,
+        // and the whole 872-repo workspace stopped converging on a phrasing
+        // mismatch.
+        || t.contains("must be unique")
     {
         ConflictKind::AlreadyExists
     } else {
@@ -556,6 +572,32 @@ Error: POST https://api.github.com/orgs/pleme-io/repos: 422 Validation Failed [{
         assert_eq!(conflicts[0].1, ConflictKind::AlreadyExists);
         assert_eq!(conflicts[1].0, "github_repository.maquina_engine");
         assert_eq!(conflicts[1].1, ConflictKind::AlreadyExists);
+    }
+
+    /// The phrasing that wedged `pleme-io-opensource` for hours on 2026-08-03.
+    ///
+    /// GitHub says "Name must be unique for this org" for a TEAM collision,
+    /// not "already exists" — so this classified as `Other`, import-on-conflict
+    /// skipped it, and the create was retried into a 422 every cycle. The real
+    /// diagnostic text, verbatim from the operator's `lastError`.
+    #[test]
+    fn classifies_github_team_name_must_be_unique_as_already_exists() {
+        let output = "\
+Error: POST https://api.github.com/orgs/pleme-io/teams: 422 Validation Failed [{Resource:Team Field:data Code:unprocessable Message:Name must be unique for this org}]
+
+  with github_team.developers,
+  on main.tf.json line 0, in resource.github_team.developers:
+";
+        let conflicts = classify_apply_conflicts(output);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].0, "github_team.developers");
+        assert_eq!(
+            conflicts[0].1,
+            ConflictKind::AlreadyExists,
+            "a uniqueness violation IS an already-exists conflict; classifying \
+             it as Other means import-on-conflict never considers it and the \
+             create is retried forever"
+        );
     }
 
     #[test]
