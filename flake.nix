@@ -372,6 +372,14 @@
               hashicorp_random
               porkbun
               cyrilgdn_rabbitmq
+              # datadog: needed for the absorbed Datadog estate
+              # (pangea-datadog-absorb). On the primary pin deliberately —
+              # it carries no CVE escape-hatch requirement, so it does not
+              # belong in the securityPkgs block above. There is no
+              # `tofu init` fallback (PANGEA_FORBID_TOFU + magma's
+              # locate_provider reads MAGMA_PROVIDER_DIR), so an absent
+              # provider here is a hard ProviderUnavailable, not a slow path.
+              datadog_datadog
             ]);
           };
         in

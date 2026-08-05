@@ -3663,8 +3663,9 @@ async fn handle_applying(
     // creating a duplicate. Imported addresses are tracked so the
     // cycle receipt can mark them Outcome::Imported (instead of
     // whatever the post-import plan would derive).
-    let mut imported_addresses =
+    let prepass =
         run_import_prepass(template, state, &workspace.path, &plan_path, &prior_drifts).await;
+    let mut imported_addresses = prepass.imported.clone();
 
     // Use plan file if it exists, otherwise apply directly. If we
     // imported anything, drop the cached plan file — the new state
@@ -3702,10 +3703,42 @@ async fn handle_applying(
     // so this gate must too — see `drift_details_from_plan_result`'s doc
     // for the 2026-07-19 fix that closed the magma-inert gap this
     // comment used to (incorrectly) claim as a known limitation.
-    if plan_file.is_none() && !imported_addresses.is_empty() {
+    // Trigger on ATTEMPTED, not on SUCCEEDED. Keying this on
+    // `!imported_addresses.is_empty()` left the worst case ungated: when every
+    // import fails (or the credential-aware executor cannot be resolved at
+    // all), nothing is imported, the cached plan with its N creates is used
+    // verbatim, and the apply duplicates every live object it was supposed to
+    // adopt. That is precisely when the gate is most needed.
+    if prepass.attempted() {
         let recheck = runner.plan(&workspace).await?;
         if recheck.success {
             let fresh_drifts = drift_details_from_plan_result(&recheck, template, state).await;
+
+            // A duplicate create is not a DESTRUCTIVE action, so the escalation
+            // check below cannot see it. For a provider with no uniqueness
+            // constraint this is the difference between adopting an object and
+            // silently standing up a second copy of it.
+            if let Some(dup) = find_unimported_create(&prepass.failed, &fresh_drifts) {
+                let msg = format!(
+                    "Applying refused: import failed for {} and the fresh plan still \
+                     wants to CREATE it. Applying would duplicate the live resource \
+                     rather than adopt it. Fix the import hint (or the credentials) \
+                     and re-reconcile. Parking at Failed.",
+                    dup.address
+                );
+                warn!(address = %dup.address, "refusing apply: unimported create");
+                update_phase_with_error(template, Phase::Failed, &msg, state).await?;
+                record_event(
+                    template,
+                    state,
+                    EventType::Warning,
+                    "UnimportedCreateRefused",
+                    &msg,
+                )
+                .await;
+                return Ok(ReconcileAction::Requeue(DEFAULT_REQUEUE_INTERVAL));
+            }
+
             if let Some(escalation) =
                 find_unapproved_destructive_escalation(&prior_drifts, &fresh_drifts)
             {
@@ -4754,13 +4787,38 @@ async fn read_legacy_show_plan_json(
 /// Failures are non-fatal: a hint with bad substitution is skipped
 /// with a Warning event; an import that fails (wrong ID, resource
 /// gone, already-managed) is logged but doesn't block the apply.
+/// What an import prepass actually did.
+///
+/// Before this carried failures, `run_import_prepass` returned only the
+/// addresses it managed to import and the failures were dropped by a
+/// `filter_map`. That made the worst case invisible: a provider whose objects
+/// have NO uniqueness constraint (Datadog monitors and dashboards are the
+/// motivating case) will happily CREATE a duplicate of a live object when an
+/// import hint fails, and the apply path had no way to know an import had even
+/// been attempted for that address.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct ImportPrepass {
+    pub imported: Vec<String>,
+    pub failed: Vec<String>,
+}
+
+impl ImportPrepass {
+    /// True when any import was ATTEMPTED, which is the condition the
+    /// post-import safety gate must key on. Keying it on "something was
+    /// imported" leaves the total-failure case ungated, and total failure is
+    /// exactly when duplication is most likely.
+    pub(crate) fn attempted(&self) -> bool {
+        !self.imported.is_empty() || !self.failed.is_empty()
+    }
+}
+
 async fn run_import_prepass(
     template: &InfrastructureTemplate,
     state: &ControllerState,
     workspace_path: &std::path::Path,
     plan_path: &std::path::Path,
     prior_drifts: &[DriftDetail],
-) -> Vec<String> {
+) -> ImportPrepass {
     use crate::controller::import::{
         discovery_from_planned_changes, parse_planned_attrs, resolve_import_targets, ImportSkip,
     };
@@ -4776,7 +4834,7 @@ async fn run_import_prepass(
 
     // Short-circuit when neither auto-import nor declared hints fire.
     if template.spec.import_hints.is_empty() && !auto_import {
-        return Vec::new();
+        return ImportPrepass::default();
     }
 
     let variables = template.spec.variables.clone().unwrap_or_default();
@@ -4864,12 +4922,12 @@ async fn run_import_prepass(
                  pre-apply import disabled this cycle (post-apply conflict catch + magma reactive \
                  adopt cover)."
             );
-            return Vec::new();
+            return ImportPrepass::default();
         }
     };
 
     if create_addresses_owned.is_empty() {
-        return Vec::new();
+        return ImportPrepass::default();
     }
 
     // Resolve every create-action to an import target via the three-layer
@@ -4953,7 +5011,7 @@ async fn run_import_prepass(
     const IMPORT_CONCURRENCY: usize = 10;
     let total_targets = targets.len();
     if total_targets == 0 {
-        return Vec::new();
+        return ImportPrepass::default();
     }
 
     // Credential-aware executor for the actual import RPCs. `executor`
@@ -4984,7 +5042,7 @@ async fn run_import_prepass(
                  disabled this cycle (post-apply conflict catch + magma reactive \
                  adopt cover)."
             );
-            return Vec::new();
+            return ImportPrepass::default();
         }
     };
 
@@ -4993,7 +5051,7 @@ async fn run_import_prepass(
         concurrency = IMPORT_CONCURRENCY,
         "Running import prepass concurrently"
     );
-    let imported: Vec<String> = futures::stream::iter(targets.into_iter())
+    let results: Vec<(String, bool)> = futures::stream::iter(targets.into_iter())
         .map(|t| {
             let import_executor = Arc::clone(&import_executor);
             async move {
@@ -5007,24 +5065,42 @@ async fn run_import_prepass(
                     &t.source,
                 )
                 .await;
-                if ok {
-                    Some(t.address)
-                } else {
-                    None
-                }
+                (t.address, ok)
             }
         })
         .buffer_unordered(IMPORT_CONCURRENCY)
-        .filter_map(|maybe_addr| async move { maybe_addr })
         .collect()
         .await;
 
+    let (ok, bad): (Vec<_>, Vec<_>) = results.into_iter().partition(|(_, ok)| *ok);
+    let outcome = ImportPrepass {
+        imported: ok.into_iter().map(|(a, _)| a).collect(),
+        failed: bad.into_iter().map(|(a, _)| a).collect(),
+    };
+
     info!(
-        imported = imported.len(),
+        imported = outcome.imported.len(),
+        failed = outcome.failed.len(),
         total = total_targets,
         "Import prepass complete"
     );
-    imported
+    outcome
+}
+
+/// Find the first address in `fresh` that terraform wants to CREATE even though
+/// an import was attempted for it and failed.
+///
+/// This is the sibling of `find_unapproved_destructive_escalation`. That one
+/// stops an unapproved delete/replace; this one stops a duplicate create. They
+/// are deliberately separate predicates: `is_destructive_action` is false for
+/// `create`, so the destructive gate passes a duplicate straight through.
+pub(crate) fn find_unimported_create<'a>(
+    failed_imports: &[String],
+    fresh: &'a [DriftDetail],
+) -> Option<&'a DriftDetail> {
+    fresh
+        .iter()
+        .find(|d| d.action.as_str() == "create" && failed_imports.iter().any(|f| f == &d.address))
 }
 
 /// Try a single import via the resolved executor (magma import RPC on
@@ -7584,7 +7660,7 @@ mod db_backed_magma_drift_extraction_tests {
 
 #[cfg(test)]
 mod unapproved_destructive_escalation_tests {
-    use super::find_unapproved_destructive_escalation;
+    use super::{find_unapproved_destructive_escalation, find_unimported_create, ImportPrepass};
     use crate::crd::DriftDetail;
 
     fn drift(address: &str, action: &str) -> DriftDetail {
@@ -7674,6 +7750,64 @@ mod unapproved_destructive_escalation_tests {
     fn empty_fresh_plan_is_never_flagged() {
         let approved = vec![drift("aws_eks_cluster.camelot-eks", "create")];
         assert!(find_unapproved_destructive_escalation(&approved, &[]).is_none());
+    }
+
+    // ---- the unimported-create gate ------------------------------------
+    //
+    // The hazard: a provider whose objects carry no uniqueness constraint
+    // (Datadog monitors and dashboards) will CREATE a duplicate of a live
+    // object when its import hint fails. `try_import` treats a failure as
+    // non-fatal and the apply proceeds, so without this predicate the
+    // duplicate is silent.
+
+    #[test]
+    fn a_create_for_a_failed_import_is_refused() {
+        let failed = vec!["datadog_monitor.cpu_high".to_string()];
+        let fresh = vec![drift("datadog_monitor.cpu_high", "create")];
+
+        let hit = find_unimported_create(&failed, &fresh).expect("must refuse");
+        assert_eq!(hit.address, "datadog_monitor.cpu_high");
+    }
+
+    #[test]
+    fn a_create_with_no_failed_import_is_allowed() {
+        // A genuinely new resource that never had a hint must not be blocked.
+        let fresh = vec![drift("datadog_monitor.brand_new", "create")];
+        assert!(find_unimported_create(&[], &fresh).is_none());
+    }
+
+    #[test]
+    fn a_failed_import_that_does_not_replan_as_create_is_allowed() {
+        let failed = vec!["datadog_monitor.cpu_high".to_string()];
+        let fresh = vec![drift("datadog_monitor.cpu_high", "update")];
+        assert!(find_unimported_create(&failed, &fresh).is_none());
+    }
+
+    // This is the gap that made the destructive gate insufficient on its own:
+    // `is_destructive_action` is false for `create`, so a duplicate create sails
+    // straight through it.
+    #[test]
+    fn the_destructive_gate_alone_does_not_catch_a_duplicate_create() {
+        let fresh = vec![drift("datadog_monitor.cpu_high", "create")];
+        assert!(find_unapproved_destructive_escalation(&[], &fresh).is_none());
+        assert!(find_unimported_create(&["datadog_monitor.cpu_high".to_string()], &fresh).is_some());
+    }
+
+    #[test]
+    fn prepass_reports_attempted_when_everything_failed() {
+        // The credential-failure path: nothing imported, every target failed.
+        // If `attempted` were keyed on `imported`, this would skip the gate and
+        // apply the cached plan verbatim -- the mass-duplication case.
+        let outcome = ImportPrepass {
+            imported: vec![],
+            failed: vec!["datadog_monitor.a".to_string(), "datadog_monitor.b".to_string()],
+        };
+        assert!(outcome.attempted());
+    }
+
+    #[test]
+    fn prepass_reports_not_attempted_when_there_was_nothing_to_do() {
+        assert!(!ImportPrepass::default().attempted());
     }
 }
 
