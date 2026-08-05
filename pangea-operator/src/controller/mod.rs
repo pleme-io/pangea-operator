@@ -125,6 +125,93 @@ pub fn resolve_and_check(
     Ok(chosen)
 }
 
+/// What to do when a template with a finalizer is being deleted.
+///
+/// A closed enum rather than two booleans threaded through the controller, so a
+/// third case cannot be added later without every match arm being revisited.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeletionDecision {
+    /// Destroy the infrastructure, then release the finalizer. The normal path.
+    Destroy,
+    /// Refuse to destroy and keep the finalizer. Correct ONLY while the escape
+    /// hatch (edit the spec, re-delete) is reachable.
+    BlockAndRequeue,
+    /// Refuse to destroy but RELEASE the finalizer, leaving the infrastructure
+    /// intact and unmanaged. The namespace is terminating, so blocking would
+    /// deadlock it forever.
+    OrphanAndRelease,
+}
+
+/// The deletion decision, as a pure function of the two facts that matter.
+///
+/// Extracted from the controller so it is exhaustively testable: this is a
+/// destructive path, and the case that bit us was invisible precisely because it
+/// was inline in an async reconcile that needs a live apiserver to exercise.
+#[must_use]
+pub const fn deletion_decision(
+    destroy_protection: bool,
+    namespace_terminating: bool,
+) -> DeletionDecision {
+    match (destroy_protection, namespace_terminating) {
+        // No protection: destroy, regardless of why the delete arrived.
+        (false, _) => DeletionDecision::Destroy,
+        // Protected, namespace alive: block. The operator can flip
+        // destroyProtection and re-delete, so blocking is recoverable.
+        (true, false) => DeletionDecision::BlockAndRequeue,
+        // Protected AND the namespace is going away: blocking is a DEADLOCK —
+        // no write into a terminating namespace can ever land, so the spec can
+        // never be edited and the finalizer is never released. Honour what the
+        // flag MEANS (do not destroy) and drop what it merely IMPLEMENTS
+        // (blocking the CR's removal).
+        (true, true) => DeletionDecision::OrphanAndRelease,
+    }
+}
+
+/// Is this namespace terminating?
+///
+/// Exists for exactly one decision: whether a CR's deletion was driven by its
+/// NAMESPACE going away rather than by someone deleting the CR. The two look
+/// identical on the object (both are just a `deletionTimestamp`), but they have
+/// opposite correct behaviours when a finalizer wants to block:
+///
+///   * CR deleted by a human    — blocking is fine. The escape hatch (edit the
+///                                spec, then re-delete) is reachable.
+///   * namespace terminating    — blocking is a DEADLOCK. Every write into a
+///                                terminating namespace is Forbidden, so no spec
+///                                edit can ever land, so the finalizer is never
+///                                released, so the namespace never finishes.
+///
+/// FAILS OPEN, deliberately: an unreadable namespace returns `false`, which
+/// preserves today's blocking behaviour. The alternative — treating a failed
+/// read as "terminating" — would release finalizers and orphan infrastructure on
+/// a transient apiserver blip, and that error is unrecoverable in the direction
+/// that matters.
+pub async fn namespace_is_terminating(client: &kube::Client, namespace: &str) -> bool {
+    use k8s_openapi::api::core::v1::Namespace;
+    use kube::Api;
+
+    let api: Api<Namespace> = Api::all(client.clone());
+    match api.get(namespace).await {
+        Ok(ns) => {
+            ns.metadata.deletion_timestamp.is_some()
+                || ns
+                    .status
+                    .as_ref()
+                    .and_then(|s| s.phase.as_deref())
+                    .is_some_and(|p| p == "Terminating")
+        }
+        Err(e) => {
+            tracing::warn!(
+                namespace = %namespace,
+                error = %e,
+                "namespace_is_terminating: read failed — assuming NOT terminating so finalizer \
+                 behaviour is unchanged; a transient read must never orphan infrastructure",
+            );
+            false
+        }
+    }
+}
+
 /// Shared state for all controllers.
 #[derive(Clone)]
 pub struct ControllerState {
@@ -772,6 +859,63 @@ impl ControllerState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── deletion_decision ───────────────────────────────────────────
+    //
+    // Exhaustive over both booleans (4 cases), because this is a DESTRUCTIVE
+    // path and the case that bit us was invisible: it lived inline in an async
+    // reconcile that needs a live apiserver to exercise, so nothing ever ran it.
+    //
+    // MEASURED on camelot-eks 2026-08-05: namespace `pleme-io-opensource` was
+    // deleted, its namespace GC deleted an InfrastructureTemplate carrying
+    // destroyProtection=true, the operator refused to destroy and requeued
+    // forever holding `pangea.pleme.io/cleanup`, and the namespace could never
+    // finish terminating. That one stuck namespace failed Flux's ENTIRE
+    // Kustomization ("dry-run failed (Forbidden): namespace is being
+    // terminated"), so every unrelated commit stopped reaching the cluster until
+    // the finalizer was removed by hand.
+
+    #[test]
+    fn unprotected_always_destroys_whatever_drove_the_delete() {
+        assert_eq!(deletion_decision(false, false), DeletionDecision::Destroy);
+        assert_eq!(deletion_decision(false, true), DeletionDecision::Destroy);
+    }
+
+    #[test]
+    fn protected_with_a_live_namespace_still_blocks() {
+        // Unchanged behaviour, and it must stay unchanged: with the namespace
+        // alive the operator CAN flip destroyProtection and re-delete, so
+        // blocking protects infrastructure at no cost.
+        assert_eq!(
+            deletion_decision(true, false),
+            DeletionDecision::BlockAndRequeue
+        );
+    }
+
+    #[test]
+    fn protected_while_the_namespace_terminates_releases_instead_of_deadlocking() {
+        // THE FIX. Blocking here cannot be escaped: every write into a
+        // terminating namespace is Forbidden, so destroyProtection can never be
+        // flipped, so the finalizer is never released, so the namespace never
+        // finishes -- and one stuck namespace blocks all GitOps on the cluster.
+        // Releasing without destroying keeps the infrastructure (recoverable by
+        // re-declaring the template) and unblocks everything else.
+        assert_eq!(
+            deletion_decision(true, true),
+            DeletionDecision::OrphanAndRelease
+        );
+    }
+
+    #[test]
+    fn orphan_and_block_are_distinct_outcomes() {
+        // Guards against a future simplification collapsing the two protected
+        // cases back into one, which is exactly the shape of the original bug.
+        assert_ne!(
+            deletion_decision(true, true),
+            deletion_decision(true, false),
+            "the namespace-terminating case must NOT behave like the live-namespace case"
+        );
+    }
 
     // ── resolve_and_check ───────────────────────────────────────────
     //

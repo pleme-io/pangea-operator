@@ -364,6 +364,74 @@ async fn reconcile_template(
             // Destroy protection: refuse to destroy infrastructure that the
             // operator itself depends on (VPC, EKS, RDS, etc.)
             if template.spec.destroy_protection {
+                // ── THE NAMESPACE-TERMINATION DEADLOCK ────────────────────────
+                //
+                // Holding the finalizer forever is correct when a HUMAN deleted
+                // this one CR: they can set destroyProtection=false and re-delete.
+                // It is catastrophic when the deletion came from the NAMESPACE
+                // being deleted, because the escape hatch is unreachable —
+                // every write into a terminating namespace is Forbidden, so
+                // destroyProtection can never be flipped, so the finalizer is
+                // never released, so the namespace never finishes terminating.
+                //
+                // MEASURED on camelot-eks 2026-08-05: namespace
+                // `pleme-io-opensource` sat Terminating with this CR's finalizer
+                // held. That single stuck namespace failed Flux's ENTIRE
+                // Kustomization —
+                //
+                //   ExternalSecret/pleme-io-opensource/github-api-token dry-run
+                //   failed (Forbidden): namespace ... is being terminated
+                //
+                // — so the cluster's whole GitOps apply was blocked and unrelated
+                // commits stopped reaching it. Recovery required break-glass
+                // removal of this finalizer by hand. The blast radius of
+                // protecting one workspace was every workload on the cluster.
+                //
+                // So: when the namespace is going away, we honour what the flag
+                // MEANS (do not destroy the infrastructure) and stop doing what
+                // it merely IMPLEMENTS (block the CR's deletion). The
+                // infrastructure is left intact and UNMANAGED, which is loudly
+                // recorded — an orphaned-but-alive VPC is recoverable by
+                // re-declaring the template; a cluster whose GitOps cannot apply
+                // is not.
+                let namespace_terminating = crate::controller::namespace_is_terminating(
+                    &state.client,
+                    &namespace,
+                )
+                .await;
+
+                // Route through the pure, exhaustively-tested decision rather
+                // than re-deciding inline — the original bug was an inline
+                // branch on a destructive path that no test could reach.
+                let decision = crate::controller::deletion_decision(
+                    template.spec.destroy_protection,
+                    namespace_terminating,
+                );
+
+                if decision == crate::controller::DeletionDecision::OrphanAndRelease {
+                    warn!(
+                        namespace = %namespace,
+                        "Destroy protection is enabled AND the namespace is terminating — \
+                         releasing the finalizer WITHOUT destroying. The infrastructure is \
+                         intact and now UNMANAGED. Holding the finalizer here would deadlock \
+                         namespace termination and block every Flux apply on the cluster.",
+                    );
+                    record_event(
+                        &template,
+                        &state,
+                        EventType::Warning,
+                        "OrphanedByNamespaceDeletion",
+                        "Namespace is terminating while destroyProtection=true. The finalizer was \
+                         released WITHOUT destroying: the infrastructure still exists and is no \
+                         longer managed by this operator. Re-declare the InfrastructureTemplate to \
+                         adopt it again. Holding the finalizer would have deadlocked namespace \
+                         termination and blocked all GitOps on this cluster.",
+                    )
+                    .await;
+                    remove_finalizer(&template, &state).await?;
+                    return Ok(Action::await_change());
+                }
+
                 warn!(
                     "Destroy protection is enabled — refusing to destroy infrastructure. \
                      Set spec.destroyProtection=false first, then re-delete."
@@ -377,7 +445,9 @@ async fn reconcile_template(
                 )
                 .await;
                 // Keep requeuing — the finalizer blocks deletion until
-                // protection is removed and destroy completes.
+                // protection is removed and destroy completes. Safe here: the
+                // namespace is alive, so the operator-facing escape hatch
+                // (flipping destroyProtection) is actually reachable.
                 return Ok(Action::requeue(DEFAULT_REQUEUE_INTERVAL));
             }
 
