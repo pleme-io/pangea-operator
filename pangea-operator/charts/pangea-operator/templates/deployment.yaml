@@ -35,6 +35,36 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            # ── ★ THE LEADER LEASE LIVES WHERE THE OPERATOR RUNS ──────────
+            # `leader.rs:94-97` reads POD_NAMESPACE and falls back to the
+            # literal "pangea-system", while `leader.rs:59` documents the
+            # intent as "the operator's OWN namespace". Nothing injected
+            # POD_NAMESPACE, so the fallback was always in force — and it is
+            # only correct on a cluster that happens to have a namespace by
+            # that name.
+            #
+            # MEASURED 2026-08-05: rio has `pangea-system` (Active) and works.
+            # camelot runs this chart in namespace `camelot`, has no
+            # `pangea-system`, and the operator sat in an infinite retry:
+            #   Leader election acquire attempt failed — retrying
+            #   namespaces "pangea-system" not found: NotFound (404)
+            # every ~3s since install. It never became leader, so it
+            # reconciled NOTHING: all 16 InfrastructureTemplates on camelot
+            # carried no phase, no resources, no cycle — including the
+            # `pleme-io-opensource` CR that owns the GitHub org's posture.
+            #
+            # The pod was 1/1 Running and the HelmRelease said "Helm upgrade
+            # succeeded" throughout, so every surface an operator checks was
+            # green while the control plane converged nothing.
+            #
+            # The downward API is the canonical fix and matches the code's
+            # stated intent: the lease belongs in the namespace the operator
+            # actually runs in, whatever that is, so the chart stops being
+            # silently coupled to one namespace NAME.
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: RUST_LOG
               value: {{ .Values.config.logLevel | quote }}
             - name: LOG_FORMAT
