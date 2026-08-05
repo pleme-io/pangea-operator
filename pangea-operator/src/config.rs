@@ -193,6 +193,15 @@ pub struct DatabaseConfig {
     pub user: String,
     /// Database name (`PGDATABASE`).
     pub database: String,
+    /// Max connections in the magma workload pool
+    /// (`PANGEA_DB_POOL_MAX`).
+    ///
+    /// This bounds concurrent magma state work, so it wants to be at least
+    /// `reconcile.workers` or workers queue on each other for a connection
+    /// rather than on real work. It deliberately does NOT bound `/readyz`:
+    /// the readiness probe owns a separate one-connection pool so a busy
+    /// operator cannot starve its own health check (main.rs).
+    pub pool_max_connections: u32,
 }
 
 /// Reconcile concurrency + live-dispatch admission budget.
@@ -442,6 +451,8 @@ struct DatabaseOverlay {
     user: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     database: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pool_max_connections: Option<u32>,
 }
 
 #[derive(Serialize, Default)]
@@ -528,6 +539,7 @@ impl EnvOverlay {
                 port: env_parse::<u16>("PGPORT"),
                 user: env_present("PGUSER"),
                 database: env_present("PGDATABASE"),
+                pool_max_connections: env_parse::<u32>("PANGEA_DB_POOL_MAX"),
             },
             reconcile: ReconcileOverlay {
                 // The clamp matches `reconcile_workers_from_env`.
@@ -598,6 +610,7 @@ impl TieredConfig for OperatorConfig {
                 port: 0,
                 user: String::new(),
                 database: String::new(),
+                pool_max_connections: 0,
             },
             reconcile: ReconcileConfig {
                 workers: 0,
@@ -670,6 +683,9 @@ impl TieredConfig for OperatorConfig {
             port: 5432,
             user: "postgres".to_string(),
             database: "pangea_state".to_string(),
+            // 5 was the hardcoded value before this became configurable.
+            // Kept as the default so the change is inert until tuned.
+            pool_max_connections: 5,
         };
         c.reconcile = ReconcileConfig {
             workers: 4,
