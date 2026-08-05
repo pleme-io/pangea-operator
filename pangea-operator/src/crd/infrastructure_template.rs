@@ -2306,6 +2306,94 @@ mod tests {
         assert!(!kinds.contains(&ProviderKind::Akeyless));
     }
 
+    // The regression test for the defect this field closes.
+    //
+    // The delivery chart (helmworks lareira-akeyless-datadog) rendered
+    // providerCredentials.datadog and the operator declared no such field. With
+    // no deny_unknown_fields serde DROPPED it silently: the CR was accepted, the
+    // spec parsed, and the credential simply was not there. Nothing failed, and
+    // every RPC fell back to the pod's ambient credential chain.
+    //
+    // The YAML below is copied verbatim from `helm template` output, so this
+    // asserts against what the chart actually emits rather than a fixture that
+    // agrees with the struct by construction.
+    #[test]
+    fn the_delivery_charts_rendered_spec_carries_its_datadog_credential() {
+        let rendered = r#"
+source:
+  gitRepository:
+    url: "https://github.com/pleme-io/pangea-architectures.git"
+    ref: "main"
+    path: "workspaces/akeyless-datadog/generated/shards/monitors.rb"
+pangeaNamespace: "akeyless-datadog"
+destroyProtection: true
+refreshInterval: "30m"
+defaultDecision: requireApproval
+providerCredentials:
+  datadog:
+    secretRef:
+      name: "dd-provider-credentials"
+importHints:
+  "datadog_monitor.example_123": "123"
+"#;
+        let spec: InfrastructureTemplateSpec =
+            serde_yaml::from_str(rendered).expect("the chart's own output must parse");
+
+        let creds = spec
+            .provider_credentials
+            .as_ref()
+            .expect("providerCredentials present");
+        let datadog = creds
+            .datadog
+            .as_ref()
+            .expect("datadog credential must survive deserialization -- silently dropping it is the bug");
+        assert_eq!(datadog.secret_ref.name, "dd-provider-credentials");
+
+        // And it must reach the generic resolver loop, which is what actually
+        // hands credentials to magma.
+        let refs = creds.iter_secret_refs();
+        let dd = refs
+            .iter()
+            .find(|(k, _)| *k == ProviderKind::Datadog)
+            .map(|(_, sref)| sref.name.as_str());
+        assert_eq!(dd, Some("dd-provider-credentials"));
+
+        assert_eq!(spec.import_hints.len(), 1);
+    }
+
+    // WHY the missing field was invisible, pinned so the next person adding a
+    // provider knows the failure mode is SILENCE rather than an error.
+    //
+    // ProviderCredentials carries no deny_unknown_fields, so an unrecognised
+    // provider key deserializes cleanly and vanishes. That is a deliberate
+    // trade -- it keeps older operators forward-compatible with newer charts --
+    // but it means "the operator ignored my credential" and "the operator has
+    // no such provider" look identical from the outside. The only defence is
+    // that adding a field breaks iter_secret_refs' destructure at compile time.
+    #[test]
+    fn an_unknown_provider_key_is_dropped_without_complaint() {
+        // The contrast this test is about: a missing REQUIRED field errors
+        // loudly -- omitting `source` and then `pangeaNamespace` each failed
+        // with a named "missing field" -- while an unknown PROVIDER key does
+        // not error at all. Required fields are guarded; the provider map is
+        // not.
+        let rendered = r#"
+source:
+  inline: "template :x do end"
+pangeaNamespace: "x"
+providerCredentials:
+  nosuchprovider:
+    secretRef:
+      name: "ignored"
+"#;
+        let spec: InfrastructureTemplateSpec =
+            serde_yaml::from_str(rendered).expect("unknown provider keys do NOT fail parsing");
+        let creds = spec.provider_credentials.expect("providerCredentials present");
+
+        // Parsed happily, and carries nothing at all.
+        assert!(creds.iter_secret_refs().is_empty());
+    }
+
     #[test]
     fn iter_secret_refs_yields_all_when_all_populated() {
         let creds = ProviderCredentials {
