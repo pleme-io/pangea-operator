@@ -294,6 +294,29 @@ fn provider_config_object(
         // org's documented cty-typed encoding rule (a `max_items=1` nested
         // block serializes as a 1-element list of objects, theory/MAGMA.md
         // § ApplyRpcContract), `api_key_login` is wrapped in an array.
+        // Datadog. The provider's config surface is FLAT -- api_key, app_key
+        // and api_url are all top-level optional strings (verified against
+        // DataDog/datadog 4.10.0's own schema), so none of the cty
+        // nested-block wrapping Akeyless needs applies here.
+        //
+        // Both keys are required together: a config carrying one of them
+        // authenticates nothing, and returning a half-built object would send
+        // every RPC out to fail with a credential error rather than falling
+        // back to the provider's own env defaults.
+        ProviderKind::Datadog => {
+            let api_key = first_present(data, &["api_key", "DD_API_KEY", "DATADOG_API_KEY"])?;
+            let app_key = first_present(data, &["app_key", "DD_APP_KEY", "DATADOG_APP_KEY"])?;
+            let mut obj = serde_json::Map::new();
+            obj.insert("api_key".to_string(), serde_json::Value::String(api_key));
+            obj.insert("app_key".to_string(), serde_json::Value::String(app_key));
+            // Only a full URL. DD_SITE carries a bare hostname
+            // (datadoghq.eu), and synthesising a URL from it here would be a
+            // guess about a scheme and path the estate never stated.
+            if let Some(url) = first_present(data, &["api_url", "DD_API_URL", "DATADOG_HOST"]) {
+                obj.insert("api_url".to_string(), serde_json::Value::String(url));
+            }
+            Some(serde_json::Value::Object(obj))
+        }
         ProviderKind::Akeyless => {
             let access_id = first_present(data, &["access_id", "AKEYLESS_ACCESS_ID"])?;
             let access_key = first_present(data, &["access_key", "AKEYLESS_ACCESS_KEY"])?;
@@ -573,6 +596,61 @@ mod tests {
         let obj = provider_config_object(ProviderKind::Cloudflare, &d, None).unwrap();
         let expected = serde_json::json!({ "api_token": "live-token" });
         assert_eq!(obj, expected);
+    }
+
+    #[test]
+    fn datadog_resolves_both_keys_into_a_flat_config() {
+        let d = data(&[("api_key", "dd-api"), ("app_key", "dd-app")]);
+        let obj = provider_config_object(ProviderKind::Datadog, &d, None)
+            .expect("datadog creds present → config object");
+        // FLAT, unlike akeyless: api_key/app_key/api_url are top-level
+        // strings in the provider's own schema, so no cty list wrapping.
+        assert_eq!(obj["api_key"], "dd-api");
+        assert_eq!(obj["app_key"], "dd-app");
+        assert!(obj.get("api_url").is_none());
+    }
+
+    #[test]
+    fn datadog_accepts_the_env_style_key_names() {
+        let d = data(&[("DD_API_KEY", "dd-api"), ("DD_APP_KEY", "dd-app")]);
+        let obj = provider_config_object(ProviderKind::Datadog, &d, None)
+            .expect("env-style keys are accepted too");
+        assert_eq!(obj["api_key"], "dd-api");
+        assert_eq!(obj["app_key"], "dd-app");
+    }
+
+    // Half a credential authenticates nothing. Returning a partial object
+    // would send every RPC out to fail rather than letting the provider's own
+    // env defaults apply.
+    #[test]
+    fn datadog_needs_both_keys_or_none() {
+        let only_api = data(&[("api_key", "dd-api")]);
+        assert!(provider_config_object(ProviderKind::Datadog, &only_api, None).is_none());
+
+        let only_app = data(&[("app_key", "dd-app")]);
+        assert!(provider_config_object(ProviderKind::Datadog, &only_app, None).is_none());
+    }
+
+    // DD_SITE carries a bare hostname; synthesising a URL from it would be a
+    // guess about scheme and path the estate never stated. Only a full URL.
+    #[test]
+    fn datadog_carries_an_explicit_api_url_when_given_one() {
+        let d = data(&[
+            ("api_key", "k"),
+            ("app_key", "a"),
+            ("api_url", "https://api.datadoghq.eu/"),
+        ]);
+        let obj = provider_config_object(ProviderKind::Datadog, &d, None).expect("config object");
+        assert_eq!(obj["api_url"], "https://api.datadoghq.eu/");
+    }
+
+    // Ruby-side authority: the absorbed workspace's shard entry points already
+    // declare `provider :datadog` with ENV.fetch, so a parallel
+    // operator-rendered block would collide with it.
+    #[test]
+    fn datadog_is_ruby_side_and_emits_no_provider_block() {
+        assert!(!ProviderKind::Datadog.operator_emits_provider_block());
+        assert_eq!(ProviderKind::Datadog.name(), "datadog");
     }
 
     #[test]

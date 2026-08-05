@@ -667,6 +667,15 @@ pub struct ProviderCredentials {
     /// `provider "akeyless" { ... }` block.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub akeyless: Option<AkeylessCredentials>,
+
+    /// Datadog credentials configuration. Used by the absorbed Datadog
+    /// estate workspace (workspaces/akeyless-datadog), whose shard entry
+    /// points declare `provider :datadog` with `ENV.fetch`. Without this
+    /// field the chart's `providerCredentials.datadog` was silently
+    /// DROPPED by serde -- no error, no condition -- and every RPC fell
+    /// back to the pod's ambient credential chain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub datadog: Option<DatadogCredentials>,
 }
 
 /// Typed identifier for each provider known to the operator.
@@ -688,6 +697,7 @@ pub enum ProviderKind {
     GitHub,
     Porkbun,
     Akeyless,
+    Datadog,
 }
 
 impl ProviderKind {
@@ -701,6 +711,7 @@ impl ProviderKind {
             ProviderKind::GitHub => "github",
             ProviderKind::Porkbun => "porkbun",
             ProviderKind::Akeyless => "akeyless",
+            ProviderKind::Datadog => "datadog",
         }
     }
 
@@ -753,6 +764,11 @@ impl ProviderKind {
             // inlines credentials via ENV.fetch. Operator emits only the
             // env-var injection, no providers.tf.json block.
             ProviderKind::Akeyless => false,
+            // Datadog: Ruby-side, same model as GitHub and Akeyless. The
+            // absorbed workspace's shard entry points already declare
+            // `provider :datadog, api_key: ENV.fetch('DD_API_KEY', ''), ...`.
+            // A parallel operator-rendered block would collide with it.
+            ProviderKind::Datadog => false,
         }
     }
 }
@@ -779,6 +795,7 @@ impl ProviderCredentials {
             github,
             porkbun,
             akeyless,
+            datadog,
         } = self;
 
         let mut out = Vec::new();
@@ -793,6 +810,9 @@ impl ProviderCredentials {
         }
         if let Some(c) = porkbun {
             out.push((ProviderKind::Porkbun, &c.secret_ref));
+        }
+        if let Some(c) = datadog {
+            out.push((ProviderKind::Datadog, &c.secret_ref));
         }
         if let Some(c) = akeyless {
             out.push((ProviderKind::Akeyless, &c.secret_ref));
@@ -827,6 +847,22 @@ pub struct AwsCredentials {
     /// Optional role ARN to assume.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role_arn: Option<String>,
+}
+
+/// Datadog credentials configuration. Ruby-side authority, same model as
+/// GitHub and Akeyless: the absorbed workspace's own shard entry points
+/// declare `provider :datadog, api_key: ENV.fetch('DD_API_KEY', ''), ...`,
+/// so the operator injects the referenced Secret's data keys as env vars
+/// and must NOT render a parallel `provider "datadog"` block.
+///
+/// On the MAGMA path the resolved config object is nonetheless the only
+/// place the provider receives credentials, so a config object is built
+/// too -- exactly as Akeyless does.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DatadogCredentials {
+    /// Secret containing the Datadog API and application keys.
+    pub secret_ref: SecretRef,
 }
 
 /// Cloudflare credentials configuration.
@@ -2241,6 +2277,7 @@ mod tests {
             github: None,
             porkbun: None,
             akeyless: None,
+            datadog: None,
         };
         assert!(creds.iter_secret_refs().is_empty());
     }
@@ -2257,6 +2294,7 @@ mod tests {
             }),
             porkbun: None,
             akeyless: None,
+            datadog: None,
         };
         let refs = creds.iter_secret_refs();
         assert_eq!(refs.len(), 2);
@@ -2288,14 +2326,17 @@ mod tests {
             akeyless: Some(AkeylessCredentials {
                 secret_ref: empty_secret_ref("ak"),
             }),
+            datadog: Some(DatadogCredentials {
+                secret_ref: empty_secret_ref("dd"),
+            }),
         };
         let refs = creds.iter_secret_refs();
-        assert_eq!(refs.len(), 5);
+        assert_eq!(refs.len(), 6);
 
         // The exhaustiveness contract: count must equal the number
         // of fields on ProviderCredentials. If a future commit adds
-        // a sixth provider field but forgets the iter_secret_refs
-        // case, this test still expects 5 — but the destructuring
+        // a seventh provider field but forgets the iter_secret_refs
+        // case, this test still expects 6 — but the destructuring
         // pattern in iter_secret_refs would have broken at compile
         // time first. This test is the runtime backstop.
         let aws_ref = refs
@@ -2309,6 +2350,12 @@ mod tests {
             .find(|(k, _)| *k == ProviderKind::Porkbun)
             .map(|(_, sref)| sref.name.as_str());
         assert_eq!(porkbun_ref, Some("pb"));
+
+        let datadog_ref = refs
+            .iter()
+            .find(|(k, _)| *k == ProviderKind::Datadog)
+            .map(|(_, sref)| sref.name.as_str());
+        assert_eq!(datadog_ref, Some("dd"));
 
         let akeyless_ref = refs
             .iter()
