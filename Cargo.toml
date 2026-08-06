@@ -14,7 +14,12 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Pleme <engineering@pleme.io>"]
 license = "Apache-2.0"
-repository = "https://github.com/pleme-io/nexus"
+# Was `pleme-io/nexus` — wrong repo, and a PRIVATE one. Harmless while this
+# repo was closed and unpublished; not harmless now that it is declared
+# public with `exposure: oss`, because `repository` is what crates.io and
+# docs.rs link from every published crate. A public crate pointing at a
+# private, unrelated repository yields a 404 for every reader.
+repository = "https://github.com/pleme-io/pangea-operator"
 
 [workspace.dependencies]
 # Shared types
