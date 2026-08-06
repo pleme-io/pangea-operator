@@ -256,7 +256,7 @@ jobs:
       # real substitute-cache benefit from sui. pending-camelot-cache: task
       # #20 tracked the runner-label half of this; that half is done, the
       # rest of #20 (broader fleet-wide cache coverage) remains open.
-      extraSubstituters: ${{ vars.CAMELOT_SUI_SUBSTITUTER }}
+      extraSubstituters: "http://sui.camelot-build.svc"
       requireSigs: ${{ vars.CAMELOT_SUI_REQUIRE_SIGS }}
       # ADDED 2026-07-25: the write half of the pair above -- image-push.yml
       # didn't support this until now (substrate cf24f2c added it, this
@@ -264,7 +264,7 @@ jobs:
       # every build here pulled from sui but never pushed back, so a
       # from-source overlay recompiled fully on every run even after a
       # successful build. Best-effort, same endpoint as the pull side.
-      superCacheSaveEndpoint: ${{ vars.CAMELOT_SUI_SUBSTITUTER }}
+      superCacheSaveEndpoint: "http://sui.camelot-build.svc"
       # Pre-publish CVE gate -- same rationale as image-rio above. This is
       # the variant every real push-triggered merge actually takes (the
       # default runner), so this is the load-bearing half of the fix.

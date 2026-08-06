@@ -48,7 +48,7 @@ jobs:
           extra-conf: |
             sandbox = relaxed
             access-tokens = github.com=${{ secrets.BOT_PAT || secrets.GITHUB_TOKEN }}
-            extra-substituters = ${{ vars.CAMELOT_SUI_SUBSTITUTER }}
+            extra-substituters = http://sui.camelot-build.svc
             require-sigs = ${{ vars.CAMELOT_SUI_REQUIRE_SIGS }}
       # `nix flake check` builds EVERY packages.x86_64-linux.* + apps.x86_64-linux.*
       # output for the current system — including dockerImage-operator-embedded-arm64
@@ -78,7 +78,7 @@ jobs:
       - name: Push built image to super-cache (sui)
         uses: pleme-io/actions/super-cache-save@main
         with:
-          endpoint: ${{ vars.CAMELOT_SUI_SUBSTITUTER }}
+          endpoint: http://sui.camelot-build.svc
           outputs: ${{ steps.build.outputs.out-path }}
           key: dockerImage-operator-embedded-amd64
 
