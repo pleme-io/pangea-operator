@@ -2,7 +2,7 @@
   "schema_version": 2,
   "cargo_lock_sha256": "9660fec8b476935153e15c3d857568d04eeaa692c6fe9f0f7eafe71c6fed088e",
   "manifest_sha256": {
-    "Cargo.toml": "4f8347b12473640715487cc6face42780a829c5e00da363abadc60eade96ee26",
+    "Cargo.toml": "442339a7073ccfab7b48f32334ac8dc56dfa1a68da55cf5e737b339ceef159ed",
     "pangea-cli/Cargo.toml": "ca2aab1f8bbb3576ab16e87da13f90adbdf0ad1abaad85d4eb55035ff11e2cba",
     "pangea-operator-mcp/Cargo.toml": "a1d5c3e03ec8073e6aabead01bed1962a05d23c93c43cda972539f2a7f46caf7",
     "pangea-operator/Cargo.toml": "18dcfb3fe1847af9437b4f0894cb1b2485c356d8a5ea39bcdaf4edc3f2a01604",
