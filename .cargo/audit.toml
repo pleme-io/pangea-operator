@@ -1,0 +1,76 @@
+# cargo-audit configuration — CLAIMS, not suppressions.
+#
+# Every entry below is a NAMED advisory with a stated reachability argument
+# and the evidence for it. That is the fleet posture (hardened-images calls
+# the same shape `cveClaims`): an advisory is claimed against a reason a
+# reviewer can check and disagree with, never silenced because it is noisy.
+#
+# Adding a line here without an argument is the failure mode this file exists
+# to prevent. If you cannot state why the code path is unreachable, upgrade
+# instead — or leave it red and say so.
+#
+# Run:  cargo audit --file Cargo.lock
+# State as of 2026-08-06: 3 advisories found, 1 FIXED by upgrade, 2 claimed.
+#
+#   RUSTSEC-2026-0185  quinn-proto 0.11.14  FIXED — bumped to 0.11.15.
+#                      Not claimed, actually resolved. Purely transitive, and
+#                      0.11.15's normal-dependency set is identical, so the
+#                      lockfile bump is complete rather than partial.
+#
+# ── The two below are claimed. Both are argued from REACHABILITY, and both
+# ── arguments are falsifiable — the recheck that would break each is stated.
+
+[advisories]
+ignore = [
+  # ── RUSTSEC-2026-0189 · rmcp 0.15.0 · DNS rebinding ──────────────────────
+  # Patched only in >= 1.4.0, a semver-MAJOR jump from the `"0.15"` range.
+  #
+  # The flaw is in rmcp's STREAMABLE HTTP server transport. This repo's only
+  # rmcp consumer is `pangea-operator-mcp`, which enables exactly
+  # `features = ["server", "transport-io"]` — stdio. The streamable-http
+  # transport is not compiled in, so there is no HTTP listener to rebind
+  # against. A prior reviewer reached the same conclusion independently on
+  # 2026-07-18 and recorded it at pangea-operator-mcp/Cargo.toml:19-35,
+  # verified there against both rmcp's feature graph and the resolved
+  # Cargo.lock dependency list.
+  #
+  # WHAT WOULD FALSIFY THIS: any consumer enabling `transport-streamable-http`
+  # (or rmcp gaining an HTTP listener under a feature already enabled here).
+  # Grep before trusting this line:
+  #   grep -rn 'transport-streamable-http\|StreamableHttp' --include='*.rs' --include='Cargo.toml'
+  # REVISIT: on a scoped rmcp 1.x bump — that is the real fix, this is the
+  # holding position until the major upgrade is scheduled.
+  "RUSTSEC-2026-0189",
+
+  # ── RUSTSEC-2023-0071 · rsa 0.9.10 · Marvin Attack (timing sidechannel) ──
+  # `patched: []` — THERE IS NO FIXED VERSION. Upgrading is not an option
+  # anyone has; this cannot be resolved by a bump today.
+  #
+  # Path into the graph (from cargo-audit's own tree):
+  #   rsa <- sqlx-mysql <- {sqlx-macros-core <- sqlx-macros <- sqlx, sqlx}
+  #
+  # Two independent reasons the vulnerable path is not exercised:
+  #  1. sqlx is configured `default-features = false` with
+  #     `["macros","migrate","json","postgres","runtime-tokio"]`
+  #     (Cargo.toml:125) — the `mysql` driver feature is NOT enabled.
+  #  2. No MySQL is used anywhere in the tree: a repo-wide grep for
+  #     `MySql|mysql` across *.rs returns nothing. The attack recovers an RSA
+  #     key through timing during MySQL's auth handshake; with no MySQL
+  #     connection there is no handshake to time.
+  # The lockfile entry exists because Cargo.lock enumerates the full possible
+  # graph regardless of feature activation, and because sqlx-macros (a
+  # PROC-MACRO crate, host-side and build-time) pulls the driver set for
+  # compile-time query checking.
+  #
+  # HONEST LIMIT: I did not prove absence from the shipped binary. `cargo tree
+  # -e normal -i rsa` — the check that would settle whether rsa is a runtime
+  # dep or only a build-time proc-macro dep — cannot run in this environment
+  # (it requires network access to private git dependencies). The claim rests
+  # on the feature graph and the absence of any MySQL call site, which is
+  # strong but is not the same as a linkage proof.
+  #
+  # WHAT WOULD FALSIFY THIS: enabling sqlx's `mysql` feature, or any MySQL
+  # connection appearing in the codebase. Either makes this immediately
+  # exploitable-in-principle and there is still no patch to take.
+  "RUSTSEC-2023-0071",
+]
