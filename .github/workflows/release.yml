@@ -102,7 +102,12 @@ on:
         # spliced into the middle of a `${{ }}` string), so a second
         # occurrence for the push-trigger case is the actual floor here,
         # not a missed DRY-up.
-        default: camelot-builder-pleme-eks
+        # ★ EMPTIED 2026-08-06: this value is forwarded to runner-resolve as
+        # `override:`, its TOP precedence tier — above the visibility tier — so a
+        # non-empty default meant every manual dispatch pinned the self-hosted
+        # label and never consulted repo visibility. On a public repo that is a
+        # queue-forever. The push path was always fine (no `inputs` context).
+        default: ""
 
 permissions:
   contents: write
@@ -134,7 +139,7 @@ jobs:
   # generic fleet primitive should know about.
   resolve-runner:
     name: resolve build runner
-    runs-on: camelot-builder-pleme-eks
+    runs-on: ${{ github.event.repository.private && 'camelot-builder-pleme-eks' || 'ubuntu-24.04' }}
     outputs:
       runner: ${{ steps.resolve.outputs.runner }}
       # rio's Attic cache is reachable ONLY from rio's own LAN, so it is

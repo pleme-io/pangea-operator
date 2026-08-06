@@ -9,7 +9,7 @@ jobs:
     # gate ("recent account payments have failed"), independent of any
     # job's own content. Matches release.yml's resolve-runner fix and the
     # camelot skill's documented fleet pattern for private pleme-io repos.
-    runs-on: camelot-builder-pleme-eks
+    runs-on: ${{ github.event.repository.private && 'camelot-builder-pleme-eks' || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@v4
       # magic-nix-cache-action is EOL'd upstream (repo-scoped, can't carry a
@@ -129,7 +129,7 @@ jobs:
     # gate ("recent account payments have failed"), independent of any
     # job's own content. Matches release.yml's resolve-runner fix and the
     # camelot skill's documented fleet pattern for private pleme-io repos.
-    runs-on: camelot-builder-pleme-eks
+    runs-on: ${{ github.event.repository.private && 'camelot-builder-pleme-eks' || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -180,7 +180,7 @@ jobs:
     # gate ("recent account payments have failed"), independent of any
     # job's own content. Matches release.yml's resolve-runner fix and the
     # camelot skill's documented fleet pattern for private pleme-io repos.
-    runs-on: camelot-builder-pleme-eks
+    runs-on: ${{ github.event.repository.private && 'camelot-builder-pleme-eks' || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
