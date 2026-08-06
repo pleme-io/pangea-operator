@@ -129,8 +129,13 @@ jobs:
   # (found duplicated a third time the same session -- this file,
   # substrate's image-push.yml, and cargo-auto-release.yml had each
   # independently invented the same "private repo -> camelot" fallback).
-  # Repointed at the shared action; this repo is always private, so the
-  # resolved value is unchanged (camelot-builder-pleme-eks), but it now
+  # Repointed at the shared action. ★ CORRECTED 2026-08-06: this comment
+  # said "this repo is always private, so the resolved value is unchanged
+  # (camelot-builder-pleme-eks)". THE REPO IS PUBLIC, so the visibility tier
+  # now resolves the OPPOSITE way — to the GitHub-hosted default. That is
+  # the correct outcome: a public repo's job is never assigned to a
+  # self-hosted runner, so the old "unchanged" claim described a routing
+  # that would have queued forever. It now
   # also honors a repo-committed .github/runner.yml override, which the
   # inline expression never could. `use-rio-cache` stays a local
   # computation -- it's this repo's own opt-in semantic
@@ -416,7 +421,10 @@ jobs:
           # embedded_ruby dropped -- no system Ruby on the stock ARC runner image, see header above
           - { os: "${{ needs.resolve-runner.outputs.runner }}", target: x86_64-unknown-linux-gnu, suffix: linux-x86_64, no-default-features: "true", features: "graphql grpc executor_magma" }
           # native arm64 leg -- no cross-compiler needed; embedded_ruby still dropped, see header above
-          - { os: camelot-builder-pleme-eks-arm64, target: aarch64-unknown-linux-gnu, suffix: linux-aarch64, no-default-features: "true", features: "graphql grpc executor_magma" }
+          # PUBLIC REPO: GitHub never assigns a public repo's jobs to a self-hosted
+          # runner, so the old `camelot-builder-pleme-eks-arm64` pin queued forever.
+          # `ubuntu-24.04-arm` is native arm64 and free on public repos.
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, suffix: linux-aarch64, no-default-features: "true", features: "graphql grpc executor_magma" }
           # cross leg -- macos-latest is arm64 native, no x86_64 libruby available; drop embedded_ruby
           - { os: macos-latest, target: x86_64-apple-darwin, suffix: macos-x86_64, no-default-features: "true", features: "graphql grpc executor_magma" }
           - { os: macos-latest, target: aarch64-apple-darwin, suffix: macos-aarch64, no-default-features: "false", features: "" }
@@ -468,16 +476,22 @@ jobs:
           targets: ${{ matrix.target }}
 
       # Only needed when actually CROSS-compiling aarch64 from a non-aarch64
-      # host. Now unreachable in this matrix (the aarch64 leg runs natively
-      # on camelot-builder-pleme-eks-arm64) -- kept, unmodified, as dead code
-      # rather than deleted, so a future re-added cross leg (e.g. if the
-      # arm64 pool ever goes away) has this step ready to re-target.
+      # host. Unreachable in this matrix today -- every leg is native.
+      #
+      # GATED ON A DECLARED PROPERTY (`matrix.cross`), not a runner label.
+      # This used to read `matrix.os != 'camelot-builder-pleme-eks-arm64'`,
+      # which silently coupled "is this a cross build?" to "which pool is
+      # this?". Retargeting the arm leg to `ubuntu-24.04-arm` for public
+      # visibility would have flipped that condition TRUE and installed a
+      # cross-linker on a NATIVE arm host -- a build break caused by an
+      # unrelated label change. A leg that genuinely cross-compiles sets
+      # `cross: "true"` and these steps run; nothing else can turn them on.
       - name: Install cross-compiler (linux aarch64 only)
-        if: matrix.target == 'aarch64-unknown-linux-gnu' && matrix.os != 'camelot-builder-pleme-eks-arm64'
+        if: matrix.cross == 'true'
         run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - name: Configure cross-linker
-        if: matrix.target == 'aarch64-unknown-linux-gnu' && matrix.os != 'camelot-builder-pleme-eks-arm64'
+        if: matrix.cross == 'true'
         run: echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
 
       - name: Build + stage

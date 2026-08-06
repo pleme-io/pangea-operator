@@ -4,11 +4,20 @@ on: [push, pull_request]
 
 jobs:
   flake-check:
-    # Routed off the metered default -- this PRIVATE repo's GitHub-hosted
-    # runs currently fail outright under an account billing/spending-limit
-    # gate ("recent account payments have failed"), independent of any
-    # job's own content. Matches release.yml's resolve-runner fix and the
-    # camelot skill's documented fleet pattern for private pleme-io repos.
+    # ★ CORRECTED 2026-08-06 — THE PREMISE BELOW IS VOID: THIS REPO IS PUBLIC.
+    # This read "this PRIVATE repo's GitHub-hosted runs currently fail
+    # outright under an account billing/spending-limit gate ('recent account
+    # payments have failed')". That gate is a PRIVATE-repo phenomenon —
+    # GitHub-hosted minutes are FREE and unmetered on public repositories, so
+    # there is nothing to route around. The observation was real; the
+    # attribution to this repo was not.
+    #
+    # The expression below is kept because it is now doing the OPPOSITE and
+    # correct thing: on a public repo the visibility tier resolves to the
+    # hosted runner, and a self-hosted pin here would have queued FOREVER
+    # (GitHub never assigns a public repo's jobs to a self-hosted runner).
+    # It is left conditional rather than hardcoded so the answer stays right
+    # if visibility ever changes again.
     runs-on: ${{ github.event.repository.private && 'camelot-builder-pleme-eks' || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@v4
@@ -103,7 +112,13 @@ jobs:
     # archive; the annotations API is the only surface that surfaced this).
     uses: pleme-io/substrate/.github/workflows/nix-devshell-cargo-test.yml@main
     with:
-      runner: camelot-builder-pleme-eks
+      # PUBLIC REPO: a self-hosted label here queues FOREVER — GitHub never
+      # assigns a public repository's jobs to a self-hosted runner, and the
+      # job never fails, so nothing alerts. Left empty so the reusable's own
+      # default (`ubuntu-24.04`) applies; hosted minutes are free on public
+      # repos, which also retires the billing-gate workaround this file's
+      # header describes.
+      runner: ""
       devshell: ruby-eval
       test-args: "--workspace --no-fail-fast"
     secrets: inherit
@@ -124,11 +139,20 @@ jobs:
     # `--workspace --no-default-features` would still pull it in. Same
     # cheap ubuntu-latest / no-libruby shape as crd-drift.yml's
     # `--no-default-features -- --generate-crds` step.
-    # Routed off the metered default -- this PRIVATE repo's GitHub-hosted
-    # runs currently fail outright under an account billing/spending-limit
-    # gate ("recent account payments have failed"), independent of any
-    # job's own content. Matches release.yml's resolve-runner fix and the
-    # camelot skill's documented fleet pattern for private pleme-io repos.
+    # ★ CORRECTED 2026-08-06 — THE PREMISE BELOW IS VOID: THIS REPO IS PUBLIC.
+    # This read "this PRIVATE repo's GitHub-hosted runs currently fail
+    # outright under an account billing/spending-limit gate ('recent account
+    # payments have failed')". That gate is a PRIVATE-repo phenomenon —
+    # GitHub-hosted minutes are FREE and unmetered on public repositories, so
+    # there is nothing to route around. The observation was real; the
+    # attribution to this repo was not.
+    #
+    # The expression below is kept because it is now doing the OPPOSITE and
+    # correct thing: on a public repo the visibility tier resolves to the
+    # hosted runner, and a self-hosted pin here would have queued FOREVER
+    # (GitHub never assigns a public repo's jobs to a self-hosted runner).
+    # It is left conditional rather than hardcoded so the answer stays right
+    # if visibility ever changes again.
     runs-on: ${{ github.event.repository.private && 'camelot-builder-pleme-eks' || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@v4
@@ -175,11 +199,20 @@ jobs:
 
   coverage:
     needs: cargo-test
-    # Routed off the metered default -- this PRIVATE repo's GitHub-hosted
-    # runs currently fail outright under an account billing/spending-limit
-    # gate ("recent account payments have failed"), independent of any
-    # job's own content. Matches release.yml's resolve-runner fix and the
-    # camelot skill's documented fleet pattern for private pleme-io repos.
+    # ★ CORRECTED 2026-08-06 — THE PREMISE BELOW IS VOID: THIS REPO IS PUBLIC.
+    # This read "this PRIVATE repo's GitHub-hosted runs currently fail
+    # outright under an account billing/spending-limit gate ('recent account
+    # payments have failed')". That gate is a PRIVATE-repo phenomenon —
+    # GitHub-hosted minutes are FREE and unmetered on public repositories, so
+    # there is nothing to route around. The observation was real; the
+    # attribution to this repo was not.
+    #
+    # The expression below is kept because it is now doing the OPPOSITE and
+    # correct thing: on a public repo the visibility tier resolves to the
+    # hosted runner, and a self-hosted pin here would have queued FOREVER
+    # (GitHub never assigns a public repo's jobs to a self-hosted runner).
+    # It is left conditional rather than hardcoded so the answer stays right
+    # if visibility ever changes again.
     runs-on: ${{ github.event.repository.private && 'camelot-builder-pleme-eks' || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@v4
