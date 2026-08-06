@@ -154,6 +154,16 @@ impl magma_apply::ImportEnvironment for StructuralImportEnvironment {
         &self,
         type_name: &str,
         id: &str,
+        // Added upstream (magma ac93c84): `ImportResourceState` is answered by
+        // whichever configured instance receives it, so the caller now names
+        // the instance that actually holds the resource instead of letting the
+        // implementation infer it from the type prefix — inference always
+        // yielded the DEFAULT instance, which silently adopted the wrong
+        // resource when a same-id object existed in the default account.
+        // Ignored here on purpose: this is the structural (no-real-provider)
+        // echo used by unit tests, which dials nothing, so there is no RPC for
+        // an instance to be routed to. A real environment must honour it.
+        _provider: &magma_types::ProviderInstance,
     ) -> std::result::Result<Vec<magma_types::ImportedInstance>, String> {
         if id == "missing" {
             return Err(format!(

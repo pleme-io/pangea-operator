@@ -62,12 +62,23 @@ ignore = [
   # PROC-MACRO crate, host-side and build-time) pulls the driver set for
   # compile-time query checking.
   #
-  # HONEST LIMIT: I did not prove absence from the shipped binary. `cargo tree
-  # -e normal -i rsa` — the check that would settle whether rsa is a runtime
-  # dep or only a build-time proc-macro dep — cannot run in this environment
-  # (it requires network access to private git dependencies). The claim rests
-  # on the feature graph and the absence of any MySQL call site, which is
-  # strong but is not the same as a linkage proof.
+  # UPGRADED FROM ARGUED TO MEASURED (2026-08-06). This entry previously
+  # recorded an honest limit: that `cargo tree -e normal -i rsa` — the check
+  # that would settle runtime-dep vs build-time-proc-macro-dep outright —
+  # could not be run here, because it needs network access to the private
+  # pangea provider dependencies. That access was obtained (cargo can reach
+  # them over SSH by rewriting the https git URLs), so the check was run:
+  #
+  #   cargo tree -e normal --target all -i rsa   -> "nothing to print"
+  #   cargo tree            --target all -i rsa   -> "nothing to print"
+  #
+  # The second form includes build and proc-macro edges, so this is stronger
+  # than the original claim: rsa is not in the resolved dependency graph AT
+  # ALL. It is not linked, and it is not even compiled host-side. Its presence
+  # is purely a Cargo.lock artifact, because the lock enumerates optional
+  # dependencies (sqlx's mysql driver) regardless of feature activation.
+  # Positive control run in the same session so "nothing to print" is not read
+  # as a broken invocation: `-i anyhow` prints its tree.
   #
   # WHAT WOULD FALSIFY THIS: enabling sqlx's `mysql` feature, or any MySQL
   # connection appearing in the codebase. Either makes this immediately

@@ -40,7 +40,10 @@ serde_yaml = "0.9"
 # Output formatting
 colored.workspace = true
 tabled = "0.17"
-indicatif = "0.17"
+# 0.17 -> 0.18 is a SECURITY bump: 0.17 pulls `number_prefix`
+# (RUSTSEC-2025-0119, unmaintained, `patched: []`). 0.18.0 is the first
+# release that drops it, so ceasing to depend on it is the only fix.
+indicatif = "0.18"
 
 # Config and paths
 directories = "5"

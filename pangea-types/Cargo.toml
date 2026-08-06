@@ -29,6 +29,14 @@ async-graphql = { version = "7", optional = true }
 cynic = { version = "3", optional = true }
 
 # Kubernetes (for CRD types)
-kube = { version = "0.98", features = ["derive"], default-features = false }
+# Version-locked to the workspace kube ON PURPOSE. This is spelled out rather
+# than `workspace = true` so the feature set stays lean (derive only — this
+# crate defines CRD types and needs no client or runtime), but the VERSION must
+# track the workspace or cargo resolves two semver-incompatible kubes into one
+# graph. It did exactly that when the workspace moved to 0.99 and this line was
+# missed: kube 0.98 and 0.99 both present, meaning two distinct `Resource`
+# traits, with the derive here impl'ing the 0.98 one while the operator consumes
+# it through 0.99. Keep this number equal to the workspace's.
+kube = { version = "0.99", features = ["derive"], default-features = false }
 k8s-openapi = { version = "0.24", features = ["v1_31"] }
 schemars = "0.8"
