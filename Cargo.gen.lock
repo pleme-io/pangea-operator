@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "9660fec8b476935153e15c3d857568d04eeaa692c6fe9f0f7eafe71c6fed088e",
+  "cargo_lock_sha256": "d8af8ae56009da7f50724495c8697e911a2e44072cec583433af7be45d9be949",
   "manifest_sha256": {
     "Cargo.toml": "442339a7073ccfab7b48f32334ac8dc56dfa1a68da55cf5e737b339ceef159ed",
     "pangea-cli/Cargo.toml": "ca2aab1f8bbb3576ab16e87da13f90adbdf0ad1abaad85d4eb55035ff11e2cba",
@@ -15054,7 +15054,7 @@
           },
           {
             "name": "proto",
-            "package_key": "quinn-proto-0.11.14",
+            "package_key": "quinn-proto-0.11.15",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -15162,7 +15162,7 @@
           "rustls-ring"
         ]
       },
-      "quinn-proto-0.11.14": {
+      "quinn-proto-0.11.15": {
         "runtime_dependencies": [
           {
             "name": "aws_lc_rs",
@@ -30861,7 +30861,7 @@
       "edition": "2021",
       "build_script": "build.rs"
     },
-    "quinn-proto-0.11.14": {
+    "quinn-proto-0.11.15": {
       "edition": "2021"
     },
     "quinn-udp-0.5.14": {
