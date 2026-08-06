@@ -6,31 +6,30 @@ name: arc-smoke
 # that runner was dead and this smoke test could never pass. Repointed at
 # the live self-hosted pool this repo's other workflows already use.
 #
-# ── ★ RETIRED 2026-08-06 — THIS TEST CANNOT PASS ON A PUBLIC REPO ────────
-# This repo is PUBLIC, and GitHub never assigns a public repository's jobs
+# ── ★ VALID TODAY, MEANINGLESS AFTER THE PUBLIC FLIP ────────────────────
+# MEASURED 2026-08-06 (anonymous GitHub API: `/repos/pleme-io/pangea-operator`
+# returns 404 while `/repos/pleme-io/breathe` returns 200): this repo is
+# PRIVATE. So this probe works as intended and is left ENABLED.
+#
+# It must be RETIRED when the repo goes public, and the reason is structural
+# rather than a preference: GitHub never assigns a public repository's jobs
 # to a self-hosted runner (a fork PR could otherwise execute arbitrary code
-# on the cluster). This job's ENTIRE PURPOSE is to prove the self-hosted ARC
-# scale set dispatches — so on a public repo it cannot succeed by
-# construction. Dispatched, it would queue forever: never failing, never
+# on the cluster), and this job's entire purpose is to prove the self-hosted
+# ARC scale set dispatches. On a public repo it cannot succeed by
+# construction — dispatched, it would queue forever: never failing, never
 # alerting, indistinguishable from "still starting".
 #
-# It is DISABLED, not deleted (★★ MODULARIZE, DON'T DELETE) — the runner
-# label, the probe body and the rio history above stay intact, so if this
-# repo ever goes private again the retirement is one line to reverse rather
-# than a rebuild from memory.
+# To retire it then: replace `workflow_dispatch: {}` below with `{}` (an
+# `on:` with no triggers keeps the file and offers no Run button). Do NOT
+# repoint it at a hosted runner — that would make it pass while testing
+# nothing, which is worse than an absent test.
 #
-# `workflow_dispatch` was already its only trigger, so nothing scheduled or
-# push-driven changes; this only stops a manual dispatch from parking a job
-# in the queue indefinitely.
+# An earlier edit today retired it prematurely, on the mistaken belief the
+# repo was already public. Reverted; the measurement above is the reason.
 on:
-  # RETIRED: re-add `workflow_dispatch: {}` to revive (see the block above).
-  # An `on:` with no triggers is what makes the workflow undispatchable —
-  # GitHub keeps the file, offers no Run button, and starts nothing.
-  {}
+  workflow_dispatch: {}
 jobs:
   smoke:
-    # Unreachable while `on:` declares no trigger. Kept verbatim so a revival
-    # needs no reconstruction.
     runs-on: camelot-builder-pleme-eks
     steps:
       - run: |

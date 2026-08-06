@@ -4,13 +4,11 @@ on: [push, pull_request]
 
 jobs:
   flake-check:
-    # ★ CORRECTED 2026-08-06 — THE PREMISE BELOW IS VOID: THIS REPO IS PUBLIC.
-    # This read "this PRIVATE repo's GitHub-hosted runs currently fail
-    # outright under an account billing/spending-limit gate ('recent account
-    # payments have failed')". That gate is a PRIVATE-repo phenomenon —
-    # GitHub-hosted minutes are FREE and unmetered on public repositories, so
-    # there is nothing to route around. The observation was real; the
-    # attribution to this repo was not.
+    # ★ 2026-08-06 — MEASURED PRIVATE TODAY; PUBLIC IS THE INTENT.
+    # Anonymous GitHub API, 2026-08-06: `/repos/pleme-io/pangea-operator`
+    # returns 404 while `/repos/pleme-io/breathe` returns 200 — so this repo
+    # is PRIVATE today, and the billing-gate note below is ACCURATE for now.
+    # Making it public is the stated intent, not the current state.
     #
     # The expression below is kept because it is now doing the OPPOSITE and
     # correct thing: on a public repo the visibility tier resolves to the
@@ -112,12 +110,12 @@ jobs:
     # archive; the annotations API is the only surface that surfaced this).
     uses: pleme-io/substrate/.github/workflows/nix-devshell-cargo-test.yml@main
     with:
-      # PUBLIC REPO: a self-hosted label here queues FOREVER — GitHub never
-      # assigns a public repository's jobs to a self-hosted runner, and the
-      # job never fails, so nothing alerts. Left empty so the reusable's own
-      # default (`ubuntu-24.04`) applies; hosted minutes are free on public
-      # repos, which also retires the billing-gate workaround this file's
-      # header describes.
+      # Left EMPTY so substrate's own runner-resolve decides by visibility:
+      # private -> camelot-builder-pleme-eks, public -> ubuntu-24.04. The
+      # previous hard pin was correct only while private; on a public repo a
+      # self-hosted label QUEUES FOREVER (GitHub never assigns a public
+      # repo's jobs to a self-hosted runner) and nothing alerts. Empty is the
+      # only value that is right on both sides of the flip.
       runner: ""
       devshell: ruby-eval
       test-args: "--workspace --no-fail-fast"
@@ -139,13 +137,11 @@ jobs:
     # `--workspace --no-default-features` would still pull it in. Same
     # cheap ubuntu-latest / no-libruby shape as crd-drift.yml's
     # `--no-default-features -- --generate-crds` step.
-    # ★ CORRECTED 2026-08-06 — THE PREMISE BELOW IS VOID: THIS REPO IS PUBLIC.
-    # This read "this PRIVATE repo's GitHub-hosted runs currently fail
-    # outright under an account billing/spending-limit gate ('recent account
-    # payments have failed')". That gate is a PRIVATE-repo phenomenon —
-    # GitHub-hosted minutes are FREE and unmetered on public repositories, so
-    # there is nothing to route around. The observation was real; the
-    # attribution to this repo was not.
+    # ★ 2026-08-06 — MEASURED PRIVATE TODAY; PUBLIC IS THE INTENT.
+    # Anonymous GitHub API, 2026-08-06: `/repos/pleme-io/pangea-operator`
+    # returns 404 while `/repos/pleme-io/breathe` returns 200 — so this repo
+    # is PRIVATE today, and the billing-gate note below is ACCURATE for now.
+    # Making it public is the stated intent, not the current state.
     #
     # The expression below is kept because it is now doing the OPPOSITE and
     # correct thing: on a public repo the visibility tier resolves to the
@@ -199,13 +195,11 @@ jobs:
 
   coverage:
     needs: cargo-test
-    # ★ CORRECTED 2026-08-06 — THE PREMISE BELOW IS VOID: THIS REPO IS PUBLIC.
-    # This read "this PRIVATE repo's GitHub-hosted runs currently fail
-    # outright under an account billing/spending-limit gate ('recent account
-    # payments have failed')". That gate is a PRIVATE-repo phenomenon —
-    # GitHub-hosted minutes are FREE and unmetered on public repositories, so
-    # there is nothing to route around. The observation was real; the
-    # attribution to this repo was not.
+    # ★ 2026-08-06 — MEASURED PRIVATE TODAY; PUBLIC IS THE INTENT.
+    # Anonymous GitHub API, 2026-08-06: `/repos/pleme-io/pangea-operator`
+    # returns 404 while `/repos/pleme-io/breathe` returns 200 — so this repo
+    # is PRIVATE today, and the billing-gate note below is ACCURATE for now.
+    # Making it public is the stated intent, not the current state.
     #
     # The expression below is kept because it is now doing the OPPOSITE and
     # correct thing: on a public repo the visibility tier resolves to the

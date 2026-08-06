@@ -421,10 +421,21 @@ jobs:
           # embedded_ruby dropped -- no system Ruby on the stock ARC runner image, see header above
           - { os: "${{ needs.resolve-runner.outputs.runner }}", target: x86_64-unknown-linux-gnu, suffix: linux-x86_64, no-default-features: "true", features: "graphql grpc executor_magma" }
           # native arm64 leg -- no cross-compiler needed; embedded_ruby still dropped, see header above
-          # PUBLIC REPO: GitHub never assigns a public repo's jobs to a self-hosted
-          # runner, so the old `camelot-builder-pleme-eks-arm64` pin queued forever.
-          # `ubuntu-24.04-arm` is native arm64 and free on public repos.
-          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, suffix: linux-aarch64, no-default-features: "true", features: "graphql grpc executor_magma" }
+          # ── arm64 leg: VISIBILITY-CONDITIONAL, not a fixed label ────────────
+          # Neither label is correct unconditionally, which is why this is an
+          # expression rather than a pin:
+          #   private -> camelot-builder-pleme-eks-arm64. A GitHub-hosted arm
+          #              runner is METERED on private repos, and this org's
+          #              billing gate has already rejected hosted jobs
+          #              outright ("recent account payments have failed").
+          #   public  -> ubuntu-24.04-arm. GitHub never assigns a public repo's
+          #              jobs to a self-hosted runner, so the camelot label
+          #              would QUEUE FOREVER — never failing, never alerting.
+          # Measured 2026-08-06: this repo is PRIVATE today, so this resolves
+          # to the camelot pool exactly as before. It flips itself the day
+          # visibility does.
+          # Quoted: a bare ${{ }} at the head of a YAML flow mapping does not parse.
+          - { os: "${{ github.event.repository.private && 'camelot-builder-pleme-eks-arm64' || 'ubuntu-24.04-arm' }}", target: aarch64-unknown-linux-gnu, suffix: linux-aarch64, no-default-features: "true", features: "graphql grpc executor_magma" }
           # cross leg -- macos-latest is arm64 native, no x86_64 libruby available; drop embedded_ruby
           - { os: macos-latest, target: x86_64-apple-darwin, suffix: macos-x86_64, no-default-features: "true", features: "graphql grpc executor_magma" }
           - { os: macos-latest, target: aarch64-apple-darwin, suffix: macos-aarch64, no-default-features: "false", features: "" }
@@ -481,7 +492,7 @@ jobs:
       # GATED ON A DECLARED PROPERTY (`matrix.cross`), not a runner label.
       # This used to read `matrix.os != 'camelot-builder-pleme-eks-arm64'`,
       # which silently coupled "is this a cross build?" to "which pool is
-      # this?". Retargeting the arm leg to `ubuntu-24.04-arm` for public
+      # this?". Making the arm leg's runner visibility-conditional for public
       # visibility would have flipped that condition TRUE and installed a
       # cross-linker on a NATIVE arm host -- a build break caused by an
       # unrelated label change. A leg that genuinely cross-compiles sets
