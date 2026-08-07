@@ -1,15 +1,19 @@
-# crd-drift-baseline.txt — CRDs with KNOWN pre-existing drift (chart CRD lags the
-# Rust struct). The crd-drift gate WARNS on these and FAILS on any OTHER drift.
+# CRD drift ratchet — CRD names whose chart copy is KNOWN to differ from
+# `--generate-crds`. The gate fails only on drift NOT listed here, so a name in
+# this file is tracked tech debt, not an exemption to keep.
 #
-# This is a ratchet: new drift is blocked immediately; this debt is tracked and
-# burned down one CRD at a time. To clear an entry: regenerate the CRD
-# (`--generate-crds`), confirm the change is ADDITIVE (CreateReplace prunes
-# removed fields from live CRs — see the architecturegem activation 2026-06-24),
-# overwrite helmworks/charts/pangea-operator/crds/<name>.yaml + bump the chart,
-# then delete the line here.
+# EMPTY as of 2026-08-07, and it should stay that way.
 #
-# Surfaced 2026-06-24 by the gate's first run (architecturegem was the third —
-# already regenerated + shipped in chart 0.8.28).
-
-infrastructuretemplates.pangea.pleme.io
-operatorpolicies.pangea.pleme.io
+# Both former entries came off together with helmworks e9da8d1:
+#   infrastructuretemplates.pangea.pleme.io — genuinely drifted since 2026-06-24.
+#     Two later syncs (chart 0.8.35, 0.8.37) added one field each by surgical
+#     insert and deliberately left the rest, because the remaining difference was
+#     unaudited. Measured 2026-08-07 with the checker's own `.spec` semantics: it
+#     was 1 of 15, and the difference WAS the operator's structs — so a wholesale
+#     regenerate cleared it rather than papering over it.
+#   operatorpolicies.pangea.pleme.io — already in sync when measured. A stale
+#     entry: something fixed the drift and nobody removed the name. A ratchet
+#     carrying a name that is no longer drifted is worse than an empty one, since
+#     it silently exempts that CRD from the gate forever.
+#
+# Adding a name here means "I could not regenerate this now". Say why, and date it.
