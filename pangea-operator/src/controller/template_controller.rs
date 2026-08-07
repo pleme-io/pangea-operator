@@ -7240,6 +7240,7 @@ mod policy_input_is_uncapped_tests {
     }
 }
 
+#[cfg(test)]
 mod canonical_drift_fingerprint_tests {
     use super::canonical_drift_fingerprint;
     use crate::crd::DriftDetail;
