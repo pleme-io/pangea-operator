@@ -260,7 +260,13 @@ fn build_plan_status_patch(
     status.resources = resources;
     status.plan_summary = plan_summary.map(|s| s.to_string());
     status.last_planned_at = Some(now);
-    status.drift_details = drift_details;
+    // The cap lives here, with the total beside it — never at the source, where
+    // the same list also feeds the policy gate, the settling fingerprint and the
+    // approval hash.
+    status.drift_total = drift_details.len() as u32;
+    let mut shown = drift_details;
+    shown.truncate(crate::controller::template_controller::DRIFT_STATUS_CAP);
+    status.drift_details = shown;
     status.policy_evaluation = policy_evaluation;
 
     scoped_status_patch(&status, PLAN_STATUS_FIELDS)
@@ -625,10 +631,23 @@ fn build_settling_status_patch(
     status.consecutive_drift_cycles = cycles;
     status.stuck_resources = stuck_addresses.clone();
     if !drift_details.is_empty() {
-        status.drift_details = drift_details.to_vec();
+        // The fingerprint hashes the FULL set; `driftDetails` carries only a
+        // capped view of it, with the real total beside it. Storing the hash
+        // rather than re-deriving it next cycle is the fix: the old code
+        // recomputed it from this very capped list, so it hashed a projection
+        // of its input and two unequal plans agreeing on their first entries
+        // compared equal.
+        status.drift_fingerprint =
+            Some(crate::controller::settling::fingerprint(drift_details));
+        status.drift_total = drift_details.len() as u32;
+        let mut shown = drift_details.to_vec();
+        shown.truncate(crate::controller::template_controller::DRIFT_STATUS_CAP);
+        status.drift_details = shown;
     } else if matches!(outcome, SettlingOutcome::Settled) {
         // Clear stale drift details once we've settled.
         status.drift_details = Vec::new();
+        status.drift_fingerprint = None;
+        status.drift_total = 0;
     }
 
     // Compute the would-be Settled condition from the outcome,

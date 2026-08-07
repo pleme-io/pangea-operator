@@ -2478,9 +2478,35 @@ fn plan_summary_and_drifts_from_artifact(
         // these from `resource_changes` if a consumer needs them.
         changes_by_type: std::collections::HashMap::new(),
     };
-    let details = art.drift_details(50);
+    // UNCAPPED, deliberately. This list is the SAFETY ENGINE'S INPUT, not a
+    // status surface — see `DRIFT_STATUS_CAP`. Capping here made
+    // `evaluate_policy` decide over the first 50 changes of a plan that could
+    // hold thousands, which means a `Refuse` rule matching change #900 was
+    // never evaluated and could not refuse anything. The cap now applies at
+    // the status write, after the policy has seen everything.
+    let details = art.drift_details(usize::MAX);
     (s, details)
 }
+
+/// How many drift entries the K8s **status object** carries.
+///
+/// A presentation limit and nothing else. It was applied at the SOURCE until
+/// 2026-08-07, which quietly made it a safety limit too: `evaluate_policy` was
+/// handed the same truncated list, so on a 1,870-change plan the gate decided
+/// from the first 50 and a `Refuse` rule matching anything later could not
+/// fire. Fail-closed by luck — the sample happened to contain `requireApproval`
+/// entries, so nothing was wrongly applied and nobody noticed for 20 cycles.
+///
+/// Keep this used ONLY at the status write.
+///
+/// There is NO full-list escape hatch. The CRD doc claimed one ("full list
+/// available via the operator's GraphQL API") and it was never implemented —
+/// `src/api/graphql` exposes only the `Drifted` phase variant, no drift-detail
+/// query. That comment made the cap read as a display convenience with an audit
+/// path behind it; a reviewer trusting it could approve intending to audit
+/// later, with nothing to audit. Say what is true: entries past the cap are not
+/// retrievable from any operator surface.
+pub(crate) const DRIFT_STATUS_CAP: usize = 50;
 
 /// The `(schema_name, template_name)` pair magma's Postgres-backed
 /// artifacts AND state are keyed on for a given CR.
@@ -2656,13 +2682,17 @@ async fn handle_planning(
     //      analyzable output" regardless of real content — see
     //      `fetch_db_backed_cycle_artifact`'s doc comment for the live
     //      incident this closes.
-    // Drift details capped at 50 so the status object stays tractable.
+    // NOT capped here. `raw_drifts` feeds `evaluate_policy` below, and a policy
+    // that only sees a prefix of the plan cannot enforce anything about the
+    // rest. The status object is kept tractable by capping at the status write
+    // (`DRIFT_STATUS_CAP`), which is where the tractability concern actually
+    // lives.
     let (summary, raw_drifts) = if !plan_result.raw_show_json.is_empty() {
         match Plan::from_json(&plan_result.raw_show_json) {
             Ok(plan) => {
                 let s = plan.summary();
                 let details: Vec<crate::crd::DriftDetail> = plan
-                    .drift_details(50)
+                    .drift_details(usize::MAX)
                     .into_iter()
                     .map(|d| crate::crd::DriftDetail {
                         address: d.address,
@@ -2796,15 +2826,30 @@ async fn handle_planning(
     } else {
         None
     };
+    // THE CAP, in its one correct place: the policy has already evaluated every
+    // change above; this only trims what the K8s status object carries. The
+    // total travels with the sample so no reader can mistake a prefix for the
+    // whole — a count that silently reported its own cap is what let a
+    // 1,870-change plan present as 50 for two days.
+    let drift_total = policy_outcome.annotated_drifts.len();
     update_plan_status(
         template,
         resource_summary,
         plan_text.as_deref(),
+        // FULL list. `update_plan_status` owns the display cap and records the
+        // total beside it — one place, matching the settling writer.
         policy_outcome.annotated_drifts.clone(),
         evaluation_to_store,
         state,
     )
     .await?;
+    if drift_total > DRIFT_STATUS_CAP {
+        info!(
+            drift_total,
+            shown = DRIFT_STATUS_CAP,
+            "status.driftDetails is a capped VIEW; the policy engine evaluated every change"
+        );
+    }
 
     // Emit per-template policy + drift-detail gauges for Prometheus.
     // Counter for total decisions accumulates over time; gauges
@@ -5134,7 +5179,9 @@ async fn handle_ready(
     } else if !plan_result.raw_show_json.is_empty() {
         match Plan::from_json(&plan_result.raw_show_json) {
             Ok(plan) => plan
-                .drift_details(50)
+                // Uncapped: this feeds the settling FINGERPRINT, which must hash
+                // the whole drift set. See `DRIFT_STATUS_CAP`.
+                .drift_details(usize::MAX)
                 .into_iter()
                 .map(|d| crate::crd::DriftDetail {
                     address: d.address,
@@ -5151,7 +5198,8 @@ async fn handle_ready(
             }
         }
     } else if let Some(art) = plan_result.artifact.as_ref() {
-        art.drift_details(50)
+        // Uncapped, same reason as the branch above.
+        art.drift_details(usize::MAX)
     } else {
         warn!(
             runner = runner.name(),
@@ -5166,11 +5214,18 @@ async fn handle_ready(
         .as_ref()
         .map(|s| s.consecutive_drift_cycles)
         .unwrap_or(0);
-    let prior_fingerprint = template
-        .status
-        .as_ref()
-        .filter(|s| !s.drift_details.is_empty())
-        .map(|s| crate::controller::settling::fingerprint(&s.drift_details));
+    // Read the STORED fingerprint. Re-deriving it from `status.drift_details`
+    // hashed a display-capped projection, so the comparison was between a
+    // full-set hash and a 50-item hash — they could never agree, and when both
+    // sides were capped, unequal plans agreeing on their first 50 entries
+    // compared EQUAL. Falling back to the old derivation keeps a
+    // pre-upgrade status object working for exactly one cycle.
+    let prior_fingerprint = template.status.as_ref().and_then(|s| {
+        s.drift_fingerprint.clone().or_else(|| {
+            (!s.drift_details.is_empty())
+                .then(|| crate::controller::settling::fingerprint(&s.drift_details))
+        })
+    });
 
     let outcome = crate::controller::settling::evaluate(
         &settling_policy,
@@ -6005,7 +6060,10 @@ pub(crate) fn drift_details_from_tofu_show_json(raw_show_json: &str) -> Vec<Drif
     }
     match Plan::from_json(raw_show_json) {
         Ok(plan) => plan
-            .drift_details(50)
+            // Uncapped. This feeds `handle_applying`'s post-import SAFETY
+            // recheck (see the doc above), and a safety recheck that inspects
+            // the first 50 changes of a plan proves nothing about the rest.
+            .drift_details(usize::MAX)
             .into_iter()
             .map(|d| DriftDetail {
                 address: d.address,
@@ -7135,6 +7193,53 @@ mod current_state_fingerprint_tests {
 }
 
 #[cfg(test)]
+mod policy_input_is_uncapped_tests {
+    use crate::crd::ActionDistribution;
+    use crate::executor::cycle_artifact::{CycleArtifact, PlanAction, Severity, TypedResourceChange};
+
+    /// ★ THE test that actually guards the 2026-08-07 fix.
+    ///
+    /// Written after the first three regression tests were red-run and stayed
+    /// GREEN. Each of those exercised a function that was already correct —
+    /// `evaluate()` over 60 drifts, `canonical_drift_fingerprint` distinguishing
+    /// past 50 — while the defect lived in the CALLER, which truncated before
+    /// either of them ran. A suite that cannot fail on the bug it documents is
+    /// the exact "gate that has never failed" shape this fix is about.
+    ///
+    /// `plan_summary_and_drifts_from_artifact` is the magma path's sole producer
+    /// of policy input (and, downstream, of the settling fingerprint and the
+    /// approval hash). Re-introduce a cap here and this goes red.
+    #[test]
+    fn the_magma_policy_input_carries_every_change_not_a_capped_view() {
+        let changes: Vec<TypedResourceChange> = (0..137)
+            .map(|i| TypedResourceChange {
+                address: format!("github_repository.repo_{i}"),
+                action: PlanAction::Update,
+                severity: Severity::Functional,
+            })
+            .collect();
+        let art = CycleArtifact {
+            action_distribution: ActionDistribution::default(),
+            resource_changes: changes,
+            artifact_ref: None,
+            severities: None,
+            lifecycle_phase: None,
+        };
+
+        let (_summary, drifts) = super::plan_summary_and_drifts_from_artifact(&art);
+
+        assert_eq!(
+            drifts.len(),
+            137,
+            "the policy engine, the settling fingerprint and the approval hash all \
+             read this list — capping it here silently narrowed all three"
+        );
+        // 137 is deliberately not a round number and well past the 50 the status
+        // surface shows: a regression that re-introduced ANY cap would land here.
+        assert!(drifts.len() > super::DRIFT_STATUS_CAP);
+    }
+}
+
 mod canonical_drift_fingerprint_tests {
     use super::canonical_drift_fingerprint;
     use crate::crd::DriftDetail;
@@ -7156,6 +7261,49 @@ mod canonical_drift_fingerprint_tests {
     // `tofu plan`'s raw-stdout graph-walk ordering — making a human's
     // approval structurally unable to catch up. The fingerprint below
     // is what `route_through_approval_gate` now hashes instead. ──────
+
+    // ── Approval-integrity regression (2026-08-07) ──
+    // This function was always correct; its INPUT was not. Both call sites
+    // built the drift list with `drift_details(50)` — a cap written for K8s
+    // status-object tractability — and the same list was handed to
+    // `route_through_approval_gate`, which hashes it into the approval hash.
+    //
+    // So the approval hash covered the first 50 changes of the plan. On
+    // pleme-io-opensource (1,870 changes) an operator approving hash X would
+    // have authorised ANY plan whose first 50 drift entries matched, with the
+    // remaining ~1,820 unreviewed and unhashed.
+    //
+    // The fix is at the call sites (`drift_details(usize::MAX)`); this test
+    // guards the property they now rely on, so a future re-cap fails here
+    // rather than silently widening what an approval covers.
+
+    #[test]
+    fn a_difference_past_the_status_cap_still_changes_the_approval_fingerprint() {
+        let common: Vec<DriftDetail> = (0..50)
+            .map(|i| drift(&format!("github_issue_label.label_{i}"), "update", &[]))
+            .collect();
+
+        let mut a = common.clone();
+        a.push(drift("github_repository.sentinela", "update", &["visibility"]));
+
+        let mut b = common.clone();
+        b.push(drift("cloudflare_zone.quero_cloud", "delete", &[]));
+
+        assert_eq!(a.len(), 51);
+        assert_ne!(
+            canonical_drift_fingerprint(&a),
+            canonical_drift_fingerprint(&b),
+            "two plans identical for 50 entries and differing at #51 must NOT share an \
+             approval hash — approving one would otherwise authorise the other"
+        );
+        // …and the first 50 alone are indistinguishable, which is exactly what
+        // the old truncated input reduced both plans to.
+        assert_eq!(
+            canonical_drift_fingerprint(&a[..50]),
+            canonical_drift_fingerprint(&b[..50]),
+            "the capped prefixes ARE equal — this is the collision the cap created"
+        );
+    }
 
     #[test]
     fn same_drifts_in_different_order_produce_the_same_fingerprint() {

@@ -1113,14 +1113,46 @@ pub struct InfrastructureTemplateStatus {
     /// Per-resource drift / change detail from the last plan.
     /// Populated whenever a plan reports `has_changes`. Lets external
     /// observers see WHICH resources changed and HOW without parsing
-    /// raw tofu output. Capped to 50 entries (full list available via
-    /// the operator's GraphQL API for large plans).
+    /// raw tofu output. Capped to `DRIFT_STATUS_CAP` entries — `driftTotal`
+    /// beside it carries the real count.
+    ///
+    /// This used to promise "full list available via the operator's GraphQL
+    /// API". That API surface does not exist and never did (`src/api/graphql`
+    /// carries only the `Drifted` phase variant), so entries past the cap are
+    /// not retrievable anywhere. The promise mattered because the same capped
+    /// list also fed the policy gate, the settling fingerprint and the approval
+    /// hash — a reviewer who believed an audit path existed had no way to know
+    /// the cap was load-bearing rather than cosmetic.
     ///
     /// Always serialized (no skip-if-empty) so an explicit empty array
     /// clears the field via JSON Merge Patch — otherwise stale drift
     /// would survive a clean settle.
     #[serde(default)]
     pub drift_details: Vec<DriftDetail>,
+
+    /// Fingerprint of the FULL drift set from the last cycle.
+    ///
+    /// Stored rather than re-derived, and that is the whole point. It used to be
+    /// recomputed on each cycle from `status.driftDetails` — a list already
+    /// capped for display — so the settling comparison hashed a 50-item
+    /// projection of its own input. Two genuinely different plans that agreed on
+    /// their first 50 entries hashed identically and escalated as
+    /// `StuckByFingerprint` while the estate was in fact changing.
+    ///
+    /// A fingerprint re-derived from a lossy view of its input is not a
+    /// fingerprint of that input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drift_fingerprint: Option<String>,
+
+    /// How many changes the plan actually held, before `drift_details` was
+    /// capped for display. `driftTotal > len(driftDetails)` means you are
+    /// looking at a PREFIX.
+    ///
+    /// Carried beside the sample so the two can never be read apart. Without
+    /// it a capped list is indistinguishable from a complete one, which is
+    /// exactly how a 1,870-change plan read as 50 changes for 20 cycles.
+    #[serde(default)]
+    pub drift_total: u32,
 
     /// Hash of the pending plan awaiting approval.
     /// Set by the operator after planning. Users approve by copying this
@@ -1962,6 +1994,21 @@ pub struct PolicyEvaluation {
     /// quick triage signal in `kubectl describe`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub refused_addresses: Vec<String>,
+
+    /// How many changes the policy engine ACTUALLY evaluated.
+    ///
+    /// The three counts above sum to this. It exists because they used to sum
+    /// to a *cap*: drift details were truncated to 50 before
+    /// `executor::policy::evaluate` saw them, so on a 1,870-change plan the
+    /// gate decided from a prefix and `requireApprovalCount: 50` was the cap
+    /// reporting itself. A count indistinguishable from its own limit is not a
+    /// count.
+    ///
+    /// Compare against the plan's change total (`+a ~b -c` in
+    /// `status.planSummary`): if this is smaller, the gate saw a sample and no
+    /// `refuse` rule can be trusted to have fired.
+    #[serde(default)]
+    pub evaluated_count: u32,
 }
 
 /// State-settling escalation policy.

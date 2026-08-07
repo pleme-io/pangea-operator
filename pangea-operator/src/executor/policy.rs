@@ -208,6 +208,11 @@ pub fn evaluate(
         aggregate: aggregate.as_str().to_string(),
         auto_apply_count,
         require_approval_count,
+        // The gate's own witness of its coverage: how many drifts it saw.
+        // `evaluate` is now handed the FULL list; if this ever comes back
+        // smaller than the plan's change count, something re-truncated the
+        // input and every decision below is a sample.
+        evaluated_count: drifts.len() as u32,
         refuse_count,
         refused_addresses,
     };
@@ -502,6 +507,77 @@ mod tests {
             },
             decision,
         }
+    }
+
+    // ── The truncation hole — regression for the 2026-08-07 finding ──
+    // `evaluate` was handed a list already capped at 50 by the CALLER
+    // (`template_controller::plan_summary_and_drifts_from_artifact` and the
+    // tofu show-JSON branch both did `drift_details(50)`). The cap was written
+    // for K8s status-object tractability and silently became a SAFETY limit:
+    // on pleme-io-opensource's 1,870-change plan the gate decided from the
+    // first 50 entries.
+    //
+    // It failed closed only by luck — that prefix happened to contain
+    // `requireApproval` entries, so the aggregate blocked and nothing was
+    // wrongly applied for 20 cycles. Had the prefix been all `autoApply`, a
+    // `refuse` rule matching change #900 would never have been evaluated and
+    // the plan would have applied straight through it.
+
+    #[test]
+    fn a_refuse_rule_matching_beyond_the_status_cap_still_refuses() {
+        // 60 drifts: the first 55 benign, #56 a destroy the operator forbids.
+        // Every index past 50 is exactly what the old caller threw away.
+        let mut drifts: Vec<_> = (0..55)
+            .map(|i| drift(&format!("github_issue_label.label_{i}"), "update", "low", vec![]))
+            .collect();
+        drifts.push(drift("cloudflare_zone.quero_cloud", "delete", "high", vec![]));
+        drifts.extend(
+            (56..60).map(|i| drift(&format!("github_issue_label.label_{i}"), "update", "low", vec![])),
+        );
+        assert_eq!(drifts.len(), 60);
+
+        let rules = vec![rule(
+            "no-zone-deletes",
+            PolicyDecision::Refuse,
+            vec!["cloudflare_zone"],
+            vec![],
+            vec!["delete"],
+            vec![],
+            vec![],
+        )];
+        let out = evaluate(&rules, Some(PolicyDecision::AutoApply), &drifts);
+
+        assert_eq!(
+            out.aggregate,
+            PolicyDecision::Refuse,
+            "a refuse rule matching entry #56 must still block the plan"
+        );
+        assert_eq!(out.evaluation.refuse_count, 1);
+        assert_eq!(
+            out.evaluation.evaluated_count, 60,
+            "the gate must witness EVERY change it was given, not a prefix"
+        );
+        assert_eq!(
+            out.evaluation.auto_apply_count + out.evaluation.require_approval_count + out.evaluation.refuse_count,
+            out.evaluation.evaluated_count,
+            "the three decision counts must sum to the coverage witness"
+        );
+    }
+
+    /// `evaluated_count` is the witness that makes a re-truncation VISIBLE.
+    /// Without it, counts capped at 50 are indistinguishable from a plan that
+    /// genuinely holds 50 changes — which is precisely how the defect survived.
+    #[test]
+    fn the_coverage_witness_reports_the_real_total_not_a_cap() {
+        let drifts: Vec<_> = (0..1870)
+            .map(|i| drift(&format!("github_repository.repo_{i}"), "update", "low", vec![]))
+            .collect();
+        let out = evaluate(&[], Some(PolicyDecision::RequireApproval), &drifts);
+        assert_eq!(out.evaluation.evaluated_count, 1870);
+        assert_eq!(
+            out.evaluation.require_approval_count, 1870,
+            "not 50 — the count reports the plan, never the display cap"
+        );
     }
 
     // ── The protected-resource floor — regression for the real incident ──

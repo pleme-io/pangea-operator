@@ -285,8 +285,10 @@ impl Plan {
     /// Render per-resource drift details for status surfacing.
     ///
     /// Capped at `limit` entries so the K8s status object stays small
-    /// (default 50 — full list is available via the operator's
-    /// GraphQL API for large plans). Skips no-op changes since they
+    /// Callers that feed a DECISION (policy gate, settling fingerprint,
+    /// approval hash, post-import recheck) must pass `usize::MAX`; only a
+    /// status writer may cap. There is no GraphQL full-list fallback — that
+    /// was documented for years and never implemented. Skips no-op changes since they
     /// add noise without observability value.
     ///
     /// Attribute names are emitted but values are intentionally
