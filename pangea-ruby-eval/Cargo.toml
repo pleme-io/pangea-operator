@@ -9,6 +9,7 @@ description = "Embedded CRuby evaluator for Pangea DSL — magnus-backed replace
 
 [dependencies]
 magnus = { version = "0.8", features = ["embed"] }
+rb-sys = { version = "0.9.126", features = ["stable-api-compiled-fallback", "bindgen-rbimpls", "bindgen-deprecated-types"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = "0.9"

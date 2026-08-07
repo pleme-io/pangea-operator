@@ -3429,6 +3429,7 @@ name = "pangea-ruby-eval"
 version = "0.1.0"
 dependencies = [
  "magnus",
+ "rb-sys",
  "serde",
  "serde_json",
  "serde_yaml",

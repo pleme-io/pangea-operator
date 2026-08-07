@@ -1,12 +1,12 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "679846ade4ab1aea7ce1a3474a12233781a0d60e61c29f1a6c746e1018d61aae",
+  "cargo_lock_sha256": "3ebae2609f3ff4a90d638ee6475ac39fece59175bfa283291b16dada7e232cc7",
   "manifest_sha256": {
     "Cargo.toml": "7db3469288a8400afb44ec74f3590ed59a457964a44fec6f3187d8db72b39238",
     "pangea-cli/Cargo.toml": "f3f970097f7914011f23728fe42e3aed3085ec83bacdea24f37cdc9c19cfe965",
     "pangea-operator-mcp/Cargo.toml": "a1d5c3e03ec8073e6aabead01bed1962a05d23c93c43cda972539f2a7f46caf7",
     "pangea-operator/Cargo.toml": "e0e3f3f5d839e3bc4f11f0172727beb1fed7442129c7a8515a9d3f3c93b3a43d",
-    "pangea-ruby-eval/Cargo.toml": "5a64cec5dd2f83b31261d7c2c11f9caaa45d7b3a553dd1fd8796aa1ee1cfc00d",
+    "pangea-ruby-eval/Cargo.toml": "a65712c95619fda84a8cebaa9f887919acf4e71f4125f085797dfaf478eb380a",
     "pangea-types/Cargo.toml": "bba5d0bee1d04b3ddaefa9f7234a1e5a11e3388dd89e62a3deb4a91b66cd4abc"
   },
   "target_resolves": {
@@ -13440,6 +13440,20 @@
             "tree": "target"
           },
           {
+            "name": "rb_sys",
+            "package_key": "rb-sys-0.9.128",
+            "kind": "normal",
+            "features": [
+              "bindgen-deprecated-types",
+              "bindgen-rbimpls",
+              "stable-api-compiled-fallback"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
             "name": "serde",
             "package_key": "serde-1.0.228",
             "kind": "normal",
@@ -15531,8 +15545,10 @@
         "features": [
           "bindgen-deprecated-types",
           "bindgen-rbimpls",
+          "default",
           "link-ruby",
-          "stable-api"
+          "stable-api",
+          "stable-api-compiled-fallback"
         ]
       },
       "rb-sys-build-0.9.128": {
