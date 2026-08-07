@@ -726,8 +726,9 @@ dependencies = [
 
 [[package]]
 name = "cofre-fs"
-version = "0.1.0"
-source = "git+https://github.com/pleme-io/cofre?rev=4f70b8fa025f2b78b7ca062fb0feb31188a8d31a#4f70b8fa025f2b78b7ca062fb0feb31188a8d31a"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb47b9c958b63e308760897dc66533cb285f442073bc435600817a5979c4ca70"
 
 [[package]]
 name = "cofre-fs"
@@ -736,8 +737,9 @@ source = "git+https://github.com/pleme-io/cofre#3809d5ec6592e6ac0e6fead41984a498
 
 [[package]]
 name = "cofre-secret"
-version = "0.1.0"
-source = "git+https://github.com/pleme-io/cofre?rev=4f70b8fa025f2b78b7ca062fb0feb31188a8d31a#4f70b8fa025f2b78b7ca062fb0feb31188a8d31a"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "267dd2fde10648f4451c7f213738d317102342e6ec79a75955f99b5db1481ae1"
 
 [[package]]
 name = "colorchoice"
@@ -1526,12 +1528,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "gen-macros"
+version = "0.1.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e87d6e8b417dad4ba0d2ed96c58c2cd7af538f592dcf698db0cd8480b08225ed"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "gen-platform"
 version = "0.1.32"
 source = "git+https://github.com/pleme-io/gen#e174470020226ca8e46a798210a59aba6088a953"
 dependencies = [
- "gen-macros",
- "gen-types",
+ "gen-macros 0.1.32",
+ "gen-types 0.1.32",
+ "inventory",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "gen-platform"
+version = "0.1.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "340242b11b413b24644f55a9dd7ffd05e371910a738ab52981a03a6ffedf6783"
+dependencies = [
+ "gen-macros 0.1.34",
+ "gen-types 0.1.34",
  "inventory",
  "serde",
  "serde_json",
@@ -1542,6 +1569,21 @@ dependencies = [
 name = "gen-types"
 version = "0.1.32"
 source = "git+https://github.com/pleme-io/gen#e174470020226ca8e46a798210a59aba6088a953"
+dependencies = [
+ "blake3",
+ "chrono",
+ "indexmap 2.14.0",
+ "inventory",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "gen-types"
+version = "0.1.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1efa39b439fd999e2f7454c08cb7a4d1f9e6e49ffa805557647f7f998caf7414"
 dependencies = [
  "blake3",
  "chrono",
@@ -2656,7 +2698,7 @@ dependencies = [
  "async-trait",
  "blake3",
  "chrono",
- "gen-platform",
+ "gen-platform 0.1.32",
  "hex",
  "magma-apply",
  "magma-backend",
@@ -2690,7 +2732,7 @@ source = "git+https://github.com/pleme-io/magma?rev=06b5e3fa9147076c43bac011be54
 dependencies = [
  "blake3",
  "chrono",
- "gen-platform",
+ "gen-platform 0.1.32",
  "hex",
  "magma-converge",
  "serde",
@@ -2869,7 +2911,7 @@ source = "git+https://github.com/pleme-io/magma?rev=06b5e3fa9147076c43bac011be54
 dependencies = [
  "base64",
  "chrono",
- "cofre-fs 0.1.4",
+ "cofre-fs 0.1.4 (git+https://github.com/pleme-io/cofre)",
  "magma-types",
  "serde",
  "serde_json",
@@ -2920,8 +2962,8 @@ version = "0.1.16"
 source = "git+https://github.com/pleme-io/magma?rev=06b5e3fa9147076c43bac011be54061b4cb3ed94#06b5e3fa9147076c43bac011be54061b4cb3ed94"
 dependencies = [
  "chrono",
- "gen-platform",
- "gen-types",
+ "gen-platform 0.1.32",
+ "gen-types 0.1.32",
  "schemars 0.8.22",
  "serde",
  "serde_json",
@@ -3333,14 +3375,14 @@ dependencies = [
  "base64",
  "blake3",
  "chrono",
- "cofre-fs 0.1.0",
+ "cofre-fs 0.1.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "cofre-secret",
  "cron",
  "derive_builder",
  "figment",
  "futures",
- "gen-platform",
- "gen-types",
+ "gen-platform 0.1.34",
+ "gen-types 0.1.34",
  "hex",
  "k8s-openapi",
  "kube",
@@ -3380,10 +3422,10 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
- "shigoto-budget 0.1.10",
- "shigoto-dag 0.1.10",
+ "shigoto-budget 0.1.15",
+ "shigoto-dag 0.1.15",
  "shigoto-rank",
- "shigoto-types 0.1.10",
+ "shigoto-types 0.1.15",
  "shikumi",
  "sqlx",
  "strum 0.26.3",
@@ -4905,11 +4947,12 @@ dependencies = [
 
 [[package]]
 name = "shigoto-budget"
-version = "0.1.10"
-source = "git+https://github.com/pleme-io/shigoto?rev=e4e4c92b7327de197e492fe8cb7589f4d04c9309#e4e4c92b7327de197e492fe8cb7589f4d04c9309"
+version = "0.1.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8958d5db64cec27f5d0ad54d0dd8699a38e7a45e7aba2c8a7abc3171a977519b"
 dependencies = [
  "serde",
- "shigoto-types 0.1.10",
+ "shigoto-types 0.1.15",
  "thiserror 2.0.18",
 ]
 
@@ -4926,12 +4969,13 @@ dependencies = [
 
 [[package]]
 name = "shigoto-dag"
-version = "0.1.10"
-source = "git+https://github.com/pleme-io/shigoto?rev=e4e4c92b7327de197e492fe8cb7589f4d04c9309#e4e4c92b7327de197e492fe8cb7589f4d04c9309"
+version = "0.1.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "623f7963706a4a310c2f3b69d663c9ee093b046b860ebe71efe86719b94203b9"
 dependencies = [
  "petgraph 0.6.5",
  "serde",
- "shigoto-types 0.1.10",
+ "shigoto-types 0.1.15",
  "thiserror 2.0.18",
 ]
 
@@ -4958,8 +5002,9 @@ dependencies = [
 
 [[package]]
 name = "shigoto-rank"
-version = "0.1.10"
-source = "git+https://github.com/pleme-io/shigoto?rev=e4e4c92b7327de197e492fe8cb7589f4d04c9309#e4e4c92b7327de197e492fe8cb7589f4d04c9309"
+version = "0.1.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b0c303eb116ca5345691765030218eac6d173067b4ebf0e58d7156bf13615d0"
 dependencies = [
  "serde",
 ]
@@ -5000,8 +5045,8 @@ dependencies = [
  "async-trait",
  "blake3",
  "chrono",
- "gen-platform",
- "gen-types",
+ "gen-platform 0.1.32",
+ "gen-types 0.1.32",
  "hex",
  "schemars 0.8.22",
  "serde",
@@ -5011,14 +5056,15 @@ dependencies = [
 
 [[package]]
 name = "shigoto-types"
-version = "0.1.10"
-source = "git+https://github.com/pleme-io/shigoto?rev=e4e4c92b7327de197e492fe8cb7589f4d04c9309#e4e4c92b7327de197e492fe8cb7589f4d04c9309"
+version = "0.1.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce4cf293345c7bb25b8b9248d97b4d14466c38342de7e31f77af2b0872eddb08"
 dependencies = [
  "async-trait",
  "blake3",
  "chrono",
- "gen-platform",
- "gen-types",
+ "gen-platform 0.1.34",
+ "gen-types 0.1.34",
  "hex",
  "schemars 0.8.22",
  "serde",
@@ -5028,14 +5074,15 @@ dependencies = [
 
 [[package]]
 name = "shikumi"
-version = "0.1.452"
-source = "git+https://github.com/pleme-io/shikumi#a1fec80e342b705f48dce559850a5497e3c1ea81"
+version = "0.1.496"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "de145934a9ccb306460220a3cd6068240dea61c139a34846b030bdb3d7b6af41"
 dependencies = [
  "arc-swap",
  "async-trait",
  "figment",
- "gen-platform",
- "gen-types",
+ "gen-platform 0.1.34",
+ "gen-types 0.1.34",
  "notify",
  "serde",
  "serde_json",
@@ -6022,10 +6069,12 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "tsunagu"
-version = "0.1.1"
-source = "git+https://github.com/pleme-io/tsunagu#242a5b56f3f83fd59b4a2312716c578be720ef12"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ddf9592003d5781e33291e096dcfd47f470c1b46025b64882256de94b514762"
 dependencies = [
  "dirs",
+ "rustix 0.38.44",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

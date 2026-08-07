@@ -142,7 +142,7 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 futures = "0.3"
 
 # Drain coordinator — SIGTERM/SIGINT handling shared across pleme-io daemons
-tsunagu = { git = "https://github.com/pleme-io/tsunagu" }
+tsunagu = "0.1.5"
 
 # Web framework
 axum = { workspace = true, features = ["tokio"] }
@@ -186,7 +186,7 @@ serde_yaml = "0.9"
 # operator's full env surface. figment is the Dict/Value builder for the
 # discovered + env overlays (already transitive via shikumi; declared direct
 # so the source of truth is clear). See ★★ CONFIGURATION MANAGEMENT.
-shikumi = { git = "https://github.com/pleme-io/shikumi", version = "0.1.0" }
+shikumi = "0.1.496"
 figment = "0.10"
 
 # Observability

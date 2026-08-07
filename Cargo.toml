@@ -27,8 +27,8 @@ pangea-types = { path = "pangea-types" }
 
 # Typed-dispatcher catalog integration
 # (theory/UNIFIED-COMPUTING-MODEL.md §VI).
-gen-platform = { git = "https://github.com/pleme-io/gen" }
-gen-types = { git = "https://github.com/pleme-io/gen" }
+gen-platform = "0.1.34"
+gen-types = "0.1.34"
 
 # Convergence primitives — the reactive-policy cascade consumes the
 # canonical innermost-wins-per-field merge (theory/CONVERGENCE-ADOPTION.md
@@ -44,10 +44,10 @@ gen-types = { git = "https://github.com/pleme-io/gen" }
 # the two revs for every symbol pangea-operator already consumed (verified
 # via `git diff` on shigoto-types — new `converge` module + rustfmt-only
 # churn, no changed signatures).
-shigoto-types = { git = "https://github.com/pleme-io/shigoto", rev = "e4e4c92b7327de197e492fe8cb7589f4d04c9309" }
-shigoto-dag = { git = "https://github.com/pleme-io/shigoto", rev = "e4e4c92b7327de197e492fe8cb7589f4d04c9309" }
-shigoto-budget = { git = "https://github.com/pleme-io/shigoto", rev = "e4e4c92b7327de197e492fe8cb7589f4d04c9309" }
-shigoto-rank = { git = "https://github.com/pleme-io/shigoto", rev = "e4e4c92b7327de197e492fe8cb7589f4d04c9309" }
+shigoto-types = "0.1.15"
+shigoto-dag = "0.1.15"
+shigoto-budget = "0.1.15"
+shigoto-rank = "0.1.15"
 
 # Credential handling.
 #
@@ -59,8 +59,8 @@ shigoto-rank = { git = "https://github.com/pleme-io/shigoto", rev = "e4e4c92b732
 # Both are dependency-free. Rev-pinned for the same reason as shigoto and
 # magma above: an unpinned `git =` lets a routine `cargo update` move the
 # live operator's credential handling with nothing asking for it.
-cofre-fs = { git = "https://github.com/pleme-io/cofre", rev = "4f70b8fa025f2b78b7ca062fb0feb31188a8d31a" }
-cofre-secret = { git = "https://github.com/pleme-io/cofre", rev = "4f70b8fa025f2b78b7ca062fb0feb31188a8d31a" }
+cofre-fs = "0.1.4"
+cofre-secret = "0.1.4"
 
 # Base64 — encodes the `Authorization: basic` value of the git credential
 # header that carries the gem-cache PAT through the environment. Already in

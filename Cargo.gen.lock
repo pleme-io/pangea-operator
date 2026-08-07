@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "3ebae2609f3ff4a90d638ee6475ac39fece59175bfa283291b16dada7e232cc7",
+  "cargo_lock_sha256": "d2b90e8683965f1a55e6ec1271662a20b70468d9d8d0a55c7e2a30cdd15c4adc",
   "manifest_sha256": {
-    "Cargo.toml": "7db3469288a8400afb44ec74f3590ed59a457964a44fec6f3187d8db72b39238",
+    "Cargo.toml": "0b30df079faead095367aac7b6d647a7114e4fab08bf9fff393af7db18a0ec72",
     "pangea-cli/Cargo.toml": "f3f970097f7914011f23728fe42e3aed3085ec83bacdea24f37cdc9c19cfe965",
     "pangea-operator-mcp/Cargo.toml": "a1d5c3e03ec8073e6aabead01bed1962a05d23c93c43cda972539f2a7f46caf7",
-    "pangea-operator/Cargo.toml": "e0e3f3f5d839e3bc4f11f0172727beb1fed7442129c7a8515a9d3f3c93b3a43d",
+    "pangea-operator/Cargo.toml": "8bbcca6f1dca9af2e79e69698473eb0bc5b1808a73477ea54b9797937cd28a4a",
     "pangea-ruby-eval/Cargo.toml": "a65712c95619fda84a8cebaa9f887919acf4e71f4125f085797dfaf478eb380a",
     "pangea-types/Cargo.toml": "bba5d0bee1d04b3ddaefa9f7234a1e5a11e3388dd89e62a3deb4a91b66cd4abc"
   },
@@ -2847,7 +2847,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "cofre-fs-0.1.0-4f70b8fa025f2b78b7ca062fb0feb31188a8d31a": {
+      "cofre-fs-0.1.4": {
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": []
@@ -2857,7 +2857,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "cofre-secret-0.1.0-4f70b8fa025f2b78b7ca062fb0feb31188a8d31a": {
+      "cofre-secret-0.1.4": {
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": []
@@ -4956,6 +4956,45 @@
         "build_dependencies": [],
         "features": []
       },
+      "gen-macros-0.1.34": {
+        "runtime_dependencies": [
+          {
+            "name": "proc_macro2",
+            "package_key": "proc-macro2-1.0.106",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "quote",
+            "package_key": "quote-1.0.45",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "syn",
+            "package_key": "syn-2.0.117",
+            "kind": "normal",
+            "features": [
+              "extra-traits",
+              "full"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
       "gen-platform-0.1.32-e174470020226ca8e46a798210a59aba6088a953": {
         "runtime_dependencies": [
           {
@@ -5024,7 +5063,157 @@
         "build_dependencies": [],
         "features": []
       },
+      "gen-platform-0.1.34": {
+        "runtime_dependencies": [
+          {
+            "name": "gen_macros",
+            "package_key": "gen-macros-0.1.34",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "host"
+          },
+          {
+            "name": "gen_types",
+            "package_key": "gen-types-0.1.34",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "inventory",
+            "package_key": "inventory-0.3.24",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde",
+            "package_key": "serde-1.0.228",
+            "kind": "normal",
+            "features": [
+              "derive"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde_json",
+            "package_key": "serde_json-1.0.150",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
       "gen-types-0.1.32-e174470020226ca8e46a798210a59aba6088a953": {
+        "runtime_dependencies": [
+          {
+            "name": "blake3",
+            "package_key": "blake3-1.8.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "chrono",
+            "package_key": "chrono-0.4.44",
+            "kind": "normal",
+            "features": [
+              "serde"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "indexmap",
+            "package_key": "indexmap-2.14.0",
+            "kind": "normal",
+            "features": [
+              "serde"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "inventory",
+            "package_key": "inventory-0.3.24",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde",
+            "package_key": "serde-1.0.228",
+            "kind": "normal",
+            "features": [
+              "derive"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde_json",
+            "package_key": "serde_json-1.0.150",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "gen-types-0.1.34": {
         "runtime_dependencies": [
           {
             "name": "blake3",
@@ -12565,7 +12754,7 @@
           },
           {
             "name": "cofre_fs",
-            "package_key": "cofre-fs-0.1.0-4f70b8fa025f2b78b7ca062fb0feb31188a8d31a",
+            "package_key": "cofre-fs-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -12575,7 +12764,7 @@
           },
           {
             "name": "cofre_secret",
-            "package_key": "cofre-secret-0.1.0-4f70b8fa025f2b78b7ca062fb0feb31188a8d31a",
+            "package_key": "cofre-secret-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -12625,7 +12814,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.32-e174470020226ca8e46a798210a59aba6088a953",
+            "package_key": "gen-platform-0.1.34",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -12635,7 +12824,7 @@
           },
           {
             "name": "gen_types",
-            "package_key": "gen-types-0.1.32-e174470020226ca8e46a798210a59aba6088a953",
+            "package_key": "gen-types-0.1.34",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -13034,7 +13223,7 @@
           },
           {
             "name": "shigoto_budget",
-            "package_key": "shigoto-budget-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309",
+            "package_key": "shigoto-budget-0.1.15",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -13044,7 +13233,7 @@
           },
           {
             "name": "shigoto_dag",
-            "package_key": "shigoto-dag-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309",
+            "package_key": "shigoto-dag-0.1.15",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -13054,7 +13243,7 @@
           },
           {
             "name": "shigoto_rank",
-            "package_key": "shigoto-rank-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309",
+            "package_key": "shigoto-rank-0.1.15",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -13064,7 +13253,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309",
+            "package_key": "shigoto-types-0.1.15",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -13074,7 +13263,7 @@
           },
           {
             "name": "shikumi",
-            "package_key": "shikumi-0.1.452-a1fec80e342b705f48dce559850a5497e3c1ea81",
+            "package_key": "shikumi-0.1.496",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -13226,7 +13415,7 @@
           },
           {
             "name": "tsunagu",
-            "package_key": "tsunagu-0.1.1-242a5b56f3f83fd59b4a2312716c578be720ef12",
+            "package_key": "tsunagu-0.1.5",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -18193,7 +18382,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-budget-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309": {
+      "shigoto-budget-0.1.15": {
         "runtime_dependencies": [
           {
             "name": "serde",
@@ -18209,7 +18398,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309",
+            "package_key": "shigoto-types-0.1.15",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -18269,7 +18458,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-dag-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309": {
+      "shigoto-dag-0.1.15": {
         "runtime_dependencies": [
           {
             "name": "petgraph",
@@ -18295,7 +18484,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309",
+            "package_key": "shigoto-types-0.1.15",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -18449,7 +18638,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-rank-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309": {
+      "shigoto-rank-0.1.15": {
         "runtime_dependencies": [
           {
             "name": "serde",
@@ -18628,7 +18817,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-types-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309": {
+      "shigoto-types-0.1.15": {
         "runtime_dependencies": [
           {
             "name": "async_trait",
@@ -18664,7 +18853,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.32-e174470020226ca8e46a798210a59aba6088a953",
+            "package_key": "gen-platform-0.1.34",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -18674,7 +18863,7 @@
           },
           {
             "name": "gen_types",
-            "package_key": "gen-types-0.1.32-e174470020226ca8e46a798210a59aba6088a953",
+            "package_key": "gen-types-0.1.34",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -18852,7 +19041,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shikumi-0.1.452-a1fec80e342b705f48dce559850a5497e3c1ea81": {
+      "shikumi-0.1.496": {
         "runtime_dependencies": [
           {
             "name": "arc_swap",
@@ -18890,7 +19079,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.32-e174470020226ca8e46a798210a59aba6088a953",
+            "package_key": "gen-platform-0.1.34",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -18900,7 +19089,7 @@
           },
           {
             "name": "gen_types",
-            "package_key": "gen-types-0.1.32-e174470020226ca8e46a798210a59aba6088a953",
+            "package_key": "gen-types-0.1.34",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -23722,13 +23911,25 @@
         "build_dependencies": [],
         "features": []
       },
-      "tsunagu-0.1.1-242a5b56f3f83fd59b4a2312716c578be720ef12": {
+      "tsunagu-0.1.5": {
         "runtime_dependencies": [
           {
             "name": "dirs",
             "package_key": "dirs-6.0.0",
             "kind": "normal",
             "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "rustix",
+            "package_key": "rustix-0.38.44",
+            "kind": "normal",
+            "features": [
+              "process"
+            ],
             "uses_default_features": true,
             "optional": false,
             "target": null,
@@ -30138,13 +30339,13 @@
     "cmake-0.1.58": {
       "edition": "2021"
     },
-    "cofre-fs-0.1.0-4f70b8fa025f2b78b7ca062fb0feb31188a8d31a": {
+    "cofre-fs-0.1.4": {
       "edition": "2024"
     },
     "cofre-fs-0.1.4-3809d5ec6592e6ac0e6fead41984a498fff6caf9": {
       "edition": "2024"
     },
-    "cofre-secret-0.1.0-4f70b8fa025f2b78b7ca062fb0feb31188a8d31a": {
+    "cofre-secret-0.1.4": {
       "edition": "2024"
     },
     "colorchoice-1.0.5": {
@@ -30414,10 +30615,20 @@
       "edition": "2024",
       "proc_macro": true
     },
+    "gen-macros-0.1.34": {
+      "edition": "2024",
+      "proc_macro": true
+    },
     "gen-platform-0.1.32-e174470020226ca8e46a798210a59aba6088a953": {
       "edition": "2024"
     },
+    "gen-platform-0.1.34": {
+      "edition": "2024"
+    },
     "gen-types-0.1.32-e174470020226ca8e46a798210a59aba6088a953": {
+      "edition": "2024"
+    },
+    "gen-types-0.1.34": {
       "edition": "2024"
     },
     "generic-array-0.14.7": {
@@ -31339,13 +31550,13 @@
     "shigoto-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": {
       "edition": "2024"
     },
-    "shigoto-budget-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309": {
+    "shigoto-budget-0.1.15": {
       "edition": "2024"
     },
     "shigoto-budget-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": {
       "edition": "2024"
     },
-    "shigoto-dag-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309": {
+    "shigoto-dag-0.1.15": {
       "edition": "2024"
     },
     "shigoto-dag-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": {
@@ -31357,7 +31568,7 @@
     "shigoto-gate-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": {
       "edition": "2024"
     },
-    "shigoto-rank-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309": {
+    "shigoto-rank-0.1.15": {
       "edition": "2024"
     },
     "shigoto-retry-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": {
@@ -31366,13 +31577,13 @@
     "shigoto-scheduler-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": {
       "edition": "2024"
     },
-    "shigoto-types-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309": {
+    "shigoto-types-0.1.15": {
       "edition": "2024"
     },
     "shigoto-types-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": {
       "edition": "2024"
     },
-    "shikumi-0.1.452-a1fec80e342b705f48dce559850a5497e3c1ea81": {
+    "shikumi-0.1.496": {
       "edition": "2024"
     },
     "shlex-1.3.0": {
@@ -31614,7 +31825,7 @@
     "try-lock-0.2.5": {
       "edition": "2015"
     },
-    "tsunagu-0.1.1-242a5b56f3f83fd59b4a2312716c578be720ef12": {
+    "tsunagu-0.1.5": {
       "edition": "2024"
     },
     "tungstenite-0.29.0": {
@@ -31778,9 +31989,7 @@
     }
   },
   "git_nar_sha256": {
-    "cofre-fs-0.1.0-4f70b8fa025f2b78b7ca062fb0feb31188a8d31a": "sha256-6zDJ/dwsxZgb3KL2RuZFWMfcsQqKp7XAJvDDJgiyzrA=",
     "cofre-fs-0.1.4-3809d5ec6592e6ac0e6fead41984a498fff6caf9": "sha256-cK34hH664hlF8L2ADoe7ZhsmDZcmKiKBpe6F9F0kuyU=",
-    "cofre-secret-0.1.0-4f70b8fa025f2b78b7ca062fb0feb31188a8d31a": "sha256-6zDJ/dwsxZgb3KL2RuZFWMfcsQqKp7XAJvDDJgiyzrA=",
     "gen-macros-0.1.32-e174470020226ca8e46a798210a59aba6088a953": "sha256-VmlO7fCgYj1O8XIcm+goVpIQEuikKx27JVyxxXiKlG4=",
     "gen-platform-0.1.32-e174470020226ca8e46a798210a59aba6088a953": "sha256-VmlO7fCgYj1O8XIcm+goVpIQEuikKx27JVyxxXiKlG4=",
     "gen-types-0.1.32-e174470020226ca8e46a798210a59aba6088a953": "sha256-VmlO7fCgYj1O8XIcm+goVpIQEuikKx27JVyxxXiKlG4=",
@@ -31808,19 +32017,13 @@
     "magma-types-0.1.16-06b5e3fa9147076c43bac011be54061b4cb3ed94": "sha256-yo6ZxpDurxpqhVD2ePUFreg0jy3iH7+2FGq/s7Zzfwo=",
     "samba-0.1.2-29650485132f635429291b08c5b2cdc5f9293500": "sha256-pENYz36juuVgZaJN7BlM/T8nEVnAzJWsXLiiI02EVdU=",
     "shigoto-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": "sha256-6HLdhsuhlRpUeT7MFKPu4H8d484JOMnkEUbtvcmghU4=",
-    "shigoto-budget-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309": "sha256-phfwlFVtQJ5X+AhR6PPLzWWhkRkjMO0GwFBR5ggk/jg=",
     "shigoto-budget-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": "sha256-6HLdhsuhlRpUeT7MFKPu4H8d484JOMnkEUbtvcmghU4=",
-    "shigoto-dag-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309": "sha256-phfwlFVtQJ5X+AhR6PPLzWWhkRkjMO0GwFBR5ggk/jg=",
     "shigoto-dag-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": "sha256-6HLdhsuhlRpUeT7MFKPu4H8d484JOMnkEUbtvcmghU4=",
     "shigoto-emit-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": "sha256-6HLdhsuhlRpUeT7MFKPu4H8d484JOMnkEUbtvcmghU4=",
     "shigoto-gate-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": "sha256-6HLdhsuhlRpUeT7MFKPu4H8d484JOMnkEUbtvcmghU4=",
-    "shigoto-rank-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309": "sha256-phfwlFVtQJ5X+AhR6PPLzWWhkRkjMO0GwFBR5ggk/jg=",
     "shigoto-retry-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": "sha256-6HLdhsuhlRpUeT7MFKPu4H8d484JOMnkEUbtvcmghU4=",
     "shigoto-scheduler-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": "sha256-6HLdhsuhlRpUeT7MFKPu4H8d484JOMnkEUbtvcmghU4=",
-    "shigoto-types-0.1.10-e4e4c92b7327de197e492fe8cb7589f4d04c9309": "sha256-phfwlFVtQJ5X+AhR6PPLzWWhkRkjMO0GwFBR5ggk/jg=",
-    "shigoto-types-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": "sha256-6HLdhsuhlRpUeT7MFKPu4H8d484JOMnkEUbtvcmghU4=",
-    "shikumi-0.1.452-a1fec80e342b705f48dce559850a5497e3c1ea81": "sha256-GcVV6futJ6NlWmE5cuEYSvUjwepjy4/STG/0TzNP9DI=",
-    "tsunagu-0.1.1-242a5b56f3f83fd59b4a2312716c578be720ef12": "sha256-o4tFsK8XDHB1EKfiNDtwpsisH+Qz84VU/nUNa/hyg+0="
+    "shigoto-types-0.1.6-c8792add60be360ff29788f87f3bd46a2b666af6": "sha256-6HLdhsuhlRpUeT7MFKPu4H8d484JOMnkEUbtvcmghU4="
   },
   "flake_metadata": {}
 }
