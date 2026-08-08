@@ -2562,8 +2562,8 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "magma-apply"
-version = "0.1.20"
-source = "git+https://github.com/pleme-io/magma?rev=61f032963e4a172f029486c9295c932ed06172a8#61f032963e4a172f029486c9295c932ed06172a8"
+version = "0.1.21"
+source = "git+https://github.com/pleme-io/magma?rev=f4f471545054019a3c8679496e14fd50132f7712#f4f471545054019a3c8679496e14fd50132f7712"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2590,8 +2590,8 @@ dependencies = [
 
 [[package]]
 name = "magma-attest"
-version = "0.1.20"
-source = "git+https://github.com/pleme-io/magma?rev=61f032963e4a172f029486c9295c932ed06172a8#61f032963e4a172f029486c9295c932ed06172a8"
+version = "0.1.21"
+source = "git+https://github.com/pleme-io/magma?rev=f4f471545054019a3c8679496e14fd50132f7712#f4f471545054019a3c8679496e14fd50132f7712"
 dependencies = [
  "blake3",
  "chrono",
@@ -2604,8 +2604,8 @@ dependencies = [
 
 [[package]]
 name = "magma-backend"
-version = "0.1.20"
-source = "git+https://github.com/pleme-io/magma?rev=61f032963e4a172f029486c9295c932ed06172a8#61f032963e4a172f029486c9295c932ed06172a8"
+version = "0.1.21"
+source = "git+https://github.com/pleme-io/magma?rev=f4f471545054019a3c8679496e14fd50132f7712#f4f471545054019a3c8679496e14fd50132f7712"
 dependencies = [
  "async-trait",
  "magma-state",
@@ -2620,8 +2620,8 @@ dependencies = [
 
 [[package]]
 name = "magma-bundle"
-version = "0.1.20"
-source = "git+https://github.com/pleme-io/magma?rev=61f032963e4a172f029486c9295c932ed06172a8#61f032963e4a172f029486c9295c932ed06172a8"
+version = "0.1.21"
+source = "git+https://github.com/pleme-io/magma?rev=f4f471545054019a3c8679496e14fd50132f7712#f4f471545054019a3c8679496e14fd50132f7712"
 dependencies = [
  "blake3",
  "chrono",
@@ -2638,8 +2638,8 @@ dependencies = [
 
 [[package]]
 name = "magma-config"
-version = "0.1.20"
-source = "git+https://github.com/pleme-io/magma?rev=61f032963e4a172f029486c9295c932ed06172a8#61f032963e4a172f029486c9295c932ed06172a8"
+version = "0.1.21"
+source = "git+https://github.com/pleme-io/magma?rev=f4f471545054019a3c8679496e14fd50132f7712#f4f471545054019a3c8679496e14fd50132f7712"
 dependencies = [
  "magma-types",
  "serde",
@@ -2650,8 +2650,8 @@ dependencies = [
 
 [[package]]
 name = "magma-converge"
-version = "0.1.20"
-source = "git+https://github.com/pleme-io/magma?rev=61f032963e4a172f029486c9295c932ed06172a8#61f032963e4a172f029486c9295c932ed06172a8"
+version = "0.1.21"
+source = "git+https://github.com/pleme-io/magma?rev=f4f471545054019a3c8679496e14fd50132f7712#f4f471545054019a3c8679496e14fd50132f7712"
 dependencies = [
  "async-trait",
  "blake3",
@@ -2674,8 +2674,8 @@ dependencies = [
 
 [[package]]
 name = "magma-cty"
-version = "0.1.20"
-source = "git+https://github.com/pleme-io/magma?rev=61f032963e4a172f029486c9295c932ed06172a8#61f032963e4a172f029486c9295c932ed06172a8"
+version = "0.1.21"
+source = "git+https://github.com/pleme-io/magma?rev=f4f471545054019a3c8679496e14fd50132f7712#f4f471545054019a3c8679496e14fd50132f7712"
 dependencies = [
  "rmpv",
  "serde",
@@ -2685,8 +2685,8 @@ dependencies = [
 
 [[package]]
 name = "magma-drift"
-version = "0.1.20"
-source = "git+https://github.com/pleme-io/magma?rev=61f032963e4a172f029486c9295c932ed06172a8#61f032963e4a172f029486c9295c932ed06172a8"
+version = "0.1.21"
+source = "git+https://github.com/pleme-io/magma?rev=f4f471545054019a3c8679496e14fd50132f7712#f4f471545054019a3c8679496e14fd50132f7712"
 dependencies = [
  "blake3",
  "chrono",
@@ -2700,8 +2700,8 @@ dependencies = [
 
 [[package]]
 name = "magma-flow"
-version = "0.1.20"
-source = "git+https://github.com/pleme-io/magma?rev=61f032963e4a172f029486c9295c932ed06172a8#61f032963e4a172f029486c9295c932ed06172a8"
+version = "0.1.21"
+source = "git+https://github.com/pleme-io/magma?rev=f4f471545054019a3c8679496e14fd50132f7712#f4f471545054019a3c8679496e14fd50132f7712"
 dependencies = [
  "hex",
  "magma-backend",
@@ -2718,8 +2718,8 @@ dependencies = [
 
 [[package]]
 name = "magma-fsm"
-version = "0.1.20"
-source = "git+https://github.com/pleme-io/magma?rev=61f032963e4a172f029486c9295c932ed06172a8#61f032963e4a172f029486c9295c932ed06172a8"
+version = "0.1.21"
+source = "git+https://github.com/pleme-io/magma?rev=f4f471545054019a3c8679496e14fd50132f7712#f4f471545054019a3c8679496e14fd50132f7712"
 dependencies = [
  "chrono",
  "magma-converge",
@@ -2730,8 +2730,8 @@ dependencies = [
 
 [[package]]
 name = "magma-graph"
-version = "0.1.20"
-source = "git+https://github.com/pleme-io/magma?rev=61f032963e4a172f029486c9295c932ed06172a8#61f032963e4a172f029486c9295c932ed06172a8"
+version = "0.1.21"
+source = "git+https://github.com/pleme-io/magma?rev=f4f471545054019a3c8679496e14fd50132f7712#f4f471545054019a3c8679496e14fd50132f7712"
 dependencies = [
  "magma-types",
  "petgraph 0.6.5",
@@ -2741,8 +2741,8 @@ dependencies = [
 
 [[package]]
 name = "magma-operator-backend"
-version = "0.1.20"
-source = "git+https://github.com/pleme-io/magma?rev=61f032963e4a172f029486c9295c932ed06172a8#61f032963e4a172f029486c9295c932ed06172a8"
+version = "0.1.21"
+source = "git+https://github.com/pleme-io/magma?rev=f4f471545054019a3c8679496e14fd50132f7712#f4f471545054019a3c8679496e14fd50132f7712"
 dependencies = [
  "async-trait",
  "magma-backend",
@@ -2756,8 +2756,8 @@ dependencies = [
 
 [[package]]
 name = "magma-pangea"
-version = "0.1.20"
-source = "git+https://github.com/pleme-io/magma?rev=61f032963e4a172f029486c9295c932ed06172a8#61f032963e4a172f029486c9295c932ed06172a8"
+version = "0.1.21"
+source = "git+https://github.com/pleme-io/magma?rev=f4f471545054019a3c8679496e14fd50132f7712#f4f471545054019a3c8679496e14fd50132f7712"
 dependencies = [
  "async-trait",
  "magma-config",
@@ -2774,8 +2774,8 @@ dependencies = [
 
 [[package]]
 name = "magma-plan"
-version = "0.1.20"
-source = "git+https://github.com/pleme-io/magma?rev=61f032963e4a172f029486c9295c932ed06172a8#61f032963e4a172f029486c9295c932ed06172a8"
+version = "0.1.21"
+source = "git+https://github.com/pleme-io/magma?rev=f4f471545054019a3c8679496e14fd50132f7712#f4f471545054019a3c8679496e14fd50132f7712"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2794,8 +2794,8 @@ dependencies = [
 
 [[package]]
 name = "magma-plugin"
-version = "0.1.20"
-source = "git+https://github.com/pleme-io/magma?rev=61f032963e4a172f029486c9295c932ed06172a8#61f032963e4a172f029486c9295c932ed06172a8"
+version = "0.1.21"
+source = "git+https://github.com/pleme-io/magma?rev=f4f471545054019a3c8679496e14fd50132f7712#f4f471545054019a3c8679496e14fd50132f7712"
 dependencies = [
  "async-trait",
  "base64",
@@ -2822,8 +2822,8 @@ dependencies = [
 
 [[package]]
 name = "magma-protocol"
-version = "0.1.20"
-source = "git+https://github.com/pleme-io/magma?rev=61f032963e4a172f029486c9295c932ed06172a8#61f032963e4a172f029486c9295c932ed06172a8"
+version = "0.1.21"
+source = "git+https://github.com/pleme-io/magma?rev=f4f471545054019a3c8679496e14fd50132f7712#f4f471545054019a3c8679496e14fd50132f7712"
 dependencies = [
  "prost",
  "prost-build",
@@ -2837,8 +2837,8 @@ dependencies = [
 
 [[package]]
 name = "magma-providers"
-version = "0.1.20"
-source = "git+https://github.com/pleme-io/magma?rev=61f032963e4a172f029486c9295c932ed06172a8#61f032963e4a172f029486c9295c932ed06172a8"
+version = "0.1.21"
+source = "git+https://github.com/pleme-io/magma?rev=f4f471545054019a3c8679496e14fd50132f7712#f4f471545054019a3c8679496e14fd50132f7712"
 dependencies = [
  "magma-plugin",
  "magma-types",
@@ -2851,8 +2851,8 @@ dependencies = [
 
 [[package]]
 name = "magma-rubygems"
-version = "0.1.20"
-source = "git+https://github.com/pleme-io/magma?rev=61f032963e4a172f029486c9295c932ed06172a8#61f032963e4a172f029486c9295c932ed06172a8"
+version = "0.1.21"
+source = "git+https://github.com/pleme-io/magma?rev=f4f471545054019a3c8679496e14fd50132f7712#f4f471545054019a3c8679496e14fd50132f7712"
 dependencies = [
  "blake3",
  "hex",
@@ -2864,8 +2864,8 @@ dependencies = [
 
 [[package]]
 name = "magma-state"
-version = "0.1.20"
-source = "git+https://github.com/pleme-io/magma?rev=61f032963e4a172f029486c9295c932ed06172a8#61f032963e4a172f029486c9295c932ed06172a8"
+version = "0.1.21"
+source = "git+https://github.com/pleme-io/magma?rev=f4f471545054019a3c8679496e14fd50132f7712#f4f471545054019a3c8679496e14fd50132f7712"
 dependencies = [
  "base64",
  "chrono",
@@ -2881,8 +2881,8 @@ dependencies = [
 
 [[package]]
 name = "magma-stream"
-version = "0.1.20"
-source = "git+https://github.com/pleme-io/magma?rev=61f032963e4a172f029486c9295c932ed06172a8#61f032963e4a172f029486c9295c932ed06172a8"
+version = "0.1.21"
+source = "git+https://github.com/pleme-io/magma?rev=f4f471545054019a3c8679496e14fd50132f7712#f4f471545054019a3c8679496e14fd50132f7712"
 dependencies = [
  "async-trait",
  "blake3",
@@ -2899,8 +2899,8 @@ dependencies = [
 
 [[package]]
 name = "magma-test-laws"
-version = "0.1.20"
-source = "git+https://github.com/pleme-io/magma?rev=61f032963e4a172f029486c9295c932ed06172a8#61f032963e4a172f029486c9295c932ed06172a8"
+version = "0.1.21"
+source = "git+https://github.com/pleme-io/magma?rev=f4f471545054019a3c8679496e14fd50132f7712#f4f471545054019a3c8679496e14fd50132f7712"
 dependencies = [
  "magma-apply",
  "magma-config",
@@ -2916,8 +2916,8 @@ dependencies = [
 
 [[package]]
 name = "magma-types"
-version = "0.1.20"
-source = "git+https://github.com/pleme-io/magma?rev=61f032963e4a172f029486c9295c932ed06172a8#61f032963e4a172f029486c9295c932ed06172a8"
+version = "0.1.21"
+source = "git+https://github.com/pleme-io/magma?rev=f4f471545054019a3c8679496e14fd50132f7712#f4f471545054019a3c8679496e14fd50132f7712"
 dependencies = [
  "chrono",
  "gen-platform",
