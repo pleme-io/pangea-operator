@@ -944,6 +944,49 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
     /// whether the renderer emits a `provider "<name>" {}` block (rio
     /// renders none for cloudflare, which is why the live apply hit
     /// "channel closed").
+    /// Share of the credential's hourly budget this operator may spend.
+    /// The remainder is left for everything else on that credential — CI,
+    /// releases, humans. Measured 2026-08-08: with no share at all the
+    /// operator's convergence consumed the whole 5,000 req/hr GitHub budget
+    /// and the org's release pipeline failed three times with "API rate limit
+    /// exceeded". Override with `PANGEA_PACER_QUOTA_PCT`.
+    fn pacer_quota_pct() -> f64 {
+        std::env::var("PANGEA_PACER_QUOTA_PCT")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|v| *v > 0.0 && *v <= 1.0)
+            .unwrap_or(0.7)
+    }
+
+    /// The ONE pacer for this template's credential set, or `None` to keep
+    /// magma's per-context default.
+    ///
+    /// Scoped deliberately to GitHub. A rate ceiling is a per-provider fact,
+    /// so applying GitHub's 5,000 req/hr to an AWS workspace would throttle it
+    /// for no reason; every non-GitHub provider keeps exactly today's
+    /// behaviour. Widening this means adding the provider's real limit, not
+    /// reusing this one.
+    ///
+    /// Keyed by a hash of the resolved provider configs — which carry the
+    /// credential — so two templates sharing a token share a bucket, and two
+    /// holding different tokens do not. Keying by template or workspace would
+    /// hand each caller its own bucket, pacing each one while multiplying the
+    /// credential's real ceiling by the caller count: pangea-operator builds
+    /// an ApplyContext at four sites, and the pleme-io-opensource estate is
+    /// five shards, so the ceiling was ~18,000 req/hr against a 5,000 budget.
+    fn shared_pacer_for(
+        configs: &std::collections::BTreeMap<String, serde_json::Value>,
+    ) -> Option<std::sync::Arc<magma_apply::engine::Pacer>> {
+        // GitHub's documented primary budget for an authenticated user.
+        const GITHUB_BUDGET_RPH: f64 = 5000.0;
+        if !configs.keys().any(|k| k.starts_with("github")) {
+            return None;
+        }
+        let bytes = serde_json::to_vec(configs).ok()?;
+        let key = blake3::hash(&bytes).to_hex().to_string();
+        magma_apply::engine::shared_pacer(&key, Self::pacer_quota_pct(), GITHUB_BUDGET_RPH)
+    }
+
     fn build_provider_configs(
         &self,
         cfg: &magma_config::Config,
@@ -1057,6 +1100,13 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
         let mut ctx = magma_apply::engine::ApplyContext::new(work_dir.to_path_buf());
         for (name, value) in self.build_provider_configs(cfg) {
             ctx = ctx.with_provider_config(name, value);
+        }
+        // ONE pacer per credential, shared across every ApplyContext this
+        // process builds. Without it each context paced independently and
+        // the credential's real ceiling was multiplied by the context count
+        // — four sites here, times five shards on pleme-io-opensource.
+        if let Some(p) = Self::shared_pacer_for(&self.build_provider_configs(cfg)) {
+            ctx = ctx.with_shared_pacer(p);
         }
         Some(ctx)
     }
@@ -1810,7 +1860,16 @@ where
         // See `provider_configs_for`'s doc comment for the load-failure
         // fallback this now goes through — a load error no longer drops
         // `self.cfg.provider_configs` to empty.
-        for (name, value) in self.provider_configs_for(work_dir, "apply").await {
+        let provider_cfgs = self.provider_configs_for(work_dir, "apply").await;
+        // ONE pacer per credential, shared across every ApplyContext this
+        // process builds. Without it each context paced independently and the
+        // credential's real ceiling was multiplied by the context count —
+        // four sites here, times five shards on pleme-io-opensource, against
+        // a budget the credential holds once.
+        if let Some(p) = Self::shared_pacer_for(&provider_cfgs) {
+            ctx = ctx.with_shared_pacer(p);
+        }
+        for (name, value) in provider_cfgs {
             ctx = ctx.with_provider_config(name, value);
         }
         let outcome = if self.cfg.structural_apply {
@@ -2076,7 +2135,16 @@ where
         // Same credential-drop class as `apply()` above — see
         // `provider_configs_for`'s doc comment for the load-failure
         // fallback this now goes through.
-        for (name, value) in self.provider_configs_for(work_dir, "destroy").await {
+        let provider_cfgs = self.provider_configs_for(work_dir, "destroy").await;
+        // ONE pacer per credential, shared across every ApplyContext this
+        // process builds. Without it each context paced independently and the
+        // credential's real ceiling was multiplied by the context count —
+        // four sites here, times five shards on pleme-io-opensource, against
+        // a budget the credential holds once.
+        if let Some(p) = Self::shared_pacer_for(&provider_cfgs) {
+            ctx = ctx.with_shared_pacer(p);
+        }
+        for (name, value) in provider_cfgs {
             ctx = ctx.with_provider_config(name, value);
         }
         let outcome = if self.cfg.structural_apply {
@@ -2207,6 +2275,13 @@ where
             if let Ok(cfg) = self.load_config_routed(work_dir).await {
                 for (name, value) in self.build_provider_configs(&cfg) {
                     ctx = ctx.with_provider_config(name, value);
+                }
+                // ONE pacer per credential, shared across every ApplyContext this
+                // process builds. Without it each context paced independently and
+                // the credential's real ceiling was multiplied by the context count
+                // — four sites here, times five shards on pleme-io-opensource.
+                if let Some(p) = Self::shared_pacer_for(&self.build_provider_configs(&cfg)) {
+                    ctx = ctx.with_shared_pacer(p);
                 }
             }
             let env = magma_apply::ConfiguredImportEnvironment::new(&ctx);
@@ -2530,6 +2605,51 @@ fn diagnose_stall(stats: &magma_apply::CycleStats, failed: &[magma_apply::Failed
         stats.elapsed_ms,
         quantum_ms
     )
+}
+
+#[cfg(test)]
+mod pacer_wiring_tests {
+    /// Every ApplyContext this executor builds gets the SHARED pacer.
+    ///
+    /// magma builds a fresh per-context bucket by default, so a context
+    /// constructed without `with_shared_pacer` is not unpaced — it is paced
+    /// INDEPENDENTLY, which is worse: it looks correct at every call site
+    /// while multiplying the credential's real ceiling by the number of
+    /// contexts. Measured 2026-08-08: four sites here times five shards put
+    /// the ceiling near 18,000 req/hr against a 5,000 req/hr budget, and
+    /// nothing in the logs said so.
+    ///
+    /// Counted at the SOURCE because the defect is a missing call — a
+    /// behavioural test would need a live provider and would still pass, since
+    /// an independently-paced context applies perfectly well.
+    #[test]
+    fn every_apply_context_receives_the_shared_pacer() {
+        // PER-SITE, not a count. Equal totals is the weaker property and it
+        // passes on a file where one site is wired twice and another not at
+        // all — which is exactly the shape a copy-paste produces.
+        let src = include_str!("magma.rs");
+        let lines: Vec<&str> = src.lines().collect();
+        const WINDOW: usize = 40;
+        let unwired: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.contains("ApplyContext::new(work_dir.to_path_buf())"))
+            .filter(|(i, _)| {
+                let end = (i + WINDOW).min(lines.len());
+                !lines[*i..end]
+                    .iter()
+                    .any(|l| l.contains("with_shared_pacer"))
+            })
+            .map(|(i, _)| i + 1)
+            .collect();
+        assert!(
+            unwired.is_empty(),
+            "ApplyContext built without the shared pacer at line(s) {unwired:?} \
+             — an un-shared context is not unpaced, it paces INDEPENDENTLY, \
+             which looks correct at the call site while multiplying the \
+             credential's real ceiling by the number of contexts"
+        );
+    }
 }
 
 #[cfg(test)]
