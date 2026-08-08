@@ -394,11 +394,8 @@ async fn reconcile_template(
                 // recorded — an orphaned-but-alive VPC is recoverable by
                 // re-declaring the template; a cluster whose GitOps cannot apply
                 // is not.
-                let namespace_terminating = crate::controller::namespace_is_terminating(
-                    &state.client,
-                    &namespace,
-                )
-                .await;
+                let namespace_terminating =
+                    crate::controller::namespace_is_terminating(&state.client, &namespace).await;
 
                 // Route through the pure, exhaustively-tested decision rather
                 // than re-deciding inline — the original bug was an inline
@@ -718,8 +715,22 @@ async fn reconcile_template(
         .and_then(|s| s.phase)
         .unwrap_or(Phase::Pending);
 
-    if generation_invalidates_render(current_gen, observed_gen)
-        && current_phase != Phase::Pending
+    // Gate on the MATERIAL spec, not the raw generation: writing
+    // `approvedPlanHash` bumps the generation, and treating that as a spec
+    // change discarded the plan the approval had just authorized (see
+    // `material_spec_digest`). An approval-only edit now falls through to the
+    // phase handler, which applies it.
+    let current_digest = material_spec_digest(&template.spec);
+    let observed_digest = template
+        .status
+        .as_ref()
+        .and_then(|s| s.observed_spec_digest.clone());
+    if material_spec_invalidates_render(
+        current_gen,
+        observed_gen,
+        current_digest.as_deref(),
+        observed_digest.as_deref(),
+    ) && current_phase != Phase::Pending
         && current_phase != Phase::Destroying
     {
         info!(
@@ -2276,6 +2287,50 @@ fn rendered_config_is_current(
 /// template.
 fn generation_invalidates_render(current_gen: i64, observed_gen: i64) -> bool {
     current_gen > observed_gen
+}
+
+/// Digest of the spec with `approvedPlanHash` normalized out.
+///
+/// The plan is derived from every spec field EXCEPT the approval, so an
+/// approval cannot logically invalidate the plan it approves. Serializing
+/// through `serde_json::Value` gives key-sorted output (its map is a
+/// `BTreeMap` under the default `preserve_order`-off build), so the digest is
+/// stable across field reordering.
+///
+/// Returns `None` when the spec cannot be serialized. A digest that cannot be
+/// computed must never read as "unchanged" — the caller falls back to the
+/// generation comparison, which is the conservative direction (restart).
+pub(crate) fn material_spec_digest(spec: &InfrastructureTemplateSpec) -> Option<String> {
+    let mut v = serde_json::to_value(spec).ok()?;
+    if let Some(obj) = v.as_object_mut() {
+        obj.remove("approvedPlanHash");
+    }
+    let bytes = serde_json::to_vec(&v).ok()?;
+    Some(blake3::hash(&bytes).to_hex().to_string())
+}
+
+/// Does this generation bump reflect a change to the MATERIAL spec?
+///
+/// `true` invalidates the render. An approval-only edit answers `false`, so
+/// the approved plan survives to be applied instead of being discarded on the
+/// same tick the gate passed.
+///
+/// Falls back to the raw generation comparison when no digest has been
+/// recorded yet (first reconcile after upgrade) or when the digest could not
+/// be computed — both fall toward restarting, never toward silently skipping.
+fn material_spec_invalidates_render(
+    current_gen: i64,
+    observed_gen: i64,
+    current_digest: Option<&str>,
+    observed_digest: Option<&str>,
+) -> bool {
+    if !generation_invalidates_render(current_gen, observed_gen) {
+        return false;
+    }
+    match (current_digest, observed_digest) {
+        (Some(cur), Some(obs)) => cur != obs,
+        _ => true,
+    }
 }
 
 async fn compiled_config_available(
@@ -6780,7 +6835,11 @@ mod is_plan_approved_tests {
     use super::{is_plan_approved, InfrastructureTemplateSpec, InfrastructureTemplateStatus};
     use crate::crd::{Dialect, TemplateSource};
 
-    fn spec_with(approved: Option<&str>) -> InfrastructureTemplateSpec {
+    /// Shared with `approval_does_not_invalidate_its_own_plan_tests` — the
+    /// two modules exercise the same approval seam from opposite ends (does
+    /// the gate PASS, and does passing it survive the restart check), so they
+    /// build the spec from one constructor rather than two that can drift.
+    pub(super) fn spec_with(approved: Option<&str>) -> InfrastructureTemplateSpec {
         InfrastructureTemplateSpec {
             source: TemplateSource {
                 inline: Some(String::new()),
@@ -7195,7 +7254,9 @@ mod current_state_fingerprint_tests {
 #[cfg(test)]
 mod policy_input_is_uncapped_tests {
     use crate::crd::ActionDistribution;
-    use crate::executor::cycle_artifact::{CycleArtifact, PlanAction, Severity, TypedResourceChange};
+    use crate::executor::cycle_artifact::{
+        CycleArtifact, PlanAction, Severity, TypedResourceChange,
+    };
 
     /// ★ THE test that actually guards the 2026-08-07 fix.
     ///
@@ -7285,7 +7346,11 @@ mod canonical_drift_fingerprint_tests {
             .collect();
 
         let mut a = common.clone();
-        a.push(drift("github_repository.sentinela", "update", &["visibility"]));
+        a.push(drift(
+            "github_repository.sentinela",
+            "update",
+            &["visibility"],
+        ));
 
         let mut b = common.clone();
         b.push(drift("cloudflare_zone.quero_cloud", "delete", &[]));
@@ -8989,5 +9054,93 @@ mod compile_front_end_tests {
                 "a git-sourced body must reach the Ruby front end whatever {declared:?} says"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod approval_does_not_invalidate_its_own_plan_tests {
+    use super::*;
+
+    use super::is_plan_approved_tests::spec_with as spec_with_approval;
+
+    /// The defect, stated as a test. Approving writes `approvedPlanHash`,
+    /// which bumps `metadata.generation`. Keying the restart on the raw
+    /// generation therefore discards the plan the approval just authorized.
+    ///
+    /// RED RUN (recorded 2026-08-08): with the gate still calling
+    /// `generation_invalidates_render(current_gen, observed_gen)` directly,
+    /// this asserts `false == true` and fails. That is the production
+    /// behaviour — three approvals on pleme-io-opensource, zero applies.
+    #[test]
+    fn an_approval_only_edit_does_not_invalidate_the_plan_it_approves() {
+        let before = spec_with_approval(None);
+        let after = spec_with_approval(Some("0169169a7a76e0bf"));
+
+        let d_before = material_spec_digest(&before);
+        let d_after = material_spec_digest(&after);
+        assert_eq!(
+            d_before, d_after,
+            "approvedPlanHash must be normalized out of the material digest"
+        );
+
+        assert!(
+            !material_spec_invalidates_render(9, 8, d_after.as_deref(), d_before.as_deref()),
+            "an approval-only edit must NOT restart the workspace — that is \
+             what kept lastAppliedAt null through three approvals"
+        );
+    }
+
+    /// The other direction, so the fix cannot pass by never restarting.
+    #[test]
+    fn a_real_spec_edit_still_invalidates_the_plan() {
+        let before = spec_with_approval(Some("aaaa"));
+        let mut after = spec_with_approval(Some("aaaa"));
+        after.template_name = Some("something_else".to_string());
+
+        let d_before = material_spec_digest(&before);
+        let d_after = material_spec_digest(&after);
+        assert_ne!(d_before, d_after, "a material edit must move the digest");
+        assert!(material_spec_invalidates_render(
+            9,
+            8,
+            d_after.as_deref(),
+            d_before.as_deref()
+        ));
+    }
+
+    /// A material edit that ALSO carries a new approval still restarts —
+    /// otherwise we would apply a plan computed from the previous spec.
+    #[test]
+    fn a_material_edit_bundled_with_an_approval_still_invalidates() {
+        let before = spec_with_approval(Some("aaaa"));
+        let mut after = spec_with_approval(Some("bbbb"));
+        after.template_name = Some("renamed".to_string());
+
+        assert!(material_spec_invalidates_render(
+            9,
+            8,
+            material_spec_digest(&after).as_deref(),
+            material_spec_digest(&before).as_deref(),
+        ));
+    }
+
+    /// No generation bump means nothing to decide, regardless of digests.
+    #[test]
+    fn an_unchanged_generation_never_invalidates() {
+        assert!(!material_spec_invalidates_render(
+            8,
+            8,
+            Some("x"),
+            Some("y")
+        ));
+    }
+
+    /// Absent digest (first reconcile after upgrade) falls back to the
+    /// generation compare — toward restarting, never toward silently
+    /// skipping a real spec change.
+    #[test]
+    fn a_missing_digest_falls_back_to_restarting() {
+        assert!(material_spec_invalidates_render(9, 8, Some("x"), None));
+        assert!(material_spec_invalidates_render(9, 8, None, Some("x")));
     }
 }

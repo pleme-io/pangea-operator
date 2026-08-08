@@ -528,12 +528,29 @@ mod tests {
         // 60 drifts: the first 55 benign, #56 a destroy the operator forbids.
         // Every index past 50 is exactly what the old caller threw away.
         let mut drifts: Vec<_> = (0..55)
-            .map(|i| drift(&format!("github_issue_label.label_{i}"), "update", "low", vec![]))
+            .map(|i| {
+                drift(
+                    &format!("github_issue_label.label_{i}"),
+                    "update",
+                    "low",
+                    vec![],
+                )
+            })
             .collect();
-        drifts.push(drift("cloudflare_zone.quero_cloud", "delete", "high", vec![]));
-        drifts.extend(
-            (56..60).map(|i| drift(&format!("github_issue_label.label_{i}"), "update", "low", vec![])),
-        );
+        drifts.push(drift(
+            "cloudflare_zone.quero_cloud",
+            "delete",
+            "high",
+            vec![],
+        ));
+        drifts.extend((56..60).map(|i| {
+            drift(
+                &format!("github_issue_label.label_{i}"),
+                "update",
+                "low",
+                vec![],
+            )
+        }));
         assert_eq!(drifts.len(), 60);
 
         let rules = vec![rule(
@@ -558,7 +575,9 @@ mod tests {
             "the gate must witness EVERY change it was given, not a prefix"
         );
         assert_eq!(
-            out.evaluation.auto_apply_count + out.evaluation.require_approval_count + out.evaluation.refuse_count,
+            out.evaluation.auto_apply_count
+                + out.evaluation.require_approval_count
+                + out.evaluation.refuse_count,
             out.evaluation.evaluated_count,
             "the three decision counts must sum to the coverage witness"
         );
@@ -570,7 +589,14 @@ mod tests {
     #[test]
     fn the_coverage_witness_reports_the_real_total_not_a_cap() {
         let drifts: Vec<_> = (0..1870)
-            .map(|i| drift(&format!("github_repository.repo_{i}"), "update", "low", vec![]))
+            .map(|i| {
+                drift(
+                    &format!("github_repository.repo_{i}"),
+                    "update",
+                    "low",
+                    vec![],
+                )
+            })
             .collect();
         let out = evaluate(&[], Some(PolicyDecision::RequireApproval), &drifts);
         assert_eq!(out.evaluation.evaluated_count, 1870);

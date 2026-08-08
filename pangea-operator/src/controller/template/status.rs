@@ -74,6 +74,11 @@ pub async fn update_phase(
     }
     status.phase = Some(phase);
     status.observed_generation = template.metadata.generation.unwrap_or(0);
+    // Recorded in lockstep with observedGeneration — the two answer the
+    // same question and a digest that lags its generation would let an
+    // approval-only edit read as a material change again.
+    status.observed_spec_digest =
+        crate::controller::template_controller::material_spec_digest(&template.spec);
     // Always set conditions so FluxCD healthChecks see current state.
     // The Ready condition is gated on the git-edge state — a phase==Ready
     // transition while behind HEAD still yields Ready=False.
@@ -107,6 +112,13 @@ pub async fn update_phase(
     let mut status_patch = serde_json::json!({
         "phase": status.phase,
         "observedGeneration": status.observed_generation,
+        // MUST ride in the same field-scoped patch as observedGeneration.
+        // These patches only write the keys present here, so a digest set on
+        // the in-memory struct but omitted here would never persist — the
+        // read side would see None forever, fall back to the generation
+        // compare, and the approval-restart bug would look unfixed while the
+        // code read as correct.
+        "observedSpecDigest": status.observed_spec_digest,
         "conditions": status.conditions,
     });
     if phase_changed {
@@ -158,6 +170,11 @@ pub async fn update_phase_with_error(
     }
     status.phase = Some(phase);
     status.observed_generation = template.metadata.generation.unwrap_or(0);
+    // Recorded in lockstep with observedGeneration — the two answer the
+    // same question and a digest that lags its generation would let an
+    // approval-only edit read as a material change again.
+    status.observed_spec_digest =
+        crate::controller::template_controller::material_spec_digest(&template.spec);
     status.last_error = Some(error_msg.to_string());
     status.failure_count = status.failure_count.saturating_add(1);
     status.conditions = conditions_for_phase(phase, Some(error_msg), source_fresh_state(template));
@@ -172,6 +189,13 @@ pub async fn update_phase_with_error(
     let mut status_patch = serde_json::json!({
         "phase": status.phase,
         "observedGeneration": status.observed_generation,
+        // MUST ride in the same field-scoped patch as observedGeneration.
+        // These patches only write the keys present here, so a digest set on
+        // the in-memory struct but omitted here would never persist — the
+        // read side would see None forever, fall back to the generation
+        // compare, and the approval-restart bug would look unfixed while the
+        // code read as correct.
+        "observedSpecDigest": status.observed_spec_digest,
         "conditions": status.conditions,
         "lastError": status.last_error,
         "failureCount": status.failure_count,
@@ -637,8 +661,7 @@ fn build_settling_status_patch(
         // recomputed it from this very capped list, so it hashed a projection
         // of its input and two unequal plans agreeing on their first entries
         // compared equal.
-        status.drift_fingerprint =
-            Some(crate::controller::settling::fingerprint(drift_details));
+        status.drift_fingerprint = Some(crate::controller::settling::fingerprint(drift_details));
         status.drift_total = drift_details.len() as u32;
         let mut shown = drift_details.to_vec();
         shown.truncate(crate::controller::template_controller::DRIFT_STATUS_CAP);

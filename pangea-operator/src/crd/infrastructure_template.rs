@@ -1154,6 +1154,26 @@ pub struct InfrastructureTemplateStatus {
     #[serde(default)]
     pub drift_total: u32,
 
+    /// Digest of the spec with `approvedPlanHash` normalized out — the part
+    /// of the spec a plan is actually derived FROM.
+    ///
+    /// `metadata.generation` cannot answer "did the material spec change?",
+    /// because it bumps for ANY spec write including an approval. That made
+    /// approving self-defeating: writing `approvedPlanHash` bumped the
+    /// generation, the controller read the bump as a spec change, and wiped
+    /// the workspace back to Pending — discarding the very plan whose
+    /// approval had just arrived. Measured on pleme-io-opensource 2026-08-08:
+    /// "Policy requires approval, waiting" and "Spec changed — cleaning
+    /// workspace and restarting from Pending" logged in the SAME
+    /// millisecond, three approvals running, `lastAppliedAt` still null.
+    ///
+    /// Comparing this digest instead answers the question actually being
+    /// asked. An approval-only edit leaves it unchanged, so the plan it
+    /// approves survives to be applied; any other spec edit changes it and
+    /// still invalidates the render.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_spec_digest: Option<String>,
+
     /// Hash of the pending plan awaiting approval.
     /// Set by the operator after planning. Users approve by copying this
     /// value to `approvedPlanHash` via kubectl patch or GraphQL mutation.
