@@ -11,6 +11,7 @@
 pub mod backend;
 pub mod escape;
 pub mod http_backend;
+pub mod lava_backend;
 
 #[cfg(feature = "embedded_ruby")]
 pub mod embedded_backend;
@@ -29,6 +30,7 @@ pub use backend::{
     CompilerBackend, FixtureOutcome, GemSource, SmokeRequest, SourceKind,
 };
 pub use http_backend::HttpCompilerBackend;
+pub use lava_backend::{DispatchingCompilerBackend, LavaCompilerBackend};
 
 #[cfg(feature = "embedded_ruby")]
 pub use embedded_backend::EmbeddedCompilerBackend;

@@ -59,6 +59,13 @@ pub enum BackendError {
     #[error("ruby evaluator: {0}")]
     Ruby(String),
 
+    /// A non-Ruby evaluator failed. `Ruby` is kept as its own variant so
+    /// the Ruby path's pinned display prefix does not move; reporting a
+    /// lava failure as "ruby evaluator:" would be a plain lie about what
+    /// ran.
+    #[error("evaluator: {0}")]
+    Evaluator(String),
+
     #[error("backend not initialized")]
     NotInitialized,
 }
@@ -216,11 +223,31 @@ pub trait CompilerBackend: Send + Sync {
     /// rendering surface a typed gap rather than a silent wrong answer.
     async fn render_dashboard(
         &self,
-        _ruby: String,
+        _source: String,
         _extend_modules: Vec<String>,
+        _kind: SourceKind,
     ) -> Result<String, BackendError> {
         Err(BackendError::Ruby(
             "render_dashboard requires the embedded backend".into(),
+        ))
+    }
+
+    /// Render a *named* dashboard architecture from the image catalogue.
+    ///
+    /// Separate from `render_dashboard` because the input is not source:
+    /// it is a name plus a parameter object, and no evaluator ever sees
+    /// caller-supplied text. That is what makes code injection
+    /// unrepresentable for this variant rather than merely contained.
+    ///
+    /// Default errors so a backend without a catalogue reports a typed
+    /// gap instead of a silently empty dashboard.
+    async fn render_dashboard_architecture(
+        &self,
+        _name: String,
+        _params: Option<serde_json::Value>,
+    ) -> Result<String, BackendError> {
+        Err(BackendError::Evaluator(
+            "named dashboard architectures require the lava backend".into(),
         ))
     }
 }

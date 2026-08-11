@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "4b87ec6ce41957c0ad6e64145c750622abdeb3c7f5c3461a2e695e42c61c3cd3",
+  "cargo_lock_sha256": "03703fcf27aa9f9c2ad982ea90d316982bba7d59930287fb27afd634142612f0",
   "manifest_sha256": {
     "Cargo.toml": "0b30df079faead095367aac7b6d647a7114e4fab08bf9fff393af7db18a0ec72",
     "pangea-cli/Cargo.toml": "f3f970097f7914011f23728fe42e3aed3085ec83bacdea24f37cdc9c19cfe965",
     "pangea-operator-mcp/Cargo.toml": "a1d5c3e03ec8073e6aabead01bed1962a05d23c93c43cda972539f2a7f46caf7",
-    "pangea-operator/Cargo.toml": "db1b14d78037aa988bf36b22779821f2ccf437497c41b914527694a050d091a9",
+    "pangea-operator/Cargo.toml": "3192545b73a090e0ef4b808384679e6a39a5b58b8e61f60bc3636c87d9271d88",
     "pangea-ruby-eval/Cargo.toml": "a65712c95619fda84a8cebaa9f887919acf4e71f4125f085797dfaf478eb380a",
     "pangea-types/Cargo.toml": "bba5d0bee1d04b3ddaefa9f7234a1e5a11e3388dd89e62a3deb4a91b66cd4abc"
   },
@@ -8326,6 +8326,296 @@
         "build_dependencies": [],
         "features": []
       },
+      "lava-arch-0.2.1": {
+        "runtime_dependencies": [
+          {
+            "name": "indexmap",
+            "package_key": "indexmap-2.14.0",
+            "kind": "normal",
+            "features": [
+              "serde"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "lava_core",
+            "package_key": "lava-core-0.2.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde",
+            "package_key": "serde-1.0.228",
+            "kind": "normal",
+            "features": [
+              "derive"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde_json",
+            "package_key": "serde_json-1.0.150",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "lava-core-0.2.2": {
+        "runtime_dependencies": [
+          {
+            "name": "indexmap",
+            "package_key": "indexmap-2.14.0",
+            "kind": "normal",
+            "features": [
+              "serde"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde",
+            "package_key": "serde-1.0.228",
+            "kind": "normal",
+            "features": [
+              "derive"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde_json",
+            "package_key": "serde_json-1.0.150",
+            "kind": "normal",
+            "features": [
+              "preserve_order"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde_yaml",
+            "package_key": "serde_yaml-0.9.34+deprecated",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "lava-eval-0.2.1": {
+        "runtime_dependencies": [
+          {
+            "name": "indexmap",
+            "package_key": "indexmap-2.14.0",
+            "kind": "normal",
+            "features": [
+              "serde"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "lava_arch",
+            "package_key": "lava-arch-0.2.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "lava_core",
+            "package_key": "lava-core-0.2.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "lava_schema",
+            "package_key": "lava-schema-0.1.7",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "lava_types",
+            "package_key": "lava-types-0.1.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde",
+            "package_key": "serde-1.0.228",
+            "kind": "normal",
+            "features": [
+              "derive"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde_json",
+            "package_key": "serde_json-1.0.150",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "lava-schema-0.1.7": {
+        "runtime_dependencies": [
+          {
+            "name": "indexmap",
+            "package_key": "indexmap-2.14.0",
+            "kind": "normal",
+            "features": [
+              "serde"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "lava_types",
+            "package_key": "lava-types-0.1.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde",
+            "package_key": "serde-1.0.228",
+            "kind": "normal",
+            "features": [
+              "derive"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "lava-types-0.1.2": {
+        "runtime_dependencies": [
+          {
+            "name": "serde",
+            "package_key": "serde-1.0.228",
+            "kind": "normal",
+            "features": [
+              "derive"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
       "lazy_static-1.5.0": {
         "runtime_dependencies": [
           {
@@ -12677,6 +12967,26 @@
             "tree": "target"
           },
           {
+            "name": "lava_core",
+            "package_key": "lava-core-0.2.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "lava_eval",
+            "package_key": "lava-eval-0.2.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
             "name": "libc",
             "package_key": "libc-0.2.186",
             "kind": "normal",
@@ -14666,7 +14976,7 @@
         "runtime_dependencies": [
           {
             "name": "heck",
-            "package_key": "heck-0.4.1",
+            "package_key": "heck-0.5.0",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -17814,6 +18124,16 @@
       "serde_json-1.0.150": {
         "runtime_dependencies": [
           {
+            "name": "indexmap",
+            "package_key": "indexmap-2.14.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
             "name": "itoa",
             "package_key": "itoa-1.0.18",
             "kind": "normal",
@@ -17858,6 +18178,8 @@
         "features": [
           "alloc",
           "default",
+          "indexmap",
+          "preserve_order",
           "raw_value",
           "std"
         ]
@@ -30475,6 +30797,21 @@
     },
     "lalrpop-util-0.22.2": {
       "edition": "2021"
+    },
+    "lava-arch-0.2.1": {
+      "edition": "2024"
+    },
+    "lava-core-0.2.2": {
+      "edition": "2024"
+    },
+    "lava-eval-0.2.1": {
+      "edition": "2024"
+    },
+    "lava-schema-0.1.7": {
+      "edition": "2024"
+    },
+    "lava-types-0.1.2": {
+      "edition": "2024"
     },
     "lazy_static-1.5.0": {
       "edition": "2015"

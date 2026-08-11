@@ -52,6 +52,8 @@ executor_magma = [
 ]
 
 [dependencies]
+lava-core = "0.2"
+lava-eval = "0.2"
 # Shared types
 pangea-types = { workspace = true, features = ["server"] }
 

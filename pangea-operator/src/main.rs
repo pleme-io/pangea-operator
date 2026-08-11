@@ -213,6 +213,15 @@ async fn main() -> Result<()> {
                  compiled in. The HTTP compiler sidecar is sunset — rebuild with the \
                  embedded_ruby feature (now default). Refusing to fall back to HTTP."
             ),
+            // Dashboards only, no Ruby in the process. The FedRAMP
+            // boundary cannot receive Ruby at all, and pangea-ruby-eval
+            // is unrestricted in-process CRuby — no $SAFE, no timeout,
+            // no restricted binding — sharing this operator's address
+            // space and credentials on the fleet control plane.
+            "lava" => {
+                info!("Compiler backend: lava (tatara-lisp dashboards, no Ruby)");
+                std::sync::Arc::new(pangea_operator::ruby::LavaCompilerBackend::from_env())
+            }
             _ => {
                 info!(endpoint = %compiler_endpoint, "Compiler backend: HTTP sidecar (LEGACY/sunset — embedded is the strategy)");
                 pangea_operator::controller::architecture_gem_controller::http_backend(

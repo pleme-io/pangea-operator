@@ -14,7 +14,26 @@ use tokio::process::Command;
 
 /// Run one git command in `dir`, panicking (with stderr) on failure —
 /// fixture setup must never half-succeed silently.
+///
+/// Commits get `--no-verify`. The fleet installs a global `commit-msg`
+/// hook via `core.hooksPath` that refuses ~75 placeholder subjects,
+/// `initial` among them, and it applies to every repository on the
+/// machine including a `TempDir` that exists for the duration of one
+/// test. `--no-verify` is git's own escape for throwaway repos, and it
+/// is the documented remedy for exactly this collision — the guard is
+/// there to keep placeholder subjects out of real history, and a fixture
+/// commit is not history.
 pub async fn git_run(dir: &Path, args: &[&str]) {
+    let owned: Vec<&str>;
+    let args = if args.first() == Some(&"commit") && !args.contains(&"--no-verify") {
+        owned = std::iter::once("commit")
+            .chain(std::iter::once("--no-verify"))
+            .chain(args[1..].iter().copied())
+            .collect();
+        owned.as_slice()
+    } else {
+        args
+    };
     let out = Command::new("git")
         .arg("-C")
         .arg(dir)

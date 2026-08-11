@@ -73,7 +73,22 @@ fn default_extend_modules() -> Vec<String> {
     vec!["Pangea::Grafana".to_string()]
 }
 
-/// Source of the dashboard Ruby DSL.
+/// Where a dashboard's definition comes from.
+///
+/// Ordered weakest-containment first. `Inline { ruby }` hands arbitrary
+/// Ruby to an in-process CRuby interpreter that shares the operator's
+/// address space and credentials — anyone who can write a CR gets code
+/// execution. `Inline { tlisp }` is a restricted evaluator with no
+/// filesystem, network or subprocess reach. `Architecture` carries **no
+/// language at all**: a name and a parameter object, resolved against
+/// the catalogue baked into the image.
+///
+/// That last one is the destination for essentially every dashboard.
+/// Surveyed 2026-08-11, 17 of the 18 `PangeaDashboard` CRs the fleet
+/// emits carry no logic — their "Ruby" is a fixed six-line wrapper
+/// around an architecture name, a params blob and a folder. For those,
+/// code injection stops being *contained* and becomes *unrepresentable*,
+/// because the schema has no field that can hold code.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum DashboardSource {
@@ -82,13 +97,54 @@ pub enum DashboardSource {
         /// Ruby source code. Must return a JSON string (e.g., via DashboardBuilder.build).
         ruby: String,
     },
-    /// Reference to a ConfigMap containing the Ruby source.
+    /// Inline tatara-lisp: a `(deflava-dashboard …)` form.
+    InlineTlisp {
+        /// tatara-lisp source. Evaluated by the lava backend.
+        tlisp: String,
+    },
+    /// A named architecture from the image's catalogue, plus its
+    /// parameters. Carries no evaluable source.
+    Architecture {
+        /// Catalogue entry name, e.g. `workload-overview`.
+        name: String,
+        /// Parameters bound into the architecture.
+        #[serde(default)]
+        #[schemars(schema_with = "super::opaque_json_schema")]
+        params: Option<serde_json::Value>,
+    },
+    /// Reference to a ConfigMap containing the source.
     ConfigMapRef {
         /// ConfigMap name.
         name: String,
         /// Key within the ConfigMap.
         key: String,
     },
+}
+
+/// Which evaluator a source needs.
+///
+/// The controller cannot otherwise tell a backend what it is holding —
+/// `render_dashboard` receives a bare string — so routing would have to
+/// sniff the text. This makes it typed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DashboardLanguage {
+    Ruby,
+    Tlisp,
+}
+
+impl DashboardSource {
+    /// The language of this source, for backend dispatch.
+    ///
+    /// A `ConfigMapRef` is Ruby for backward compatibility: existing
+    /// ConfigMaps hold Ruby, and silently reinterpreting them as
+    /// tatara-lisp would fail at parse rather than doing nothing.
+    #[must_use]
+    pub fn language(&self) -> DashboardLanguage {
+        match self {
+            Self::Inline { .. } | Self::ConfigMapRef { .. } => DashboardLanguage::Ruby,
+            Self::InlineTlisp { .. } | Self::Architecture { .. } => DashboardLanguage::Tlisp,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

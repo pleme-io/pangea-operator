@@ -279,7 +279,17 @@ impl CompilerBackend for EmbeddedCompilerBackend {
         &self,
         ruby: String,
         extend_modules: Vec<String>,
+        kind: SourceKind,
     ) -> Result<String, BackendError> {
+        // Refuse anything that is not Ruby rather than handing it to the
+        // interpreter. A `.tlisp` form fed to CRuby is a syntax error at
+        // best; the point of routing on a typed kind is that it never
+        // gets that far.
+        if kind != SourceKind::Ruby {
+            return Err(BackendError::Ruby(format!(
+                "the embedded Ruby backend cannot evaluate {kind:?} source"
+            )));
+        }
         // Dashboard render runs the inline DSL Ruby on a pool worker
         // and returns the Grafana JSON string. The owner thread does
         // the require-extend-modules + eval + string-extraction; this

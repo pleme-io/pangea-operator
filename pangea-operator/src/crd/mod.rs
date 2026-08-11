@@ -92,8 +92,8 @@ pub use compliance_binding::{
 
 // Re-export PangeaDashboard types
 pub use pangea_dashboard::{
-    DashboardSource, PangeaDashboard, PangeaDashboardPhase, PangeaDashboardSpec,
-    PangeaDashboardStatus,
+    DashboardLanguage, DashboardSource, PangeaDashboard, PangeaDashboardPhase,
+    PangeaDashboardSpec, PangeaDashboardStatus,
 };
 
 // Re-export ArchitectureGem types (M1 — workspace reconciliation hardening)

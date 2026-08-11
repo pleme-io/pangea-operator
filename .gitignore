@@ -19,3 +19,5 @@ pangea-compiler/.bundle/
 pangea-compiler/vendor/
 crate-hashes.json
 Cargo.build-spec.json
+
+.cargo/

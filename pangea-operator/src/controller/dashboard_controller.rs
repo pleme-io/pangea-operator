@@ -34,7 +34,10 @@ use kube::{
 };
 use tracing::{debug, error, info, instrument, warn};
 
-use crate::crd::{Condition, DashboardSource, PangeaDashboard, PangeaDashboardPhase};
+use crate::crd::{
+    Condition, DashboardLanguage, DashboardSource, PangeaDashboard, PangeaDashboardPhase,
+};
+use crate::ruby::backend::SourceKind;
 use crate::error::Error;
 
 use super::{create_condition, ControllerState, DEFAULT_REQUEUE_INTERVAL, SHORT_REQUEUE_INTERVAL};
@@ -136,9 +139,27 @@ async fn reconcile(pd: Arc<PangeaDashboard>, state: Arc<ControllerState>) -> Res
         return Ok(Action::requeue(Duration::from_secs(30)));
     }
 
-    // Extract Ruby source.
+    // Extract the source, and the evaluator it needs. The kind travels
+    // with the text: the backend receives a bare string and cannot
+    // otherwise tell Ruby from tatara-lisp without sniffing it.
+    let source_kind = match pd.spec.source.language() {
+        DashboardLanguage::Ruby => SourceKind::Ruby,
+        DashboardLanguage::Tlisp => SourceKind::Lisp,
+    };
     let ruby_source = match &pd.spec.source {
         DashboardSource::Inline { ruby } => ruby.clone(),
+        DashboardSource::InlineTlisp { tlisp } => tlisp.clone(),
+        DashboardSource::Architecture {
+            name: arch, params, ..
+        } => {
+            // The typed variant carries no evaluable source at all, so
+            // there is nothing to hand an evaluator. What the diff gate
+            // hashes is the *reference* — the catalogue name plus its
+            // parameters — which is exactly what changes when the CR
+            // changes. Resolution happens in the backend, so the
+            // controller never holds a string that could be code.
+            serde_json::json!({ "architecture": arch, "params": params }).to_string()
+        }
         DashboardSource::ConfigMapRef {
             name: cm_name, key, ..
         } => {
@@ -182,12 +203,30 @@ async fn reconcile(pd: Arc<PangeaDashboard>, state: Arc<ControllerState>) -> Res
         }
     }
 
-    // (a) Render the inline Ruby → Grafana dashboard JSON string.
-    let dashboard_json = match state
-        .compiler_backend
-        .render_dashboard(ruby_source.clone(), pd.spec.extend_modules.clone())
-        .await
-    {
+    // (a) Render the source → Grafana dashboard JSON string.
+    let render = match &pd.spec.source {
+        // The typed variant never reaches an evaluator: the backend
+        // resolves the catalogue entry itself.
+        DashboardSource::Architecture {
+            name: arch, params, ..
+        } => {
+            state
+                .compiler_backend
+                .render_dashboard_architecture(arch.clone(), params.clone())
+                .await
+        }
+        _ => {
+            state
+                .compiler_backend
+                .render_dashboard(
+                    ruby_source.clone(),
+                    pd.spec.extend_modules.clone(),
+                    source_kind,
+                )
+                .await
+        }
+    };
+    let dashboard_json = match render {
         Ok(j) => j,
         Err(e) => {
             let msg = format!("dashboard render failed: {e}");

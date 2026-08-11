@@ -2292,10 +2292,17 @@ fn generation_invalidates_render(current_gen: i64, observed_gen: i64) -> bool {
 /// Digest of the spec with `approvedPlanHash` normalized out.
 ///
 /// The plan is derived from every spec field EXCEPT the approval, so an
-/// approval cannot logically invalidate the plan it approves. Serializing
-/// through `serde_json::Value` gives key-sorted output (its map is a
-/// `BTreeMap` under the default `preserve_order`-off build), so the digest is
-/// stable across field reordering.
+/// approval cannot logically invalidate the plan it approves.
+///
+/// Key order is normalized EXPLICITLY, via [`sort_json_keys`]. This used to
+/// rely on `serde_json::Value` re-emitting sorted output because its map is a
+/// `BTreeMap` "under the default `preserve_order`-off build" — which is a
+/// property of a cargo feature, not of this code. Cargo unifies features
+/// across the whole dependency graph, so *any* crate anywhere in the build
+/// turning `preserve_order` on swaps the backing store for an `IndexMap` and
+/// silently makes this digest order-sensitive. That is not a hypothetical:
+/// lava-core enables it, and it moved this digest the moment the operator
+/// gained a lava dependency.
 ///
 /// Returns `None` when the spec cannot be serialized. A digest that cannot be
 /// computed must never read as "unchanged" — the caller falls back to the
@@ -2305,7 +2312,7 @@ pub(crate) fn material_spec_digest(spec: &InfrastructureTemplateSpec) -> Option<
     if let Some(obj) = v.as_object_mut() {
         obj.remove("approvedPlanHash");
     }
-    let bytes = serde_json::to_vec(&v).ok()?;
+    let bytes = serde_json::to_vec(&sort_json_keys(v)).ok()?;
     Some(blake3::hash(&bytes).to_hex().to_string())
 }
 
@@ -6130,8 +6137,42 @@ fn plan_approval_hash(plan_text: &str, state_bytes: Option<&[u8]>) -> String {
 /// unexpected input.
 fn canonicalize_state_bytes(bytes: &[u8]) -> Vec<u8> {
     match serde_json::from_slice::<serde_json::Value>(bytes) {
-        Ok(value) => serde_json::to_vec(&value).unwrap_or_else(|_| bytes.to_vec()),
+        Ok(value) => {
+            serde_json::to_vec(&sort_json_keys(value)).unwrap_or_else(|_| bytes.to_vec())
+        }
         Err(_) => bytes.to_vec(),
+    }
+}
+
+/// Recursively sort every object's keys.
+///
+/// The canonicalization above used to be implicit: a round-trip through
+/// `serde_json::Value` re-emitted objects in sorted order purely because
+/// `serde_json::Map` is a `BTreeMap` by default. That is a property of a
+/// *cargo feature*, not of this code — `serde_json`'s `preserve_order`
+/// swaps the backing store for an `IndexMap`, and cargo unifies features
+/// across the whole dependency graph, so any crate anywhere in the build
+/// enabling it silently turns this function into a no-op and moves every
+/// approval hash.
+///
+/// An approval hash is exactly the wrong thing to leave resting on a
+/// transitive feature flag: the failure is silent, and its consequence is
+/// a human's approval being invalidated (or, worse, reused) for reasons
+/// no one can see in this file. Sorting explicitly makes the guarantee
+/// belong to the code that claims it.
+fn sort_json_keys(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let sorted: std::collections::BTreeMap<String, serde_json::Value> = map
+                .into_iter()
+                .map(|(k, v)| (k, sort_json_keys(v)))
+                .collect();
+            serde_json::Value::Object(sorted.into_iter().collect())
+        }
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.into_iter().map(sort_json_keys).collect())
+        }
+        scalar => scalar,
     }
 }
 
