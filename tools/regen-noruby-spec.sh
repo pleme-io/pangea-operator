@@ -18,9 +18,14 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 spec="$root/Cargo.noruby.build-spec.json"
 
 # Keep this list in lockstep with the default set in
-# pangea-operator/Cargo.toml MINUS embedded_ruby. A feature added to the
-# default set and not added here ships in the Ruby image and silently
-# vanishes from the Ruby-free one.
+# pangea-operator/Cargo.toml MINUS the two Ruby-linking features. A
+# feature added to the default set and not added here ships in the Ruby
+# image and silently vanishes from the Ruby-free one.
+#
+# BOTH must be omitted. magma-rubygems links libruby through magnus/rb-sys
+# exactly as pangea-ruby-eval does, and it used to ride inside
+# executor_magma — so dropping embedded_ruby alone took the operator from
+# 76 runtime deps to 75 and left Ruby in the closure anyway.
 FEATURES="graphql,grpc,executor_magma"
 
 before=""

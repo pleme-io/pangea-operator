@@ -1184,9 +1184,25 @@ async fn compute_gem_tree_attestation(work_dir: &Path) -> Option<String> {
     if !gemfile_lock.exists() {
         return None;
     }
-    let source = tokio::fs::read_to_string(&gemfile_lock).await.ok()?;
-    let lock = magma_rubygems::lockfile::parse(&source).ok()?;
-    Some(magma_rubygems::attestation::attest_lockfile(&lock))
+    #[cfg(feature = "magma_rubygems")]
+    {
+        let source = tokio::fs::read_to_string(&gemfile_lock).await.ok()?;
+        let lock = magma_rubygems::lockfile::parse(&source).ok()?;
+        Some(magma_rubygems::attestation::attest_lockfile(&lock))
+    }
+    // Without the feature there is no gem attester linked, and there is
+    // nothing to fall back to — this returns None rather than a wrong
+    // answer. A build that omits `magma_rubygems` is one targeting an
+    // environment that cannot run Ruby at all, where a Gemfile.lock in
+    // the workspace is already anomalous.
+    #[cfg(not(feature = "magma_rubygems"))]
+    {
+        tracing::debug!(
+            path = %gemfile_lock.display(),
+            "Gemfile.lock present but this build omits magma_rubygems; not attested"
+        );
+        None
+    }
 }
 
 /// Convert a `magma_types::Plan` (Terraform-shape, granular Action
@@ -4135,6 +4151,12 @@ mod tests {
         magma_stream::verify_chain(&bundle.audit).unwrap();
     }
 
+    // Asserts the attestation is PRESENT, which is precisely what the
+    // feature controls — a Ruby-free build has no gem attester linked and
+    // correctly returns None. Gated rather than softened: weakening the
+    // assertion to "present or None" would make it pass in both builds
+    // while proving nothing in either.
+    #[cfg(feature = "magma_rubygems")]
     #[tokio::test]
     async fn plan_carries_gem_tree_attestation_when_gemfile_lock_present() {
         // When the workspace ships a Gemfile.lock, the bundle

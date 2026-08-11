@@ -21386,96 +21386,6 @@
         "preBuild": "export CARGO_CRATE_NAME=magma_providers;"
       }
     },
-    "magma-rubygems-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e": {
-      "name": "magma-rubygems",
-      "version": "0.1.22",
-      "edition": "2024",
-      "source": {
-        "kind": "git",
-        "url": "https://github.com/pleme-io/magma",
-        "rev": "af94559ea32f1ed132c9dda5c82618635e6e910e",
-        "sha256": "sha256-u49rSs1u8g256ivIKKeZ0iVPEFtk5F6ji2J6aRhYYwY="
-      },
-      "features": [],
-      "proc_macro": false,
-      "build_script": null,
-      "links": null,
-      "binaries": [],
-      "lib_target": null,
-      "runtime_dependencies": [
-        {
-          "name": "blake3",
-          "package_key": "blake3-1.8.5",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "hex",
-          "package_key": "hex-0.4.3",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "serde",
-          "package_key": "serde-1.0.228",
-          "kind": "normal",
-          "features": [
-            "derive"
-          ],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "serde_json",
-          "package_key": "serde_json-1.0.150",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "sha2",
-          "package_key": "sha2-0.10.9",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "thiserror",
-          "package_key": "thiserror-2.0.18",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        }
-      ],
-      "build_dependencies": [],
-      "crate_renames": {},
-      "build_rust_crate_args": {
-        "crateName": "magma-rubygems",
-        "version": "0.1.22",
-        "edition": "2024",
-        "release": true,
-        "preBuild": "export CARGO_CRATE_NAME=magma_rubygems;"
-      }
-    },
     "magma-state-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e": {
       "name": "magma-state",
       "version": "0.1.22",
@@ -25457,16 +25367,6 @@
           "tree": "target"
         },
         {
-          "name": "magma_rubygems",
-          "package_key": "magma-rubygems-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": true,
-          "target": null,
-          "tree": "target"
-        },
-        {
           "name": "magma_state",
           "package_key": "magma-state-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e",
           "kind": "normal",
@@ -26049,12 +25949,6 @@
             "rename": "magma_plan"
           }
         ],
-        "magma-rubygems": [
-          {
-            "version": "0.1.22",
-            "rename": "magma_rubygems"
-          }
-        ],
         "magma-state": [
           {
             "version": "0.1.22",
@@ -26284,12 +26178,6 @@
             {
               "version": "0.1.22",
               "rename": "magma_plan"
-            }
-          ],
-          "magma-rubygems": [
-            {
-              "version": "0.1.22",
-              "rename": "magma_rubygems"
             }
           ],
           "magma-state": [
@@ -60269,74 +60157,6 @@
         "build_dependencies": [],
         "features": []
       },
-      "magma-rubygems-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e": {
-        "runtime_dependencies": [
-          {
-            "name": "blake3",
-            "package_key": "blake3-1.8.5",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "hex",
-            "package_key": "hex-0.4.3",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "serde",
-            "package_key": "serde-1.0.228",
-            "kind": "normal",
-            "features": [
-              "derive"
-            ],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "serde_json",
-            "package_key": "serde_json-1.0.150",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "sha2",
-            "package_key": "sha2-0.10.9",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "thiserror",
-            "package_key": "thiserror-2.0.18",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          }
-        ],
-        "build_dependencies": [],
-        "features": []
-      },
       "magma-state-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e": {
         "runtime_dependencies": [
           {
@@ -62509,16 +62329,6 @@
           {
             "name": "magma_plan",
             "package_key": "magma-plan-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "magma_rubygems",
-            "package_key": "magma-rubygems-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -79503,7 +79313,7 @@
     "Cargo.toml": "0b30df079faead095367aac7b6d647a7114e4fab08bf9fff393af7db18a0ec72",
     "pangea-cli/Cargo.toml": "f3f970097f7914011f23728fe42e3aed3085ec83bacdea24f37cdc9c19cfe965",
     "pangea-operator-mcp/Cargo.toml": "a1d5c3e03ec8073e6aabead01bed1962a05d23c93c43cda972539f2a7f46caf7",
-    "pangea-operator/Cargo.toml": "069feab1aa67105ac6368ccf46da0e67574690b5fca6fe8cba7efcf2a7e71ac8",
+    "pangea-operator/Cargo.toml": "edf8c71ae84a64bb1316f561174ef1a204152ebb868f762b9b4facdfd5b6ade0",
     "pangea-ruby-eval/Cargo.toml": "a65712c95619fda84a8cebaa9f887919acf4e71f4125f085797dfaf478eb380a",
     "pangea-types/Cargo.toml": "bba5d0bee1d04b3ddaefa9f7234a1e5a11e3388dd89e62a3deb4a91b66cd4abc"
   }

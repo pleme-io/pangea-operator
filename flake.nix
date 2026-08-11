@@ -175,6 +175,84 @@
           3. Re-build: nix build .#dockerImage-operator-embedded-amd64
       '' pangeaInputs;
 
+      # ── Ruby-FREE operator image (distroless-static) ──────────────
+      #
+      # The second of two image variants, and the one the FedRAMP
+      # boundary can actually receive. ADDITIVE: it adds a package and
+      # touches nothing the embedded-ruby image below reads, so it cannot
+      # change what the existing image builds.
+      #
+      # Why a second SPEC and not a second argument: gen bakes the
+      # RESOLVED feature set into Cargo.build-spec.json, and rootFeatures
+      # is not honored on the lockfile-builder path — there is no way to
+      # ask a build for FEWER features than its spec carries. So the
+      # variant reads `Cargo.noruby.build-spec.json`, produced by
+      # tools/regen-noruby-spec.sh and committed beside the canonical one.
+      # Verified: it resolves the canonical feature set minus `default`
+      # and `embedded_ruby`.
+      #
+      # Why that reaches distroless-STATIC when the embedded image cannot:
+      # `embedded_ruby` links libruby.so dynamically (magnus/rb-sys), and
+      # a static binary has no dynamic linker to resolve it through —
+      # which is the sole reason the image below is built against plain
+      # glibc nixpkgs instead of the musl-static target every other
+      # binary in this repo already uses. No libruby, no glibc, no shell,
+      # no package manager: CA roots and /etc/passwd only.
+      mkNoRubyOperatorImage = imageSystem:
+        let
+          imagePkgs = import nixpkgs { system = imageSystem; };
+          # musl-static: the binary must carry its own libc for a
+          # distroless-static base to be legal.
+          staticPkgs = imagePkgs.pkgsStatic;
+          lockfileBuilder =
+            import "${substrate}/lib/build/rust/lockfile-builder.nix" {
+              pkgs = staticPkgs;
+            };
+          plemeCrateOverrides =
+            (import "${substrate}/lib/build/rust/pleme-crate-overrides.nix")
+              staticPkgs.stdenv.hostPlatform.rust.rustcTarget;
+          project = lockfileBuilder.mkProject {
+            src = self;
+            name = "pangea-operator-noruby";
+            specFile = "Cargo.noruby.build-spec.json";
+            defaultCrateOverrides =
+              staticPkgs.defaultCrateOverrides // plemeCrateOverrides // {
+                # Same stopgap as the `base` build above — routes tsunagu
+                # through the flake-input fetcher rather than a sandboxed
+                # fetchgit with no credentials.
+                tsunagu = _oldAttrs: { src = inputs.tsunagu; };
+              };
+          };
+          bin = project.workspaceMembers."pangea-operator".build;
+          hardened =
+            import "${substrate}/lib/build/oci/hardened-base.nix" {
+              pkgs = imagePkgs;
+            };
+          arch = if imageSystem == "aarch64-linux" then "arm64" else "amd64";
+        in
+        hardened.mkPackageImage {
+          service = "pangea-operator";
+          base = hardened.bases.distroless-static;
+          package = bin;
+          publishName = "pangea-operator-noruby";
+          publishTag = arch;
+          entrypoint = [ "${bin}/bin/pangea-operator" ];
+          # The Ruby-free build cannot serve the embedded backend — main.rs
+          # panics loudly on PANGEA_COMPILER_BACKEND=embedded rather than
+          # silently falling back — so the image selects the lava backend
+          # explicitly. Without this the default config (compiler.backend
+          # = "embedded") would crash it on startup.
+          env = [
+            "PANGEA_COMPILER_BACKEND=lava"
+            "LAVA_DASHBOARD_CATALOG=/usr/share/lava/dashboards"
+          ];
+          exposedPorts = {
+            "8080/tcp" = {};
+            "8081/tcp" = {};
+            "9090/tcp" = {};
+          };
+        };
+
       # ── embedded-ruby operator image ──────────────────────────────
       #
       # Built via substrate's mkCrate2nixDockerImage — despite the name,
@@ -519,7 +597,11 @@
           arch = if system == "aarch64-linux" then "arm64" else "amd64";
         in
         {
-          packages.${system}."dockerImage-operator-embedded-${arch}" = mkEmbeddedOperatorImage system;
+          packages.${system} = {
+            "dockerImage-operator-embedded-${arch}" = mkEmbeddedOperatorImage system;
+            # Additive sibling — see mkNoRubyOperatorImage.
+            "dockerImage-operator-noruby-${arch}" = mkNoRubyOperatorImage system;
+          };
         };
 
       withEmbedded = lib.foldl'
