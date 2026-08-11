@@ -139,7 +139,26 @@ fn bind_params(src: &str, params: &serde_json::Value) -> Result<String, BackendE
             "dashboard params must be an object".to_string(),
         ));
     };
-    let mut out = src.to_string();
+    // A Grafana legend is `{{label}}`, and a param sharing a label's name
+    // must not be substituted inside one. Naive replacement turns
+    // `{{namespace}}` into `{default}` — the inner `{namespace}` matches —
+    // and the result is not a broken legend but an INTERPOLATION ERROR
+    // from the evaluator, `unknown var "default"`, pointing nowhere near
+    // the legend that caused it.
+    //
+    // Found 2026-08-11 the moment a board legended by `{{namespace}}` and
+    // `{{job}}` was written; every earlier board legended by `{{pod}}`,
+    // and `pod` happened not to be a param. The bug was one panel away
+    // from the start and nothing would have caught it until a board used
+    // the wrong two words.
+    //
+    // Masking `{{`/`}}` around the substitution is the whole fix: a
+    // doubled brace is never a placeholder, so it is never a candidate.
+    // The sentinel uses NUL, which cannot appear in a `.tlisp` source —
+    // the lexer would have rejected the file long before this point.
+    const LB: &str = "\u{0}lava-lb\u{0}";
+    const RB: &str = "\u{0}lava-rb\u{0}";
+    let mut out = src.replace("{{", LB).replace("}}", RB);
     for (k, v) in map {
         let scalar = match v {
             serde_json::Value::String(s) => s.clone(),
@@ -159,7 +178,7 @@ fn bind_params(src: &str, params: &serde_json::Value) -> Result<String, BackendE
         };
         out = out.replace(&format!("{{{k}}}"), &scalar);
     }
-    Ok(out)
+    Ok(out.replace(LB, "{{").replace(RB, "}}"))
 }
 
 #[async_trait]
@@ -288,6 +307,34 @@ mod tests {
         .unwrap();
         assert!(out.contains(r#":uid "camelot-board""#), "{out}");
         assert!(out.contains(":replicas 3"), "{out}");
+    }
+
+    /// A Grafana legend is `{{label}}` and must survive binding intact,
+    /// even when a param shares the label's name.
+    ///
+    /// Found live 2026-08-11. Naive replacement rewrites the INNER
+    /// `{namespace}` of `{{namespace}}`, yielding `{default}` — and the
+    /// symptom is not a wrong legend but the evaluator refusing the whole
+    /// document with `unknown var "default"`, an error naming a value the
+    /// author never wrote and pointing nowhere near the legend.
+    ///
+    /// It was one panel away from the start: every board until then
+    /// legended by `{{pod}}`, and `pod` happened not to be a param. The
+    /// first board legended by `{{namespace}}` broke instantly.
+    #[test]
+    fn a_grafana_legend_is_not_a_placeholder() {
+        let out = bind_params(
+            r#"(:legend "{{namespace}}/{{job}}" :expr "up{namespace=\"{namespace}\"}" :title "{namespace}")"#,
+            &serde_json::json!({ "namespace": "camelot", "job": "auth" }),
+        )
+        .unwrap();
+
+        // The legend survives untouched — both labels.
+        assert!(out.contains(r#":legend "{{namespace}}/{{job}}""#), "{out}");
+        // …while genuine single-brace placeholders still bind, including
+        // one sitting inside a PromQL selector in the same string.
+        assert!(out.contains(r#"up{namespace=\"camelot\"}"#), "{out}");
+        assert!(out.contains(r#":title "camelot""#), "{out}");
     }
 
     #[tokio::test]
