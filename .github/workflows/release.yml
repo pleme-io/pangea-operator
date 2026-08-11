@@ -188,18 +188,55 @@ jobs:
   # the first few real runs on this pool for signal-9 exits; if it OOMs
   # even at cores:1, the fix is a runner-pod memory bump in that same
   # runner-scale-set-pleme.yaml, not a further squeeze here.
+  #
+  # ── TWO VARIANTS PER BUILD, not a flag day (added 2026-08-11) ────────────
+  # Every build publishes BOTH the embedded-Ruby image and the Ruby-free one,
+  # under separate tag families. See the `variant` matrix on both jobs below;
+  # the full rationale is stated once, here, rather than twice.
+  #
+  # Why a matrix and not a third/fourth copy-pasted job: the top-of-file rule
+  # is "no CONDITIONALS in a `with:` value" — a `${{ a && b || c }}` whose
+  # condition drifts between call sites. `${{ matrix.variant.attr }}` is not
+  # a conditional; it is a lookup into a static two-row table declared inline,
+  # so there is exactly one place a variant's tag family can be written and no
+  # way for two call sites to disagree. (YAML `<<:` anchors are still out —
+  # GHA's parser silently drops the anchored fields, as the header records.)
+  #
+  # `fail-fast: false` is load-bearing, not a default-tweak. The embedded row
+  # is the image camelot actually deploys; the noruby row is not consumed by
+  # anything yet. Under matrix's default fail-fast, a CVE-gate failure or an
+  # OOM on the unconsumed row would CANCEL the row that ships, turning a new
+  # variant into an outage for the old one.
+  #
+  # The noruby tag family cannot autobump anything, and that is what makes it
+  # safe to publish before the 18 Ruby-backed CRs migrate — a Ruby-free binary
+  # meeting a Ruby CR panics at startup (main.rs refuses to fall back to the
+  # sunset sidecar). Verified 2026-08-11 against all three live ImagePolicies
+  # for this image — pleme-io/k8s clusters/rio, akeyless-k8s
+  # clusters/camelot-mode1 and clusters/camelot-eks — every one of which
+  # anchors `^embedded-amd64-r(?P<n>[0-9]+)-[0-9a-f]+$`. `noruby-amd64-…`
+  # matches none of them, so Flux never sees it until someone writes an
+  # ImagePolicy that asks for it. Keep the `<variant>-amd64-r<n>-<sha>` shape
+  # when adding a variant, so that future policy is the same regex with one
+  # word changed.
   image-rio:
-    name: container image → ghcr.io (rio, manual override only)
+    name: container image → ghcr.io (rio, ${{ matrix.variant.tag }})
     needs: resolve-runner
     if: needs.resolve-runner.outputs.use-rio-cache == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - { attr: dockerImage-operator-embedded-amd64, tag: embedded-amd64 }
+          - { attr: dockerImage-operator-noruby-amd64, tag: noruby-amd64 }
     uses: pleme-io/substrate/.github/workflows/image-push.yml@main
     with:
-      imageAttr: dockerImage-operator-embedded-amd64
+      imageAttr: ${{ matrix.variant.attr }}
       imageName: pleme-io/pangea-operator
       # `r<run_number>` makes the tag sortable by recency for Flux ImagePolicy
       # (a git sha alone isn't orderable); the sha keeps it traceable.
-      tag: embedded-amd64-r${{ github.run_number }}-${{ github.sha }}
-      additionalTags: latest-embedded-amd64
+      tag: ${{ matrix.variant.tag }}-r${{ github.run_number }}-${{ github.sha }}
+      additionalTags: latest-${{ matrix.variant.tag }}
       runner: rio-build-01
       buildCores: "1"
       maxJobs: "1"
@@ -236,15 +273,26 @@ jobs:
   # is reachable from this pool (see extraSubstituters below), unlike
   # Mode-1's now-retired pool.
   image-fallback:
-    name: container image → ghcr.io (camelot-builder-pleme-eks / override)
+    name: container image → ghcr.io (camelot-builder-pleme-eks / override, ${{ matrix.variant.tag }})
     needs: resolve-runner
     if: needs.resolve-runner.outputs.use-rio-cache != 'true'
+    # Same two-row variant table as image-rio — see the block comment above
+    # that job for why both variants ship on every build, why fail-fast is
+    # off, and why the noruby tag family is invisible to every live
+    # ImagePolicy. THIS is the variant every push-triggered merge takes, so
+    # it is the one that actually delivers the Ruby-free image.
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - { attr: dockerImage-operator-embedded-amd64, tag: embedded-amd64 }
+          - { attr: dockerImage-operator-noruby-amd64, tag: noruby-amd64 }
     uses: pleme-io/substrate/.github/workflows/image-push.yml@main
     with:
-      imageAttr: dockerImage-operator-embedded-amd64
+      imageAttr: ${{ matrix.variant.attr }}
       imageName: pleme-io/pangea-operator
-      tag: embedded-amd64-r${{ github.run_number }}-${{ github.sha }}
-      additionalTags: latest-embedded-amd64
+      tag: ${{ matrix.variant.tag }}-r${{ github.run_number }}-${{ github.sha }}
+      additionalTags: latest-${{ matrix.variant.tag }}
       runner: ${{ needs.resolve-runner.outputs.runner }}
       buildCores: "1"
       maxJobs: "1"

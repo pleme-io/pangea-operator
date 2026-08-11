@@ -89,6 +89,83 @@ jobs:
           outputs: ${{ steps.build.outputs.out-path }}
           key: dockerImage-operator-embedded-amd64
 
+      # ── The Ruby-free variant is built on every PR, not only at release ──
+      # release.yml publishes BOTH variants on every merge (see its `variant`
+      # matrix). If only the embedded one were built here, a change that
+      # breaks the Ruby-free build would go green on the PR and fail AFTER
+      # merge, on the publish path — the "a check nobody builds enforces
+      # nothing" class. It is the FedRAMP deliverable, so it gets the same
+      # pre-merge signal as the image camelot deploys.
+      #
+      # A STEP in this job, not a second job, on purpose: it reuses the nix
+      # store this runner already warmed (nixpkgs, the shared crate graph,
+      # every non-operator derivation) instead of paying installer + cold
+      # substitution twice. What it genuinely rebuilds is the operator crate
+      # itself, which resolves a different feature set from
+      # Cargo.noruby.build-spec.json and therefore cannot share the embedded
+      # build's output.
+      #
+      # Worth knowing when this fails locally: the EMBEDDED image cannot be
+      # evaluated at all without an x86_64-linux builder — its Ruby gem
+      # workspace is IFD (`pangea-compiler-ruby-env`), so a darwin
+      # workstation dies before producing a .drv. This variant has no gem
+      # workspace, so `nix path-info --derivation
+      # .#packages.x86_64-linux.dockerImage-operator-noruby-amd64` resolves
+      # on a Mac. Dropping Ruby did not only shrink the image; it made the
+      # derivation reachable from the machines we actually work on.
+      - name: nix build — native amd64 Ruby-free operator image (the FedRAMP variant)
+        id: build-noruby
+        run: |
+          OUT=$(nix build .#dockerImage-operator-noruby-amd64 --no-link --print-build-logs --print-out-paths)
+          echo "out-path=${OUT}" >> "$GITHUB_OUTPUT"
+
+      - name: Push built Ruby-free image to super-cache (sui)
+        uses: pleme-io/actions/super-cache-save@main
+        with:
+          endpoint: http://sui.camelot-build.svc
+          outputs: ${{ steps.build-noruby.outputs.out-path }}
+          key: dockerImage-operator-noruby-amd64
+
+      # ── The gate that makes `-noruby` mean something ────────────────────
+      # Building the variant proves it BUILDS, not that it is Ruby-free.
+      # Both ways it can silently stop being Ruby-free build green and ship:
+      # someone puts `embedded_ruby` back in tools/regen-noruby-spec.sh's
+      # FEATURES list, or a transitive dep starts pulling libruby. Either
+      # way the tag still says noruby.
+      #
+      # This is TWO-SIDED on purpose, and the second assertion is the
+      # load-bearing one. A one-sided "no Ruby in the noruby closure" check
+      # passes for a grep pattern that matches NOTHING — a renamed nixpkgs
+      # ruby attribute, a typo, a query pointed at the wrong path — and
+      # reports a clean zero forever. So the SAME pattern is also run
+      # against the embedded closure, where it must find Ruby. A pattern
+      # that has stopped working fails there before it can wave the variant
+      # through here.
+      #
+      # It scans the DERIVATION's requisites, not the output path's. The
+      # output is a .tar.gz whose runtime closure is nearly empty — a scan
+      # of it would be the vacuous-zero above, dressed as a real check.
+      - name: Assert the Ruby-free image is actually Ruby-free
+        run: |
+          set -uo pipefail
+          PAT='libruby|ruby-3|rb-sys|magnus|pangea-ruby-eval'
+          scan() { nix-store -q --requisites "$1" | grep -v -- '-noruby'; }
+          NORUBY_DRV=$(nix path-info --derivation .#dockerImage-operator-noruby-amd64)
+          EMBED_DRV=$(nix path-info --derivation .#dockerImage-operator-embedded-amd64)
+          n_total=$(scan "$NORUBY_DRV" | wc -l | tr -d ' ')
+          n_ruby=$(scan "$NORUBY_DRV" | grep -Eic "$PAT" || true)
+          e_ruby=$(scan "$EMBED_DRV" | grep -Eic "$PAT" || true)
+          echo "noruby: scanned=$n_total ruby=$n_ruby | embedded: ruby=$e_ruby"
+          if [ "$e_ruby" -eq 0 ]; then
+            echo "::error::the Ruby pattern found 0 hits in the EMBEDDED closure, so a 0 in the variant proves nothing — fix the pattern, do not relax the gate"
+            exit 1
+          fi
+          if [ "$n_ruby" -ne 0 ]; then
+            echo "::error::$n_ruby Ruby paths inside the -noruby closure (scanned $n_total)"
+            scan "$NORUBY_DRV" | grep -Ei "$PAT"
+            exit 1
+          fi
+
   cargo-test:
     # Runs inside `.#ruby-eval` via the shared substrate reusable workflow
     # (pleme-io/substrate/.github/workflows/nix-devshell-cargo-test.yml)
