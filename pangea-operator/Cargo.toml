@@ -16,6 +16,33 @@ repository.workspace = true
 # build (this is why the operator silently shipped HTTP-sidecar + Tofu-only).
 # Making them default is the load-bearing fix: every build now links libruby
 # (use the `.#ruby-eval` devshell) + compiles MagmaExecutor in.
+#
+# ── THE RUBY-FREE BUILD, and why it is not the default yet (2026-08-11) ──
+#
+# `--no-default-features --features graphql,grpc,executor_magma` compiles
+# clean and passes the full suite (1330 tests, verified 2026-08-11). That
+# configuration is what the FedRAMP boundary needs — it cannot receive Ruby —
+# and it is also what unlocks distroless-STATIC, because libruby is
+# dynamically linked (magnus/rb-sys) and is the sole reason this image is
+# built against plain glibc nixpkgs instead of the musl-static cross target
+# every other binary in this repo already uses.
+#
+# Inverting these defaults is the ONLY lever that reaches the image, since
+# rootFeatures is not honored and there is no way to ask that path for FEWER
+# features than the default set. But inverting alone is a live break, not an
+# improvement:
+#
+#   config.rs's prescribed default is `compiler.backend = "embedded"`, and
+#   main.rs deliberately PANICS on `embedded` when the feature is absent
+#   rather than silently falling back to the sunset HTTP sidecar. So flipping
+#   the default crashes the operator on startup for every deployment that has
+#   not already migrated — camelot included, which is serving 18 Ruby-backed
+#   PangeaDashboard CRs today.
+#
+# The order that works is: publish BOTH image variants first (a `-noruby` tag
+# beside the current one), migrate the CRs to the tlisp/architecture source
+# shapes, then invert. Two-variant publishing needs either a gen fix so
+# rootFeatures reaches the image, or a second committed build spec.
 default = ["graphql", "grpc", "embedded_ruby", "executor_magma"]
 graphql = ["async-graphql", "async-graphql-axum"]
 grpc = ["tonic", "prost"]
