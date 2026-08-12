@@ -203,6 +203,31 @@
           imagePkgs = import nixpkgs { system = imageSystem; };
           # musl-static: the binary must carry its own libc for a
           # distroless-static base to be legal.
+          #
+          # `pending-noruby-toolchain: pkgsStatic restages the TOOLCHAIN, not
+          #  just the target.` MEASURED 2026-08-12 on rio (32 cores, from a
+          # cold store): this build never reaches pangea-operator's own source.
+          # It stops in `llvm-static-x86_64-unknown-linux-musl-21.1.8` at file
+          # 3434/3992, linking libLLVM.so.21.1 -- a SHARED object -- for the
+          # musl-static target:
+          #
+          #   ld.bfd: failed to set dynamic section sizes: bad value
+          #   collect2: error: ld returned 1 exit status
+          #
+          # That is why GHCR carries ZERO `noruby-*` tags: the variant has never
+          # been built anywhere, by anyone. The "3433 paths, 0 Ruby" measurement
+          # this variant is trusted on was taken over the DERIVATION's requisites
+          # (computable without building), so it is still true and still not
+          # evidence the image exists.
+          #
+          # The fix is not a patch, it is the fleet's own proven pattern:
+          # substrate's `crate2nix-builders.nix:399-401` builds musl binaries
+          # with `pkgsCross.musl64` + `CARGO_BUILD_TARGET = muslTarget` -- a
+          # NORMAL toolchain cross-compiling to musl -- and contains no
+          # `pkgsStatic` anywhere. `pkgsStatic` asks nixpkgs to rebuild rustc
+          # and LLVM themselves as static artifacts, which is a much larger and
+          # much less travelled claim than "this binary carries its own libc".
+          # Idiom-first, and the idiom already exists.
           staticPkgs = imagePkgs.pkgsStatic;
           lockfileBuilder =
             import "${substrate}/lib/build/rust/lockfile-builder.nix" {
