@@ -6078,6 +6078,124 @@ fn plan_approval_hash(plan_text: &str, state_bytes: Option<&[u8]>) -> String {
     format!("{:016x}", hasher.finish())
 }
 
+/// The PLAN half of [`plan_approval_hash`], on its own.
+///
+/// "Everything we did" — the change an operator actually reads and signs off.
+/// Stable across cycles for as long as the intended change is unchanged,
+/// regardless of what the environment does underneath it.
+fn plan_content_fingerprint(plan_text: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    content_hash(plan_text).hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+/// The ENVIRONMENT half, on its own.
+///
+/// "The world it was computed against." Moves whenever the state does — which,
+/// for a magma-backed template, is *every Planning cycle*, because the
+/// plan-time refresh re-persists the full state even when nothing is applied
+/// (see [`canonicalize_state_bytes`]).
+fn state_fingerprint(state_bytes: Option<&[u8]>) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    match state_bytes {
+        Some(bytes) => {
+            1u8.hash(&mut hasher);
+            canonicalize_state_bytes(bytes).hash(&mut hasher);
+        }
+        None => 0u8.hash(&mut hasher),
+    }
+    format!("{:016x}", hasher.finish())
+}
+
+/// How a freshly-computed plan relates to the one that was approved.
+///
+/// # Why this is a type and not a bool
+///
+/// Approval is string equality on [`plan_approval_hash`], which multiplies
+/// the plan and the state into one opaque value. That is correct as a SAFETY
+/// binding — it is what closed the 2026-07-12 state-wipe postmortem, where a
+/// plan recomputed against wiped state hashed identically to the approved one
+/// and silently reused the approval. But as a REPORT it collapses two
+/// completely different situations into one "not approved":
+///
+/// - the change itself differs — an approval must never carry across this;
+/// - only the world moved — the change an operator read is still that change.
+///
+/// An operator staring at a new 16-hex hash cannot tell which happened, and
+/// neither can a policy. Measured 2026-08-12 on `pleme-io-opensource-org`:
+/// two consecutive cycles, byte-identical plan content, different
+/// `pendingPlanHash` — because magma's plan-time refresh re-persists the full
+/// state every Planning cycle. That workspace therefore has FOUR changes
+/// parked behind an approval that can never converge, and nothing on the API
+/// says why.
+///
+/// Naming the condition is what lets anything react to it precisely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlanDelta {
+    /// Nothing was ever approved.
+    NeverApproved,
+    /// Same change, same world — the approval stands.
+    Unchanged,
+    /// **Same change, different world.** The plan is byte-identical to the
+    /// approved one; only the state it was computed against moved.
+    ///
+    /// Today this still requires re-approval, and that is deliberate: the
+    /// postmortem above is exactly a case where the world moving mattered.
+    /// The point of naming it is that the operator can now SEE that their
+    /// approval lapsed because the environment churned rather than because
+    /// somebody changed the plan — and a future policy can decide, per
+    /// workspace, whether that churn should cost a re-review.
+    EnvironmentMoved,
+    /// Different change. An approval can never carry across this.
+    PlanChanged,
+}
+
+impl PlanDelta {
+    /// A short, operator-facing reason.
+    #[must_use]
+    pub fn reason(self) -> &'static str {
+        match self {
+            Self::NeverApproved => "no plan has been approved yet",
+            Self::Unchanged => "plan and state both unchanged since approval",
+            Self::EnvironmentMoved => {
+                "the PLAN is unchanged since approval; the STATE it was computed \
+                 against moved (magma re-persists state every planning cycle)"
+            }
+            Self::PlanChanged => "the plan itself changed since approval",
+        }
+    }
+}
+
+/// Classify a fresh plan against what was approved.
+///
+/// Takes fingerprints rather than the raw plan so the comparison cannot
+/// accidentally be made against a different canonicalization than the one
+/// that produced the stored values.
+#[must_use]
+pub fn classify_plan_delta(
+    approved_plan_fp: Option<&str>,
+    approved_state_fp: Option<&str>,
+    current_plan_fp: &str,
+    current_state_fp: &str,
+) -> PlanDelta {
+    let Some(approved_plan) = approved_plan_fp else {
+        return PlanDelta::NeverApproved;
+    };
+    if approved_plan != current_plan_fp {
+        return PlanDelta::PlanChanged;
+    }
+    // The plan matches. Absent a recorded state fingerprint we cannot claim
+    // the world is unchanged — an approval from before this field existed
+    // reports the honest `EnvironmentMoved` rather than an optimistic
+    // `Unchanged`.
+    match approved_state_fp {
+        Some(s) if s == current_state_fp => PlanDelta::Unchanged,
+        _ => PlanDelta::EnvironmentMoved,
+    }
+}
+
 /// Canonicalize state bytes before folding them into the approval hash
 /// so a JSON object key-order permutation can never change
 /// `status.pendingPlanHash` for a state that is otherwise
@@ -9317,5 +9435,125 @@ mod approval_does_not_invalidate_its_own_plan_tests {
     fn a_missing_digest_falls_back_to_restarting() {
         assert!(material_spec_invalidates_render(9, 8, Some("x"), None));
         assert!(material_spec_invalidates_render(9, 8, None, Some("x")));
+    }
+}
+
+#[cfg(test)]
+mod plan_delta_tests {
+    use super::*;
+
+    const PLAN_A: &str = "+ github_repository.banken\n  visibility: private -> public\n";
+    const PLAN_B: &str = "+ github_repository.banken\n  description: old -> new\n";
+    const STATE_1: &[u8] = br#"{"serial":1,"resources":[]}"#;
+    const STATE_2: &[u8] = br#"{"serial":2,"resources":[]}"#;
+
+    /// **THE MEASURED CASE.** Same plan, state moved — which is what
+    /// `pleme-io-opensource-org` does on every single cycle, and which the
+    /// combined hash reports as an indistinguishable "not approved".
+    #[test]
+    fn an_unchanged_plan_against_a_moved_state_is_environment_moved() {
+        let plan = plan_content_fingerprint(PLAN_A);
+        let s1 = state_fingerprint(Some(STATE_1));
+        let s2 = state_fingerprint(Some(STATE_2));
+        assert_ne!(s1, s2, "the two states must differ for this to mean anything");
+
+        assert_eq!(
+            classify_plan_delta(Some(&plan), Some(&s1), &plan, &s2),
+            PlanDelta::EnvironmentMoved,
+        );
+    }
+
+    #[test]
+    fn the_same_plan_and_state_is_unchanged() {
+        let plan = plan_content_fingerprint(PLAN_A);
+        let s = state_fingerprint(Some(STATE_1));
+        assert_eq!(
+            classify_plan_delta(Some(&plan), Some(&s), &plan, &s),
+            PlanDelta::Unchanged,
+        );
+    }
+
+    /// **The safety case, and it must dominate.** A changed plan is
+    /// `PlanChanged` even when the state is identical — an approval can never
+    /// carry across a different change.
+    #[test]
+    fn a_changed_plan_is_plan_changed_even_on_an_identical_state() {
+        let a = plan_content_fingerprint(PLAN_A);
+        let b = plan_content_fingerprint(PLAN_B);
+        assert_ne!(a, b, "the two plans must differ for this to mean anything");
+        let s = state_fingerprint(Some(STATE_1));
+        assert_eq!(
+            classify_plan_delta(Some(&a), Some(&s), &b, &s),
+            PlanDelta::PlanChanged,
+        );
+    }
+
+    /// And a changed plan dominates a moved state too — the classifier must
+    /// never report the softer condition when the harder one applies.
+    #[test]
+    fn a_changed_plan_dominates_a_moved_state() {
+        let a = plan_content_fingerprint(PLAN_A);
+        let b = plan_content_fingerprint(PLAN_B);
+        assert_eq!(
+            classify_plan_delta(
+                Some(&a),
+                Some(&state_fingerprint(Some(STATE_1))),
+                &b,
+                &state_fingerprint(Some(STATE_2)),
+            ),
+            PlanDelta::PlanChanged,
+        );
+    }
+
+    #[test]
+    fn nothing_approved_reports_never_approved() {
+        let plan = plan_content_fingerprint(PLAN_A);
+        let s = state_fingerprint(Some(STATE_1));
+        assert_eq!(
+            classify_plan_delta(None, None, &plan, &s),
+            PlanDelta::NeverApproved,
+        );
+    }
+
+    /// **An approval recorded before these fields existed must not read as
+    /// `Unchanged`.** Absent a stored state fingerprint the honest answer is
+    /// that we cannot claim the world is the same.
+    #[test]
+    fn a_missing_state_fingerprint_is_environment_moved_not_unchanged() {
+        let plan = plan_content_fingerprint(PLAN_A);
+        assert_eq!(
+            classify_plan_delta(Some(&plan), None, &plan, &state_fingerprint(Some(STATE_1))),
+            PlanDelta::EnvironmentMoved,
+        );
+    }
+
+    /// The two halves must together still distinguish everything the combined
+    /// hash distinguishes — otherwise splitting them would have weakened the
+    /// binding rather than explained it.
+    #[test]
+    fn the_two_halves_separate_exactly_what_the_combined_hash_joins() {
+        let combined_a1 = plan_approval_hash(PLAN_A, Some(STATE_1));
+        let combined_a2 = plan_approval_hash(PLAN_A, Some(STATE_2));
+        let combined_b1 = plan_approval_hash(PLAN_B, Some(STATE_1));
+        assert_ne!(combined_a1, combined_a2, "state moved");
+        assert_ne!(combined_a1, combined_b1, "plan changed");
+
+        // Same-plan-different-state and different-plan-same-state are both
+        // "not approved" under the combined hash and are now separable.
+        assert_eq!(
+            plan_content_fingerprint(PLAN_A),
+            plan_content_fingerprint(PLAN_A),
+        );
+        assert_ne!(
+            state_fingerprint(Some(STATE_1)),
+            state_fingerprint(Some(STATE_2)),
+        );
+    }
+
+    /// An absent state is not an empty one — the same distinction
+    /// `plan_approval_hash` tags for.
+    #[test]
+    fn an_absent_state_never_collides_with_an_empty_one() {
+        assert_ne!(state_fingerprint(None), state_fingerprint(Some(b"")));
     }
 }
