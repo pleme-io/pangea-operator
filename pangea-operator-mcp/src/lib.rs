@@ -76,11 +76,62 @@ pub struct PangeaOperatorMcp {
     tool_router: ToolRouter<Self>,
 }
 
+/// A successful read. `outcome: "found"` for a payload; a list that came back
+/// empty is a FINDING and says so.
 fn ok(v: &Value) -> String {
-    serde_json::to_string_pretty(v).unwrap_or_else(|e| format!("{{\"error\":\"serialize: {e}\"}}"))
+    // No let-chain: this crate is not on edition 2024.
+    if let Value::Array(items) = v {
+        if items.is_empty() {
+            return kotae::Answer::empty("matching resources").render();
+        }
+    }
+    kotae::Answer::found_value(v.clone()).render()
 }
+
+/// **The classification, and it is the whole value of adopting kotae here.**
+///
+/// This returned `{"error": <display>}` for every failure, so a template that
+/// does not exist, a request the apiserver rejected, and an unreachable cluster
+/// were one shape. An agent cannot act on that: the remedies are *stop looking*,
+/// *change the request*, and *fix the environment*, and it had no way to tell
+/// which it was facing.
+///
+/// `kube::Error::Api` carries the HTTP status, so the distinction is available
+/// and was simply being discarded:
+///
+/// - **404** → `empty`. The resource is not there. That is an answer, not a
+///   failure — and it is the one that most needs separating, because "the
+///   template is gone" and "I could not reach the cluster" lead an operator to
+///   opposite conclusions.
+/// - **400 / 403 / 405 / 409 / 422** → `refused`. The apiserver understood and
+///   declined: a malformed name, an RBAC denial, a conflicting write. The
+///   caller must change something.
+/// - **anything else** (5xx, connect, TLS, auth, timeout, serde) → `blind`.
+///   We could not look. Conclude nothing about the resource.
+///
+/// Deliberately NOT collapsing 403 into `blind`: a permission denial is a fact
+/// about the request, not about reachability, and telling an agent to retry it
+/// wastes calls against an apiserver that will keep saying no.
 fn err(e: &StoreError) -> String {
-    json!({ "error": e.to_string() }).to_string()
+    let msg = e.to_string();
+    let k = match e {
+        StoreError::Kube(k) => k,
+        // Serde: we could not render what we found. Not a statement about the
+        // resource.
+        StoreError::Serde(_) => return kotae::Answer::blind(msg).render(),
+    };
+    match k {
+        kube::Error::Api(response) => match response.code {
+            404 => kotae::Answer::empty(msg).render(),
+            400 | 403 | 405 | 409 | 422 => kotae::Answer::refused(
+                msg,
+                ["a request the apiserver accepts (check name, namespace, and RBAC)"],
+            )
+            .render(),
+            _ => kotae::Answer::blind(msg).render(),
+        },
+        _ => kotae::Answer::blind(msg).render(),
+    }
 }
 fn nonce() -> String {
     chrono::Utc::now().to_rfc3339()
@@ -223,6 +274,76 @@ impl ServerHandler for PangeaOperatorMcp {
             ),
             ..Default::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod classification_tests {
+    use super::*;
+
+    fn api_error(code: u16) -> StoreError {
+        StoreError::Kube(kube::Error::Api(kube::error::ErrorResponse {
+            status: "Failure".into(),
+            message: format!("status {code}"),
+            reason: "Test".into(),
+            code,
+        }))
+    }
+
+    fn outcome_of(s: &str) -> String {
+        let v: Value = serde_json::from_str(s).expect("every answer is valid JSON");
+        v["outcome"].as_str().expect("carries a discriminant").to_owned()
+    }
+
+    /// **THE WHOLE VALUE OF THIS ADOPTION.** Before, every failure was
+    /// `{"error": <display>}` — a 404, an RBAC denial and an unreachable
+    /// cluster were ONE shape with three different remedies (stop looking,
+    /// change the request, fix the environment). The status code was available
+    /// on `kube::Error::Api` and simply discarded.
+    #[test]
+    fn a_status_code_decides_the_outcome() {
+        assert_eq!(outcome_of(&err(&api_error(404))), "empty");
+        for refused in [400, 403, 405, 409, 422] {
+            assert_eq!(
+                outcome_of(&err(&api_error(refused))),
+                "refused",
+                "status {refused} is the apiserver declining, not us being blind",
+            );
+        }
+        for blind in [500, 502, 503] {
+            assert_eq!(outcome_of(&err(&api_error(blind))), "blind", "status {blind}");
+        }
+    }
+
+    /// 404 must NOT read as an error. "The template is not there" and "I could
+    /// not reach the cluster" lead an operator to opposite conclusions, and
+    /// collapsing them is the single most expensive confusion this type exists
+    /// to prevent.
+    #[test]
+    fn a_missing_resource_is_empty_and_never_blind() {
+        assert_ne!(outcome_of(&err(&api_error(404))), "blind");
+    }
+
+    /// 403 stays a REFUSAL rather than folding into blind. A permission denial
+    /// is a fact about the request, not about reachability — telling an agent
+    /// to retry it wastes calls against an apiserver that will keep saying no.
+    #[test]
+    fn a_permission_denial_is_refused_not_blind() {
+        assert_eq!(outcome_of(&err(&api_error(403))), "refused");
+    }
+
+    /// A transport failure carries no information about the resource.
+    #[test]
+    fn a_non_api_kube_error_is_blind() {
+        let e = StoreError::Kube(kube::Error::LinesCodecMaxLineLengthExceeded);
+        assert_eq!(outcome_of(&err(&e)), "blind");
+    }
+
+    /// An empty list is a finding, not an empty success.
+    #[test]
+    fn an_empty_list_says_so() {
+        assert_eq!(outcome_of(&ok(&json!([]))), "empty");
+        assert_eq!(outcome_of(&ok(&json!([{"name": "x"}]))), "found");
     }
 }
 

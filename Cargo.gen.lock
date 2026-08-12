@@ -1,10 +1,10 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "03703fcf27aa9f9c2ad982ea90d316982bba7d59930287fb27afd634142612f0",
+  "cargo_lock_sha256": "309a7288842c27c6378e9c16dcf7d208d41ded2bc72f8f6651b05defc164bb68",
   "manifest_sha256": {
     "Cargo.toml": "0b30df079faead095367aac7b6d647a7114e4fab08bf9fff393af7db18a0ec72",
     "pangea-cli/Cargo.toml": "f3f970097f7914011f23728fe42e3aed3085ec83bacdea24f37cdc9c19cfe965",
-    "pangea-operator-mcp/Cargo.toml": "a1d5c3e03ec8073e6aabead01bed1962a05d23c93c43cda972539f2a7f46caf7",
+    "pangea-operator-mcp/Cargo.toml": "09effecc444389e773da8dffcfd1e4f9676d9dab2a3e7f88bcc8a55643283491",
     "pangea-operator/Cargo.toml": "edf8c71ae84a64bb1316f561174ef1a204152ebb868f762b9b4facdfd5b6ade0",
     "pangea-ruby-eval/Cargo.toml": "a65712c95619fda84a8cebaa9f887919acf4e71f4125f085797dfaf478eb380a",
     "pangea-types/Cargo.toml": "bba5d0bee1d04b3ddaefa9f7234a1e5a11e3388dd89e62a3deb4a91b66cd4abc"
@@ -7484,6 +7484,34 @@
           "v1_31"
         ]
       },
+      "kotae-0.1.1": {
+        "runtime_dependencies": [
+          {
+            "name": "serde",
+            "package_key": "serde-1.0.228",
+            "kind": "normal",
+            "features": [
+              "derive"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde_json",
+            "package_key": "serde_json-1.0.150",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
       "kube-0.99.0": {
         "runtime_dependencies": [
           {
@@ -13628,6 +13656,16 @@
             "features": [
               "v1_31"
             ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "kotae",
+            "package_key": "kotae-0.1.1",
+            "kind": "normal",
+            "features": [],
             "uses_default_features": true,
             "optional": false,
             "target": null,
@@ -30779,6 +30817,9 @@
       "edition": "2021",
       "build_script": "build.rs",
       "links": "k8s-openapi-0.24.0"
+    },
+    "kotae-0.1.1": {
+      "edition": "2024"
     },
     "kube-0.99.0": {
       "edition": "2021"

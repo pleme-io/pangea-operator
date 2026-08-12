@@ -33,6 +33,10 @@ path = "src/main.rs"
 # vulnerability is already unreachable here. Revisit on a scoped rmcp 1.x
 # migration, not as a security fix.
 rmcp = { version = "0.15", features = ["server", "transport-io"] }
+# kotae (答え) — the typed answer a machine gives a machine. Every failure
+# here was `{"error": <display>}`, so a 404, an RBAC denial and an
+# unreachable cluster were one shape with three different remedies.
+kotae = "0.1"
 kube = { workspace = true }
 k8s-openapi = { workspace = true }
 tokio = { workspace = true }
