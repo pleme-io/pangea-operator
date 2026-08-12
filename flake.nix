@@ -200,7 +200,42 @@
       # no package manager: CA roots and /etc/passwd only.
       mkNoRubyOperatorImage = imageSystem:
         let
-          imagePkgs = import nixpkgs { system = imageSystem; };
+          # THE OVERLAY IS THE FIX, and substrate already wrote it.
+          #
+          # A bare `import nixpkgs` gives pkgsStatic no prebuilt toolchain, so
+          # nixpkgs builds rustc -- and therefore LLVM -- from source for the
+          # musl-static target. substrate's own overlay comment describes the
+          # exact failure this repo then hit on rio:
+          #
+          #   "Static-musl builds via pkgsStatic otherwise drag in a
+          #    from-source rustc + LLVM (a ~30-min build that also hits a
+          #    static-link bug on recent LLVM); the prebuilt std makes the host
+          #    rustc cross-compile straight to the target."
+          #
+          # `targets` contributes fenix's PREBUILT rust-std for the triple, so
+          # the host rustc emits target objects and llvm-static is never
+          # entered. fenix needs no new input here: substrate already carries
+          # it, so this follows the same rev the rest of the fleet builds with
+          # rather than pinning a second toolchain.
+          #
+          # NOTE the leg this does NOT change. lockfile-builder is the GEN
+          # path -- "a pure-dispatch Rust builder over gen's typed
+          # Cargo.build-spec.json" (its line 1), reading Cargo.gen.lock, which
+          # this repo already has. It expects pkgsStatic and keeps it. The
+          # crate2nix leg is NOT an alternative for a musl-static image:
+          # gaveta's flake records that buildRustCrate's per-crate rustc
+          # ignores CARGO_BUILD_TARGET and yields a glibc-dynamic binary that
+          # cannot run in the image at all.
+          imagePkgs = import nixpkgs {
+            system = imageSystem;
+            overlays = [
+              ((import "${substrate}/lib/build/rust/overlay.nix").mkRustOverlay {
+                fenix = substrate.inputs.fenix;
+                system = imageSystem;
+                targets = [ "x86_64-unknown-linux-musl" ];
+              })
+            ];
+          };
           # musl-static: the binary must carry its own libc for a
           # distroless-static base to be legal.
           #
