@@ -281,6 +281,32 @@
                 # through the flake-input fetcher rather than a sandboxed
                 # fetchgit with no credentials.
                 tsunagu = _oldAttrs: { src = inputs.tsunagu; };
+                # magma-protocol needs protoc, and this override is a COPY of
+                # the one mkEmbeddedOperatorImage already carries — not a new
+                # discovery. `executor_magma` is a DEFAULT cargo feature, so it
+                # is in the Ruby-free spec too, and its build.rs falls back to
+                # protoc-bin-vendored when PROTOC is unset. The vendored binary
+                # is not materialized in the sandbox, so protoc_bin_path()
+                # panics:
+                #
+                #   internal: protoc not found
+                #   /build/protoc-bin-vendored-linux-x86_64-3.2.0/bin/protoc
+                #
+                # Measured on rio, 2026-08-12, at the FIRST build that ever got
+                # past the toolchain — the llvm-static blocker had been hiding
+                # this one behind it the whole time.
+                #
+                # The duplication is the real finding. Two image builders in one
+                # flake maintain two hand-copied override sets over the same
+                # workspace, so a fix landed in one is invisible to the other
+                # until its build reaches the same crate. `pending-operator-image-overrides:
+                # hoist the shared crate overrides to one binding both
+                # mkEmbeddedOperatorImage and mkNoRubyOperatorImage read.`
+                magma-protocol = oldAttrs: {
+                  nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ])
+                    ++ [ imagePkgs.protobuf ];
+                  PROTOC = "${imagePkgs.protobuf}/bin/protoc";
+                };
               };
           };
           bin = project.workspaceMembers."pangea-operator".build;
