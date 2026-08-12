@@ -227,8 +227,8 @@ jobs:
       fail-fast: false
       matrix:
         variant:
-          - { attr: dockerImage-operator-embedded-amd64, tag: embedded-amd64 }
-          - { attr: dockerImage-operator-noruby-amd64, tag: noruby-amd64 }
+          - { attr: dockerImage-operator-embedded-amd64, tag: embedded-amd64, ignoreFile: .trivyignore }
+          - { attr: dockerImage-operator-noruby-amd64, tag: noruby-amd64, ignoreFile: .trivyignore.noruby }
     uses: pleme-io/substrate/.github/workflows/image-push.yml@main
     with:
       imageAttr: ${{ matrix.variant.attr }}
@@ -258,7 +258,7 @@ jobs:
       # it. Same threshold + exception file the old post-publish job used.
       scanBeforePush: true
       scanFailOnSeverity: "UNKNOWN"
-      scanIgnoreFile: ".trivyignore"
+      scanIgnoreFile: ${{ matrix.variant.ignoreFile }}
     secrets:
       # BOT_PAT carries write:packages for ghcr.io/pleme-io/* — the proven
       # ghcr-push token (matches caixa-/helm-auto-release.yml). `secrets: inherit`
@@ -285,8 +285,8 @@ jobs:
       fail-fast: false
       matrix:
         variant:
-          - { attr: dockerImage-operator-embedded-amd64, tag: embedded-amd64 }
-          - { attr: dockerImage-operator-noruby-amd64, tag: noruby-amd64 }
+          - { attr: dockerImage-operator-embedded-amd64, tag: embedded-amd64, ignoreFile: .trivyignore }
+          - { attr: dockerImage-operator-noruby-amd64, tag: noruby-amd64, ignoreFile: .trivyignore.noruby }
     uses: pleme-io/substrate/.github/workflows/image-push.yml@main
     with:
       imageAttr: ${{ matrix.variant.attr }}
@@ -323,7 +323,7 @@ jobs:
       # default runner), so this is the load-bearing half of the fix.
       scanBeforePush: true
       scanFailOnSeverity: "UNKNOWN"
-      scanIgnoreFile: ".trivyignore"
+      scanIgnoreFile: ${{ matrix.variant.ignoreFile }}
     secrets:
       GHCR_TOKEN: ${{ secrets.BOT_PAT }}
       # BOT_PAT must be passed SEPARATELY even though GHCR_TOKEN carries the

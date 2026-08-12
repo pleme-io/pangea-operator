@@ -1,0 +1,26 @@
+# .trivyignore.noruby — the suppression surface for the RUBY-FREE operator image.
+#
+# DELIBERATELY EMPTY, and it must stay that way.
+#
+# Why it exists as a separate file at all: both image variants used to pass
+# `.trivyignore`, which carries 65 waived CVE/GHSA ids. A shared suppression file
+# is inherited WHOLE — so the Ruby-free image was scanned with 65 findings waived
+# and published as "zero-tolerance UNKNOWN" clean. That is not a measurement of
+# the Ruby-free image; it is a measurement of the embedded image's debt applied
+# to a different artifact.
+#
+# The two images do not share a closure. The Ruby-free variant is musl-static on
+# distroless-static with no libruby, no gem workspace and no interpreter (3433
+# store paths, 0 Ruby, verified in CI). Most of the 65 ids in `.trivyignore` come
+# from surfaces this variant does not contain. Scanning it against them cannot
+# tell us its real CVE count in either direction — it can only hide findings.
+#
+# This variant is the one crossing into a FedRAMP High boundary, so it is the one
+# that must be measured rather than asserted. An EMPTY file makes the scan report
+# the truth: if the Ruby-free image is genuinely clean the gate passes on its own
+# merits, and if it is not, we learn the real number instead of inheriting a
+# number that was never about this artifact.
+#
+# The standing bar is real 0-CVE with an empty suppression surface — fix at
+# cause, fork and patch upstream, never file an exception. Adding an id here
+# would make this file exactly the thing it exists to replace.
