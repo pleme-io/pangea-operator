@@ -41,8 +41,11 @@ spec:
     - jsonPath: .status.conditions[?(@.type=='Healthy')].status
       name: Healthy
       type: string
-    - jsonPath: .status.autoSuspended
+    - jsonPath: .spec.suspend
       name: Suspended
+      type: boolean
+    - jsonPath: .status.autoSuspended
+      name: AutoSusp
       type: boolean
     - jsonPath: .spec.destroyProtection
       name: Protected
@@ -56,7 +59,6 @@ spec:
         description: Auto-generated derived type for InfrastructureTemplateSpec via `CustomResource`
         properties:
           spec:
-            description: InfrastructureTemplate represents a Pangea infrastructure template to be compiled, planned, and applied by the operator.
             properties:
               approvedPlanHash:
                 description: 'GitOps-native approval: commit the plan hash the operator reported in `status.pendingPlanHash`/its `PlanPending` event here (a declare-and-observe spec edit, per ★★ PLATFORM-MEDIATED INFRASTRUCTURE) instead of a direct `kubectl patch ... --subresource status`. Checked as an OR alternative to `status.approvedPlanHash` (see `handle_planning`''s `is_approved` gate) -- either satisfies the approval, so existing direct-patch workflows (and this field''s own `PlanPending` event text) keep working unchanged. Clusters whose tooling refuses imperative status-subresource mutations against a FluxCD-managed namespace (this fleet''s own `guardrail` `kubectl-imperative-camelot` rule is the motivating case) now have a real committed-manifest path: bump this field, commit, let Flux apply it, observe `status.lastCycle` for the outcome. The operator NEVER writes this field (spec is git-owned; a controller write here would fight Flux''s own reconciliation of the committed manifest) -- unlike `status.approvedPlanHash`, which the operator actively resets on drift (see `update_pending_plan_hash`), this one goes stale passively: a plan-hash change simply stops matching the old committed value, so a stale approval never silently re-approves a DIFFERENT plan without needing an explicit clear.'
@@ -141,14 +143,56 @@ spec:
                 - refuse
                 nullable: true
                 type: string
-              destroyProtection:
-                default: false
+              destroyAuthorization:
+                additionalProperties: false
                 description: |-
-                  Prevent destruction of the managed infrastructure.
+                  The break-glass half of a destroy. Absent means no destroy, ever.
 
-                  When enabled, the operator will refuse to run `tofu destroy` even if the CR is deleted. Plan and apply continue to work normally for drift correction. This is critical for self-managed bootstrap infrastructure — the cluster, database, and network that the operator itself runs on.
+                  A destroy proceeds only when `destroy_protection` is `false` AND this is present AND it names this template. See [`DestroyAuthorization`].
+                nullable: true
+                properties:
+                  authorizedBy:
+                    description: 'Who is accountable. A human identity, not a service account: the point is that a person can be asked afterwards why this happened.'
+                    type: string
+                  expiresAt:
+                    description: |-
+                      RFC3339 instant after which this authorization is void.
 
-                  To actually destroy protected infrastructure, first set this to false, then delete the CR.
+                      A destroy authorization is a moment, not a property. Without an expiry, one written during a migration stays valid forever and silently arms every future deletion of that CR — which is how a break-glass becomes the normal path.
+                    type: string
+                  reason:
+                    description: Why. Free text, and it is read by a human during an incident, so "cleanup" is a worse answer than "superseded by camelot-eks-v2, ticket ASM-nnnnn".
+                    type: string
+                  template:
+                    description: |-
+                      The template this authorization is for, by name.
+
+                      Load-bearing: without it, an authorization block copied from one CR into another during a templating pass authorizes a destroy nobody considered. The controller compares this against the CR's own name and refuses on a mismatch.
+                    type: string
+                required:
+                - authorizedBy
+                - expiresAt
+                - reason
+                - template
+                type: object
+              destroyProtection:
+                default: true
+                description: |-
+                  Prevent destruction of the managed infrastructure. **Defaults to `true`.**
+
+                  When enabled, the operator refuses to destroy even if the CR is deleted. Plan and apply continue to work normally for drift correction.
+
+                  ## Why the default is `true`
+
+                  It was `false` — `#[serde(default)]` on a `bool` is `false`, so every template that did not mention this field was destroyable, and the dangerous posture was the one you got by saying nothing. That is exactly backwards for a field whose failure mode is unrecoverable: a wrong `apply` is re-appliable, a wrong destroy is not.
+
+                  The fleet posture is ABSORB, never destroy — an out-of-band resource is adopted via `importHints`, and a retired one is configured off rather than deleted (★★ MODULARIZE, DON'T DELETE). A default that destroys on silence contradicts both.
+
+                  ## Turning it off is not enough
+
+                  Setting this to `false` no longer authorizes a destroy on its own. It removes the *refusal*; [`DestroyAuthorization`] supplies the *intent*, and both are required. One field can be flipped by a templating accident, a bad merge, or a copied example; two, one of which must name a human and this specific template, cannot be arrived at by drift.
+
+                  This mirrors breathe's `writeIntent`, where `write` REQUIRES `authorizedBy` naming who said so.
                 type: boolean
               dialect:
                 default: auto
@@ -357,6 +401,26 @@ spec:
                     properties:
                       secretRef:
                         description: Secret containing Cloudflare API token.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
+                  datadog:
+                    description: Datadog credentials configuration. Used by the absorbed Datadog estate workspace (workspaces/akeyless-datadog), whose shard entry points declare `provider :datadog` with `ENV.fetch`. Without this field the chart's `providerCredentials.datadog` was silently DROPPED by serde -- no error, no condition -- and every RPC fell back to the pod's ambient credential chain.
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the Datadog API and application keys.
                         properties:
                           name:
                             description: Name of the Secret.
@@ -880,7 +944,9 @@ spec:
               driftDetails:
                 default: []
                 description: |-
-                  Per-resource drift / change detail from the last plan. Populated whenever a plan reports `has_changes`. Lets external observers see WHICH resources changed and HOW without parsing raw tofu output. Capped to 50 entries (full list available via the operator's GraphQL API for large plans).
+                  Per-resource drift / change detail from the last plan. Populated whenever a plan reports `has_changes`. Lets external observers see WHICH resources changed and HOW without parsing raw tofu output. Capped to `DRIFT_STATUS_CAP` entries — `driftTotal` beside it carries the real count.
+
+                  This used to promise "full list available via the operator's GraphQL API". That API surface does not exist and never did (`src/api/graphql` carries only the `Drifted` phase variant), so entries past the cap are not retrievable anywhere. The promise mattered because the same capped list also fed the policy gate, the settling fingerprint and the approval hash — a reviewer who believed an audit path existed had no way to know the cap was load-bearing rather than cosmetic.
 
                   Always serialized (no skip-if-empty) so an explicit empty array clears the field via JSON Merge Patch — otherwise stale drift would survive a clean settle.
                 items:
@@ -917,6 +983,24 @@ spec:
                   - risk
                   type: object
                 type: array
+              driftFingerprint:
+                description: |-
+                  Fingerprint of the FULL drift set from the last cycle.
+
+                  Stored rather than re-derived, and that is the whole point. It used to be recomputed on each cycle from `status.driftDetails` — a list already capped for display — so the settling comparison hashed a 50-item projection of its own input. Two genuinely different plans that agreed on their first 50 entries hashed identically and escalated as `StuckByFingerprint` while the estate was in fact changing.
+
+                  A fingerprint re-derived from a lossy view of its input is not a fingerprint of that input.
+                nullable: true
+                type: string
+              driftTotal:
+                default: 0
+                description: |-
+                  How many changes the plan actually held, before `drift_details` was capped for display. `driftTotal > len(driftDetails)` means you are looking at a PREFIX.
+
+                  Carried beside the sample so the two can never be read apart. Without it a capped list is indistinguishable from a complete one, which is exactly how a 1,870-change plan read as 50 changes for 20 cycles.
+                format: uint32
+                minimum: 0.0
+                type: integer
               executor:
                 description: |-
                   Echo of the IaC executor the operator selected at runtime for this template's reconcile path. `"magma"` or `"tofu"`.
@@ -1117,13 +1201,13 @@ spec:
                     type: string
                   summary:
                     default:
-                      created: 0
-                      destroyed: 0
-                      driftedUncorrected: 0
-                      failed: 0
-                      imported: 0
                       matched: 0
                       updated: 0
+                      created: 0
+                      destroyed: 0
+                      imported: 0
+                      driftedUncorrected: 0
+                      failed: 0
                     description: Aggregate outcome counts for the cycle. `matched` = total managed resources minus everything that planned a change. Other counts are per-Outcome variant.
                     properties:
                       created:
@@ -1211,6 +1295,15 @@ spec:
                 description: 'The remote HEAD the freshness gate last observed via `git ls-remote` (1 RTT, no clone). Tier-honest: a C2 external-world observation, renewed per check — never a compile-time proof.'
                 nullable: true
                 type: string
+              observedSpecDigest:
+                description: |-
+                  Digest of the spec with `approvedPlanHash` normalized out — the part of the spec a plan is actually derived FROM.
+
+                  `metadata.generation` cannot answer "did the material spec change?", because it bumps for ANY spec write including an approval. That made approving self-defeating: writing `approvedPlanHash` bumped the generation, the controller read the bump as a spec change, and wiped the workspace back to Pending — discarding the very plan whose approval had just arrived. Measured on pleme-io-opensource 2026-08-08: "Policy requires approval, waiting" and "Spec changed — cleaning workspace and restarting from Pending" logged in the SAME millisecond, three approvals running, `lastAppliedAt` still null.
+
+                  Comparing this digest instead answers the question actually being asked. An approval-only edit leaves it unchanged, so the plan it approves survives to be applied; any other spec edit changes it and still invalidates the render.
+                nullable: true
+                type: string
               outputs:
                 additionalProperties: true
                 description: Outputs from the last successful apply.
@@ -1256,6 +1349,17 @@ spec:
                   autoApplyCount:
                     default: 0
                     description: Number of changes that resolved to `autoApply`.
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  evaluatedCount:
+                    default: 0
+                    description: |-
+                      How many changes the policy engine ACTUALLY evaluated.
+
+                      The three counts above sum to this. It exists because they used to sum to a *cap*: drift details were truncated to 50 before `executor::policy::evaluate` saw them, so on a 1,870-change plan the gate decided from a prefix and `requireApprovalCount: 50` was the cap reporting itself. A count indistinguishable from its own limit is not a count.
+
+                      Compare against the plan's change total (`+a ~b -c` in `status.planSummary`): if this is smaller, the gate saw a sample and no `refuse` rule can be trusted to have fired.
                     format: uint32
                     minimum: 0.0
                     type: integer

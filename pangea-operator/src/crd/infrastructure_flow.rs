@@ -12,6 +12,35 @@ use strum::{Display, EnumString};
 
 use super::TemplateSource;
 
+/// Resolve a step's destroy protection against its flow's, MONOTONE UPWARD.
+///
+/// `step_destroy_protection(flow, step)` is `flow || step` — a step may RAISE
+/// protection and can never lower it.
+///
+/// It replaces `step.destroy_protection.unwrap_or(flow.destroy_protection)`,
+/// which let `Some(false)` on one step in a list quietly unprotect it inside a
+/// protected flow. That is a second, quieter route to a destroy than the flag
+/// everyone reads: the flow spec says protected, and the reader has to notice
+/// one overriding step buried in a `steps:` array to know otherwise.
+///
+/// Lowering protection is still reachable — at the flow level, where it is
+/// visible, and still only alongside a DestroyAuthorization.
+#[must_use]
+pub const fn step_destroy_protection(flow: bool, step: Option<bool>) -> bool {
+    match step {
+        Some(step_value) => flow || step_value,
+        None => flow,
+    }
+}
+
+/// Flow-level destroy protection is ON unless a flow says otherwise.
+///
+/// A free function because `#[serde(default)]` on a bool yields `false`, and
+/// that silent `false` is exactly the defect this replaces.
+const fn default_flow_destroy_protection() -> bool {
+    true
+}
+
 /// InfrastructureFlow orchestrates multiple InfrastructureTemplates as a DAG.
 #[derive(CustomResource, Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[kube(
@@ -47,8 +76,15 @@ pub struct InfrastructureFlowSpec {
     #[serde(default)]
     pub suspend: bool,
 
-    /// Prevent destruction of all templates in this flow.
-    #[serde(default)]
+    /// Prevent destruction of all templates in this flow. **Defaults to `true`.**
+    ///
+    /// Same reasoning and same default as
+    /// [`InfrastructureTemplateSpec::destroy_protection`]: it was
+    /// `#[serde(default)]` on a bool, i.e. `false`, so a flow that never
+    /// mentioned the field was destroyable BY SAYING NOTHING — and a flow
+    /// carries N templates, so the blast radius of that silence was larger
+    /// here than on a single template.
+    #[serde(default = "default_flow_destroy_protection")]
     pub destroy_protection: bool,
 }
 
@@ -78,7 +114,17 @@ pub struct FlowStep {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_approve: Option<bool>,
 
-    /// Override destroy protection for this step.
+    /// Override destroy protection for this step. **Can only RAISE it.**
+    ///
+    /// `Some(true)` protects a step inside an unprotected flow. `Some(false)`
+    /// does NOT unprotect a step inside a protected flow — see
+    /// [`InfrastructureFlowSpec::step_destroy_protection`], which takes the
+    /// stricter of the two.
+    ///
+    /// A per-step override that could lower the flow's protection is a second,
+    /// quieter place to arrive at a destroy: the flow says protected, one step
+    /// buried in a list says otherwise, and the reader of the flow spec sees
+    /// only the protection. Monotone-upward removes that shape entirely.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub destroy_protection: Option<bool>,
 
@@ -298,5 +344,31 @@ mod tests {
     #[test]
     fn flow_phase_default_is_pending() {
         assert_eq!(FlowPhase::default(), FlowPhase::Pending);
+    }
+}
+
+#[cfg(test)]
+mod step_protection_tests {
+    use super::step_destroy_protection;
+
+    #[test]
+    fn a_step_can_raise_protection() {
+        assert!(step_destroy_protection(false, Some(true)));
+    }
+
+    #[test]
+    fn a_step_cannot_lower_protection() {
+        // The defect this replaces: `unwrap_or` returned false here, so one
+        // step in a list could unprotect itself inside a protected flow.
+        assert!(
+            step_destroy_protection(true, Some(false)),
+            "a step must not be able to unprotect itself inside a protected flow"
+        );
+    }
+
+    #[test]
+    fn absent_inherits_the_flow() {
+        assert!(step_destroy_protection(true, None));
+        assert!(!step_destroy_protection(false, None));
     }
 }

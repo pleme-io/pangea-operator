@@ -48,8 +48,7 @@ pub use infrastructure_template::{
 // Re-export InfrastructureFlow types
 pub use infrastructure_flow::{
     BackoffStrategy, DestroyOrder, FlowPhase, FlowRetryPolicy, FlowStep, FlowStepStatus,
-    FlowTemplateRef, InfrastructureFlow, InfrastructureFlowSpec, InfrastructureFlowStatus,
-};
+    FlowTemplateRef, InfrastructureFlow, InfrastructureFlowSpec, InfrastructureFlowStatus, step_destroy_protection,};
 
 // Re-export PangeaNamespace types (SecretRef renamed to avoid collision)
 pub use pangea_namespace::{
@@ -609,6 +608,24 @@ mod tests {
                 trimmed.contains("apiextensions.k8s.io"),
                 "CRD document missing apiextensions.k8s.io"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod crd_emit {
+    /// Emit the generated CRDs to `PANGEA_CRD_OUT` when set.
+    ///
+    /// A test rather than a bin: the CRD is a pure function of the Rust types,
+    /// and this crate has no crdgen binary. Doctrine — a CRD SCHEMA IS
+    /// GENERATED, NEVER MAINTAINED — and `properties` is a CLOSED schema, so a
+    /// field the types declare and the yaml omits is PRUNED BEFORE THE
+    /// CONTROLLER SEES IT. Hand-editing the yaml is how a field goes silently
+    /// missing.
+    #[test]
+    fn emit_generated_crds() {
+        if let Ok(path) = std::env::var("PANGEA_CRD_OUT") {
+            std::fs::write(&path, super::generate_crds()).expect("write generated crds");
         }
     }
 }

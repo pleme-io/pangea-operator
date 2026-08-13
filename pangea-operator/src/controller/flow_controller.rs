@@ -288,9 +288,14 @@ async fn reconcile_flow(
                             // executor default. Per-CR overrides happen on
                             // operator-authored templates only (M0.12).
                             executor: None,
-                            destroy_protection: step
-                                .destroy_protection
-                                .unwrap_or(flow.spec.destroy_protection),
+                            // MONOTONE: a step may raise protection, never
+                            // lower it. `unwrap_or` allowed Some(false) on one
+                            // step to unprotect it inside a protected flow.
+                            destroy_protection:
+                                crate::crd::step_destroy_protection(
+                                    flow.spec.destroy_protection,
+                                    step.destroy_protection,
+                                ),
                             retry_policy: None,
                             provider_credentials: None,
                             compliance_profiles: vec![],
