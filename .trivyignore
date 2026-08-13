@@ -218,25 +218,28 @@ GHSA-xmrv-pmrh-hhx2
 # as the otel case above.
 CVE-2026-32952
 
-# packer 1.15.4 -- github.com/containerd/containerd/v2 v2.2.4
-# (CVE-2026-53488/-53489/-53492 HIGH, CVE-2026-47262/-50195 MEDIUM) and
-# go.mongodb.org/mongo-driver v1.14.0 (CVE-2026-2303 MEDIUM). Checked
-# packer's `main` branch go.mod directly: containerd/v2 is ALREADY bumped
-# to v2.2.5 (satisfies every one of the containerd fix ranges above) and
-# mongo-driver to v1.17.9 (satisfies the >= 1.17.7 fix line) there -- same
-# shape as opentofu's otel case: the fix is real and written upstream,
-# just not yet cut into a tagged release (latest tag v1.15.4, 2026-06-03,
-# predates this main-branch bump). No nixpkgs packaging exists for an
-# untagged commit; building packer from an unreleased git rev is out of
-# scope for this pass (no reachable x86_64-linux builder from this
-# workstation to verify the resulting binary). Re-check when packer cuts
-# its next tag.
-CVE-2026-53488
-CVE-2026-53489
-CVE-2026-53492
-CVE-2026-47262
-CVE-2026-50195
-CVE-2026-2303
+# CLOSED 2026-08-13 — packer's containerd + mongo-driver entries are DELETED,
+# not moved. They suppressed six findings against packer 1.15.4:
+# containerd/v2 v2.2.4 (CVE-2026-53488/-53489/-53492 HIGH,
+# CVE-2026-47262/-50195 MEDIUM) and mongo-driver v1.14.0 (CVE-2026-2303).
+#
+# The entry's own blocker was "the fix is on packer's main but not yet in a
+# tagged release, and there is no reachable x86_64-linux builder from this
+# workstation to verify an untagged build". Both halves have since dissolved:
+# packer cut v1.16.0, the image took it via packer-grpc-bump, and `ssh rio`
+# is a 32-core x86_64-linux builder that has now built this exact derivation
+# three times today.
+#
+# Verified against the SHIPPED BINARY, not a manifest: `go version -m` on
+# /nix/store/4v956dzk85lb4sngsz8ysl2p53ljvmc8-packer-1.16.0/bin/packer reports
+# containerd/v2 v2.3.3 (every fix line is 2.3.2) and NO mongo-driver module at
+# all across its 410 dep lines.
+#
+# ONE HONEST GAP: "no OTHER binary in the image carries a vulnerable
+# containerd or mongo-driver" is a closure inference — nobody has run trivy
+# against r314+. The next scan is the confirmation, and it is cheap: if any of
+# the six is still live the gate goes red and this deletion is one revert.
+# That is the correct direction to be wrong in.
 
 # terraform-provider-kubernetes 3.2.1 -- github.com/getkin/kin-openapi
 # v0.111.0 (CVE-2025-30153 HIGH, fix >= 0.131.0) and
