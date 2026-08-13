@@ -655,10 +655,22 @@ mod tests {
             .collect();
         let out = evaluate(&[], Some(PolicyDecision::RequireApproval), &drifts);
         assert_eq!(out.evaluation.evaluated_count, 1870);
+        // These are UPDATEs, so they now take the non-destructive fallback.
+        // The witness property under test is unchanged and is the whole point:
+        // the count reports the plan (1870), never the 50-item display cap.
         assert_eq!(
-            out.evaluation.require_approval_count, 1870,
+            out.evaluation.auto_apply_count, 1870,
             "not 50 — the count reports the plan, never the display cap"
         );
+
+        // Same witness on the path that still gates, so lowering the default
+        // did not cost this test its coverage of the approval counter.
+        let destroys: Vec<_> = (0..1870)
+            .map(|i| drift(&format!("github_repository.repo_{i}"), "delete", "low", vec![]))
+            .collect();
+        let out = evaluate(&[], Some(PolicyDecision::RequireApproval), &destroys);
+        assert_eq!(out.evaluation.evaluated_count, 1870);
+        assert_eq!(out.evaluation.require_approval_count, 1870);
     }
 
     // ── The protected-resource floor — regression for the real incident ──
@@ -985,11 +997,24 @@ mod tests {
             out.annotated_drifts[0].matched_policy.as_deref(),
             Some("rio-dns-only")
         );
+        // The unmatched drift is a CREATE on an unprotected type, so it now
+        // takes the non-destructive fallback rather than the blanket
+        // requireApproval this used to assert. The rule-matched drift above is
+        // unaffected: a matched rule still wins.
         assert_eq!(
             out.annotated_drifts[1].matched_policy.as_deref(),
-            Some("<default>")
+            Some("<default-nondestructive>")
         );
-        assert_eq!(out.aggregate, PolicyDecision::RequireApproval);
+        assert_eq!(out.annotated_drifts[1].policy_decision.as_deref(), Some("autoApply"));
+        // The aggregate moves to AutoApply, and that is correct rather than a
+        // loosening: the matched rule is itself AutoApply, and BOTH drifts are
+        // creates. Nothing here was configured to require approval — the old
+        // RequireApproval came purely from the blanket default, which is the
+        // thing this change removed. A rule that said requireApproval would
+        // still win; the assertion below proves the matched rule still governs
+        // its own drift.
+        assert_eq!(out.aggregate, PolicyDecision::AutoApply);
+        assert_eq!(out.annotated_drifts[0].matched_policy.as_deref(), Some("rio-dns-only"));
     }
 
     #[test]
