@@ -309,7 +309,54 @@
                 };
               };
           };
-          bin = project.workspaceMembers."pangea-operator".build;
+          rawBin = project.workspaceMembers."pangea-operator".build;
+
+          # ── MAKE THE BINARY SCANNABLE, or the CVE gate on this image is a
+          #    GREEN THAT INSPECTED NOTHING. Measured 2026-08-12 on the first
+          #    build that ever succeeded:
+          #
+          #      trivy image --input pangea-operator-noruby.tar.gz
+          #        -> results: 0   packages: 0   Metadata OS: None
+          #
+          #    Zero findings because zero targets. A distroless-static image
+          #    whose only content is a static Rust binary has no OS package DB
+          #    and no embedded dependency metadata, so trivy emits JSON with no
+          #    `Results` key and EXITS 0. `scanBeforePush: true` +
+          #    `scanFailOnSeverity: UNKNOWN` passes it. The image's own
+          #    .trivyignore.noruby being empty does not help: an empty
+          #    suppression surface over an empty measurement is still empty.
+          #
+          #    substrate diagnosed this on 2026-07-30 and PROVED it at the byte
+          #    level (cargo-audit-data.nix's header): stripping `.dep-v0` from
+          #    nixpkgs' ripgrep flips trivy from a real `Type: rustbinary` row
+          #    to Results-absent + exit 0. It then built the fix and, until now,
+          #    NOTHING IN THE FLEET CONSUMED IT -- zero call sites repo-wide.
+          #    This is the first.
+          #
+          #    What it proves, stated so it is not rounded up: a CVE-database
+          #    verdict against the RESOLVED DEPENDENCY GRAPH, keyed to the
+          #    scanner DB at scan epoch. It is not a closure theorem -- that is
+          #    closureInfo + vulnix, which can never see a crate advisory
+          #    because the whole runtime closure is one derivation NVD has no
+          #    entry for. The two are complements.
+          auditData =
+            (import "${substrate}/lib/build/rust/cargo-audit-data.nix" { })
+              .mkCargoAuditData imagePkgs {
+                name = "pangea-operator-noruby";
+                lockFile = ./Cargo.lock;
+                rootCrate = "pangea-operator";
+              };
+          bin = imagePkgs.runCommand "pangea-operator-noruby-auditable" { } ''
+            mkdir -p $out/bin
+            cp ${rawBin}/bin/pangea-operator $out/bin/pangea-operator
+            chmod +w $out/bin/pangea-operator
+            ${(import "${substrate}/lib/build/rust/cargo-audit-data.nix" { }).injectCommand {
+              inherit auditData;
+              target = "$out/bin/pangea-operator";
+              objcopy = "${imagePkgs.binutils}/bin/objcopy";
+            }}
+          '';
+
           hardened =
             import "${substrate}/lib/build/oci/hardened-base.nix" {
               pkgs = imagePkgs;
