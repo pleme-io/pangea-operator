@@ -361,6 +361,48 @@ async fn reconcile_template(
     // Handle deletion via finalizer
     if template.metadata.deletion_timestamp.is_some() {
         if has_finalizer(&template) {
+            // ── TWO KEYS, EVALUATED BEFORE ANY BRANCH ─────────────────────
+            //
+            // The authority check is hoisted above `destroy_protection` on
+            // purpose. It used to live inside that branch, so a template that
+            // simply never mentioned destroyProtection skipped the decision
+            // entirely and fell through to destroy — the dangerous posture
+            // reached by SAYING NOTHING, which is the defect this closes.
+            //
+            // `destroy_protection` now defaults to true, so silence is safe;
+            // and even an explicit `false` destroys nothing without a valid
+            // DestroyAuthorization naming this template. Both keys, always
+            // evaluated, on every deletion path.
+            let authority = crate::controller::destroy_authority(
+                template.spec.destroy_authorization.as_ref(),
+                &name,
+                chrono::Utc::now(),
+            );
+            let namespace_terminating_now =
+                crate::controller::namespace_is_terminating(&state.client, &namespace).await;
+            let gate = crate::controller::deletion_decision(
+                template.spec.destroy_protection,
+                namespace_terminating_now,
+                authority,
+            );
+
+            if matches!(authority, crate::controller::DestroyAuthority::Absent)
+                && !template.spec.destroy_protection
+            {
+                warn!(
+                    namespace = %namespace,
+                    template = %name,
+                    "destroyProtection is false but there is no valid DestroyAuthorization for \
+                     this template — releasing the finalizer WITHOUT destroying. The \
+                     infrastructure is intact and now UNMANAGED. A destroy needs BOTH \
+                     destroyProtection=false AND an unexpired spec.destroyAuthorization naming \
+                     this template, its authorizer and a reason."
+                );
+                let _ = gate;
+                remove_finalizer(&template, &state).await?;
+                return Ok(Action::await_change());
+            }
+
             // Destroy protection: refuse to destroy infrastructure that the
             // operator itself depends on (VPC, EKS, RDS, etc.)
             if template.spec.destroy_protection {
@@ -403,6 +445,7 @@ async fn reconcile_template(
                 let decision = crate::controller::deletion_decision(
                     template.spec.destroy_protection,
                     namespace_terminating,
+                    authority,
                 );
 
                 if decision == crate::controller::DeletionDecision::OrphanAndRelease {
@@ -7076,6 +7119,8 @@ mod is_plan_approved_tests {
     /// build the spec from one constructor rather than two that can drift.
     pub(super) fn spec_with(approved: Option<&str>) -> InfrastructureTemplateSpec {
         InfrastructureTemplateSpec {
+            // Tests never destroy; absent is the safe value.
+            destroy_authorization: None,
             source: TemplateSource {
                 inline: Some(String::new()),
                 config_map_ref: None,
@@ -8226,6 +8271,8 @@ mod state_continuity_breach_tests {
 
     fn default_test_spec() -> InfrastructureTemplateSpec {
         InfrastructureTemplateSpec {
+            // Tests never destroy; absent is the safe value.
+            destroy_authorization: None,
             source: TemplateSource {
                 inline: Some(String::new()),
                 config_map_ref: None,
@@ -9268,6 +9315,8 @@ mod compile_front_end_tests {
         InfrastructureTemplate::new(
             "t",
             InfrastructureTemplateSpec {
+                // Tests never destroy; absent is the safe value.
+                destroy_authorization: None,
                 source: TemplateSource {
                     inline: Some(String::new()),
                     config_map_ref: None,

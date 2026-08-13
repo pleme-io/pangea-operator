@@ -147,13 +147,88 @@ pub enum DeletionDecision {
 /// Extracted from the controller so it is exhaustively testable: this is a
 /// destructive path, and the case that bit us was invisible precisely because it
 /// was inline in an async reconcile that needs a live apiserver to exercise.
+/// Whether a break-glass destroy authorization is present, valid, and for THIS
+/// template. Computed by the caller (it needs the CR's name and the clock);
+/// this module keeps the decision pure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DestroyAuthority {
+    /// No authorization block, or one that is expired, or one naming a
+    /// different template. All three are the same answer: not authorized.
+    Absent,
+    /// A present, unexpired authorization naming this template.
+    Granted,
+}
+
+/// Resolve a destroy authorization to a yes/no, purely.
+///
+/// Three ways to be `Absent`, and they are deliberately indistinguishable to
+/// the caller — a destroy that does not happen does not owe the caller a reason
+/// to try harder:
+///   * no authorization block at all (the overwhelmingly common case),
+///   * one whose `template` names a DIFFERENT template (the copy-paste case a
+///     templating pass produces),
+///   * one whose `expires_at` has passed, or does not parse as RFC3339.
+///
+/// An unparseable expiry is treated as EXPIRED rather than as an error. A
+/// malformed timestamp on a destroy authorization is not a reason to destroy.
+#[must_use]
+pub fn destroy_authority(
+    auth: Option<&crate::crd::infrastructure_template::DestroyAuthorization>,
+    template_name: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> DestroyAuthority {
+    let Some(auth) = auth else {
+        return DestroyAuthority::Absent;
+    };
+    if auth.template != template_name {
+        return DestroyAuthority::Absent;
+    }
+    match chrono::DateTime::parse_from_rfc3339(&auth.expires_at) {
+        Ok(expiry) if expiry.with_timezone(&chrono::Utc) > now => DestroyAuthority::Granted,
+        _ => DestroyAuthority::Absent,
+    }
+}
+
+/// The deletion decision, as a pure function of the three facts that matter.
+///
+/// ## Two keys, not one
+///
+/// `destroy_protection = false` alone no longer destroys. It removes the
+/// REFUSAL; [`DestroyAuthority::Granted`] supplies the INTENT. A destroy needs
+/// both.
+///
+/// The reason is the asymmetry of the mistake. Every other action this operator
+/// takes is re-appliable — a wrong plan is re-planned, a wrong apply is
+/// corrected on the next tick by the same loop that made it. A destroy is not:
+/// the resource is gone, and the fleet posture is ABSORB, never destroy (an
+/// out-of-band resource is adopted via `importHints`; a retired one is
+/// configured off, per ★★ MODULARIZE, DON'T DELETE). One boolean can reach the
+/// unrecoverable action through a templating accident, a bad merge, or a copied
+/// example. Two, one of which must name a human, a reason, an expiry, and this
+/// specific template, cannot be arrived at by drift.
+///
+/// Mirrors breathe's `writeIntent`, where `write` REQUIRES `authorizedBy`.
 #[must_use]
 pub const fn deletion_decision(
     destroy_protection: bool,
     namespace_terminating: bool,
+    authority: DestroyAuthority,
 ) -> DeletionDecision {
+    // Unprotected but UNAUTHORIZED is the case the old two-argument signature
+    // could not express, and it is the common one: a template that simply never
+    // mentioned destroyProtection used to be destroyable by silence.
+    //
+    // It orphans rather than blocks. Blocking would deadlock a terminating
+    // namespace exactly the way destroyProtection did on camelot-eks
+    // 2026-08-05, and the whole point of that fix was that an orphaned-but-alive
+    // resource is recoverable by re-declaring the template, while a cluster
+    // whose GitOps cannot apply is not.
+    if matches!(authority, DestroyAuthority::Absent) {
+        return DeletionDecision::OrphanAndRelease;
+    }
+
     match (destroy_protection, namespace_terminating) {
-        // No protection: destroy, regardless of why the delete arrived.
+        // Unprotected AND authorized: the only path to a destroy.
         (false, _) => DeletionDecision::Destroy,
         // Protected, namespace alive: block. The operator can flip
         // destroyProtection and re-delete, so blocking is recoverable.
@@ -875,10 +950,103 @@ mod tests {
     // terminated"), so every unrelated commit stopped reaching the cluster until
     // the finalizer was removed by hand.
 
+    // ── THE TWO-KEY GATE ──────────────────────────────────────────────
+    //
+    // Destroy is off by default and needs BOTH keys. These prove the gate
+    // FIRES, not merely that it exists: every arm below reaches a live
+    // destroy path and is refused.
+
+    #[test]
+    fn silence_does_not_destroy() {
+        // The whole defect in one assertion. `#[serde(default)]` on a bool is
+        // `false`, so a template that never mentioned destroyProtection was
+        // destroyable BY SAYING NOTHING. It now defaults to protected, and
+        // even unprotected-by-accident cannot destroy without authority.
+        assert_eq!(
+            deletion_decision(false, false, DestroyAuthority::Absent),
+            DeletionDecision::OrphanAndRelease,
+            "an unprotected template with no authorization must orphan, never destroy"
+        );
+    }
+
+    #[test]
+    fn authorization_alone_does_not_destroy() {
+        // The other key still matters: authority without dropping protection
+        // is a stated intent that has not been acted on.
+        assert_eq!(
+            deletion_decision(true, false, DestroyAuthority::Granted),
+            DeletionDecision::BlockAndRequeue
+        );
+    }
+
+    #[test]
+    fn only_both_keys_destroy() {
+        assert_eq!(
+            deletion_decision(false, false, DestroyAuthority::Granted),
+            DeletionDecision::Destroy
+        );
+    }
+
+    #[test]
+    fn an_unauthorized_delete_never_deadlocks_a_terminating_namespace() {
+        // The camelot-eks 2026-08-05 lesson: refusing to destroy must never
+        // mean holding the finalizer while the namespace terminates, because
+        // no write can land there to release it. Orphan instead.
+        assert_eq!(
+            deletion_decision(false, true, DestroyAuthority::Absent),
+            DeletionDecision::OrphanAndRelease
+        );
+        assert_eq!(
+            deletion_decision(true, true, DestroyAuthority::Absent),
+            DeletionDecision::OrphanAndRelease
+        );
+    }
+
+    fn auth(template: &str, expires_at: &str) -> crate::crd::infrastructure_template::DestroyAuthorization {
+        crate::crd::infrastructure_template::DestroyAuthorization {
+            authorized_by: "drzzln".into(),
+            reason: "superseded".into(),
+            template: template.into(),
+            expires_at: expires_at.into(),
+        }
+    }
+
+    fn at(s: &str) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&chrono::Utc)
+    }
+
+    #[test]
+    fn authority_requires_presence_match_and_freshness() {
+        let now = at("2026-08-13T00:00:00Z");
+        assert_eq!(destroy_authority(None, "camelot-eks", now), DestroyAuthority::Absent);
+        assert_eq!(
+            destroy_authority(Some(&auth("camelot-eks", "2026-08-14T00:00:00Z")), "camelot-eks", now),
+            DestroyAuthority::Granted
+        );
+        // The copy-paste case a templating pass produces.
+        assert_eq!(
+            destroy_authority(Some(&auth("some-other-template", "2026-08-14T00:00:00Z")), "camelot-eks", now),
+            DestroyAuthority::Absent,
+            "an authorization naming another template must not authorize this one"
+        );
+        // A break-glass is a moment, not a property.
+        assert_eq!(
+            destroy_authority(Some(&auth("camelot-eks", "2026-08-12T00:00:00Z")), "camelot-eks", now),
+            DestroyAuthority::Absent,
+            "an expired authorization is no authorization"
+        );
+        // A malformed timestamp is not a reason to destroy.
+        assert_eq!(
+            destroy_authority(Some(&auth("camelot-eks", "whenever")), "camelot-eks", now),
+            DestroyAuthority::Absent,
+            "an unparseable expiry must read as expired, never as valid"
+        );
+    }
+
     #[test]
     fn unprotected_always_destroys_whatever_drove_the_delete() {
-        assert_eq!(deletion_decision(false, false), DeletionDecision::Destroy);
-        assert_eq!(deletion_decision(false, true), DeletionDecision::Destroy);
+        assert_eq!(deletion_decision(false, false, DestroyAuthority::Granted), DeletionDecision::Destroy);
+        assert_eq!(deletion_decision(false, true, DestroyAuthority::Granted), DeletionDecision::Destroy);
     }
 
     #[test]
@@ -887,7 +1055,7 @@ mod tests {
         // alive the operator CAN flip destroyProtection and re-delete, so
         // blocking protects infrastructure at no cost.
         assert_eq!(
-            deletion_decision(true, false),
+            deletion_decision(true, false, DestroyAuthority::Granted),
             DeletionDecision::BlockAndRequeue
         );
     }
@@ -901,7 +1069,7 @@ mod tests {
         // Releasing without destroying keeps the infrastructure (recoverable by
         // re-declaring the template) and unblocks everything else.
         assert_eq!(
-            deletion_decision(true, true),
+            deletion_decision(true, true, DestroyAuthority::Granted),
             DeletionDecision::OrphanAndRelease
         );
     }
@@ -911,8 +1079,8 @@ mod tests {
         // Guards against a future simplification collapsing the two protected
         // cases back into one, which is exactly the shape of the original bug.
         assert_ne!(
-            deletion_decision(true, true),
-            deletion_decision(true, false),
+            deletion_decision(true, true, DestroyAuthority::Granted),
+            deletion_decision(true, false, DestroyAuthority::Granted),
             "the namespace-terminating case must NOT behave like the live-namespace case"
         );
     }

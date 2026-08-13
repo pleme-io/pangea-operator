@@ -13,6 +13,52 @@ use strum::{Display, EnumString};
 
 /// InfrastructureTemplate represents a Pangea infrastructure template
 /// to be compiled, planned, and applied by the operator.
+/// Who authorized a destroy, why, and until when.
+///
+/// The break-glass half of the two-key destroy. `destroy_protection = false`
+/// removes the refusal; this supplies the intent. Neither alone is sufficient.
+///
+/// Every field is REQUIRED and none has a default, so an empty or partial
+/// authorization does not deserialize — a destroy cannot be authorized by
+/// accident, only by writing all four facts down.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DestroyAuthorization {
+    /// Who is accountable. A human identity, not a service account: the point
+    /// is that a person can be asked afterwards why this happened.
+    pub authorized_by: String,
+
+    /// Why. Free text, and it is read by a human during an incident, so
+    /// "cleanup" is a worse answer than "superseded by camelot-eks-v2, ticket
+    /// ASM-nnnnn".
+    pub reason: String,
+
+    /// The template this authorization is for, by name.
+    ///
+    /// Load-bearing: without it, an authorization block copied from one CR into
+    /// another during a templating pass authorizes a destroy nobody considered.
+    /// The controller compares this against the CR's own name and refuses on a
+    /// mismatch.
+    pub template: String,
+
+    /// RFC3339 instant after which this authorization is void.
+    ///
+    /// A destroy authorization is a moment, not a property. Without an expiry,
+    /// one written during a migration stays valid forever and silently arms
+    /// every future deletion of that CR — which is how a break-glass becomes
+    /// the normal path.
+    pub expires_at: String,
+}
+
+/// Destroy protection is ON unless a template says otherwise.
+///
+/// A free function rather than an inline literal because `#[serde(default)]`
+/// on a bool yields `false`, and that silent `false` is precisely the defect
+/// this replaces.
+const fn default_destroy_protection() -> bool {
+    true
+}
+
 #[derive(CustomResource, Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[kube(
     group = "pangea.pleme.io",
@@ -115,17 +161,43 @@ pub struct InfrastructureTemplateSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executor: Option<String>,
 
-    /// Prevent destruction of the managed infrastructure.
+    /// Prevent destruction of the managed infrastructure. **Defaults to `true`.**
     ///
-    /// When enabled, the operator will refuse to run `tofu destroy` even if
-    /// the CR is deleted. Plan and apply continue to work normally for drift
-    /// correction. This is critical for self-managed bootstrap infrastructure
-    /// — the cluster, database, and network that the operator itself runs on.
+    /// When enabled, the operator refuses to destroy even if the CR is deleted.
+    /// Plan and apply continue to work normally for drift correction.
     ///
-    /// To actually destroy protected infrastructure, first set this to false,
-    /// then delete the CR.
-    #[serde(default)]
+    /// ## Why the default is `true`
+    ///
+    /// It was `false` — `#[serde(default)]` on a `bool` is `false`, so every
+    /// template that did not mention this field was destroyable, and the
+    /// dangerous posture was the one you got by saying nothing. That is exactly
+    /// backwards for a field whose failure mode is unrecoverable: a wrong
+    /// `apply` is re-appliable, a wrong destroy is not.
+    ///
+    /// The fleet posture is ABSORB, never destroy — an out-of-band resource is
+    /// adopted via `importHints`, and a retired one is configured off rather
+    /// than deleted (★★ MODULARIZE, DON'T DELETE). A default that destroys on
+    /// silence contradicts both.
+    ///
+    /// ## Turning it off is not enough
+    ///
+    /// Setting this to `false` no longer authorizes a destroy on its own. It
+    /// removes the *refusal*; [`DestroyAuthorization`] supplies the *intent*,
+    /// and both are required. One field can be flipped by a templating
+    /// accident, a bad merge, or a copied example; two, one of which must name
+    /// a human and this specific template, cannot be arrived at by drift.
+    ///
+    /// This mirrors breathe's `writeIntent`, where `write` REQUIRES
+    /// `authorizedBy` naming who said so.
+    #[serde(default = "default_destroy_protection")]
     pub destroy_protection: bool,
+
+    /// The break-glass half of a destroy. Absent means no destroy, ever.
+    ///
+    /// A destroy proceeds only when `destroy_protection` is `false` AND this is
+    /// present AND it names this template. See [`DestroyAuthorization`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub destroy_authorization: Option<DestroyAuthorization>,
 
     /// Cross-template variable references. Resolved before compilation by
     /// fetching the referenced template's outputs.

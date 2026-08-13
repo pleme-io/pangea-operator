@@ -256,6 +256,9 @@ async fn reconcile_flow(
                         &template_name,
                         InfrastructureTemplateSpec {
                             source,
+                            // A flow step never destroys. Absent authorization is the safe
+                            // value and the only one this call site should ever produce.
+                            destroy_authorization: None,
                             // A flow step carries a body but not a
                             // declared language, so a spawned template
                             // gets `auto` — the same guess these
