@@ -216,6 +216,84 @@ fn resolve_drift_reaction(inputs: &CascadeInputs) -> (DriftReaction, CascadeLeve
     last.unwrap_or((DriftReaction::RequireApproval, CascadeLevel::Default))
 }
 
+/// The planned action a policy decision is being made about.
+///
+/// A closed enum rather than a string, so a fifth action cannot appear without
+/// [`default_reaction_for`] being revisited.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlannedAction {
+    /// A resource that does not exist yet.
+    Create,
+    /// An in-place change to an existing resource.
+    Update,
+    /// Destroy-then-create. Carries a destroy, so it is treated as one.
+    Replace,
+    /// A resource being removed.
+    Delete,
+    /// Anything the planner reported that is none of the above.
+    Other,
+}
+
+impl PlannedAction {
+    /// Classify a planner action string. Unknown strings are [`Self::Other`]
+    /// and are treated as if they destroyed — an action we do not recognise
+    /// is not one we auto-apply.
+    #[must_use]
+    pub fn classify(action: &str) -> Self {
+        match action {
+            "create" => Self::Create,
+            "update" => Self::Update,
+            "replace" => Self::Replace,
+            "delete" | "destroy" => Self::Delete,
+            _ => Self::Other,
+        }
+    }
+
+    /// Does this action remove or recreate infrastructure?
+    #[must_use]
+    pub const fn is_destructive(self) -> bool {
+        matches!(self, Self::Replace | Self::Delete | Self::Other)
+    }
+}
+
+/// The default reaction when no cascade level expressed one — by ACTION.
+///
+/// ## Why this is not one value
+///
+/// It was `RequireApproval` for everything, and that is wrong in the expensive
+/// direction: it stalls the safe majority to gate the rare dangerous case.
+/// Measured on camelot-eks 2026-08-13 — `pleme-io-opensource-repos-0` planned
+/// `+9 ~0 -0` (one repo and eight of its labels, zero destroys) and sat in
+/// Planning for 103 minutes with `requireApprovalCount: 9`, until the phase
+/// timed out and the workspace reported `Healthy=False`. Nothing was wrong. It
+/// was asking permission to create nine labels.
+///
+/// A gate that fires on everything teaches people to approve without reading,
+/// which is exactly how the one plan that DID carry a destroy gets waved
+/// through. So the default now distinguishes:
+///
+/// * create / update -> `AutoApply`. Both are re-appliable: a wrong create is
+///   deleted by removing the declaration, a wrong update is corrected on the
+///   next tick by the same loop that made it.
+/// * replace / delete / unknown -> `RequireApproval`. A destroy is not
+///   recoverable, and a replace carries one. An action string we do not
+///   recognise is treated as destructive, because the failure of guessing wrong
+///   is asymmetric.
+///
+/// This is a DEFAULT, not a ceiling. Any cascade level that says
+/// `requireApproval` or `refuse` still wins for every action — the precedence
+/// above is untouched. And a destroy still needs the two keys
+/// (`destroyProtection = false` plus an unexpired `destroyAuthorization`), so
+/// approving one here is necessary and not sufficient.
+#[must_use]
+pub const fn default_reaction_for(action: PlannedAction) -> DriftReaction {
+    if action.is_destructive() {
+        DriftReaction::RequireApproval
+    } else {
+        DriftReaction::AutoApply
+    }
+}
+
 fn innermost_bool(
     gem: Option<bool>,
     workspace: Option<bool>,

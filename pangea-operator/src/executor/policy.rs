@@ -95,6 +95,21 @@ fn is_destructive_action(action: &str) -> bool {
     )
 }
 
+/// Is this action POSITIVELY known to add or amend without removing?
+///
+/// Deliberately not `!is_destructive_action(..)`. That predicate answers false
+/// for an action it cannot PARSE, so negating it silently classifies every
+/// unrecognised action string as safe — a fail-open on the one axis that must
+/// fail closed. This requires the action to be recognised AND to be one of the
+/// two non-removing kinds; anything else, known or not, is not eligible for the
+/// auto-apply path below.
+fn is_known_nondestructive_action(action: &str) -> bool {
+    matches!(
+        DriftAction::parse_wire(action),
+        Some(DriftAction::Create) | Some(DriftAction::Update)
+    )
+}
+
 /// Outcome of evaluating one plan against a policy set.
 #[derive(Debug, Clone)]
 pub struct PolicyOutcome {
@@ -154,6 +169,46 @@ pub fn evaluate(
                         (
                             PolicyDecision::RequireApproval,
                             "<protected-resource-floor>".to_string(),
+                        )
+                    } else if fallback == PolicyDecision::RequireApproval
+                        && is_known_nondestructive_action(&d.action)
+                        && !is_protected_resource_type(resource_type)
+                    {
+                        // ── THE SYMMETRIC HALF OF THE FLOOR ABOVE ────────────
+                        //
+                        // The floor RAISES AutoApply to RequireApproval for a
+                        // destructive action on a protected type. This LOWERS
+                        // an unconfigured RequireApproval to AutoApply for a
+                        // NON-destructive action on an unprotected type, which
+                        // is the case that was costing far more than it bought.
+                        //
+                        // Measured on camelot-eks 2026-08-13:
+                        // `pleme-io-opensource-repos-0` planned `+9 ~0 -0` —
+                        // one repository and eight of its issue labels, zero
+                        // destroys — and sat in Planning for 103 minutes with
+                        // `requireApprovalCount: 9`, until the phase timeout
+                        // flipped the workspace to `Healthy=False`. Nothing was
+                        // broken. It was asking permission to create labels.
+                        //
+                        // A gate that fires on everything trains people to
+                        // approve without reading, which is precisely how the
+                        // one plan that DOES carry a destroy gets waved through.
+                        // Spending the gate only where the action is
+                        // unrecoverable is what keeps it meaningful.
+                        //
+                        // Scope, deliberately narrow. This ONLY moves the
+                        // `<default>` fallback. A matched rule still wins; a
+                        // protected resource type still floors; `Refuse` is
+                        // untouched; and every destructive action — including
+                        // `replace`, and including any action string
+                        // `is_destructive_action` does not recognise — still
+                        // requires approval. Approval also remains necessary
+                        // rather than sufficient for a destroy, which needs
+                        // `destroyProtection = false` AND an unexpired
+                        // `destroyAuthorization` naming the template.
+                        (
+                            PolicyDecision::AutoApply,
+                            "<default-nondestructive>".to_string(),
                         )
                     } else {
                         (fallback, "<default>".to_string())
@@ -1182,5 +1237,76 @@ mod tests {
         )];
         assert!(is_configured(&r, None));
         assert!(is_configured(&r, Some(PolicyDecision::Refuse)));
+    }
+}
+
+#[cfg(test)]
+mod nondestructive_default_tests {
+    use super::*;
+
+    fn d(address: &str, action: &str) -> DriftDetail {
+        DriftDetail {
+            address: address.to_string(),
+            action: action.to_string(),
+            risk: "low".to_string(),
+            attributes: vec![],
+            policy_decision: None,
+            matched_policy: None,
+        }
+    }
+
+    fn eval(drifts: &[DriftDetail]) -> PolicyOutcome {
+        // No rules, and an unconfigured default of RequireApproval — the exact
+        // shape camelot-eks was in when it stalled on nine label creations.
+        evaluate(&[], Some(PolicyDecision::RequireApproval), drifts)
+    }
+
+    #[test]
+    fn a_create_on_an_unprotected_type_auto_applies() {
+        let out = eval(&[d("github_issue_label.acude-label-bug", "create")]);
+        assert_eq!(out.evaluation.auto_apply_count, 1);
+        assert_eq!(out.evaluation.require_approval_count, 0);
+    }
+
+    #[test]
+    fn a_delete_still_requires_approval() {
+        let out = eval(&[d("github_issue_label.acude-label-bug", "delete")]);
+        assert_eq!(out.evaluation.require_approval_count, 1, "a destroy must never auto-apply");
+    }
+
+    #[test]
+    fn a_replace_still_requires_approval() {
+        // A replace carries a destroy inside it.
+        let out = eval(&[d("github_repository.acude", "replace")]);
+        assert_eq!(out.evaluation.require_approval_count, 1);
+    }
+
+    #[test]
+    fn an_unrecognised_action_still_requires_approval() {
+        // The fail-open I nearly shipped. `is_destructive_action` answers FALSE
+        // for an action it cannot parse, so `!is_destructive_action(..)` would
+        // have auto-applied this. The positive predicate refuses it.
+        let out = eval(&[d("github_repository.acude", "moved-sideways")]);
+        assert_eq!(
+            out.evaluation.require_approval_count, 1,
+            "an action string we do not recognise must never take the auto-apply path"
+        );
+    }
+
+    #[test]
+    fn the_camelot_plan_would_now_flow() {
+        // +9 ~0 -0: one repo and eight labels, zero destroys. This is the plan
+        // that sat 103 minutes waiting for a human on 2026-08-13.
+        let mut plan = vec![d("github_repository.acude", "create")];
+        for label in [
+            "bug", "dependencies", "documentation", "enhancement",
+            "good-first-issue", "help-wanted", "security", "question",
+        ] {
+            plan.push(d(&format!("github_issue_label.acude-label-{label}"), "create"));
+        }
+        let out = eval(&plan);
+        assert_eq!(out.evaluation.auto_apply_count, 9);
+        assert_eq!(out.evaluation.require_approval_count, 0);
+        assert_eq!(out.evaluation.refuse_count, 0);
     }
 }
