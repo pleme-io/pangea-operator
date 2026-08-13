@@ -55,15 +55,40 @@ pub struct GemCache {
     base_dir: PathBuf,
 }
 
+/// Environment override for the cache root.
+const GEM_CACHE_DIR_VAR: &str = "PANGEA_GEM_CACHE_DIR";
+
+/// The canonical cache root — absolute by construction.
+const GEM_CACHE_DIR_DEFAULT: &str = "/var/pangea/gems";
+
+/// Pure resolver behind [`GemCache::from_env`]. Takes the variable's
+/// value explicitly so the invariant is testable without mutating the
+/// process environment, which races under parallel test execution.
+///
+/// Every arm yields an absolute path. The override is *filtered*, not
+/// trusted: unset, empty and relative all resolve to the default.
+fn resolve_base_dir(override_value: Option<std::ffi::OsString>) -> PathBuf {
+    override_value
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| PathBuf::from(GEM_CACHE_DIR_DEFAULT))
+}
+
 impl GemCache {
     /// `base_dir` defaults to `/var/pangea/gems`. Override via
     /// `PANGEA_GEM_CACHE_DIR` for tests + dev shells where the
     /// operator can't write to the canonical path.
+    ///
+    /// **A non-absolute override is ignored**, falling back to the
+    /// default. Both arms of this chain are absolute — the literal by
+    /// construction, the override by filter — because a relative or
+    /// empty value lands the whole gem tree in the operator process's
+    /// cwd: `entry_dir()` joins onto it, and `create_dir_all("")`
+    /// early-returns `Ok(())` rather than erroring, so nothing
+    /// downstream notices. See `theory/MASKED-BRANCH.md`.
     pub fn from_env() -> Self {
-        let base = std::env::var("PANGEA_GEM_CACHE_DIR")
-            .unwrap_or_else(|_| "/var/pangea/gems".to_string());
         Self {
-            base_dir: PathBuf::from(base),
+            base_dir: resolve_base_dir(std::env::var_os(GEM_CACHE_DIR_VAR)),
         }
     }
 
@@ -490,6 +515,40 @@ mod tests {
         let cache = GemCache::new("/tmp/gems");
         let p = cache.entry_dir("pangea-architectures", "7fb2fcc").unwrap();
         assert_eq!(p, Path::new("/tmp/gems/pangea-architectures-7fb2fcc"));
+    }
+
+    /// The masked-branch invariant: the literal default arm is absolute
+    /// by construction, so it is the arm every reader checks — and the
+    /// override arm, which is the one production always takes (the helm
+    /// chart renders `PANGEA_GEM_CACHE_DIR` unconditionally), used to be
+    /// taken verbatim. An empty or relative value put the whole gem tree
+    /// in the operator process's cwd with no error anywhere: `entry_dir`
+    /// joins onto it and `create_dir_all("")` returns `Ok(())`.
+    ///
+    /// Driven through the pure resolver rather than `set_var`, so it
+    /// cannot race the other tests in this binary.
+    #[test]
+    fn a_non_absolute_cache_dir_override_is_ignored() {
+        let default = Path::new(GEM_CACHE_DIR_DEFAULT);
+
+        // Unset — the arm that always behaved correctly.
+        assert_eq!(resolve_base_dir(None), default);
+
+        // Empty and relative — the arm that did not.
+        for bad in ["", "gems", "./gems", "../gems", "var/pangea/gems"] {
+            assert_eq!(
+                resolve_base_dir(Some(bad.into())),
+                default,
+                "non-absolute override {bad:?} must fall back to the default"
+            );
+        }
+
+        // An absolute override is honoured verbatim: this is the only
+        // shape any real configuration takes, and it must not move.
+        assert_eq!(
+            resolve_base_dir(Some("/tmp/pangea-gems".into())),
+            Path::new("/tmp/pangea-gems")
+        );
     }
 
     #[test]
