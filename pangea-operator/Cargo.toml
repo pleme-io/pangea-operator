@@ -238,29 +238,50 @@ figment = "0.10"
 # Observability
 tracing.workspace = true
 tracing-subscriber.workspace = true
-tracing-opentelemetry = "0.27"
-# Pinned to 0.26 to match tracing-opentelemetry 0.27's transitive
-# dependency. Bumping to 0.27 of both opentelemetry crates produces
-# duplicate types where tracing-opentelemetry's `with_tracer` bound
-# doesn't accept the 0.27 Tracer.
+# CURED 2026-08-13 — CVE-2026-48504 / GHSA-w9wp-h8wv-79jx (unbounded
+# allocation parsing W3C Baggage headers) is gone from the lock. The four
+# crates move in lockstep because they are one ecosystem and always were:
+# tracing-opentelemetry 0.33 pairs with opentelemetry 0.32, exactly as 0.27
+# paired with 0.26.
 #
-# KNOWN, TRACKED EXCEPTION (2026-07-18): opentelemetry_sdk 0.26.0 carries
-# GHSA-w9wp-h8wv-79jx / CVE-2026-48504 (unbounded allocation parsing W3C
-# Baggage headers; availability-only, no data exposure). Patched version
-# is 0.32.1 — six minor releases away, and `cargo update -p
-# opentelemetry_sdk --dry-run` confirms 0.26.0 is already the newest
-# release satisfying the `"0.26"` manifest constraint (no in-range patch
-# exists). Reaching 0.32.1 requires bumping opentelemetry +
-# opentelemetry-otlp + opentelemetry_sdk + tracing-opentelemetry in
-# lockstep across an ecosystem with a documented history of breaking
-# `with_tracer`/Tracer-type changes between adjacent 0.x releases (see
-# the pin comment above — the last such bump broke the build). Not
-# attempted blind; tracked as a deliberate exception pending a scoped
-# opentelemetry migration. No cargo-deny/cargo-audit ignore file exists
-# in this repo to register the exception in machine-readable form.
-opentelemetry = { version = "0.26", features = ["trace"] }
-opentelemetry-otlp = { version = "0.26", features = ["tonic"] }
-opentelemetry_sdk = { version = "0.26", features = ["rt-tokio"] }
+# THE FOUR MUST STAY IN LOCKSTEP. This is the real constraint and it is not
+# a version-number convention: `tracing_opentelemetry::layer().with_tracer(t)`
+# is generic over a Tracer trait that opentelemetry re-declares each minor
+# release, so a mismatched pair fails with a bound error naming two types that
+# LOOK identical. That is what broke the last attempted bump, and it is why
+# the previous comment concluded the migration was expensive.
+#
+# It was not. The whole opentelemetry surface in this crate is ONE file --
+# observability/tracing_setup.rs, two `.with_tracer()` calls and one
+# `build_otlp_tracer` -- and 0.27→0.32 replaced the builder pipeline
+# (`new_pipeline().install_batch()`) with an explicit
+# `SdkTracerProvider::builder().with_batch_exporter()`. A real API change,
+# confined to one function, found by reading the compiler rather than by
+# predicting the ecosystem.
+#
+# The lesson worth keeping: "six minor releases away across an ecosystem with
+# a history of breaking changes" priced the DEPENDENCY GRAPH, which is large,
+# instead of the CALL SITE, which is one function. Price the call site.
+tracing-opentelemetry = "0.33"
+opentelemetry = { version = "0.32", features = ["trace"] }
+# `tonic` → `grpc-tonic` at 0.32. `default-features = false` is deliberate:
+# 0.32's defaults are ["http-proto", "reqwest-blocking-client", "trace",
+# "metrics", "logs", "internal-logs"], so taking them compiles a whole second
+# OTLP transport — the protobuf-over-HTTP encoder and a blocking HTTP client —
+# beside the gRPC one this call site actually uses, plus the metrics and logs
+# pipelines nothing here exports.
+#
+# Measured, because the tempting version of this claim is wrong: it does NOT
+# remove reqwest from the closure. `cargo tree -i reqwest` shows exactly one
+# parent and it is pangea-operator itself — reqwest is a direct dependency of
+# this crate and stays. What the cut buys is that the unused HTTP transport is
+# not COMPILED IN, and that opentelemetry-otlp stops being a second reason for
+# the HTTP stack to be there — which matters the day the direct use goes away.
+opentelemetry-otlp = { version = "0.32", default-features = false, features = [
+  "grpc-tonic",
+  "trace",
+] }
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
 # `process` feature pulls in libc + procfs so the process_collector
 # exports process_cpu_seconds_total / process_resident_memory_bytes /
 # open FDs / threads. The collector module is gated by prometheus to

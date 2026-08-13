@@ -116,14 +116,18 @@
     platforms = [];
     source = {
       remotes = ["https://rubygems.org"];
-      # CVE-2026-54696 (LOW) fixed >= 2.19.9; bumped to 2.21.1 (latest ruby-
-      # platform release as of 2026-07-19). Native ext (ext/json/ext/{generator,
-      # parser}), same build shape as the existing nio4r/puma C-ext entries —
-      # no new build machinery needed.
-      sha256 = "10q54a0dkm0050n0zzqiv2ln8w931wszybbhym1i8r4mbpvkv90k";
+      # CVE-2026-54696 (LOW) fixed >= 2.19.9; bumped to 2.21.1 on 2026-07-19.
+      # CVE-2026-71847 (LOW) fixed >= 2.21.2; bumped again 2026-08-13.
+      #
+      # `json` is not in the Gemfile — it arrives as a transitive dependency of
+      # pangea-compiler's own gem, which is why the version lives here and in
+      # Gemfile.lock rather than in a manifest anyone reads. Native ext
+      # (ext/json/ext/{generator,parser}), same build shape as the nio4r/puma
+      # C-ext entries — no new build machinery needed.
+      sha256 = "0shwgjqbj856mb6m9kgkpy08nhym2gdvc2yaprlimfmky9y3n78z";
       type = "gem";
     };
-    version = "2.21.1";
+    version = "2.21.2";
   };
   logger = {
     groups = ["default"];

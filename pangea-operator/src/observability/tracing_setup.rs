@@ -128,29 +128,43 @@ pub fn init_tracing() -> crate::error::Result<()> {
 /// any `OTEL_RESOURCE_ATTRIBUTES` are honored automatically by
 /// opentelemetry-sdk's environment defaults.
 ///
-/// Uses the 0.26-era pipeline API (matches the tracing-opentelemetry
-/// 0.27 transitive dependency on opentelemetry 0.26).
+/// Uses the 0.32 explicit-builder API (matches the tracing-opentelemetry
+/// 0.33 transitive dependency on opentelemetry 0.32).
+///
+/// The 0.26 → 0.32 move replaced the whole builder shape and this function is
+/// the entire blast radius of it: `new_pipeline().tracing().with_exporter()
+/// .install_batch(runtime::Tokio)` became `SdkTracerProvider::builder()
+/// .with_batch_exporter(exporter)`. Two things changed underneath that are
+/// worth naming, because neither is visible from the diff:
+///
+/// - **The runtime argument is gone.** 0.26 took `runtime::Tokio` explicitly;
+///   0.32's batch processor discovers the ambient runtime. Passing a runtime
+///   is no longer possible, so an init from outside a Tokio context now fails
+///   at run time rather than at compile time.
+/// - **`Resource` lost its public `new`.** It is `Resource::builder()` now,
+///   and `with_service_name` is a first-class method rather than a hand-rolled
+///   `service.name` KeyValue — which also means the SDK applies its own
+///   env-var precedence to it.
 fn build_otlp_tracer(endpoint: &str) -> Result<opentelemetry_sdk::trace::Tracer, String> {
     use opentelemetry_otlp::WithExportConfig;
 
     let service_name =
         env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| "pangea-operator".to_string());
 
-    let resource = opentelemetry_sdk::Resource::new(vec![opentelemetry::KeyValue::new(
-        "service.name",
-        service_name,
-    )]);
+    let resource = opentelemetry_sdk::Resource::builder()
+        .with_service_name(service_name)
+        .build();
 
-    let exporter = opentelemetry_otlp::new_exporter()
-        .tonic()
-        .with_endpoint(endpoint);
+    let exporter = opentelemetry_otlp::SpanExporter::builder()
+        .with_tonic()
+        .with_endpoint(endpoint)
+        .build()
+        .map_err(|e| format!("build OTLP span exporter: {e}"))?;
 
-    let provider = opentelemetry_otlp::new_pipeline()
-        .tracing()
-        .with_exporter(exporter)
-        .with_trace_config(opentelemetry_sdk::trace::Config::default().with_resource(resource))
-        .install_batch(opentelemetry_sdk::runtime::Tokio)
-        .map_err(|e| format!("install OTLP tracing pipeline: {e}"))?;
+    let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+        .with_batch_exporter(exporter)
+        .with_resource(resource)
+        .build();
 
     Ok(provider.tracer("pangea-operator"))
 }

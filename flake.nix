@@ -453,7 +453,17 @@
           # section for the residual GHSA-hrxh-6v49-42gf citation.
           hardenedSecurityPkgs = (import "${substrate}/lib/security/mk-hardened-pkgs.nix" { inherit lib; }) {
             pkgs = securityPkgs;
-            mitigations = [ "terraform-provider-aws-grpc-bump" "packer-grpc-bump" ];
+            # packer carries TWO mitigations and they compose in order: the
+            # -grpc- one moves 1.15.4 -> 1.16.0 (version + src), and the
+            # -gogit- one then patches THAT release's go.mod, since 1.16.0 is
+            # the tip of hashicorp's release list and still pins the
+            # vulnerable go-git v5.19.1. Both were confirmed against a built
+            # binary rather than a manifest.
+            mitigations = [
+              "terraform-provider-aws-grpc-bump"
+              "packer-grpc-bump"
+              "packer-gogit-bump"
+            ];
             # terraform-provider-kubernetes-kin-openapi-bump is authored in
             # substrate's catalog but deliberately NOT referenced here — a
             # real CI build confirmed it breaks the provider's own source

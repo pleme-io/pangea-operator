@@ -166,7 +166,7 @@ GEM
       dry-logic (~> 1.4)
       zeitwerk (~> 2.6)
     ice_nine (0.11.2)
-    json (2.21.1)
+    json (2.21.2)
     logger (1.7.0)
     mustermann (3.1.1)
     nio4r (2.7.5)

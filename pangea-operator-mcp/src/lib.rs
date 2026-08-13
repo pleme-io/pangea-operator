@@ -17,7 +17,7 @@ mod facade;
 use std::sync::Arc;
 
 use rmcp::{
-    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
+    handler::server::wrapper::Parameters,
     model::{ServerCapabilities, ServerInfo},
     schemars, tool, tool_handler, tool_router, ServerHandler,
 };
@@ -70,10 +70,18 @@ pub struct Empty {}
 
 // ─────────────────────────── the server ────────────────────────────
 
+// No `tool_router` field, and its absence is the correct shape under rmcp 3
+// rather than an omission. In 0.15 `#[tool_handler]` defaulted to the FIELD
+// `self.tool_router`; in 3.x it defaults to the associated function
+// `Self::tool_router()` that `#[tool_router]` generates. Carrying the field
+// too would compile, wire the tools correctly via the associated function,
+// and leave a never-read clone of the router on every instance — which is
+// exactly what `dead_code` reported at the bump. The field is only earned
+// back by a per-instance router (`#[tool_handler(router = self.tool_router)]`),
+// and this server builds the same router every time.
 #[derive(Clone)]
 pub struct PangeaOperatorMcp {
     store: Arc<dyn PangeaStore>,
-    tool_router: ToolRouter<Self>,
 }
 
 /// A successful read. `outcome: "found"` for a payload; a list that came back
@@ -141,10 +149,7 @@ fn nonce() -> String {
 impl PangeaOperatorMcp {
     #[must_use]
     pub fn new(store: Arc<dyn PangeaStore>) -> Self {
-        Self {
-            store,
-            tool_router: Self::tool_router(),
-        }
+        Self { store }
     }
 
     #[tool(
@@ -261,19 +266,23 @@ impl PangeaOperatorMcp {
 #[tool_handler]
 impl ServerHandler for PangeaOperatorMcp {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            instructions: Some(
-                "Observe + control a running pangea-operator. The CRDs are the state. List/get \
-                 InfrastructureTemplates with status.lastCycle (phase/lastError/plan), force a \
-                 reconcile, suspend/resume; read WorkspaceCatalog verify state + ArchitectureGem \
-                 load phases (a not-Loaded gem blocks templates at Verified); restart + status-check \
-                 the operator Deployment. Declare-and-observe: mutations are idempotent metadata/spec \
-                 patches (the kubectl annotate / rollout-restart analogs), never destructive."
-                    .into(),
-            ),
-            ..Default::default()
-        }
+        // rmcp 3 marks `ServerInfo` #[non_exhaustive], so it cannot be built
+        // with a struct expression — not even with `..Default::default()`,
+        // which is the part that surprises people. The attribute forbids the
+        // SYNTAX from outside the defining crate, independently of whether
+        // every field is named. Start from the default and assign.
+        let mut info = ServerInfo::default();
+        info.capabilities = ServerCapabilities::builder().enable_tools().build();
+        info.instructions = Some(
+            "Observe + control a running pangea-operator. The CRDs are the state. List/get \
+             InfrastructureTemplates with status.lastCycle (phase/lastError/plan), force a \
+             reconcile, suspend/resume; read WorkspaceCatalog verify state + ArchitectureGem \
+             load phases (a not-Loaded gem blocks templates at Verified); restart + status-check \
+             the operator Deployment. Declare-and-observe: mutations are idempotent metadata/spec \
+             patches (the kubectl annotate / rollout-restart analogs), never destructive."
+                .into(),
+        );
+        info
     }
 }
 

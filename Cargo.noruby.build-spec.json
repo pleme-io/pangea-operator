@@ -2757,339 +2757,6 @@
         "preBuild": "export CARGO_CRATE_NAME=aws_lc_sys;"
       }
     },
-    "axum-0.7.9": {
-      "name": "axum",
-      "version": "0.7.9",
-      "edition": "2021",
-      "source": {
-        "kind": "registry",
-        "url": "https://static.crates.io/crates/axum/axum-0.7.9.crate",
-        "sha256": "edca88bc138befd0323b20752846e6587272d3b03b0343c8ea28a6f819e6e71f",
-        "name_with_ext": "axum-0.7.9.tar.gz"
-      },
-      "features": [],
-      "proc_macro": false,
-      "build_script": null,
-      "links": null,
-      "binaries": [],
-      "lib_target": null,
-      "runtime_dependencies": [
-        {
-          "name": "async_trait",
-          "package_key": "async-trait-0.1.89",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "host"
-        },
-        {
-          "name": "axum_core",
-          "package_key": "axum-core-0.4.5",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "bytes",
-          "package_key": "bytes-1.11.1",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "futures_util",
-          "package_key": "futures-util-0.3.32",
-          "kind": "normal",
-          "features": [
-            "alloc"
-          ],
-          "uses_default_features": false,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "http",
-          "package_key": "http-1.4.1",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "http_body",
-          "package_key": "http-body-1.0.1",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "http_body_util",
-          "package_key": "http-body-util-0.1.3",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "itoa",
-          "package_key": "itoa-1.0.18",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "matchit",
-          "package_key": "matchit-0.7.3",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "memchr",
-          "package_key": "memchr-2.8.1",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "mime",
-          "package_key": "mime-0.3.17",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "percent_encoding",
-          "package_key": "percent-encoding-2.3.2",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "pin_project_lite",
-          "package_key": "pin-project-lite-0.2.17",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "rustversion",
-          "package_key": "rustversion-1.0.22",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "host"
-        },
-        {
-          "name": "serde",
-          "package_key": "serde-1.0.228",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "sync_wrapper",
-          "package_key": "sync_wrapper-1.0.2",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "tower",
-          "package_key": "tower-0.5.3",
-          "kind": "normal",
-          "features": [
-            "util"
-          ],
-          "uses_default_features": false,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "tower_layer",
-          "package_key": "tower-layer-0.3.3",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "tower_service",
-          "package_key": "tower-service-0.3.3",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        }
-      ],
-      "build_dependencies": [],
-      "crate_renames": {
-        "async-trait": [
-          {
-            "version": "0.1.89",
-            "rename": "async_trait"
-          }
-        ],
-        "axum-core": [
-          {
-            "version": "0.4.5",
-            "rename": "axum_core"
-          }
-        ],
-        "futures-util": [
-          {
-            "version": "0.3.32",
-            "rename": "futures_util"
-          }
-        ],
-        "http-body": [
-          {
-            "version": "1.0.1",
-            "rename": "http_body"
-          }
-        ],
-        "http-body-util": [
-          {
-            "version": "0.1.3",
-            "rename": "http_body_util"
-          }
-        ],
-        "percent-encoding": [
-          {
-            "version": "2.3.2",
-            "rename": "percent_encoding"
-          }
-        ],
-        "pin-project-lite": [
-          {
-            "version": "0.2.17",
-            "rename": "pin_project_lite"
-          }
-        ],
-        "tower-layer": [
-          {
-            "version": "0.3.3",
-            "rename": "tower_layer"
-          }
-        ],
-        "tower-service": [
-          {
-            "version": "0.3.3",
-            "rename": "tower_service"
-          }
-        ]
-      },
-      "build_rust_crate_args": {
-        "crateName": "axum",
-        "version": "0.7.9",
-        "edition": "2021",
-        "crateRenames": {
-          "async-trait": [
-            {
-              "version": "0.1.89",
-              "rename": "async_trait"
-            }
-          ],
-          "axum-core": [
-            {
-              "version": "0.4.5",
-              "rename": "axum_core"
-            }
-          ],
-          "futures-util": [
-            {
-              "version": "0.3.32",
-              "rename": "futures_util"
-            }
-          ],
-          "http-body": [
-            {
-              "version": "1.0.1",
-              "rename": "http_body"
-            }
-          ],
-          "http-body-util": [
-            {
-              "version": "0.1.3",
-              "rename": "http_body_util"
-            }
-          ],
-          "percent-encoding": [
-            {
-              "version": "2.3.2",
-              "rename": "percent_encoding"
-            }
-          ],
-          "pin-project-lite": [
-            {
-              "version": "0.2.17",
-              "rename": "pin_project_lite"
-            }
-          ],
-          "tower-layer": [
-            {
-              "version": "0.3.3",
-              "rename": "tower_layer"
-            }
-          ],
-          "tower-service": [
-            {
-              "version": "0.3.3",
-              "rename": "tower_service"
-            }
-          ]
-        },
-        "release": true,
-        "preBuild": "export CARGO_CRATE_NAME=axum;"
-      }
-    },
     "axum-0.8.9": {
       "name": "axum",
       "version": "0.8.9",
@@ -3582,243 +3249,6 @@
         "preBuild": "export CARGO_CRATE_NAME=axum;"
       }
     },
-    "axum-core-0.4.5": {
-      "name": "axum-core",
-      "version": "0.4.5",
-      "edition": "2021",
-      "source": {
-        "kind": "registry",
-        "url": "https://static.crates.io/crates/axum-core/axum-core-0.4.5.crate",
-        "sha256": "09f2bd6146b97ae3359fa0cc6d6b376d9539582c7b4220f041a33ec24c226199",
-        "name_with_ext": "axum-core-0.4.5.tar.gz"
-      },
-      "features": [],
-      "proc_macro": false,
-      "build_script": null,
-      "links": null,
-      "binaries": [],
-      "lib_target": null,
-      "runtime_dependencies": [
-        {
-          "name": "async_trait",
-          "package_key": "async-trait-0.1.89",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "host"
-        },
-        {
-          "name": "bytes",
-          "package_key": "bytes-1.11.1",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "futures_util",
-          "package_key": "futures-util-0.3.32",
-          "kind": "normal",
-          "features": [
-            "alloc"
-          ],
-          "uses_default_features": false,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "http",
-          "package_key": "http-1.4.1",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "http_body",
-          "package_key": "http-body-1.0.1",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "http_body_util",
-          "package_key": "http-body-util-0.1.3",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "mime",
-          "package_key": "mime-0.3.17",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "pin_project_lite",
-          "package_key": "pin-project-lite-0.2.17",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "rustversion",
-          "package_key": "rustversion-1.0.22",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "host"
-        },
-        {
-          "name": "sync_wrapper",
-          "package_key": "sync_wrapper-1.0.2",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "tower_layer",
-          "package_key": "tower-layer-0.3.3",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "tower_service",
-          "package_key": "tower-service-0.3.3",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        }
-      ],
-      "build_dependencies": [],
-      "crate_renames": {
-        "async-trait": [
-          {
-            "version": "0.1.89",
-            "rename": "async_trait"
-          }
-        ],
-        "futures-util": [
-          {
-            "version": "0.3.32",
-            "rename": "futures_util"
-          }
-        ],
-        "http-body": [
-          {
-            "version": "1.0.1",
-            "rename": "http_body"
-          }
-        ],
-        "http-body-util": [
-          {
-            "version": "0.1.3",
-            "rename": "http_body_util"
-          }
-        ],
-        "pin-project-lite": [
-          {
-            "version": "0.2.17",
-            "rename": "pin_project_lite"
-          }
-        ],
-        "tower-layer": [
-          {
-            "version": "0.3.3",
-            "rename": "tower_layer"
-          }
-        ],
-        "tower-service": [
-          {
-            "version": "0.3.3",
-            "rename": "tower_service"
-          }
-        ]
-      },
-      "build_rust_crate_args": {
-        "crateName": "axum-core",
-        "version": "0.4.5",
-        "edition": "2021",
-        "crateRenames": {
-          "async-trait": [
-            {
-              "version": "0.1.89",
-              "rename": "async_trait"
-            }
-          ],
-          "futures-util": [
-            {
-              "version": "0.3.32",
-              "rename": "futures_util"
-            }
-          ],
-          "http-body": [
-            {
-              "version": "1.0.1",
-              "rename": "http_body"
-            }
-          ],
-          "http-body-util": [
-            {
-              "version": "0.1.3",
-              "rename": "http_body_util"
-            }
-          ],
-          "pin-project-lite": [
-            {
-              "version": "0.2.17",
-              "rename": "pin_project_lite"
-            }
-          ],
-          "tower-layer": [
-            {
-              "version": "0.3.3",
-              "rename": "tower_layer"
-            }
-          ],
-          "tower-service": [
-            {
-              "version": "0.3.3",
-              "rename": "tower_service"
-            }
-          ]
-        },
-        "release": true,
-        "preBuild": "export CARGO_CRATE_NAME=axum_core;"
-      }
-    },
     "axum-core-0.5.6": {
       "name": "axum-core",
       "version": "0.5.6",
@@ -4215,6 +3645,44 @@
         "features": [
           "alloc",
           "default",
+          "std"
+        ],
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=base64;"
+      }
+    },
+    "base64-0.23.1": {
+      "name": "base64",
+      "version": "0.23.1",
+      "edition": "2021",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/base64/base64-0.23.1.crate",
+        "sha256": "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5",
+        "name_with_ext": "base64-0.23.1.tar.gz"
+      },
+      "features": [
+        "alloc",
+        "default",
+        "simd-unsafe",
+        "std"
+      ],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [],
+      "build_dependencies": [],
+      "crate_renames": {},
+      "build_rust_crate_args": {
+        "crateName": "base64",
+        "version": "0.23.1",
+        "edition": "2021",
+        "features": [
+          "alloc",
+          "default",
+          "simd-unsafe",
           "std"
         ],
         "release": true,
@@ -7052,6 +6520,61 @@
         "preBuild": "export CARGO_CRATE_NAME=darling;"
       }
     },
+    "darling-0.24.0": {
+      "name": "darling",
+      "version": "0.24.0",
+      "edition": "2021",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/darling/darling-0.24.0.crate",
+        "sha256": "88490bf1b990d87eaaa7ac8aa887f629a08e7359765b4911faf63c3763347d23",
+        "name_with_ext": "darling-0.24.0.tar.gz"
+      },
+      "features": [
+        "default",
+        "suggestions"
+      ],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [
+        {
+          "name": "darling_core",
+          "package_key": "darling_core-0.24.0",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "darling_macro",
+          "package_key": "darling_macro-0.24.0",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "host"
+        }
+      ],
+      "build_dependencies": [],
+      "crate_renames": {},
+      "build_rust_crate_args": {
+        "crateName": "darling",
+        "version": "0.24.0",
+        "edition": "2021",
+        "features": [
+          "default",
+          "suggestions"
+        ],
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=darling;"
+      }
+    },
     "darling_core-0.20.11": {
       "name": "darling_core",
       "version": "0.20.11",
@@ -7268,6 +6791,109 @@
         "preBuild": "export CARGO_CRATE_NAME=darling_core;"
       }
     },
+    "darling_core-0.24.0": {
+      "name": "darling_core",
+      "version": "0.24.0",
+      "edition": "2021",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/darling_core/darling_core-0.24.0.crate",
+        "sha256": "084e274f91c482280130e1e34e0b8d6e66776a060d7b6de7b84289ca778868c4",
+        "name_with_ext": "darling_core-0.24.0.tar.gz"
+      },
+      "features": [
+        "strsim",
+        "suggestions"
+      ],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [
+        {
+          "name": "ident_case",
+          "package_key": "ident_case-1.0.1",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "proc_macro2",
+          "package_key": "proc-macro2-1.0.106",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "quote",
+          "package_key": "quote-1.0.45",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "strsim",
+          "package_key": "strsim-0.11.1",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "syn",
+          "package_key": "syn-3.0.3",
+          "kind": "normal",
+          "features": [
+            "extra-traits",
+            "full"
+          ],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        }
+      ],
+      "build_dependencies": [],
+      "crate_renames": {
+        "proc-macro2": [
+          {
+            "version": "1.0.106",
+            "rename": "proc_macro2"
+          }
+        ]
+      },
+      "build_rust_crate_args": {
+        "crateName": "darling_core",
+        "version": "0.24.0",
+        "edition": "2021",
+        "features": [
+          "strsim",
+          "suggestions"
+        ],
+        "crateRenames": {
+          "proc-macro2": [
+            {
+              "version": "1.0.106",
+              "rename": "proc_macro2"
+            }
+          ]
+        },
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=darling_core;"
+      }
+    },
     "darling_macro-0.20.11": {
       "name": "darling_macro",
       "version": "0.20.11",
@@ -7380,6 +7006,65 @@
       "build_rust_crate_args": {
         "crateName": "darling_macro",
         "version": "0.23.0",
+        "edition": "2021",
+        "release": true,
+        "procMacro": true,
+        "preBuild": "export CARGO_CRATE_NAME=darling_macro;"
+      }
+    },
+    "darling_macro-0.24.0": {
+      "name": "darling_macro",
+      "version": "0.24.0",
+      "edition": "2021",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/darling_macro/darling_macro-0.24.0.crate",
+        "sha256": "68f5792fa0d41cd2325ce0ffa64f0a340eaebd4971a3a0c5e1ffd2cc488a355e",
+        "name_with_ext": "darling_macro-0.24.0.tar.gz"
+      },
+      "features": [],
+      "proc_macro": true,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [
+        {
+          "name": "darling_core",
+          "package_key": "darling_core-0.24.0",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "quote",
+          "package_key": "quote-1.0.45",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "syn",
+          "package_key": "syn-3.0.3",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        }
+      ],
+      "build_dependencies": [],
+      "crate_renames": {},
+      "build_rust_crate_args": {
+        "crateName": "darling_macro",
+        "version": "0.24.0",
         "edition": "2021",
         "release": true,
         "procMacro": true,
@@ -11797,38 +11482,6 @@
         "preBuild": "export CARGO_CRATE_NAME=handlebars;"
       }
     },
-    "hashbrown-0.12.3": {
-      "name": "hashbrown",
-      "version": "0.12.3",
-      "edition": "2021",
-      "source": {
-        "kind": "registry",
-        "url": "https://static.crates.io/crates/hashbrown/hashbrown-0.12.3.crate",
-        "sha256": "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888",
-        "name_with_ext": "hashbrown-0.12.3.tar.gz"
-      },
-      "features": [
-        "raw"
-      ],
-      "proc_macro": false,
-      "build_script": null,
-      "links": null,
-      "binaries": [],
-      "lib_target": null,
-      "runtime_dependencies": [],
-      "build_dependencies": [],
-      "crate_renames": {},
-      "build_rust_crate_args": {
-        "crateName": "hashbrown",
-        "version": "0.12.3",
-        "edition": "2021",
-        "features": [
-          "raw"
-        ],
-        "release": true,
-        "preBuild": "export CARGO_CRATE_NAME=hashbrown;"
-      }
-    },
     "hashbrown-0.15.5": {
       "name": "hashbrown",
       "version": "0.15.5",
@@ -14645,58 +14298,6 @@
         "preBuild": "export CARGO_CRATE_NAME=idna_adapter;"
       }
     },
-    "indexmap-1.9.3": {
-      "name": "indexmap",
-      "version": "1.9.3",
-      "edition": "2021",
-      "source": {
-        "kind": "registry",
-        "url": "https://static.crates.io/crates/indexmap/indexmap-1.9.3.crate",
-        "sha256": "bd070e393353796e801d209ad339e89596eb4c8d430d18ede6a1cced8fafbd99",
-        "name_with_ext": "indexmap-1.9.3.tar.gz"
-      },
-      "features": [],
-      "proc_macro": false,
-      "build_script": "build.rs",
-      "links": null,
-      "binaries": [],
-      "lib_target": null,
-      "runtime_dependencies": [
-        {
-          "name": "hashbrown",
-          "package_key": "hashbrown-0.12.3",
-          "kind": "normal",
-          "features": [
-            "raw"
-          ],
-          "uses_default_features": false,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        }
-      ],
-      "build_dependencies": [
-        {
-          "name": "autocfg",
-          "package_key": "autocfg-1.5.1",
-          "kind": "build",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "host"
-        }
-      ],
-      "crate_renames": {},
-      "build_rust_crate_args": {
-        "crateName": "indexmap",
-        "version": "1.9.3",
-        "edition": "2021",
-        "release": true,
-        "build": "build.rs",
-        "preBuild": "export CARGO_CRATE_NAME=indexmap;"
-      }
-    },
     "indexmap-2.14.0": {
       "name": "indexmap",
       "version": "2.14.0",
@@ -15556,6 +15157,56 @@
         "build": "build.rs",
         "links": "k8s-openapi-0.24.0",
         "preBuild": "export CARGO_CRATE_NAME=k8s_openapi;"
+      }
+    },
+    "kotae-0.1.1": {
+      "name": "kotae",
+      "version": "0.1.1",
+      "edition": "2024",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/kotae/kotae-0.1.1.crate",
+        "sha256": "1194689d317921722f9793d9d803d96801777c0359784ab33f2870ac9c040b04",
+        "name_with_ext": "kotae-0.1.1.tar.gz"
+      },
+      "features": [],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [
+        {
+          "name": "serde",
+          "package_key": "serde-1.0.228",
+          "kind": "normal",
+          "features": [
+            "derive"
+          ],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "serde_json",
+          "package_key": "serde_json-1.0.150",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        }
+      ],
+      "build_dependencies": [],
+      "crate_renames": {},
+      "build_rust_crate_args": {
+        "crateName": "kotae",
+        "version": "0.1.1",
+        "edition": "2024",
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=kotae;"
       }
     },
     "kube-0.99.0": {
@@ -22403,38 +22054,6 @@
         "preBuild": "export CARGO_CRATE_NAME=matchers;"
       }
     },
-    "matchit-0.7.3": {
-      "name": "matchit",
-      "version": "0.7.3",
-      "edition": "2021",
-      "source": {
-        "kind": "registry",
-        "url": "https://static.crates.io/crates/matchit/matchit-0.7.3.crate",
-        "sha256": "0e7465ac9959cc2b1404e8e2367b43684a6d13790fe23056cc8c6c5a6b7bcb94",
-        "name_with_ext": "matchit-0.7.3.tar.gz"
-      },
-      "features": [
-        "default"
-      ],
-      "proc_macro": false,
-      "build_script": null,
-      "links": null,
-      "binaries": [],
-      "lib_target": null,
-      "runtime_dependencies": [],
-      "build_dependencies": [],
-      "crate_renames": {},
-      "build_rust_crate_args": {
-        "crateName": "matchit",
-        "version": "0.7.3",
-        "edition": "2021",
-        "features": [
-          "default"
-        ],
-        "release": true,
-        "preBuild": "export CARGO_CRATE_NAME=matchit;"
-      }
-    },
     "matchit-0.8.4": {
       "name": "matchit",
       "version": "0.8.4",
@@ -23771,22 +23390,28 @@
         "preBuild": "export CARGO_CRATE_NAME=openssl_probe;"
       }
     },
-    "opentelemetry-0.26.0": {
+    "opentelemetry-0.32.0": {
       "name": "opentelemetry",
-      "version": "0.26.0",
+      "version": "0.32.0",
       "edition": "2021",
       "source": {
         "kind": "registry",
-        "url": "https://static.crates.io/crates/opentelemetry/opentelemetry-0.26.0.crate",
-        "sha256": "570074cc999d1a58184080966e5bd3bf3a9a4af650c3b05047c2621e7405cd17",
-        "name_with_ext": "opentelemetry-0.26.0.tar.gz"
+        "url": "https://static.crates.io/crates/opentelemetry/opentelemetry-0.32.0.crate",
+        "sha256": "b0142c63252a9e054e68a4c61a5778f7b14f576274d593f8ce883d191a099682",
+        "name_with_ext": "opentelemetry-0.32.0.tar.gz"
       },
       "features": [
         "default",
+        "futures",
+        "futures-core",
+        "futures-sink",
+        "internal-logs",
         "logs",
         "metrics",
         "pin-project-lite",
-        "trace"
+        "thiserror",
+        "trace",
+        "tracing"
       ],
       "proc_macro": false,
       "build_script": null,
@@ -23800,7 +23425,7 @@
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
-          "optional": false,
+          "optional": true,
           "target": null,
           "tree": "target"
         },
@@ -23810,17 +23435,7 @@
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "once_cell",
-          "package_key": "once_cell-1.21.4",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
+          "optional": true,
           "target": null,
           "tree": "target"
         },
@@ -23836,11 +23451,21 @@
         },
         {
           "name": "thiserror",
-          "package_key": "thiserror-1.0.69",
+          "package_key": "thiserror-2.0.18",
           "kind": "normal",
           "features": [],
           "uses_default_features": false,
-          "optional": false,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "tracing",
+          "package_key": "tracing-0.1.44",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": false,
+          "optional": true,
           "target": null,
           "tree": "target"
         }
@@ -23868,14 +23493,20 @@
       },
       "build_rust_crate_args": {
         "crateName": "opentelemetry",
-        "version": "0.26.0",
+        "version": "0.32.0",
         "edition": "2021",
         "features": [
           "default",
+          "futures",
+          "futures-core",
+          "futures-sink",
+          "internal-logs",
           "logs",
           "metrics",
           "pin-project-lite",
-          "trace"
+          "thiserror",
+          "trace",
+          "tracing"
         ],
         "crateRenames": {
           "futures-core": [
@@ -23901,25 +23532,23 @@
         "preBuild": "export CARGO_CRATE_NAME=opentelemetry;"
       }
     },
-    "opentelemetry-otlp-0.26.0": {
+    "opentelemetry-otlp-0.32.0": {
       "name": "opentelemetry-otlp",
-      "version": "0.26.0",
+      "version": "0.32.0",
       "edition": "2021",
       "source": {
         "kind": "registry",
-        "url": "https://static.crates.io/crates/opentelemetry-otlp/opentelemetry-otlp-0.26.0.crate",
-        "sha256": "29e1f9c8b032d4f635c730c0efcf731d5e2530ea13fa8bef7939ddc8420696bd",
-        "name_with_ext": "opentelemetry-otlp-0.26.0.tar.gz"
+        "url": "https://static.crates.io/crates/opentelemetry-otlp/opentelemetry-otlp-0.32.0.crate",
+        "sha256": "9966929966d17620d7c316c643ba62631826e10021409357772d5eea84f62c35",
+        "name_with_ext": "opentelemetry-otlp-0.32.0.tar.gz"
       },
       "features": [
-        "default",
         "grpc-tonic",
         "http",
-        "logs",
-        "metrics",
         "prost",
         "tokio",
         "tonic",
+        "tonic-types",
         "trace"
       ],
       "proc_macro": false,
@@ -23928,26 +23557,6 @@
       "binaries": [],
       "lib_target": null,
       "runtime_dependencies": [
-        {
-          "name": "async_trait",
-          "package_key": "async-trait-0.1.89",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "host"
-        },
-        {
-          "name": "futures_core",
-          "package_key": "futures-core-0.3.32",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
         {
           "name": "http",
           "package_key": "http-1.4.1",
@@ -23962,7 +23571,7 @@
         },
         {
           "name": "opentelemetry",
-          "package_key": "opentelemetry-0.26.0",
+          "package_key": "opentelemetry-0.32.0",
           "kind": "normal",
           "features": [],
           "uses_default_features": false,
@@ -23972,7 +23581,7 @@
         },
         {
           "name": "opentelemetry_proto",
-          "package_key": "opentelemetry-proto-0.26.1",
+          "package_key": "opentelemetry-proto-0.32.0",
           "kind": "normal",
           "features": [],
           "uses_default_features": false,
@@ -23982,7 +23591,7 @@
         },
         {
           "name": "opentelemetry_sdk",
-          "package_key": "opentelemetry_sdk-0.26.0",
+          "package_key": "opentelemetry_sdk-0.32.1",
           "kind": "normal",
           "features": [],
           "uses_default_features": false,
@@ -23992,7 +23601,7 @@
         },
         {
           "name": "prost",
-          "package_key": "prost-0.13.5",
+          "package_key": "prost-0.14.4",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -24002,7 +23611,7 @@
         },
         {
           "name": "thiserror",
-          "package_key": "thiserror-1.0.69",
+          "package_key": "thiserror-2.0.18",
           "kind": "normal",
           "features": [],
           "uses_default_features": false,
@@ -24025,10 +23634,20 @@
         },
         {
           "name": "tonic",
-          "package_key": "tonic-0.12.3",
+          "package_key": "tonic-0.14.6",
           "kind": "normal",
           "features": [],
           "uses_default_features": false,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "tonic_types",
+          "package_key": "tonic-types-0.14.6",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
           "optional": true,
           "target": null,
           "tree": "target"
@@ -24036,57 +23655,43 @@
       ],
       "build_dependencies": [],
       "crate_renames": {
-        "async-trait": [
-          {
-            "version": "0.1.89",
-            "rename": "async_trait"
-          }
-        ],
-        "futures-core": [
-          {
-            "version": "0.3.32",
-            "rename": "futures_core"
-          }
-        ],
         "opentelemetry-proto": [
           {
-            "version": "0.26.1",
+            "version": "0.32.0",
             "rename": "opentelemetry_proto"
+          }
+        ],
+        "tonic-types": [
+          {
+            "version": "0.14.6",
+            "rename": "tonic_types"
           }
         ]
       },
       "build_rust_crate_args": {
         "crateName": "opentelemetry-otlp",
-        "version": "0.26.0",
+        "version": "0.32.0",
         "edition": "2021",
         "features": [
-          "default",
           "grpc-tonic",
           "http",
-          "logs",
-          "metrics",
           "prost",
           "tokio",
           "tonic",
+          "tonic-types",
           "trace"
         ],
         "crateRenames": {
-          "async-trait": [
-            {
-              "version": "0.1.89",
-              "rename": "async_trait"
-            }
-          ],
-          "futures-core": [
-            {
-              "version": "0.3.32",
-              "rename": "futures_core"
-            }
-          ],
           "opentelemetry-proto": [
             {
-              "version": "0.26.1",
+              "version": "0.32.0",
               "rename": "opentelemetry_proto"
+            }
+          ],
+          "tonic-types": [
+            {
+              "version": "0.14.6",
+              "rename": "tonic_types"
             }
           ]
         },
@@ -24094,23 +23699,22 @@
         "preBuild": "export CARGO_CRATE_NAME=opentelemetry_otlp;"
       }
     },
-    "opentelemetry-proto-0.26.1": {
+    "opentelemetry-proto-0.32.0": {
       "name": "opentelemetry-proto",
-      "version": "0.26.1",
+      "version": "0.32.0",
       "edition": "2021",
       "source": {
         "kind": "registry",
-        "url": "https://static.crates.io/crates/opentelemetry-proto/opentelemetry-proto-0.26.1.crate",
-        "sha256": "c9d3968ce3aefdcca5c27e3c4ea4391b37547726a70893aab52d3de95d5f8b34",
-        "name_with_ext": "opentelemetry-proto-0.26.1.tar.gz"
+        "url": "https://static.crates.io/crates/opentelemetry-proto/opentelemetry-proto-0.32.0.crate",
+        "sha256": "56d658ba1faf63f7b9c492cfbe6e0ec365440a16132d3270c1065f7b33f1b638",
+        "name_with_ext": "opentelemetry-proto-0.32.0.tar.gz"
       },
       "features": [
         "gen-tonic",
         "gen-tonic-messages",
-        "logs",
-        "metrics",
         "prost",
         "tonic",
+        "tonic-prost",
         "trace"
       ],
       "proc_macro": false,
@@ -24121,7 +23725,7 @@
       "runtime_dependencies": [
         {
           "name": "opentelemetry",
-          "package_key": "opentelemetry-0.26.0",
+          "package_key": "opentelemetry-0.32.0",
           "kind": "normal",
           "features": [],
           "uses_default_features": false,
@@ -24131,7 +23735,7 @@
         },
         {
           "name": "opentelemetry_sdk",
-          "package_key": "opentelemetry_sdk-0.26.0",
+          "package_key": "opentelemetry_sdk-0.32.1",
           "kind": "normal",
           "features": [],
           "uses_default_features": false,
@@ -24141,7 +23745,7 @@
         },
         {
           "name": "prost",
-          "package_key": "prost-0.13.5",
+          "package_key": "prost-0.14.4",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -24151,57 +23755,79 @@
         },
         {
           "name": "tonic",
-          "package_key": "tonic-0.12.3",
+          "package_key": "tonic-0.14.6",
           "kind": "normal",
           "features": [
-            "codegen",
-            "prost"
+            "codegen"
           ],
           "uses_default_features": false,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "tonic_prost",
+          "package_key": "tonic-prost-0.14.6",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
           "optional": true,
           "target": null,
           "tree": "target"
         }
       ],
       "build_dependencies": [],
-      "crate_renames": {},
+      "crate_renames": {
+        "tonic-prost": [
+          {
+            "version": "0.14.6",
+            "rename": "tonic_prost"
+          }
+        ]
+      },
       "build_rust_crate_args": {
         "crateName": "opentelemetry-proto",
-        "version": "0.26.1",
+        "version": "0.32.0",
         "edition": "2021",
         "features": [
           "gen-tonic",
           "gen-tonic-messages",
-          "logs",
-          "metrics",
           "prost",
           "tonic",
+          "tonic-prost",
           "trace"
         ],
+        "crateRenames": {
+          "tonic-prost": [
+            {
+              "version": "0.14.6",
+              "rename": "tonic_prost"
+            }
+          ]
+        },
         "release": true,
         "preBuild": "export CARGO_CRATE_NAME=opentelemetry_proto;"
       }
     },
-    "opentelemetry_sdk-0.26.0": {
+    "opentelemetry_sdk-0.32.1": {
       "name": "opentelemetry_sdk",
-      "version": "0.26.0",
+      "version": "0.32.1",
       "edition": "2021",
       "source": {
         "kind": "registry",
-        "url": "https://static.crates.io/crates/opentelemetry_sdk/opentelemetry_sdk-0.26.0.crate",
-        "sha256": "d2c627d9f4c9cdc1f21a29ee4bfbd6028fcb8bcf2a857b43f3abdf72c9c862f3",
-        "name_with_ext": "opentelemetry_sdk-0.26.0.tar.gz"
+        "url": "https://static.crates.io/crates/opentelemetry_sdk/opentelemetry_sdk-0.32.1.crate",
+        "sha256": "9b59f80e1ac4d5ff7a2db8fb6c80badb7f0f3f858211fba08dd9aaec750894f9",
+        "name_with_ext": "opentelemetry_sdk-0.32.1.tar.gz"
       },
       "features": [
-        "async-trait",
         "default",
-        "glob",
+        "experimental_async_runtime",
+        "internal-logs",
         "logs",
         "metrics",
         "percent-encoding",
         "rand",
         "rt-tokio",
-        "serde_json",
         "tokio",
         "tokio-stream",
         "trace"
@@ -24212,16 +23838,6 @@
       "binaries": [],
       "lib_target": null,
       "runtime_dependencies": [
-        {
-          "name": "async_trait",
-          "package_key": "async-trait-0.1.89",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": true,
-          "target": null,
-          "tree": "host"
-        },
         {
           "name": "futures_channel",
           "package_key": "futures-channel-0.3.32",
@@ -24257,31 +23873,11 @@
           "tree": "target"
         },
         {
-          "name": "glob",
-          "package_key": "glob-0.3.3",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": true,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "once_cell",
-          "package_key": "once_cell-1.21.4",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
           "name": "opentelemetry",
-          "package_key": "opentelemetry-0.26.0",
+          "package_key": "opentelemetry-0.32.0",
           "kind": "normal",
           "features": [],
-          "uses_default_features": true,
+          "uses_default_features": false,
           "optional": false,
           "target": null,
           "tree": "target"
@@ -24298,12 +23894,14 @@
         },
         {
           "name": "rand",
-          "package_key": "rand-0.8.6",
+          "package_key": "rand-0.9.4",
           "kind": "normal",
           "features": [
+            "os_rng",
             "small_rng",
             "std",
-            "std_rng"
+            "std_rng",
+            "thread_rng"
           ],
           "uses_default_features": false,
           "optional": true,
@@ -24311,18 +23909,8 @@
           "tree": "target"
         },
         {
-          "name": "serde_json",
-          "package_key": "serde_json-1.0.150",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": true,
-          "target": null,
-          "tree": "target"
-        },
-        {
           "name": "thiserror",
-          "package_key": "thiserror-1.0.69",
+          "package_key": "thiserror-2.0.18",
           "kind": "normal",
           "features": [],
           "uses_default_features": false,
@@ -24334,10 +23922,7 @@
           "name": "tokio",
           "package_key": "tokio-1.52.3",
           "kind": "normal",
-          "features": [
-            "rt",
-            "time"
-          ],
+          "features": [],
           "uses_default_features": false,
           "optional": true,
           "target": null,
@@ -24356,12 +23941,6 @@
       ],
       "build_dependencies": [],
       "crate_renames": {
-        "async-trait": [
-          {
-            "version": "0.1.89",
-            "rename": "async_trait"
-          }
-        ],
         "futures-channel": [
           {
             "version": "0.3.32",
@@ -24395,29 +23974,22 @@
       },
       "build_rust_crate_args": {
         "crateName": "opentelemetry_sdk",
-        "version": "0.26.0",
+        "version": "0.32.1",
         "edition": "2021",
         "features": [
-          "async-trait",
           "default",
-          "glob",
+          "experimental_async_runtime",
+          "internal-logs",
           "logs",
           "metrics",
           "percent-encoding",
           "rand",
           "rt-tokio",
-          "serde_json",
           "tokio",
           "tokio-stream",
           "trace"
         ],
         "crateRenames": {
-          "async-trait": [
-            {
-              "version": "0.1.89",
-              "rename": "async_trait"
-            }
-          ],
           "futures-channel": [
             {
               "version": "0.3.32",
@@ -25420,7 +24992,7 @@
         },
         {
           "name": "opentelemetry",
-          "package_key": "opentelemetry-0.26.0",
+          "package_key": "opentelemetry-0.32.0",
           "kind": "normal",
           "features": [
             "trace"
@@ -25432,19 +25004,20 @@
         },
         {
           "name": "opentelemetry_otlp",
-          "package_key": "opentelemetry-otlp-0.26.0",
+          "package_key": "opentelemetry-otlp-0.32.0",
           "kind": "normal",
           "features": [
-            "tonic"
+            "grpc-tonic",
+            "trace"
           ],
-          "uses_default_features": true,
+          "uses_default_features": false,
           "optional": false,
           "target": null,
           "tree": "target"
         },
         {
           "name": "opentelemetry_sdk",
-          "package_key": "opentelemetry_sdk-0.26.0",
+          "package_key": "opentelemetry_sdk-0.32.1",
           "kind": "normal",
           "features": [
             "rt-tokio"
@@ -25756,7 +25329,7 @@
         },
         {
           "name": "tracing_opentelemetry",
-          "package_key": "tracing-opentelemetry-0.27.0",
+          "package_key": "tracing-opentelemetry-0.33.0",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -25975,7 +25548,7 @@
         ],
         "opentelemetry-otlp": [
           {
-            "version": "0.26.0",
+            "version": "0.32.0",
             "rename": "opentelemetry_otlp"
           }
         ],
@@ -26029,7 +25602,7 @@
         ],
         "tracing-opentelemetry": [
           {
-            "version": "0.27.0",
+            "version": "0.33.0",
             "rename": "tracing_opentelemetry"
           }
         ],
@@ -26206,7 +25779,7 @@
           ],
           "opentelemetry-otlp": [
             {
-              "version": "0.26.0",
+              "version": "0.32.0",
               "rename": "opentelemetry_otlp"
             }
           ],
@@ -26260,7 +25833,7 @@
           ],
           "tracing-opentelemetry": [
             {
-              "version": "0.27.0",
+              "version": "0.33.0",
               "rename": "tracing_opentelemetry"
             }
           ],
@@ -26345,6 +25918,16 @@
           "tree": "target"
         },
         {
+          "name": "kotae",
+          "package_key": "kotae-0.1.1",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
           "name": "kube",
           "package_key": "kube-0.99.0",
           "kind": "normal",
@@ -26360,7 +25943,7 @@
         },
         {
           "name": "rmcp",
-          "package_key": "rmcp-0.15.0",
+          "package_key": "rmcp-3.1.2",
           "kind": "normal",
           "features": [
             "server",
@@ -29335,6 +28918,78 @@
         "preBuild": "export CARGO_CRATE_NAME=prost;"
       }
     },
+    "prost-0.14.4": {
+      "name": "prost",
+      "version": "0.14.4",
+      "edition": "2021",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/prost/prost-0.14.4.crate",
+        "sha256": "528ac67416ff8646872a3c02cad9cc4ee5dc9f9540c9b10771855c95cb2e5ae1",
+        "name_with_ext": "prost-0.14.4.tar.gz"
+      },
+      "features": [
+        "default",
+        "derive",
+        "std"
+      ],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [
+        {
+          "name": "bytes",
+          "package_key": "bytes-1.11.1",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": false,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "prost_derive",
+          "package_key": "prost-derive-0.14.4",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": true,
+          "target": null,
+          "tree": "host"
+        }
+      ],
+      "build_dependencies": [],
+      "crate_renames": {
+        "prost-derive": [
+          {
+            "version": "0.14.4",
+            "rename": "prost_derive"
+          }
+        ]
+      },
+      "build_rust_crate_args": {
+        "crateName": "prost",
+        "version": "0.14.4",
+        "edition": "2021",
+        "features": [
+          "default",
+          "derive",
+          "std"
+        ],
+        "crateRenames": {
+          "prost-derive": [
+            {
+              "version": "0.14.4",
+              "rename": "prost_derive"
+            }
+          ]
+        },
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=prost;"
+      }
+    },
     "prost-build-0.13.5": {
       "name": "prost-build",
       "version": "0.13.5",
@@ -29608,6 +29263,102 @@
         "preBuild": "export CARGO_CRATE_NAME=prost_derive;"
       }
     },
+    "prost-derive-0.14.4": {
+      "name": "prost-derive",
+      "version": "0.14.4",
+      "edition": "2021",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/prost-derive/prost-derive-0.14.4.crate",
+        "sha256": "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf",
+        "name_with_ext": "prost-derive-0.14.4.tar.gz"
+      },
+      "features": [],
+      "proc_macro": true,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [
+        {
+          "name": "anyhow",
+          "package_key": "anyhow-1.0.103",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "itertools",
+          "package_key": "itertools-0.13.0",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "proc_macro2",
+          "package_key": "proc-macro2-1.0.106",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "quote",
+          "package_key": "quote-1.0.45",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "syn",
+          "package_key": "syn-2.0.117",
+          "kind": "normal",
+          "features": [
+            "extra-traits"
+          ],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        }
+      ],
+      "build_dependencies": [],
+      "crate_renames": {
+        "proc-macro2": [
+          {
+            "version": "1.0.106",
+            "rename": "proc_macro2"
+          }
+        ]
+      },
+      "build_rust_crate_args": {
+        "crateName": "prost-derive",
+        "version": "0.14.4",
+        "edition": "2021",
+        "crateRenames": {
+          "proc-macro2": [
+            {
+              "version": "1.0.106",
+              "rename": "proc_macro2"
+            }
+          ]
+        },
+        "release": true,
+        "procMacro": true,
+        "preBuild": "export CARGO_CRATE_NAME=prost_derive;"
+      }
+    },
     "prost-types-0.13.5": {
       "name": "prost-types",
       "version": "0.13.5",
@@ -29646,6 +29397,53 @@
       "build_rust_crate_args": {
         "crateName": "prost-types",
         "version": "0.13.5",
+        "edition": "2021",
+        "features": [
+          "default",
+          "std"
+        ],
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=prost_types;"
+      }
+    },
+    "prost-types-0.14.4": {
+      "name": "prost-types",
+      "version": "0.14.4",
+      "edition": "2021",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/prost-types/prost-types-0.14.4.crate",
+        "sha256": "f94967dc7688f3054c7fac87473ffae4cc4c3904800e2d9f5b857246d8963b0a",
+        "name_with_ext": "prost-types-0.14.4.tar.gz"
+      },
+      "features": [
+        "default",
+        "std"
+      ],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [
+        {
+          "name": "prost",
+          "package_key": "prost-0.14.4",
+          "kind": "normal",
+          "features": [
+            "derive"
+          ],
+          "uses_default_features": false,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        }
+      ],
+      "build_dependencies": [],
+      "crate_renames": {},
+      "build_rust_crate_args": {
+        "crateName": "prost-types",
+        "version": "0.14.4",
         "edition": "2021",
         "features": [
           "default",
@@ -30662,7 +30460,6 @@
         "getrandom",
         "libc",
         "rand_chacha",
-        "small_rng",
         "std",
         "std_rng"
       ],
@@ -30715,7 +30512,6 @@
           "getrandom",
           "libc",
           "rand_chacha",
-          "small_rng",
           "std",
           "std_rng"
         ],
@@ -32917,23 +32713,25 @@
         "preBuild": "export CARGO_CRATE_NAME=ring;"
       }
     },
-    "rmcp-0.15.0": {
+    "rmcp-3.1.2": {
       "name": "rmcp",
-      "version": "0.15.0",
+      "version": "3.1.2",
       "edition": "2024",
       "source": {
         "kind": "registry",
-        "url": "https://static.crates.io/crates/rmcp/rmcp-0.15.0.crate",
-        "sha256": "1bef41ebc9ebed2c1b1d90203e9d1756091e8a00bbc3107676151f39868ca0ee",
-        "name_with_ext": "rmcp-0.15.0.tar.gz"
+        "url": "https://static.crates.io/crates/rmcp/rmcp-3.1.2.crate",
+        "sha256": "c8dddc5b1924b9a59fba420166160ca2c4663a4e01803e52eda33070f56d63c8",
+        "name_with_ext": "rmcp-3.1.2.tar.gz"
       },
       "features": [
         "base64",
         "default",
         "macros",
+        "schemars",
         "server",
         "transport-async-rw",
-        "transport-io"
+        "transport-io",
+        "uuid"
       ],
       "proc_macro": false,
       "build_script": "build.rs",
@@ -32942,18 +32740,8 @@
       "lib_target": null,
       "runtime_dependencies": [
         {
-          "name": "async_trait",
-          "package_key": "async-trait-0.1.89",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "host"
-        },
-        {
           "name": "base64",
-          "package_key": "base64-0.22.1",
+          "package_key": "base64-0.23.1",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -32981,9 +32769,10 @@
           "package_key": "chrono-0.4.44",
           "kind": "normal",
           "features": [
+            "now",
             "serde"
           ],
-          "uses_default_features": true,
+          "uses_default_features": false,
           "optional": false,
           "target": "cfg(not(all(target_family = \"wasm\", target_os = \"unknown\")))",
           "tree": "target"
@@ -33020,7 +32809,7 @@
         },
         {
           "name": "rmcp_macros",
-          "package_key": "rmcp-macros-0.15.0",
+          "package_key": "rmcp-macros-3.1.2",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -33107,16 +32896,22 @@
           "optional": false,
           "target": null,
           "tree": "target"
+        },
+        {
+          "name": "uuid",
+          "package_key": "uuid-1.23.1",
+          "kind": "normal",
+          "features": [
+            "v4"
+          ],
+          "uses_default_features": true,
+          "optional": true,
+          "target": null,
+          "tree": "target"
         }
       ],
       "build_dependencies": [],
       "crate_renames": {
-        "async-trait": [
-          {
-            "version": "0.1.89",
-            "rename": "async_trait"
-          }
-        ],
         "pin-project-lite": [
           {
             "version": "0.2.17",
@@ -33125,7 +32920,7 @@
         ],
         "rmcp-macros": [
           {
-            "version": "0.15.0",
+            "version": "3.1.2",
             "rename": "rmcp_macros"
           }
         ],
@@ -33138,23 +32933,19 @@
       },
       "build_rust_crate_args": {
         "crateName": "rmcp",
-        "version": "0.15.0",
+        "version": "3.1.2",
         "edition": "2024",
         "features": [
           "base64",
           "default",
           "macros",
+          "schemars",
           "server",
           "transport-async-rw",
-          "transport-io"
+          "transport-io",
+          "uuid"
         ],
         "crateRenames": {
-          "async-trait": [
-            {
-              "version": "0.1.89",
-              "rename": "async_trait"
-            }
-          ],
           "pin-project-lite": [
             {
               "version": "0.2.17",
@@ -33163,7 +32954,7 @@
           ],
           "rmcp-macros": [
             {
-              "version": "0.15.0",
+              "version": "3.1.2",
               "rename": "rmcp_macros"
             }
           ],
@@ -33179,15 +32970,15 @@
         "preBuild": "export CARGO_CRATE_NAME=rmcp;"
       }
     },
-    "rmcp-macros-0.15.0": {
+    "rmcp-macros-3.1.2": {
       "name": "rmcp-macros",
-      "version": "0.15.0",
+      "version": "3.1.2",
       "edition": "2024",
       "source": {
         "kind": "registry",
-        "url": "https://static.crates.io/crates/rmcp-macros/rmcp-macros-0.15.0.crate",
-        "sha256": "0e88ad84b8b6237a934534a62b379a5be6388915663c0cc598ceb9b3292bbbfe",
-        "name_with_ext": "rmcp-macros-0.15.0.tar.gz"
+        "url": "https://static.crates.io/crates/rmcp-macros/rmcp-macros-3.1.2.crate",
+        "sha256": "6898e24cd16342b59bfa8a53c2c04b9cf62fc8a2cfea57b9c038b09984bfc521",
+        "name_with_ext": "rmcp-macros-3.1.2.tar.gz"
       },
       "features": [],
       "proc_macro": true,
@@ -33198,7 +32989,7 @@
       "runtime_dependencies": [
         {
           "name": "darling",
-          "package_key": "darling-0.23.0",
+          "package_key": "darling-0.24.0",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -33238,7 +33029,7 @@
         },
         {
           "name": "syn",
-          "package_key": "syn-2.0.117",
+          "package_key": "syn-3.0.3",
           "kind": "normal",
           "features": [
             "full"
@@ -33260,7 +33051,7 @@
       },
       "build_rust_crate_args": {
         "crateName": "rmcp-macros",
-        "version": "0.15.0",
+        "version": "3.1.2",
         "edition": "2024",
         "crateRenames": {
           "proc-macro2": [
@@ -41923,6 +41714,110 @@
         "preBuild": "export CARGO_CRATE_NAME=syn;"
       }
     },
+    "syn-3.0.3": {
+      "name": "syn",
+      "version": "3.0.3",
+      "edition": "2021",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/syn/syn-3.0.3.crate",
+        "sha256": "53e9bae58849f64dfa4f5d5ae372c8341f7305f82a3868709269343628b659a3",
+        "name_with_ext": "syn-3.0.3.tar.gz"
+      },
+      "features": [
+        "clone-impls",
+        "default",
+        "derive",
+        "extra-traits",
+        "full",
+        "parsing",
+        "printing",
+        "proc-macro"
+      ],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [
+        {
+          "name": "proc_macro2",
+          "package_key": "proc-macro2-1.0.106",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": false,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "quote",
+          "package_key": "quote-1.0.45",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": false,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "unicode_ident",
+          "package_key": "unicode-ident-1.0.24",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        }
+      ],
+      "build_dependencies": [],
+      "crate_renames": {
+        "proc-macro2": [
+          {
+            "version": "1.0.106",
+            "rename": "proc_macro2"
+          }
+        ],
+        "unicode-ident": [
+          {
+            "version": "1.0.24",
+            "rename": "unicode_ident"
+          }
+        ]
+      },
+      "build_rust_crate_args": {
+        "crateName": "syn",
+        "version": "3.0.3",
+        "edition": "2021",
+        "features": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro"
+        ],
+        "crateRenames": {
+          "proc-macro2": [
+            {
+              "version": "1.0.106",
+              "rename": "proc_macro2"
+            }
+          ],
+          "unicode-ident": [
+            {
+              "version": "1.0.24",
+              "rename": "unicode_ident"
+            }
+          ]
+        },
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=syn;"
+      }
+    },
     "sync_wrapper-1.0.2": {
       "name": "sync_wrapper",
       "version": "1.0.2",
@@ -44232,413 +44127,6 @@
         "preBuild": "export CARGO_CRATE_NAME=toml_write;"
       }
     },
-    "tonic-0.12.3": {
-      "name": "tonic",
-      "version": "0.12.3",
-      "edition": "2021",
-      "source": {
-        "kind": "registry",
-        "url": "https://static.crates.io/crates/tonic/tonic-0.12.3.crate",
-        "sha256": "877c5b330756d856ffcc4553ab34a5684481ade925ecc54bcd1bf02b1d0d4d52",
-        "name_with_ext": "tonic-0.12.3.tar.gz"
-      },
-      "features": [
-        "channel",
-        "codegen",
-        "prost",
-        "router",
-        "server",
-        "transport"
-      ],
-      "proc_macro": false,
-      "build_script": null,
-      "links": null,
-      "binaries": [],
-      "lib_target": null,
-      "runtime_dependencies": [
-        {
-          "name": "async_stream",
-          "package_key": "async-stream-0.3.6",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": true,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "async_trait",
-          "package_key": "async-trait-0.1.89",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": true,
-          "target": null,
-          "tree": "host"
-        },
-        {
-          "name": "axum",
-          "package_key": "axum-0.7.9",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": false,
-          "optional": true,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "base64",
-          "package_key": "base64-0.22.1",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "bytes",
-          "package_key": "bytes-1.11.1",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "h2",
-          "package_key": "h2-0.4.14",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": true,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "http",
-          "package_key": "http-1.4.1",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "http_body",
-          "package_key": "http-body-1.0.1",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "http_body_util",
-          "package_key": "http-body-util-0.1.3",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "hyper",
-          "package_key": "hyper-1.10.0",
-          "kind": "normal",
-          "features": [
-            "http1",
-            "http2"
-          ],
-          "uses_default_features": true,
-          "optional": true,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "hyper_timeout",
-          "package_key": "hyper-timeout-0.5.2",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": true,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "hyper_util",
-          "package_key": "hyper-util-0.1.20",
-          "kind": "normal",
-          "features": [
-            "tokio"
-          ],
-          "uses_default_features": true,
-          "optional": true,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "percent_encoding",
-          "package_key": "percent-encoding-2.3.2",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "pin_project",
-          "package_key": "pin-project-1.1.13",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "prost",
-          "package_key": "prost-0.13.5",
-          "kind": "normal",
-          "features": [
-            "std"
-          ],
-          "uses_default_features": false,
-          "optional": true,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "socket2",
-          "package_key": "socket2-0.5.10",
-          "kind": "normal",
-          "features": [
-            "all"
-          ],
-          "uses_default_features": true,
-          "optional": true,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "tokio",
-          "package_key": "tokio-1.52.3",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": false,
-          "optional": true,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "tokio_stream",
-          "package_key": "tokio-stream-0.1.18",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": false,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "tower",
-          "package_key": "tower-0.4.13",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": false,
-          "optional": true,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "tower_layer",
-          "package_key": "tower-layer-0.3.3",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "tower_service",
-          "package_key": "tower-service-0.3.3",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "tracing",
-          "package_key": "tracing-0.1.44",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        }
-      ],
-      "build_dependencies": [],
-      "crate_renames": {
-        "async-stream": [
-          {
-            "version": "0.3.6",
-            "rename": "async_stream"
-          }
-        ],
-        "async-trait": [
-          {
-            "version": "0.1.89",
-            "rename": "async_trait"
-          }
-        ],
-        "http-body": [
-          {
-            "version": "1.0.1",
-            "rename": "http_body"
-          }
-        ],
-        "http-body-util": [
-          {
-            "version": "0.1.3",
-            "rename": "http_body_util"
-          }
-        ],
-        "hyper-timeout": [
-          {
-            "version": "0.5.2",
-            "rename": "hyper_timeout"
-          }
-        ],
-        "hyper-util": [
-          {
-            "version": "0.1.20",
-            "rename": "hyper_util"
-          }
-        ],
-        "percent-encoding": [
-          {
-            "version": "2.3.2",
-            "rename": "percent_encoding"
-          }
-        ],
-        "pin-project": [
-          {
-            "version": "1.1.13",
-            "rename": "pin_project"
-          }
-        ],
-        "tokio-stream": [
-          {
-            "version": "0.1.18",
-            "rename": "tokio_stream"
-          }
-        ],
-        "tower-layer": [
-          {
-            "version": "0.3.3",
-            "rename": "tower_layer"
-          }
-        ],
-        "tower-service": [
-          {
-            "version": "0.3.3",
-            "rename": "tower_service"
-          }
-        ]
-      },
-      "build_rust_crate_args": {
-        "crateName": "tonic",
-        "version": "0.12.3",
-        "edition": "2021",
-        "features": [
-          "channel",
-          "codegen",
-          "prost",
-          "router",
-          "server",
-          "transport"
-        ],
-        "crateRenames": {
-          "async-stream": [
-            {
-              "version": "0.3.6",
-              "rename": "async_stream"
-            }
-          ],
-          "async-trait": [
-            {
-              "version": "0.1.89",
-              "rename": "async_trait"
-            }
-          ],
-          "http-body": [
-            {
-              "version": "1.0.1",
-              "rename": "http_body"
-            }
-          ],
-          "http-body-util": [
-            {
-              "version": "0.1.3",
-              "rename": "http_body_util"
-            }
-          ],
-          "hyper-timeout": [
-            {
-              "version": "0.5.2",
-              "rename": "hyper_timeout"
-            }
-          ],
-          "hyper-util": [
-            {
-              "version": "0.1.20",
-              "rename": "hyper_util"
-            }
-          ],
-          "percent-encoding": [
-            {
-              "version": "2.3.2",
-              "rename": "percent_encoding"
-            }
-          ],
-          "pin-project": [
-            {
-              "version": "1.1.13",
-              "rename": "pin_project"
-            }
-          ],
-          "tokio-stream": [
-            {
-              "version": "0.1.18",
-              "rename": "tokio_stream"
-            }
-          ],
-          "tower-layer": [
-            {
-              "version": "0.3.3",
-              "rename": "tower_layer"
-            }
-          ],
-          "tower-service": [
-            {
-              "version": "0.3.3",
-              "rename": "tower_service"
-            }
-          ]
-        },
-        "release": true,
-        "preBuild": "export CARGO_CRATE_NAME=tonic;"
-      }
-    },
     "tonic-0.13.1": {
       "name": "tonic",
       "version": "0.13.1",
@@ -45079,6 +44567,349 @@
         "preBuild": "export CARGO_CRATE_NAME=tonic;"
       }
     },
+    "tonic-0.14.6": {
+      "name": "tonic",
+      "version": "0.14.6",
+      "edition": "2024",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/tonic/tonic-0.14.6.crate",
+        "sha256": "ac2a5518c70fa84342385732db33fb3f44bc4cc748936eb5833d2df34d6445ef",
+        "name_with_ext": "tonic-0.14.6.tar.gz"
+      },
+      "features": [
+        "channel",
+        "codegen"
+      ],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [
+        {
+          "name": "async_trait",
+          "package_key": "async-trait-0.1.89",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": true,
+          "target": null,
+          "tree": "host"
+        },
+        {
+          "name": "base64",
+          "package_key": "base64-0.22.1",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "bytes",
+          "package_key": "bytes-1.11.1",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "http",
+          "package_key": "http-1.4.1",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "http_body",
+          "package_key": "http-body-1.0.1",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "http_body_util",
+          "package_key": "http-body-util-0.1.3",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "hyper",
+          "package_key": "hyper-1.10.0",
+          "kind": "normal",
+          "features": [
+            "http1",
+            "http2"
+          ],
+          "uses_default_features": true,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "hyper_timeout",
+          "package_key": "hyper-timeout-0.5.2",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "hyper_util",
+          "package_key": "hyper-util-0.1.20",
+          "kind": "normal",
+          "features": [
+            "tokio"
+          ],
+          "uses_default_features": true,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "percent_encoding",
+          "package_key": "percent-encoding-2.3.2",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "pin_project",
+          "package_key": "pin-project-1.1.13",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "sync_wrapper",
+          "package_key": "sync_wrapper-1.0.2",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "tokio",
+          "package_key": "tokio-1.52.3",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": false,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "tokio_stream",
+          "package_key": "tokio-stream-0.1.18",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": false,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "tower",
+          "package_key": "tower-0.5.3",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": false,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "tower_layer",
+          "package_key": "tower-layer-0.3.3",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "tower_service",
+          "package_key": "tower-service-0.3.3",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "tracing",
+          "package_key": "tracing-0.1.44",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        }
+      ],
+      "build_dependencies": [],
+      "crate_renames": {
+        "async-trait": [
+          {
+            "version": "0.1.89",
+            "rename": "async_trait"
+          }
+        ],
+        "http-body": [
+          {
+            "version": "1.0.1",
+            "rename": "http_body"
+          }
+        ],
+        "http-body-util": [
+          {
+            "version": "0.1.3",
+            "rename": "http_body_util"
+          }
+        ],
+        "hyper-timeout": [
+          {
+            "version": "0.5.2",
+            "rename": "hyper_timeout"
+          }
+        ],
+        "hyper-util": [
+          {
+            "version": "0.1.20",
+            "rename": "hyper_util"
+          }
+        ],
+        "percent-encoding": [
+          {
+            "version": "2.3.2",
+            "rename": "percent_encoding"
+          }
+        ],
+        "pin-project": [
+          {
+            "version": "1.1.13",
+            "rename": "pin_project"
+          }
+        ],
+        "tokio-stream": [
+          {
+            "version": "0.1.18",
+            "rename": "tokio_stream"
+          }
+        ],
+        "tower-layer": [
+          {
+            "version": "0.3.3",
+            "rename": "tower_layer"
+          }
+        ],
+        "tower-service": [
+          {
+            "version": "0.3.3",
+            "rename": "tower_service"
+          }
+        ]
+      },
+      "build_rust_crate_args": {
+        "crateName": "tonic",
+        "version": "0.14.6",
+        "edition": "2024",
+        "features": [
+          "channel",
+          "codegen"
+        ],
+        "crateRenames": {
+          "async-trait": [
+            {
+              "version": "0.1.89",
+              "rename": "async_trait"
+            }
+          ],
+          "http-body": [
+            {
+              "version": "1.0.1",
+              "rename": "http_body"
+            }
+          ],
+          "http-body-util": [
+            {
+              "version": "0.1.3",
+              "rename": "http_body_util"
+            }
+          ],
+          "hyper-timeout": [
+            {
+              "version": "0.5.2",
+              "rename": "hyper_timeout"
+            }
+          ],
+          "hyper-util": [
+            {
+              "version": "0.1.20",
+              "rename": "hyper_util"
+            }
+          ],
+          "percent-encoding": [
+            {
+              "version": "2.3.2",
+              "rename": "percent_encoding"
+            }
+          ],
+          "pin-project": [
+            {
+              "version": "1.1.13",
+              "rename": "pin_project"
+            }
+          ],
+          "tokio-stream": [
+            {
+              "version": "0.1.18",
+              "rename": "tokio_stream"
+            }
+          ],
+          "tower-layer": [
+            {
+              "version": "0.3.3",
+              "rename": "tower_layer"
+            }
+          ],
+          "tower-service": [
+            {
+              "version": "0.3.3",
+              "rename": "tower_service"
+            }
+          ]
+        },
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=tonic;"
+      }
+    },
     "tonic-build-0.13.1": {
       "name": "tonic-build",
       "version": "0.13.1",
@@ -45217,37 +45048,17 @@
         "preBuild": "export CARGO_CRATE_NAME=tonic_build;"
       }
     },
-    "tower-0.4.13": {
-      "name": "tower",
-      "version": "0.4.13",
-      "edition": "2018",
+    "tonic-prost-0.14.6": {
+      "name": "tonic-prost",
+      "version": "0.14.6",
+      "edition": "2024",
       "source": {
         "kind": "registry",
-        "url": "https://static.crates.io/crates/tower/tower-0.4.13.crate",
-        "sha256": "b8fa9be0de6cf49e536ce1851f987bd21a43b771b09473c3549a6c853db37c1c",
-        "name_with_ext": "tower-0.4.13.tar.gz"
+        "url": "https://static.crates.io/crates/tonic-prost/tonic-prost-0.14.6.crate",
+        "sha256": "50849f68853be452acf590cde0b146665b8d507b3b8af17261df47e02c209ea0",
+        "name_with_ext": "tonic-prost-0.14.6.tar.gz"
       },
-      "features": [
-        "__common",
-        "balance",
-        "buffer",
-        "discover",
-        "futures-core",
-        "futures-util",
-        "indexmap",
-        "limit",
-        "load",
-        "make",
-        "pin-project",
-        "pin-project-lite",
-        "rand",
-        "ready-cache",
-        "slab",
-        "tokio",
-        "tokio-util",
-        "tracing",
-        "util"
-      ],
+      "features": [],
       "proc_macro": false,
       "build_script": null,
       "links": null,
@@ -45255,104 +45066,8 @@
       "lib_target": null,
       "runtime_dependencies": [
         {
-          "name": "futures_core",
-          "package_key": "futures-core-0.3.32",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": true,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "futures_util",
-          "package_key": "futures-util-0.3.32",
-          "kind": "normal",
-          "features": [
-            "alloc"
-          ],
-          "uses_default_features": false,
-          "optional": true,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "indexmap",
-          "package_key": "indexmap-1.9.3",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": true,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "pin_project",
-          "package_key": "pin-project-1.1.13",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": true,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "pin_project_lite",
-          "package_key": "pin-project-lite-0.2.17",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": true,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "rand",
-          "package_key": "rand-0.8.6",
-          "kind": "normal",
-          "features": [
-            "small_rng"
-          ],
-          "uses_default_features": true,
-          "optional": true,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "slab",
-          "package_key": "slab-0.4.12",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": true,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "tokio",
-          "package_key": "tokio-1.52.3",
-          "kind": "normal",
-          "features": [
-            "sync"
-          ],
-          "uses_default_features": true,
-          "optional": true,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "tokio_util",
-          "package_key": "tokio-util-0.7.18",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": false,
-          "optional": true,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "tower_layer",
-          "package_key": "tower-layer-0.3.3",
+          "name": "bytes",
+          "package_key": "bytes-1.11.1",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -45361,8 +45076,8 @@
           "tree": "target"
         },
         {
-          "name": "tower_service",
-          "package_key": "tower-service-0.3.3",
+          "name": "prost",
+          "package_key": "prost-0.14.4",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -45371,134 +45086,97 @@
           "tree": "target"
         },
         {
-          "name": "tracing",
-          "package_key": "tracing-0.1.44",
+          "name": "tonic",
+          "package_key": "tonic-0.14.6",
           "kind": "normal",
-          "features": [
-            "std"
-          ],
+          "features": [],
           "uses_default_features": false,
-          "optional": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        }
+      ],
+      "build_dependencies": [],
+      "crate_renames": {},
+      "build_rust_crate_args": {
+        "crateName": "tonic-prost",
+        "version": "0.14.6",
+        "edition": "2024",
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=tonic_prost;"
+      }
+    },
+    "tonic-types-0.14.6": {
+      "name": "tonic-types",
+      "version": "0.14.6",
+      "edition": "2024",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/tonic-types/tonic-types-0.14.6.crate",
+        "sha256": "73ab1b02061f83d519bba3caa167f88f261ef05720ab8ebc954ade70de3348e8",
+        "name_with_ext": "tonic-types-0.14.6.tar.gz"
+      },
+      "features": [],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [
+        {
+          "name": "prost",
+          "package_key": "prost-0.14.4",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "prost_types",
+          "package_key": "prost-types-0.14.4",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "tonic",
+          "package_key": "tonic-0.14.6",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": false,
+          "optional": false,
           "target": null,
           "tree": "target"
         }
       ],
       "build_dependencies": [],
       "crate_renames": {
-        "futures-core": [
+        "prost-types": [
           {
-            "version": "0.3.32",
-            "rename": "futures_core"
-          }
-        ],
-        "futures-util": [
-          {
-            "version": "0.3.32",
-            "rename": "futures_util"
-          }
-        ],
-        "pin-project": [
-          {
-            "version": "1.1.13",
-            "rename": "pin_project"
-          }
-        ],
-        "pin-project-lite": [
-          {
-            "version": "0.2.17",
-            "rename": "pin_project_lite"
-          }
-        ],
-        "tokio-util": [
-          {
-            "version": "0.7.18",
-            "rename": "tokio_util"
-          }
-        ],
-        "tower-layer": [
-          {
-            "version": "0.3.3",
-            "rename": "tower_layer"
-          }
-        ],
-        "tower-service": [
-          {
-            "version": "0.3.3",
-            "rename": "tower_service"
+            "version": "0.14.4",
+            "rename": "prost_types"
           }
         ]
       },
       "build_rust_crate_args": {
-        "crateName": "tower",
-        "version": "0.4.13",
-        "edition": "2018",
-        "features": [
-          "__common",
-          "balance",
-          "buffer",
-          "discover",
-          "futures-core",
-          "futures-util",
-          "indexmap",
-          "limit",
-          "load",
-          "make",
-          "pin-project",
-          "pin-project-lite",
-          "rand",
-          "ready-cache",
-          "slab",
-          "tokio",
-          "tokio-util",
-          "tracing",
-          "util"
-        ],
+        "crateName": "tonic-types",
+        "version": "0.14.6",
+        "edition": "2024",
         "crateRenames": {
-          "futures-core": [
+          "prost-types": [
             {
-              "version": "0.3.32",
-              "rename": "futures_core"
-            }
-          ],
-          "futures-util": [
-            {
-              "version": "0.3.32",
-              "rename": "futures_util"
-            }
-          ],
-          "pin-project": [
-            {
-              "version": "1.1.13",
-              "rename": "pin_project"
-            }
-          ],
-          "pin-project-lite": [
-            {
-              "version": "0.2.17",
-              "rename": "pin_project_lite"
-            }
-          ],
-          "tokio-util": [
-            {
-              "version": "0.7.18",
-              "rename": "tokio_util"
-            }
-          ],
-          "tower-layer": [
-            {
-              "version": "0.3.3",
-              "rename": "tower_layer"
-            }
-          ],
-          "tower-service": [
-            {
-              "version": "0.3.3",
-              "rename": "tower_service"
+              "version": "0.14.4",
+              "rename": "prost_types"
             }
           ]
         },
         "release": true,
-        "preBuild": "export CARGO_CRATE_NAME=tower;"
+        "preBuild": "export CARGO_CRATE_NAME=tonic_types;"
       }
     },
     "tower-0.5.3": {
@@ -45521,6 +45199,7 @@
         "indexmap",
         "limit",
         "load",
+        "load-shed",
         "log",
         "make",
         "pin-project-lite",
@@ -45708,6 +45387,7 @@
           "indexmap",
           "limit",
           "load",
+          "load-shed",
           "log",
           "make",
           "pin-project-lite",
@@ -46394,15 +46074,15 @@
         "preBuild": "export CARGO_CRATE_NAME=tracing_log;"
       }
     },
-    "tracing-opentelemetry-0.27.0": {
+    "tracing-opentelemetry-0.33.0": {
       "name": "tracing-opentelemetry",
-      "version": "0.27.0",
+      "version": "0.33.0",
       "edition": "2021",
       "source": {
         "kind": "registry",
-        "url": "https://static.crates.io/crates/tracing-opentelemetry/tracing-opentelemetry-0.27.0.crate",
-        "sha256": "dc58af5d3f6c5811462cabb3289aec0093f7338e367e5a33d28c0433b3c7360b",
-        "name_with_ext": "tracing-opentelemetry-0.27.0.tar.gz"
+        "url": "https://static.crates.io/crates/tracing-opentelemetry/tracing-opentelemetry-0.33.0.crate",
+        "sha256": "adbc64cba7137545b8044cb1fe9814f7aacf3c6b5f9b45be8bb5db538befdb26",
+        "name_with_ext": "tracing-opentelemetry-0.33.0.tar.gz"
       },
       "features": [
         "default",
@@ -46417,30 +46097,8 @@
       "lib_target": null,
       "runtime_dependencies": [
         {
-          "name": "once_cell",
-          "package_key": "once_cell-1.21.4",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": true,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
           "name": "opentelemetry",
-          "package_key": "opentelemetry-0.26.0",
-          "kind": "normal",
-          "features": [
-            "trace"
-          ],
-          "uses_default_features": false,
-          "optional": false,
-          "target": null,
-          "tree": "target"
-        },
-        {
-          "name": "opentelemetry_sdk",
-          "package_key": "opentelemetry_sdk-0.26.0",
+          "package_key": "opentelemetry-0.32.0",
           "kind": "normal",
           "features": [
             "trace"
@@ -46529,7 +46187,7 @@
       },
       "build_rust_crate_args": {
         "crateName": "tracing-opentelemetry",
-        "version": "0.27.0",
+        "version": "0.33.0",
         "edition": "2021",
         "features": [
           "default",
@@ -50703,206 +50361,6 @@
           "prebuilt-nasm"
         ]
       },
-      "axum-0.7.9": {
-        "runtime_dependencies": [
-          {
-            "name": "async_trait",
-            "package_key": "async-trait-0.1.89",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "host"
-          },
-          {
-            "name": "axum_core",
-            "package_key": "axum-core-0.4.5",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "bytes",
-            "package_key": "bytes-1.11.1",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "futures_util",
-            "package_key": "futures-util-0.3.32",
-            "kind": "normal",
-            "features": [
-              "alloc"
-            ],
-            "uses_default_features": false,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "http",
-            "package_key": "http-1.4.1",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "http_body",
-            "package_key": "http-body-1.0.1",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "http_body_util",
-            "package_key": "http-body-util-0.1.3",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "itoa",
-            "package_key": "itoa-1.0.18",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "matchit",
-            "package_key": "matchit-0.7.3",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "memchr",
-            "package_key": "memchr-2.8.1",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "mime",
-            "package_key": "mime-0.3.17",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "percent_encoding",
-            "package_key": "percent-encoding-2.3.2",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "pin_project_lite",
-            "package_key": "pin-project-lite-0.2.17",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "rustversion",
-            "package_key": "rustversion-1.0.22",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "host"
-          },
-          {
-            "name": "serde",
-            "package_key": "serde-1.0.228",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "sync_wrapper",
-            "package_key": "sync_wrapper-1.0.2",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "tower",
-            "package_key": "tower-0.5.3",
-            "kind": "normal",
-            "features": [
-              "util"
-            ],
-            "uses_default_features": false,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "tower_layer",
-            "package_key": "tower-layer-0.3.3",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "tower_service",
-            "package_key": "tower-service-0.3.3",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          }
-        ],
-        "build_dependencies": [],
-        "features": []
-      },
       "axum-0.8.9": {
         "runtime_dependencies": [
           {
@@ -51224,134 +50682,6 @@
           "ws"
         ]
       },
-      "axum-core-0.4.5": {
-        "runtime_dependencies": [
-          {
-            "name": "async_trait",
-            "package_key": "async-trait-0.1.89",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "host"
-          },
-          {
-            "name": "bytes",
-            "package_key": "bytes-1.11.1",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "futures_util",
-            "package_key": "futures-util-0.3.32",
-            "kind": "normal",
-            "features": [
-              "alloc"
-            ],
-            "uses_default_features": false,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "http",
-            "package_key": "http-1.4.1",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "http_body",
-            "package_key": "http-body-1.0.1",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "http_body_util",
-            "package_key": "http-body-util-0.1.3",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "mime",
-            "package_key": "mime-0.3.17",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "pin_project_lite",
-            "package_key": "pin-project-lite-0.2.17",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "rustversion",
-            "package_key": "rustversion-1.0.22",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "host"
-          },
-          {
-            "name": "sync_wrapper",
-            "package_key": "sync_wrapper-1.0.2",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "tower_layer",
-            "package_key": "tower-layer-0.3.3",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "tower_service",
-            "package_key": "tower-service-0.3.3",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          }
-        ],
-        "build_dependencies": [],
-        "features": []
-      },
       "axum-core-0.5.6": {
         "runtime_dependencies": [
           {
@@ -51552,6 +50882,16 @@
         "features": [
           "alloc",
           "default",
+          "std"
+        ]
+      },
+      "base64-0.23.1": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": [
+          "alloc",
+          "default",
+          "simd-unsafe",
           "std"
         ]
       },
@@ -52692,6 +52032,35 @@
           "suggestions"
         ]
       },
+      "darling-0.24.0": {
+        "runtime_dependencies": [
+          {
+            "name": "darling_core",
+            "package_key": "darling_core-0.24.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "darling_macro",
+            "package_key": "darling_macro-0.24.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "host"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default",
+          "suggestions"
+        ]
+      },
       "darling_core-0.20.11": {
         "runtime_dependencies": [
           {
@@ -52826,6 +52195,68 @@
           "suggestions"
         ]
       },
+      "darling_core-0.24.0": {
+        "runtime_dependencies": [
+          {
+            "name": "ident_case",
+            "package_key": "ident_case-1.0.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "proc_macro2",
+            "package_key": "proc-macro2-1.0.106",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "quote",
+            "package_key": "quote-1.0.45",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "strsim",
+            "package_key": "strsim-0.11.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "syn",
+            "package_key": "syn-3.0.3",
+            "kind": "normal",
+            "features": [
+              "extra-traits",
+              "full"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "strsim",
+          "suggestions"
+        ]
+      },
       "darling_macro-0.20.11": {
         "runtime_dependencies": [
           {
@@ -52887,6 +52318,42 @@
           {
             "name": "syn",
             "package_key": "syn-2.0.117",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "darling_macro-0.24.0": {
+        "runtime_dependencies": [
+          {
+            "name": "darling_core",
+            "package_key": "darling_core-0.24.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "quote",
+            "package_key": "quote-1.0.45",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "syn",
+            "package_key": "syn-3.0.3",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -54880,13 +54347,6 @@
           "default"
         ]
       },
-      "hashbrown-0.12.3": {
-        "runtime_dependencies": [],
-        "build_dependencies": [],
-        "features": [
-          "raw"
-        ]
-      },
       "hashbrown-0.15.5": {
         "runtime_dependencies": [
           {
@@ -56392,35 +55852,6 @@
           "compiled_data"
         ]
       },
-      "indexmap-1.9.3": {
-        "runtime_dependencies": [
-          {
-            "name": "hashbrown",
-            "package_key": "hashbrown-0.12.3",
-            "kind": "normal",
-            "features": [
-              "raw"
-            ],
-            "uses_default_features": false,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          }
-        ],
-        "build_dependencies": [
-          {
-            "name": "autocfg",
-            "package_key": "autocfg-1.5.1",
-            "kind": "build",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "host"
-          }
-        ],
-        "features": []
-      },
       "indexmap-2.14.0": {
         "runtime_dependencies": [
           {
@@ -56789,6 +56220,34 @@
         "features": [
           "v1_31"
         ]
+      },
+      "kotae-0.1.1": {
+        "runtime_dependencies": [
+          {
+            "name": "serde",
+            "package_key": "serde-1.0.228",
+            "kind": "normal",
+            "features": [
+              "derive"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde_json",
+            "package_key": "serde_json-1.0.150",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
       },
       "kube-0.99.0": {
         "runtime_dependencies": [
@@ -60745,13 +60204,6 @@
         "build_dependencies": [],
         "features": []
       },
-      "matchit-0.7.3": {
-        "runtime_dependencies": [],
-        "build_dependencies": [],
-        "features": [
-          "default"
-        ]
-      },
       "matchit-0.8.4": {
         "runtime_dependencies": [],
         "build_dependencies": [],
@@ -61247,7 +60699,7 @@
           "std"
         ]
       },
-      "opentelemetry-0.26.0": {
+      "opentelemetry-0.32.0": {
         "runtime_dependencies": [
           {
             "name": "futures_core",
@@ -61255,7 +60707,7 @@
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
-            "optional": false,
+            "optional": true,
             "target": null,
             "tree": "target"
           },
@@ -61265,17 +60717,7 @@
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "once_cell",
-            "package_key": "once_cell-1.21.4",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
+            "optional": true,
             "target": null,
             "tree": "target"
           },
@@ -61291,11 +60733,21 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-1.0.69",
+            "package_key": "thiserror-2.0.18",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
-            "optional": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "tracing",
+            "package_key": "tracing-0.1.44",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": true,
             "target": null,
             "tree": "target"
           }
@@ -61303,34 +60755,20 @@
         "build_dependencies": [],
         "features": [
           "default",
+          "futures",
+          "futures-core",
+          "futures-sink",
+          "internal-logs",
           "logs",
           "metrics",
           "pin-project-lite",
-          "trace"
+          "thiserror",
+          "trace",
+          "tracing"
         ]
       },
-      "opentelemetry-otlp-0.26.0": {
+      "opentelemetry-otlp-0.32.0": {
         "runtime_dependencies": [
-          {
-            "name": "async_trait",
-            "package_key": "async-trait-0.1.89",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "host"
-          },
-          {
-            "name": "futures_core",
-            "package_key": "futures-core-0.3.32",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
           {
             "name": "http",
             "package_key": "http-1.4.1",
@@ -61345,7 +60783,7 @@
           },
           {
             "name": "opentelemetry",
-            "package_key": "opentelemetry-0.26.0",
+            "package_key": "opentelemetry-0.32.0",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -61355,7 +60793,7 @@
           },
           {
             "name": "opentelemetry_proto",
-            "package_key": "opentelemetry-proto-0.26.1",
+            "package_key": "opentelemetry-proto-0.32.0",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -61365,7 +60803,7 @@
           },
           {
             "name": "opentelemetry_sdk",
-            "package_key": "opentelemetry_sdk-0.26.0",
+            "package_key": "opentelemetry_sdk-0.32.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -61375,7 +60813,7 @@
           },
           {
             "name": "prost",
-            "package_key": "prost-0.13.5",
+            "package_key": "prost-0.14.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -61385,7 +60823,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-1.0.69",
+            "package_key": "thiserror-2.0.18",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -61408,10 +60846,20 @@
           },
           {
             "name": "tonic",
-            "package_key": "tonic-0.12.3",
+            "package_key": "tonic-0.14.6",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "tonic_types",
+            "package_key": "tonic-types-0.14.6",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
             "optional": true,
             "target": null,
             "tree": "target"
@@ -61419,22 +60867,20 @@
         ],
         "build_dependencies": [],
         "features": [
-          "default",
           "grpc-tonic",
           "http",
-          "logs",
-          "metrics",
           "prost",
           "tokio",
           "tonic",
+          "tonic-types",
           "trace"
         ]
       },
-      "opentelemetry-proto-0.26.1": {
+      "opentelemetry-proto-0.32.0": {
         "runtime_dependencies": [
           {
             "name": "opentelemetry",
-            "package_key": "opentelemetry-0.26.0",
+            "package_key": "opentelemetry-0.32.0",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -61444,7 +60890,7 @@
           },
           {
             "name": "opentelemetry_sdk",
-            "package_key": "opentelemetry_sdk-0.26.0",
+            "package_key": "opentelemetry_sdk-0.32.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -61454,7 +60900,7 @@
           },
           {
             "name": "prost",
-            "package_key": "prost-0.13.5",
+            "package_key": "prost-0.14.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -61464,13 +60910,22 @@
           },
           {
             "name": "tonic",
-            "package_key": "tonic-0.12.3",
+            "package_key": "tonic-0.14.6",
             "kind": "normal",
             "features": [
-              "codegen",
-              "prost"
+              "codegen"
             ],
             "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "tonic_prost",
+            "package_key": "tonic-prost-0.14.6",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
             "optional": true,
             "target": null,
             "tree": "target"
@@ -61480,25 +60935,14 @@
         "features": [
           "gen-tonic",
           "gen-tonic-messages",
-          "logs",
-          "metrics",
           "prost",
           "tonic",
+          "tonic-prost",
           "trace"
         ]
       },
-      "opentelemetry_sdk-0.26.0": {
+      "opentelemetry_sdk-0.32.1": {
         "runtime_dependencies": [
-          {
-            "name": "async_trait",
-            "package_key": "async-trait-0.1.89",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "host"
-          },
           {
             "name": "futures_channel",
             "package_key": "futures-channel-0.3.32",
@@ -61534,31 +60978,11 @@
             "tree": "target"
           },
           {
-            "name": "glob",
-            "package_key": "glob-0.3.3",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "once_cell",
-            "package_key": "once_cell-1.21.4",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
             "name": "opentelemetry",
-            "package_key": "opentelemetry-0.26.0",
+            "package_key": "opentelemetry-0.32.0",
             "kind": "normal",
             "features": [],
-            "uses_default_features": true,
+            "uses_default_features": false,
             "optional": false,
             "target": null,
             "tree": "target"
@@ -61575,12 +60999,14 @@
           },
           {
             "name": "rand",
-            "package_key": "rand-0.8.6",
+            "package_key": "rand-0.9.4",
             "kind": "normal",
             "features": [
+              "os_rng",
               "small_rng",
               "std",
-              "std_rng"
+              "std_rng",
+              "thread_rng"
             ],
             "uses_default_features": false,
             "optional": true,
@@ -61588,18 +61014,8 @@
             "tree": "target"
           },
           {
-            "name": "serde_json",
-            "package_key": "serde_json-1.0.150",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
             "name": "thiserror",
-            "package_key": "thiserror-1.0.69",
+            "package_key": "thiserror-2.0.18",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -61611,10 +61027,7 @@
             "name": "tokio",
             "package_key": "tokio-1.52.3",
             "kind": "normal",
-            "features": [
-              "rt",
-              "time"
-            ],
+            "features": [],
             "uses_default_features": false,
             "optional": true,
             "target": null,
@@ -61633,15 +61046,14 @@
         ],
         "build_dependencies": [],
         "features": [
-          "async-trait",
           "default",
-          "glob",
+          "experimental_async_runtime",
+          "internal-logs",
           "logs",
           "metrics",
           "percent-encoding",
           "rand",
           "rt-tokio",
-          "serde_json",
           "tokio",
           "tokio-stream",
           "trace"
@@ -62390,7 +61802,7 @@
           },
           {
             "name": "opentelemetry",
-            "package_key": "opentelemetry-0.26.0",
+            "package_key": "opentelemetry-0.32.0",
             "kind": "normal",
             "features": [
               "trace"
@@ -62402,19 +61814,20 @@
           },
           {
             "name": "opentelemetry_otlp",
-            "package_key": "opentelemetry-otlp-0.26.0",
+            "package_key": "opentelemetry-otlp-0.32.0",
             "kind": "normal",
             "features": [
-              "tonic"
+              "grpc-tonic",
+              "trace"
             ],
-            "uses_default_features": true,
+            "uses_default_features": false,
             "optional": false,
             "target": null,
             "tree": "target"
           },
           {
             "name": "opentelemetry_sdk",
-            "package_key": "opentelemetry_sdk-0.26.0",
+            "package_key": "opentelemetry_sdk-0.32.1",
             "kind": "normal",
             "features": [
               "rt-tokio"
@@ -62726,7 +62139,7 @@
           },
           {
             "name": "tracing_opentelemetry",
-            "package_key": "tracing-opentelemetry-0.27.0",
+            "package_key": "tracing-opentelemetry-0.33.0",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -62849,6 +62262,16 @@
             "tree": "target"
           },
           {
+            "name": "kotae",
+            "package_key": "kotae-0.1.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
             "name": "kube",
             "package_key": "kube-0.99.0",
             "kind": "normal",
@@ -62864,7 +62287,7 @@
           },
           {
             "name": "rmcp",
-            "package_key": "rmcp-0.15.0",
+            "package_key": "rmcp-3.1.2",
             "kind": "normal",
             "features": [
               "server",
@@ -64188,6 +63611,36 @@
           "std"
         ]
       },
+      "prost-0.14.4": {
+        "runtime_dependencies": [
+          {
+            "name": "bytes",
+            "package_key": "bytes-1.11.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "prost_derive",
+            "package_key": "prost-derive-0.14.4",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "host"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default",
+          "derive",
+          "std"
+        ]
+      },
       "prost-build-0.13.5": {
         "runtime_dependencies": [
           {
@@ -64382,6 +63835,64 @@
         "build_dependencies": [],
         "features": []
       },
+      "prost-derive-0.14.4": {
+        "runtime_dependencies": [
+          {
+            "name": "anyhow",
+            "package_key": "anyhow-1.0.103",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "itertools",
+            "package_key": "itertools-0.13.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "proc_macro2",
+            "package_key": "proc-macro2-1.0.106",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "quote",
+            "package_key": "quote-1.0.45",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "syn",
+            "package_key": "syn-2.0.117",
+            "kind": "normal",
+            "features": [
+              "extra-traits"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
       "prost-types-0.13.5": {
         "runtime_dependencies": [
           {
@@ -64390,6 +63901,27 @@
             "kind": "normal",
             "features": [
               "prost-derive"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default",
+          "std"
+        ]
+      },
+      "prost-types-0.14.4": {
+        "runtime_dependencies": [
+          {
+            "name": "prost",
+            "package_key": "prost-0.14.4",
+            "kind": "normal",
+            "features": [
+              "derive"
             ],
             "uses_default_features": false,
             "optional": false,
@@ -64911,7 +64443,6 @@
           "getrandom",
           "libc",
           "rand_chacha",
-          "small_rng",
           "std",
           "std_rng"
         ]
@@ -66018,21 +65549,11 @@
           "rustls"
         ]
       },
-      "rmcp-0.15.0": {
+      "rmcp-3.1.2": {
         "runtime_dependencies": [
           {
-            "name": "async_trait",
-            "package_key": "async-trait-0.1.89",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "host"
-          },
-          {
             "name": "base64",
-            "package_key": "base64-0.22.1",
+            "package_key": "base64-0.23.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -66060,9 +65581,10 @@
             "package_key": "chrono-0.4.44",
             "kind": "normal",
             "features": [
+              "now",
               "serde"
             ],
-            "uses_default_features": true,
+            "uses_default_features": false,
             "optional": false,
             "target": "cfg(not(all(target_family = \"wasm\", target_os = \"unknown\")))",
             "tree": "target"
@@ -66099,7 +65621,7 @@
           },
           {
             "name": "rmcp_macros",
-            "package_key": "rmcp-macros-0.15.0",
+            "package_key": "rmcp-macros-3.1.2",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -66186,6 +65708,18 @@
             "optional": false,
             "target": null,
             "tree": "target"
+          },
+          {
+            "name": "uuid",
+            "package_key": "uuid-1.23.1",
+            "kind": "normal",
+            "features": [
+              "v4"
+            ],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
           }
         ],
         "build_dependencies": [],
@@ -66193,16 +65727,18 @@
           "base64",
           "default",
           "macros",
+          "schemars",
           "server",
           "transport-async-rw",
-          "transport-io"
+          "transport-io",
+          "uuid"
         ]
       },
-      "rmcp-macros-0.15.0": {
+      "rmcp-macros-3.1.2": {
         "runtime_dependencies": [
           {
             "name": "darling",
-            "package_key": "darling-0.23.0",
+            "package_key": "darling-0.24.0",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -66242,7 +65778,7 @@
           },
           {
             "name": "syn",
-            "package_key": "syn-2.0.117",
+            "package_key": "syn-3.0.3",
             "kind": "normal",
             "features": [
               "full"
@@ -70475,6 +70011,51 @@
           "visit-mut"
         ]
       },
+      "syn-3.0.3": {
+        "runtime_dependencies": [
+          {
+            "name": "proc_macro2",
+            "package_key": "proc-macro2-1.0.106",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "quote",
+            "package_key": "quote-1.0.45",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "unicode_ident",
+            "package_key": "unicode-ident-1.0.24",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro"
+        ]
+      },
       "sync_wrapper-1.0.2": {
         "runtime_dependencies": [
           {
@@ -71630,248 +71211,6 @@
           "std"
         ]
       },
-      "tonic-0.12.3": {
-        "runtime_dependencies": [
-          {
-            "name": "async_stream",
-            "package_key": "async-stream-0.3.6",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "async_trait",
-            "package_key": "async-trait-0.1.89",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "host"
-          },
-          {
-            "name": "axum",
-            "package_key": "axum-0.7.9",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": false,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "base64",
-            "package_key": "base64-0.22.1",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "bytes",
-            "package_key": "bytes-1.11.1",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "h2",
-            "package_key": "h2-0.4.14",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "http",
-            "package_key": "http-1.4.1",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "http_body",
-            "package_key": "http-body-1.0.1",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "http_body_util",
-            "package_key": "http-body-util-0.1.3",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "hyper",
-            "package_key": "hyper-1.10.0",
-            "kind": "normal",
-            "features": [
-              "http1",
-              "http2"
-            ],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "hyper_timeout",
-            "package_key": "hyper-timeout-0.5.2",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "hyper_util",
-            "package_key": "hyper-util-0.1.20",
-            "kind": "normal",
-            "features": [
-              "tokio"
-            ],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "percent_encoding",
-            "package_key": "percent-encoding-2.3.2",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "pin_project",
-            "package_key": "pin-project-1.1.13",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "prost",
-            "package_key": "prost-0.13.5",
-            "kind": "normal",
-            "features": [
-              "std"
-            ],
-            "uses_default_features": false,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "socket2",
-            "package_key": "socket2-0.5.10",
-            "kind": "normal",
-            "features": [
-              "all"
-            ],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "tokio",
-            "package_key": "tokio-1.52.3",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": false,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "tokio_stream",
-            "package_key": "tokio-stream-0.1.18",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": false,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "tower",
-            "package_key": "tower-0.4.13",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": false,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "tower_layer",
-            "package_key": "tower-layer-0.3.3",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "tower_service",
-            "package_key": "tower-service-0.3.3",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "tracing",
-            "package_key": "tracing-0.1.44",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          }
-        ],
-        "build_dependencies": [],
-        "features": [
-          "channel",
-          "codegen",
-          "prost",
-          "router",
-          "server",
-          "transport"
-        ]
-      },
       "tonic-0.13.1": {
         "runtime_dependencies": [
           {
@@ -72131,6 +71470,200 @@
           "transport"
         ]
       },
+      "tonic-0.14.6": {
+        "runtime_dependencies": [
+          {
+            "name": "async_trait",
+            "package_key": "async-trait-0.1.89",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "host"
+          },
+          {
+            "name": "base64",
+            "package_key": "base64-0.22.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "bytes",
+            "package_key": "bytes-1.11.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "http",
+            "package_key": "http-1.4.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "http_body",
+            "package_key": "http-body-1.0.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "http_body_util",
+            "package_key": "http-body-util-0.1.3",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "hyper",
+            "package_key": "hyper-1.10.0",
+            "kind": "normal",
+            "features": [
+              "http1",
+              "http2"
+            ],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "hyper_timeout",
+            "package_key": "hyper-timeout-0.5.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "hyper_util",
+            "package_key": "hyper-util-0.1.20",
+            "kind": "normal",
+            "features": [
+              "tokio"
+            ],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "percent_encoding",
+            "package_key": "percent-encoding-2.3.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "pin_project",
+            "package_key": "pin-project-1.1.13",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "sync_wrapper",
+            "package_key": "sync_wrapper-1.0.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "tokio",
+            "package_key": "tokio-1.52.3",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "tokio_stream",
+            "package_key": "tokio-stream-0.1.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "tower",
+            "package_key": "tower-0.5.3",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "tower_layer",
+            "package_key": "tower-layer-0.3.3",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "tower_service",
+            "package_key": "tower-service-0.3.3",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "tracing",
+            "package_key": "tracing-0.1.44",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "channel",
+          "codegen"
+        ]
+      },
       "tonic-build-0.13.1": {
         "runtime_dependencies": [
           {
@@ -72202,107 +71735,11 @@
           "transport"
         ]
       },
-      "tower-0.4.13": {
+      "tonic-prost-0.14.6": {
         "runtime_dependencies": [
           {
-            "name": "futures_core",
-            "package_key": "futures-core-0.3.32",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "futures_util",
-            "package_key": "futures-util-0.3.32",
-            "kind": "normal",
-            "features": [
-              "alloc"
-            ],
-            "uses_default_features": false,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "indexmap",
-            "package_key": "indexmap-1.9.3",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "pin_project",
-            "package_key": "pin-project-1.1.13",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "pin_project_lite",
-            "package_key": "pin-project-lite-0.2.17",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "rand",
-            "package_key": "rand-0.8.6",
-            "kind": "normal",
-            "features": [
-              "small_rng"
-            ],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "slab",
-            "package_key": "slab-0.4.12",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "tokio",
-            "package_key": "tokio-1.52.3",
-            "kind": "normal",
-            "features": [
-              "sync"
-            ],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "tokio_util",
-            "package_key": "tokio-util-0.7.18",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": false,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "tower_layer",
-            "package_key": "tower-layer-0.3.3",
+            "name": "bytes",
+            "package_key": "bytes-1.11.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -72311,8 +71748,8 @@
             "tree": "target"
           },
           {
-            "name": "tower_service",
-            "package_key": "tower-service-0.3.3",
+            "name": "prost",
+            "package_key": "prost-0.14.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -72321,40 +71758,54 @@
             "tree": "target"
           },
           {
-            "name": "tracing",
-            "package_key": "tracing-0.1.44",
+            "name": "tonic",
+            "package_key": "tonic-0.14.6",
             "kind": "normal",
-            "features": [
-              "std"
-            ],
+            "features": [],
             "uses_default_features": false,
-            "optional": true,
+            "optional": false,
             "target": null,
             "tree": "target"
           }
         ],
         "build_dependencies": [],
-        "features": [
-          "__common",
-          "balance",
-          "buffer",
-          "discover",
-          "futures-core",
-          "futures-util",
-          "indexmap",
-          "limit",
-          "load",
-          "make",
-          "pin-project",
-          "pin-project-lite",
-          "rand",
-          "ready-cache",
-          "slab",
-          "tokio",
-          "tokio-util",
-          "tracing",
-          "util"
-        ]
+        "features": []
+      },
+      "tonic-types-0.14.6": {
+        "runtime_dependencies": [
+          {
+            "name": "prost",
+            "package_key": "prost-0.14.4",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "prost_types",
+            "package_key": "prost-types-0.14.4",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "tonic",
+            "package_key": "tonic-0.14.6",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
       },
       "tower-0.5.3": {
         "runtime_dependencies": [
@@ -72484,6 +71935,7 @@
           "indexmap",
           "limit",
           "load",
+          "load-shed",
           "log",
           "make",
           "pin-project-lite",
@@ -72812,33 +72264,11 @@
           "std"
         ]
       },
-      "tracing-opentelemetry-0.27.0": {
+      "tracing-opentelemetry-0.33.0": {
         "runtime_dependencies": [
           {
-            "name": "once_cell",
-            "package_key": "once_cell-1.21.4",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
             "name": "opentelemetry",
-            "package_key": "opentelemetry-0.26.0",
-            "kind": "normal",
-            "features": [
-              "trace"
-            ],
-            "uses_default_features": false,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "opentelemetry_sdk",
-            "package_key": "opentelemetry_sdk-0.26.0",
+            "package_key": "opentelemetry-0.32.0",
             "kind": "normal",
             "features": [
               "trace"
@@ -79308,12 +78738,12 @@
       }
     }
   },
-  "cargo_lock_sha256": "03703fcf27aa9f9c2ad982ea90d316982bba7d59930287fb27afd634142612f0",
+  "cargo_lock_sha256": "5c09b815432e4a4aa22f9c6a72e5f99f7b10b365e12365cd5f20570107a3bc0f",
   "manifest_sha256": {
     "Cargo.toml": "0b30df079faead095367aac7b6d647a7114e4fab08bf9fff393af7db18a0ec72",
     "pangea-cli/Cargo.toml": "f3f970097f7914011f23728fe42e3aed3085ec83bacdea24f37cdc9c19cfe965",
-    "pangea-operator-mcp/Cargo.toml": "a1d5c3e03ec8073e6aabead01bed1962a05d23c93c43cda972539f2a7f46caf7",
-    "pangea-operator/Cargo.toml": "edf8c71ae84a64bb1316f561174ef1a204152ebb868f762b9b4facdfd5b6ade0",
+    "pangea-operator-mcp/Cargo.toml": "72a01f5815a03b1c418697a985ede13816d4f5aec385332ec436e2155713dea8",
+    "pangea-operator/Cargo.toml": "ffaf1c70750a3ead001b79804f0bd467fa9c6481de2b857ac9729a26f4c52207",
     "pangea-ruby-eval/Cargo.toml": "a65712c95619fda84a8cebaa9f887919acf4e71f4125f085797dfaf478eb380a",
     "pangea-types/Cargo.toml": "bba5d0bee1d04b3ddaefa9f7234a1e5a11e3388dd89e62a3deb4a91b66cd4abc"
   }

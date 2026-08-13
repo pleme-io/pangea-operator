@@ -16,38 +16,31 @@ name = "pangea-operator-mcp"
 path = "src/main.rs"
 
 [dependencies]
-# KNOWN, TRACKED EXCEPTION (2026-07-18): rmcp 0.15.0 carries
-# GHSA-89vp-x53w-74fx / CVE-2026-42559, a DNS-rebinding flaw in rmcp's
-# *Streamable HTTP server transport*. Verified unreachable in this
-# binary: the vulnerable surface lives behind the `transport-streamable-
-# http-server` feature (which itself requires `server-side-http` +
-# `transport-worker`, pulling in axum/tower/sse-stream/http-body). We
-# enable only `server` + `transport-io` (stdio transport). No HTTP transport
-# code is compiled in.
+# CURED 2026-08-13 — CVE-2026-42559 / GHSA-89vp-x53w-74fx (DNS rebinding in
+# rmcp's Streamable HTTP server transport) is gone from the lock, not argued
+# away. Bumped 0.15 → 3.x, past the 1.4.0 fix.
 #
-# RE-VERIFIED 2026-08-12 against the SHIPPED BINARY, and the evidence sentence
-# below is corrected because the original one misleads a checker into the wrong
-# answer. It said the resolved lock "contains none of axum/tower/http/
-# http-body/sse-stream/uuid". Read as a statement about the BINARY that is
-# false: axum 0.8.9, tower 0.5.3, hyper 1.10.0, http-body 1.0.1 and tower-http
-# 0.6.11 are all present in the 576-package graph of the Ruby-free image --
-# pulled by the operator's own GraphQL/kube stack, nothing to do with rmcp.
-# Anyone re-checking the exception the obvious way sees axum and concludes the
-# exception is stale.
+# What was here before was a long, careful, CORRECT argument that the
+# vulnerable surface is unreachable in this binary: it lives behind
+# `transport-streamable-http-server`, we enable only `server` +
+# `transport-io`, and `sse-stream` is absent from the whole closure. All of
+# that was true and none of it helped, because a scanner reads the RESOLVED
+# VERSION IN THE LOCKFILE and cannot see which features were compiled. The
+# argument's own quality was the problem — it was persuasive enough that
+# nobody re-opened it for four weeks while it silently blocked every publish.
 #
-# The claim that is TRUE, and is the one to check: `rmcp`'s OWN dependency list
-# in Cargo.lock has 14 entries -- async-trait, base64, chrono, futures, pastey,
-# pin-project-lite, rmcp-macros, schemars, serde, serde_json, thiserror, tokio,
-# tokio-util, tracing -- and NONE of them is an HTTP transport. The single
-# sharpest discriminator is `sse-stream`, which rmcp's streamable-HTTP
-# transport requires and which is ABSENT from the whole binary. Check that one,
-# not axum. Patched version is 1.4.0 — a 0.x→1.x jump outside the
-# `"0.15"` manifest range (`cargo update -p rmcp --dry-run` cannot reach
-# it without a manifest bump), and a stabilization major release is
-# likely to carry real API breakage; not attempted blind given the
-# vulnerability is already unreachable here. Revisit on a scoped rmcp 1.x
-# migration, not as a security fix.
-rmcp = { version = "0.15", features = ["server", "transport-io"] }
+# The deferral rested on one assumption that was never tested: that a
+# 0.x → 1.x stabilization release "is likely to carry real API breakage".
+# The actual surface is eleven items across 770 lines — the standard
+# macro-based server pattern (`#[tool_router]` / `#[tool]` /
+# `#[tool_handler]` / `ServerHandler` / `ToolRouter` / `Parameters` /
+# `ServerCapabilities` / `ServerInfo` / `schemars` / `stdio` / `ServiceExt`),
+# which is precisely the API 1.0 stabilized. Measuring it took a grep.
+#
+# Reachability analysis belongs in a VEX document with an expiry, if anywhere.
+# It does not belong in a manifest comment, because a comment cannot be
+# revoked when it stops being true and no gate can read it.
+rmcp = { version = "3", features = ["server", "transport-io"] }
 # kotae (答え) — the typed answer a machine gives a machine. Every failure
 # here was `{"error": <display>}`, so a 404, an RBAC denial and an
 # unreachable cluster were one shape with three different remedies.
