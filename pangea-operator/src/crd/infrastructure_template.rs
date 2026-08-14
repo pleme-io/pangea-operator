@@ -21,8 +21,28 @@ use strum::{Display, EnumString};
 /// Every field is REQUIRED and none has a default, so an empty or partial
 /// authorization does not deserialize — a destroy cannot be authorized by
 /// accident, only by writing all four facts down.
+// NO `deny_unknown_fields`, and its absence is load-bearing rather than an
+// oversight — it was here, and it made this CRD **unapplyable to any cluster**:
+//
+//   The CustomResourceDefinition "infrastructuretemplates.pangea.pleme.io" is
+//   invalid: spec.validation.openAPIV3Schema.properties[spec]
+//   .properties[destroyAuthorization].additionalProperties: Forbidden:
+//   additionalProperties and properties are mutual exclusive
+//
+// schemars renders `deny_unknown_fields` as `additionalProperties: false`, and
+// the apiserver rejects that beside `properties`. 14 of 15 CRDs applied; this
+// one did not. Found by applying the bundle to a real cluster — `cargo test`
+// generates the yaml but never asks Kubernetes to accept it, so the whole
+// destroy break-glass shipped in a state where no cluster could install it.
+//
+// Nothing is lost by removing it. A CRD structural schema PRUNES unknown
+// fields at the apiserver before the object is ever stored, so the closure
+// this attribute was reaching for is already enforced one layer up — and
+// enforced harder, since pruning happens before the operator deserializes at
+// all. The four fields below are still each REQUIRED (no Option, no default),
+// which is what actually makes a destroy impossible to authorize by accident.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct DestroyAuthorization {
     /// Who is accountable. A human identity, not a service account: the point
     /// is that a person can be asked afterwards why this happened.

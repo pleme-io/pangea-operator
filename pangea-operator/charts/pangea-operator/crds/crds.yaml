@@ -144,7 +144,6 @@ spec:
                 nullable: true
                 type: string
               destroyAuthorization:
-                additionalProperties: false
                 description: |-
                   The break-glass half of a destroy. Absent means no destroy, ever.
 
