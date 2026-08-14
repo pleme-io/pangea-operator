@@ -1709,6 +1709,22 @@
         "type": "github"
       }
     },
+    "lava-architectures": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1786510786,
+        "narHash": "sha256-jOiM1tqG/fgMOD++1SjhhgULbkS/Dm/yex65EgQm95w=",
+        "owner": "pleme-io",
+        "repo": "lava-architectures",
+        "rev": "f9259c9c7d6762b9d8842e7b7eafdfa88e7fbb10",
+        "type": "github"
+      },
+      "original": {
+        "owner": "pleme-io",
+        "repo": "lava-architectures",
+        "type": "github"
+      }
+    },
     "nix": {
       "inputs": {
         "flake-compat": [
@@ -2563,6 +2579,7 @@
     },
     "root": {
       "inputs": {
+        "lava-architectures": "lava-architectures",
         "nixpkgs": [
           "substrate",
           "nixpkgs"

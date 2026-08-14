@@ -19,6 +19,28 @@
     # NOT `inputs.nixpkgs.follows` — the whole point is a different rev.
     nixpkgs-security.url = "github:NixOS/nixpkgs/nixos-unstable";
 
+    # The lava dashboard catalogue — the `.tlisp` architectures the Ruby-free
+    # image resolves `spec.source.architecture.name` against.
+    #
+    # Source-only: nothing here is built, the five `dashboards/*.tlisp` files
+    # are copied into the image at LAVA_DASHBOARD_CATALOG and evaluated at
+    # reconcile time by the lava backend.
+    #
+    # WITHOUT THIS INPUT the noruby image set LAVA_DASHBOARD_CATALOG to a path
+    # nothing populated, so every typed-architecture dashboard failed with
+    #
+    #   architecture "workload-overview" not found in the image catalogue at
+    #   /usr/share/lava/dashboards: No such file or directory (os error 2)
+    #
+    # Measured 2026-08-13, the first time the image was ever started. The env
+    # var had been correct since the variant was authored; the contents were
+    # never wired, and a build that only proves the image BUILDS cannot notice
+    # that the directory it points at is empty.
+    lava-architectures = {
+      url = "github:pleme-io/lava-architectures";
+      flake = false;
+    };
+
     # Path-gem source-only inputs for the embedded-ruby operator image —
     # the same 13 typed primitive providers + composers the (now-sunset)
     # pangea-compiler sidecar bundled, RUBYLIB-mounted into the operator's
@@ -378,6 +400,31 @@
           env = [
             "PANGEA_COMPILER_BACKEND=lava"
             "LAVA_DASHBOARD_CATALOG=/usr/share/lava/dashboards"
+          ];
+          # The catalogue those two env vars are useless without. Copied from
+          # the lava-architectures input rather than vendored, so adding a
+          # dashboard is a lock bump and not an edit here.
+          #
+          # The `find … -exec install` shape (rather than `cp -r`) is
+          # deliberate: it fails loudly if `dashboards/` is missing or empty
+          # upstream, where a `cp -r` of an absent directory would produce an
+          # empty target and reproduce exactly the bug this closes — an env
+          # var pointing at nothing, discovered only when a CR is applied
+          # months later.
+          extraContents = _: [
+            (imagePkgs.runCommand "lava-dashboard-catalog" { } ''
+              mkdir -p $out/usr/share/lava/dashboards
+              n=$(find ${inputs.lava-architectures}/dashboards -name '*.tlisp' | wc -l)
+              if [ "$n" -eq 0 ]; then
+                echo "lava-architectures ships no dashboards/*.tlisp — the" \
+                     "catalogue would be empty and every architecture CR" \
+                     "would fail at reconcile" >&2
+                exit 1
+              fi
+              find ${inputs.lava-architectures}/dashboards -name '*.tlisp' \
+                -exec install -Dm444 {} $out/usr/share/lava/dashboards/ \;
+              echo "lava catalogue: $n architectures"
+            '')
           ];
           exposedPorts = {
             "8080/tcp" = {};
