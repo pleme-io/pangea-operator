@@ -310,7 +310,7 @@ pub struct FlowStepStatus {
     /// Enables {{ steps.X.state.resource_type.resource_name.attribute }} references.
     /// Stored as an opaque JSON object.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(schema_with = "opaque_json_schema")]
+    #[schemars(schema_with = "super::opaque_json_schema")]
     pub state: Option<serde_json::Value>,
 
     /// Whether workspace has been pre-initialized (warm-up).
@@ -318,13 +318,13 @@ pub struct FlowStepStatus {
     pub warmed_up: bool,
 }
 
-/// Generate an opaque JSON object schema (type: object with no properties).
-fn opaque_json_schema(_gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
-    schemars::schema::Schema::Object(schemars::schema::SchemaObject {
-        instance_type: Some(schemars::schema::InstanceType::Object.into()),
-        ..Default::default()
-    })
-}
+// The local `opaque_json_schema` copy that used to live here is DELETED, not
+// fixed. It was byte-identical to `super::opaque_json_schema` and carried the
+// same defect — `type: object` with no `x-kubernetes-preserve-unknown-fields`,
+// which prunes every field inside it. Two copies meant fixing the shared one
+// would have left this CRD still silently emptying its opaque field, which is
+// precisely the reason the fleet's rule is to solve a thing once in one place.
+// The `#[schemars(schema_with = ...)]` above now points at the shared helper.
 
 impl InfrastructureFlow {
     /// Get the template name for a flow step.

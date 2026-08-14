@@ -2020,6 +2020,7 @@ spec:
                     state:
                       description: Full terraform state snapshot (from `tofu show -json`). Enables {{ steps.X.state.resource_type.resource_name.attribute }} references. Stored as an opaque JSON object.
                       type: object
+                      x-kubernetes-preserve-unknown-fields: true
                     templateName:
                       description: Name of the managed InfrastructureTemplate.
                       nullable: true
@@ -2321,6 +2322,7 @@ spec:
                     inline:
                       description: Inline JSON content for the var file.
                       type: object
+                      x-kubernetes-preserve-unknown-fields: true
                     secretRef:
                       description: Reference to a Secret key containing the var file.
                       nullable: true
@@ -2663,6 +2665,7 @@ spec:
                     config:
                       description: Type-specific configuration (JSON value interpreted per suite_type).
                       type: object
+                      x-kubernetes-preserve-unknown-fields: true
                     dependsOn:
                       description: Suite names that must complete successfully before this suite runs.
                       items:
@@ -3412,6 +3415,7 @@ spec:
                         config:
                           description: Type-specific configuration (JSON value interpreted per suite_type).
                           type: object
+                          x-kubernetes-preserve-unknown-fields: true
                         dependsOn:
                           description: Suite names that must complete successfully before this suite runs.
                           items:
@@ -4137,6 +4141,7 @@ spec:
                     config:
                       description: Additional runner configuration.
                       type: object
+                      x-kubernetes-preserve-unknown-fields: true
                     controlFamilies:
                       description: NIST 800-53 control family mappings for this suite. Used for compliance reporting and OSCAL export.
                       items:
@@ -4675,6 +4680,7 @@ spec:
                       params:
                         description: Parameters bound into the architecture.
                         type: object
+                        x-kubernetes-preserve-unknown-fields: true
                     required:
                     - name
                     type: object

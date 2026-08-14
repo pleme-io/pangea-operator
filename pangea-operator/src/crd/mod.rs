@@ -141,14 +141,53 @@ pub use image_pipeline::{
 
 use kube::CustomResourceExt;
 
-/// Generate an opaque JSON object schema (type: object with no properties).
-/// Used for `serde_json::Value` fields that hold an arbitrary JSON OBJECT
-/// (config / inline tf.json / tofu state — all object-shaped).
+/// Generate an opaque JSON object schema: `type: object` **plus**
+/// `x-kubernetes-preserve-unknown-fields`. Used for `serde_json::Value` fields
+/// that hold an arbitrary JSON OBJECT (config / inline tf.json / tofu state /
+/// architecture params — all object-shaped).
+///
+/// # The extension is the whole function, and omitting it silently emptied
+/// every field that used this
+///
+/// A CRD schema is STRUCTURAL. `type: object` with no `properties` and no
+/// `x-kubernetes-preserve-unknown-fields` does not mean "any object" — it
+/// means an object with **no permitted fields**, and the apiserver PRUNES
+/// everything inside it before the object is stored. No error, no warning; the
+/// field simply arrives at the controller as `{}`.
+///
+/// Measured 2026-08-13 on a throwaway cluster: applying a `PangeaDashboard`
+/// with `spec.source.architecture.params` carrying the six parameters
+/// `lareira-camelot-observe` actually emits produced
+///
+///   strict decoding error: unknown field "spec.source.architecture.params.env",
+///   unknown field "spec.source.architecture.params.service", … (all six)
+///
+/// under `--validate=strict`, and would have SILENTLY DROPPED all six under a
+/// normal apply — rendering a dashboard from an architecture with no
+/// parameters bound. That is the Ruby-free path's entire payload, and it is
+/// the exact failure mode the fleet's own doctrine names: *"`properties` is a
+/// closed schema — a field the Rust types declare and the yaml omits is pruned
+/// before the controller sees it. The CR applies, and nothing errors."*
+///
+/// Five fields used this helper (dashboard params, compliance-schedule config,
+/// ami-test spec, packer-build spec, and infrastructure_flow's own local
+/// copy), so this was never one dashboard's bug — it was every opaque JSON
+/// field in the CRD set.
+///
+/// `type: object` is RETAINED deliberately: that is what distinguishes this
+/// from [`any_json_schema`], which permits scalars too. An architecture's
+/// params must be an object; a mocked upstream output may legitimately be a
+/// bare string.
 pub fn opaque_json_schema(_gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
-    schemars::schema::Schema::Object(schemars::schema::SchemaObject {
+    let mut obj = schemars::schema::SchemaObject {
         instance_type: Some(schemars::schema::InstanceType::Object.into()),
         ..Default::default()
-    })
+    };
+    obj.extensions.insert(
+        "x-kubernetes-preserve-unknown-fields".to_string(),
+        serde_json::Value::Bool(true),
+    );
+    schemars::schema::Schema::Object(obj)
 }
 
 /// Generate an "any JSON value" schema via `x-kubernetes-preserve-unknown-fields`
@@ -290,6 +329,52 @@ mod tests {
             }
             _ => panic!("Expected Schema::Object variant"),
         }
+    }
+
+    /// `type: object` alone is NOT an opaque object in a CRD — it is an object
+    /// with no permitted fields, and the apiserver prunes everything inside it
+    /// before the controller ever sees it.
+    ///
+    /// This assertion is the one that was missing. The test above checks
+    /// `instance_type` and passed for as long as the helper emitted a schema
+    /// that silently emptied five CRD fields, including
+    /// `PangeaDashboard.spec.source.architecture.params` — the entire payload
+    /// of the Ruby-free dashboard path. Measured against a real apiserver
+    /// 2026-08-13: six params in, zero params stored.
+    #[test]
+    fn opaque_json_schema_preserves_unknown_fields() {
+        let mut gen = schemars::gen::SchemaGenerator::default();
+        let schemars::schema::Schema::Object(obj) = opaque_json_schema(&mut gen) else {
+            panic!("Expected Schema::Object variant");
+        };
+        assert_eq!(
+            obj.extensions.get("x-kubernetes-preserve-unknown-fields"),
+            Some(&serde_json::Value::Bool(true)),
+            "without this extension a structural CRD schema PRUNES every field \
+             inside the object — the field applies cleanly and arrives empty, \
+             which is the most expensive way for a schema to be wrong"
+        );
+    }
+
+    /// The generated bundle carries the extension on the dashboard params
+    /// field specifically — the helper being right is necessary but not
+    /// sufficient, since a field could be repointed at a different helper.
+    #[test]
+    fn generated_dashboard_params_preserve_unknown_fields() {
+        let crds = generate_crds();
+        let dash = crds
+            .split("---")
+            .find(|d| d.contains("name: pangeadashboards.pangea.pleme.io"))
+            .expect("the bundle must contain the PangeaDashboard CRD");
+        let params_idx = dash
+            .find("params:")
+            .expect("the architecture source must expose a params field");
+        let window = &dash[params_idx..(params_idx + 400).min(dash.len())];
+        assert!(
+            window.contains("x-kubernetes-preserve-unknown-fields"),
+            "architecture params must preserve unknown fields or every parameter \
+             is pruned on apply; got:\n{window}"
+        );
     }
 
     #[test]
