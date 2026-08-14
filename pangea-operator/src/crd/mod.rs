@@ -713,4 +713,141 @@ mod crd_emit {
             std::fs::write(&path, super::generate_crds()).expect("write generated crds");
         }
     }
+
+    // ── structural-schema conformance ────────────────────────────────
+    //
+    // These two walks exist because on 2026-08-13 the generated bundle
+    // carried TWO defects that every other gate was green over, and both
+    // were found only by handing the yaml to a real apiserver:
+    //
+    //   1. `additionalProperties: false` beside `properties` → the
+    //      apiserver REFUSES the CRD outright. 14 of 15 installed.
+    //   2. `type: object` with no `properties` and no
+    //      `x-kubernetes-preserve-unknown-fields` → the apiserver ACCEPTS
+    //      the CRD and then silently PRUNES every field inside it.
+    //
+    // Defect 2 is the dangerous one: an apply of a CR with that field
+    // populated SUCCEEDS and stores `{}`. There is no error to notice.
+    //
+    // A kind cluster in CI would catch both, and is deliberately not what
+    // this is: it needs privileged docker-in-docker on the ARC runner, and
+    // a canary CR only exercises the paths the canary happens to touch.
+    // These walk EVERY object schema in EVERY CRD, so a new field of
+    // either shape fails at the PR regardless of whether anyone thought
+    // to write a CR for it.
+
+    /// Recursively visit every schema object in a parsed CRD document.
+    fn walk_schemas(node: &serde_yaml::Value, path: &str, out: &mut Vec<(String, serde_yaml::Mapping)>) {
+        match node {
+            serde_yaml::Value::Mapping(m) => {
+                if m.contains_key(serde_yaml::Value::from("type"))
+                    || m.contains_key(serde_yaml::Value::from("properties"))
+                {
+                    out.push((path.to_string(), m.clone()));
+                }
+                for (k, v) in m {
+                    let key = k.as_str().unwrap_or("?");
+                    walk_schemas(v, &format!("{path}.{key}"), out);
+                }
+            }
+            serde_yaml::Value::Sequence(s) => {
+                for (i, v) in s.iter().enumerate() {
+                    walk_schemas(v, &format!("{path}[{i}]"), out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn all_schema_nodes() -> Vec<(String, serde_yaml::Mapping)> {
+        let bundle = super::generate_crds();
+        let mut out = Vec::new();
+        for doc in bundle.split("\n---\n").chain(bundle.split("---\n").take(1)) {
+            let Ok(v) = serde_yaml::from_str::<serde_yaml::Value>(doc) else {
+                continue;
+            };
+            let name = v
+                .get("metadata")
+                .and_then(|m| m.get("name"))
+                .and_then(|n| n.as_str())
+                .unwrap_or("<unnamed>")
+                .to_string();
+            walk_schemas(&v, &name, &mut out);
+        }
+        assert!(
+            out.len() > 100,
+            "the walk found only {} schema nodes — it is not reaching the CRDs, \
+             which would make both assertions below vacuous",
+            out.len()
+        );
+        out
+    }
+
+    /// Defect 1: the apiserver refuses a CRD carrying both.
+    #[test]
+    fn no_schema_has_both_additional_properties_and_properties() {
+        let offenders: Vec<String> = all_schema_nodes()
+            .into_iter()
+            .filter(|(_, m)| {
+                m.contains_key(serde_yaml::Value::from("properties"))
+                    && m.contains_key(serde_yaml::Value::from("additionalProperties"))
+            })
+            .map(|(p, _)| p)
+            .collect();
+        assert!(
+            offenders.is_empty(),
+            "these schemas carry BOTH `properties` and `additionalProperties`; the \
+             apiserver rejects the whole CRD with \"additionalProperties and properties \
+             are mutual exclusive\" and the resource cannot be installed at all:\n  {}",
+            offenders.join("\n  ")
+        );
+    }
+
+    /// A propertyless object schema is CORRECT when the Rust type is
+    /// genuinely empty — there is nothing to preserve, and pruning whatever a
+    /// user puts there is the wanted behaviour.
+    ///
+    /// The schema alone cannot distinguish that from the defect: an empty
+    /// struct and a `serde_json::Value` meant to hold anything both render as
+    /// `type: object` with no properties. So the exemption is stated here, per
+    /// path, with the reason — and it is CLOSED. A new entry means somebody
+    /// has to justify that the type is genuinely empty rather than silently
+    /// emptied, which is the whole distinction this test exists to police.
+    const EMPTY_BY_DESIGN: &[&str] = &[
+        // `PangeaFleetStatusSpec` has no fields at all: the singleton is
+        // operator-driven, and the struct exists only because kube-rs
+        // `CustomResource` requires a Spec type. Its own comment says "users
+        // should leave this object alone" — pruning is the intent.
+        "pangeafleetstatuses.pangea.pleme.io.spec.versions[0].schema.openAPIV3Schema.properties.spec",
+    ];
+
+    /// Defect 2: a propertyless object without the preserve extension is
+    /// not "any object" — it accepts nothing and prunes silently.
+    #[test]
+    fn every_propertyless_object_preserves_unknown_fields() {
+        let offenders: Vec<String> = all_schema_nodes()
+            .into_iter()
+            .filter(|(p, _)| !EMPTY_BY_DESIGN.contains(&p.as_str()))
+            .filter(|(_, m)| {
+                let is_object = m.get(serde_yaml::Value::from("type")).and_then(|t| t.as_str())
+                    == Some("object");
+                let has_props = m.contains_key(serde_yaml::Value::from("properties"));
+                let has_addl = m.contains_key(serde_yaml::Value::from("additionalProperties"));
+                let preserves = m
+                    .get(serde_yaml::Value::from("x-kubernetes-preserve-unknown-fields"))
+                    .and_then(|p| p.as_bool())
+                    .unwrap_or(false);
+                is_object && !has_props && !has_addl && !preserves
+            })
+            .map(|(p, _)| p)
+            .collect();
+        assert!(
+            offenders.is_empty(),
+            "these object schemas declare no `properties`, no `additionalProperties` and \
+             no `x-kubernetes-preserve-unknown-fields`. That is not an opaque object — \
+             the apiserver PRUNES everything inside it, the apply SUCCEEDS, and the \
+             field reaches the controller empty:\n  {}",
+            offenders.join("\n  ")
+        );
+    }
 }
