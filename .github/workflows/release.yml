@@ -15,7 +15,7 @@ name: release
 # `rio-build-01`, which has 0 registered runners fleet-wide.
 #
 # The 2026-07-17 pass moved the default to `camelot-builder-pleme` (Mode-1,
-# akeyless-k8s/clusters/camelot-mode1/infrastructure/ci/runner-scale-set-pleme.yaml).
+# declared in the camelot GitOps repo's Mode-1 CI runner scale set).
 # That pool's sole node went NotReady/Unreachable 2026-07-17T18:19 and was
 # never replaced (its own self-healing InfrastructureTemplate,
 # camelot-builder-pool, sat suspend:true) -- 28+ consecutive runs stuck
@@ -23,8 +23,8 @@ name: release
 # retired entirely (fleet-wide Mode-1 -> Mode-3/EKS consolidation).
 #
 # RETARGETED 2026-07-19: the default now points at `camelot-builder-pleme-eks`
-# -- the direct Mode-3/EKS clone of the same pool (akeyless-k8s/clusters/
-# camelot-eks/infrastructure/ci/runner-scale-set-pleme.yaml), ported 2026-07-17
+# -- the direct Mode-3/EKS clone of the same pool (the camelot GitOps repo's
+# camelot-eks CI runner scale set), ported 2026-07-17
 # for exactly this reason and confirmed live + Ready (HelmRelease
 # Released=True, ExternalSecret synced, chart-version-locked to the shared
 # arc-controller at 0.12.1). Same shape as Mode-1's pool in every load-bearing
@@ -55,7 +55,7 @@ name: release
 #    an explicit manual override back to rio.
 #
 # Recovery path when camelot-builder-pleme-eks itself is unavailable: check
-# `akeyless-k8s/clusters/camelot-eks/infrastructure/ci/runner-scale-set-pleme.yaml`
+# that camelot-eks's own CI runner scale set (in the camelot GitOps repo)
 # + its sibling `arc-controller` Kustomization are Ready via the
 # fluxcd-camelot-eks MCP, or fall back to `workflow_dispatch` with
 # `runner: ubuntu-latest` for a one-off unblock -- this workflow cannot
@@ -179,15 +179,14 @@ jobs:
   # memory-heavy rustc that OOM-killed (signal 9) on r40 under load; cores:1
   # makes that rustc single-threaded → lowest peak RAM regardless of node.
   # Both settings are kept on the fallback variant too -- camelot-builder-
-  # pleme-eks's runner pod caps at 6Gi (akeyless-k8s clusters/camelot-eks/
-  # infrastructure/ci/runner-scale-set-pleme.yaml
+  # pleme-eks's runner pod caps at 6Gi (its own runner scale set's
   # template.spec.containers[0].resources.limits.memory), TIGHTER than
   # rio's ~13Gi, so the same OOM risk applies there and cores:1/maxJobs:1
   # is the load-bearing mitigation, not a rio-specific tune. Unverified
   # empirically on camelot-builder-pleme-eks as of this retarget — watch
   # the first few real runs on this pool for signal-9 exits; if it OOMs
   # even at cores:1, the fix is a runner-pod memory bump in that same
-  # runner-scale-set-pleme.yaml, not a further squeeze here.
+  # runner scale set, not a further squeeze here.
   #
   # ── TWO VARIANTS PER BUILD, not a flag day (added 2026-08-11) ────────────
   # Every build publishes BOTH the embedded-Ruby image and the Ruby-free one,
@@ -212,8 +211,8 @@ jobs:
   # safe to publish before the 18 Ruby-backed CRs migrate — a Ruby-free binary
   # meeting a Ruby CR panics at startup (main.rs refuses to fall back to the
   # sunset sidecar). Verified 2026-08-11 against all three live ImagePolicies
-  # for this image — pleme-io/k8s clusters/rio, akeyless-k8s
-  # clusters/camelot-mode1 and clusters/camelot-eks — every one of which
+  # for this image — pleme-io/k8s clusters/rio plus camelot's own Mode-1
+  # and camelot-eks GitOps trees — every one of which
   # anchors `^embedded-amd64-r(?P<n>[0-9]+)-[0-9a-f]+$`. `noruby-amd64-…`
   # matches none of them, so Flux never sees it until someone writes an
   # ImagePolicy that asks for it. Keep the `<variant>-amd64-r<n>-<sha>` shape
@@ -430,9 +429,8 @@ jobs:
   # image-fallback around (see resolve-runner's own header). Self-hosted ARC
   # runners (camelot-builder-pleme-eks / -arm64) aren't GitHub-Actions-billed
   # at all -- this is the same fix pleme-io/hardened-images' verify-aarch64-
-  # build job already shipped for the identical wall
-  # (akeyless-k8s/clusters/camelot-eks/infrastructure/ci/
-  # runner-scale-set-pleme-arm64.yaml's own header).
+  # build job already shipped for the identical wall (see the arm64 runner
+  # scale set's own header in the camelot GitOps repo).
   #
   # x86_64-unknown-linux-gnu now runs on camelot-builder-pleme-eks (the same
   # amd64 pool image-fallback already targets) via resolve-runner's shared
