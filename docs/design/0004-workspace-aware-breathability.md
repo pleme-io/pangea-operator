@@ -258,14 +258,14 @@ classes:
   aws-prod-medium:
     enabled: true
     providers: [aws]
-    account: "akeyless-prod"   # used to filter WorkUnits + scope creds
+    account: "example-prod"   # used to filter WorkUnits + scope creds
     resources: ...
     scaling: ...
 
   aws-dev-medium:
     enabled: true
     providers: [aws]
-    account: "akeyless-development"
+    account: "example-dev"
     resources: ...
     scaling: ...
 ```

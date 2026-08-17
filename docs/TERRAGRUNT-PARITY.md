@@ -3,17 +3,17 @@
 **Goal:** pangea + pangea-operator express, across all four layers (CRD/Helm →
 config cascade → Pangea Ruby functions/architectures → magma executor),
 everything a real Terragrunt workload needs — with *easy inherit and data
-semantics* — so an akeylesslabs-style fleet (single-root inheritance + per-unit
-isolated state + a cross-unit dependency DAG) is fully authorable as pangea CRDs
-and reconciled by the operator, never Terragrunt.
+semantics* — so a production-scale Terragrunt fleet (single-root inheritance +
+per-unit isolated state + a cross-unit dependency DAG) is fully authorable as
+pangea CRDs and reconciled by the operator, never Terragrunt.
 
 This doc leads with the destination (Operating Principle #0), grounded in two
-code surveys: the **real** Terragrunt feature usage in `akeylesslabs/akeyless-
-environments` (488 live units) and the **current** pangea expressive surface.
+code surveys: the **real** Terragrunt feature usage in a reference estate of
+488 live units, and the **current** pangea expressive surface.
 
 ---
 
-## What the real target actually is (akeylesslabs, 488 units)
+## What the real target actually is (the reference estate, 488 units)
 
 Parity is **dominated by six features**; everything else is unused there:
 

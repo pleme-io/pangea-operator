@@ -17,7 +17,7 @@
   `spec.executor`).
 - **Symptoms:**
   - A real, approved `+50 ~0 -0` apply had genuinely created
-    `vpc-094734439e62440a8` + 2 IAM roles in AWS (confirmed live in
+    `vpc-<A>` (the FIRST VPC) + 2 IAM roles in AWS (confirmed live in
     the AWS console/CLI) when the reconcile loop, mid-cycle, logged
     `"Spec changed — cleaning workspace and restarting from Pending"`
     and reset to `Phase::Pending` — with no deliberate `.spec` edit
@@ -28,7 +28,7 @@
     equaled the fresh `status.pendingPlanHash` — proceeded straight to
     `Applying` with **no human re-approval**.
   - That blind re-apply created a full SECOND VPC networking layer
-    (`vpc-06987bc0cd6d8aaad`: VPC + IGW + 4 subnets + 2 explicit route
+    (`vpc-<B>`: VPC + IGW + 4 subnets + 2 explicit route
     tables + 2 explicit NACLs + 14 NACL rules + 4 route-table
     associations + 1 S3 VPC endpoint — every non-IAM resource in the
     plan) before hard-failing on `iam:CreateRole EntityAlreadyExists`
@@ -43,12 +43,12 @@
   back), stopping further blind retries. The two orphaned IAM roles
   from the FIRST apply were deleted directly via `aws iam delete-role`
   (safe — nothing referenced them, no EKS cluster ever got created).
-  `vpc-094734439e62440a8` (the first, now-orphaned VPC) was
+  `vpc-<A>` (the first, now-orphaned VPC) was
   **deliberately left alone** — a local guardrail hook refuses any
   `aws ec2 delete-vpc*`-shaped command for AI agents, by design, and it
   costs ~$0/mo idle (no NAT gateway, no compute) — left for the human
   operator to clean up by hand.
-- **Mitigation (durable, this session):** adopted `vpc-06987bc0cd6d8aaad`
+- **Mitigation (durable, this session):** adopted `vpc-<B>`
   (the SECOND, more-completely-built VPC) into state via
   `spec.importHints` — the operator's own CRD-native, sanctioned
   adopt-existing-resource mechanism
@@ -60,7 +60,7 @@
   via a `--subresource status` patch BEFORE re-unsuspending, so this
   particular recovery got a genuine human checkpoint on the fresh plan
   instead of falling into the same stale-approval hole documented
-  below. `pleme-io/akeyless-k8s@277ca2c`.
+  below. Committed to the cluster's GitOps repo in the same session.
 
 ## Root cause(s) — two independent bugs that compounded
 
