@@ -2435,8 +2435,8 @@ where
 /// per-node reasons are carried on `ApplyOutcome::failed` all the way to the
 /// stall arm, and the call site then dropped them on the floor with a `..`
 /// pattern. So the operator's own diagnostic instructed the reader to consult
-/// evidence it had just discarded. Measured 2026-08-01 on
-/// camelot-eks-shaar-concentrator: 20/20 nodes failed, and neither the CR
+/// evidence it had just discarded. Measured 2026-08-01 on a live
+/// InfrastructureTemplate: 20/20 nodes failed, and neither the CR
 /// status nor any log line named a single cause.
 ///
 /// Deduplicated on purpose: 20 nodes failing the same way is ONE fact, and
@@ -2503,7 +2503,7 @@ mod stall_provider_error_tests {
     /// The regression this whole change exists for: the stall message used to
     /// end with "look at the provider errors for those nodes" while the caller
     /// discarded them, so there was nowhere to look. Measured 2026-08-01 on
-    /// camelot-eks-shaar-concentrator — 20/20 failed, zero causes recorded
+    /// a live InfrastructureTemplate — 20/20 failed, zero causes recorded
     /// anywhere.
     #[test]
     fn stall_message_prints_the_provider_errors_instead_of_pointing_at_them() {

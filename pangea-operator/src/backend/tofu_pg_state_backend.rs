@@ -240,8 +240,13 @@ mod tests {
     /// This is the denominator for the "cannot fire live" claim in the
     /// module doc. It is a dated snapshot: a template added after that
     /// date is not in it.
+    ///
+    /// Two names are genericized placeholders standing in for live
+    /// templates whose real names carried a customer identifier. The
+    /// COUNT and the hyphen/underscore/dot SHAPES — the only properties
+    /// the assertions below read — are unchanged.
     const LIVE_PAIRS: &[(&str, &str)] = &[
-        ("pangea_camelot", "akeyless-dev-shaar-concentrator"),
+        ("pangea_camelot", "example-dev-concentrator"),
         ("pangea_camelot", "camelot-breathe-controller-iam"),
         ("pangea_camelot", "camelot-eks"),
         ("pangea_camelot", "camelot-eks-coredns-addon"),
@@ -252,7 +257,7 @@ mod tests {
         ("pangea_camelot", "camelot-eks-nacl-reassociate-fix"),
         ("pangea_camelot", "camelot-eks-nacl-smtp-egress"),
         ("pangea_camelot", "camelot-eks-node-subnets"),
-        ("pangea_camelot", "camelot-eks-shaar-concentrator"),
+        ("pangea_camelot", "camelot-eks-concentrator"),
         ("pangea_camelot", "camelot-eks-sui-nlb-sg"),
         ("pangea_camelot", "camelot-eks-vpc-cni-addon"),
         ("pangea_camelot", "camelot-rabbitmq-topology"),

@@ -16,9 +16,9 @@
 //!     name: prod-nist-continuous
 //!   targets:
 //!     - kind: ImagePipeline
-//!       name: akeyless-dev-ami-rollout
+//!       name: example-dev-ami-rollout
 //!     - kind: InfrastructureTemplate
-//!       name: akeyless-dev-cluster
+//!       name: example-dev-cluster
 //!   enforcement: gate
 //!   reactions:
 //!     - event: nonCompliant

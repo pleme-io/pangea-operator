@@ -8,8 +8,8 @@
 //! resolver (`executor::variable_resolver`): same data shape (named upstreams →
 //! their outputs), promoted from inside-a-Flow to between top-level templates.
 //! It adds `mockOutputs` (Terragrunt parity) so a downstream can PLAN before its
-//! upstream has applied — the most-used companion of `dependency` in the real
-//! akeylesslabs workloads.
+//! upstream has applied — the most-used companion of `dependency` in real-world
+//! Terragrunt estates.
 //!
 //! Pure (`serde_json` + `std`), fully unit-testable; the kube fetch of each
 //! upstream's `status.outputs` is the thin wiring in the controller.

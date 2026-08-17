@@ -245,7 +245,7 @@ pub struct Metrics {
     pub output_bindings_published_total: IntCounterVec,
 
     // -----------------------------------------------------------------
-    // Magma apply-outcome metrics (ASM-observe-operator-metrics).
+    // Magma apply-outcome metrics (observe-operator-metrics).
     //
     // Until these landed, a magma apply's outcome was only visible
     // through the generic `pangea_tofu_operations_total{operation,result}`

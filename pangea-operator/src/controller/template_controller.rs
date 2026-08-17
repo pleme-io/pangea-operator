@@ -7006,7 +7006,7 @@ mod plan_approval_hash_tests {
         let plan_text = "Plan: 50 to add, 0 to change, 0 to destroy.";
 
         let first_plan_hash =
-            plan_approval_hash(plan_text, Some(b"vpc-094734439e62440a8-partial-state"));
+            plan_approval_hash(plan_text, Some(b"vpc-aaaa1111-partial-state"));
         let approved_plan_hash = first_plan_hash.clone(); // human approves via kubectl patch
 
         // Workspace::clean() wiped state; state_path() now reads back
@@ -7044,14 +7044,14 @@ mod plan_approval_hash_tests {
         let state_order_a = br#"{
             "serial": 4,
             "outputs": {
-                "role_arn": {"value": "arn:aws:iam::376129857990:role/x", "sensitive": false},
-                "policy_arn": {"value": "arn:aws:iam::376129857990:policy/y", "sensitive": false}
+                "role_arn": {"value": "arn:aws:iam::123456789012:role/x", "sensitive": false},
+                "policy_arn": {"value": "arn:aws:iam::123456789012:policy/y", "sensitive": false}
             }
         }"#;
         let state_order_b = br#"{
             "outputs": {
-                "policy_arn": {"value": "arn:aws:iam::376129857990:policy/y", "sensitive": false},
-                "role_arn": {"value": "arn:aws:iam::376129857990:role/x", "sensitive": false}
+                "policy_arn": {"value": "arn:aws:iam::123456789012:policy/y", "sensitive": false},
+                "role_arn": {"value": "arn:aws:iam::123456789012:role/x", "sensitive": false}
             },
             "serial": 4
         }"#;
@@ -7071,9 +7071,9 @@ mod plan_approval_hash_tests {
         // canonicalize away a genuine VALUE difference.
         let plan_text = "Plan: +0 ~1 -0";
         let state_before =
-            br#"{"outputs":{"role_arn":{"value":"arn:aws:iam::376129857990:role/x"}}}"#;
+            br#"{"outputs":{"role_arn":{"value":"arn:aws:iam::123456789012:role/x"}}}"#;
         let state_after =
-            br#"{"outputs":{"role_arn":{"value":"arn:aws:iam::376129857990:role/DIFFERENT"}}}"#;
+            br#"{"outputs":{"role_arn":{"value":"arn:aws:iam::123456789012:role/DIFFERENT"}}}"#;
 
         assert_ne!(
             plan_approval_hash(plan_text, Some(state_before)),
@@ -7376,7 +7376,7 @@ mod current_state_fingerprint_tests {
                 "pangea_camelot",
                 "camelot-eks",
                 "default",
-                b"vpc-094734439e62440a8-partial-state",
+                b"vpc-aaaa1111-partial-state",
             )
             .await
             .unwrap();
@@ -7388,7 +7388,7 @@ mod current_state_fingerprint_tests {
                 "pangea_camelot",
                 "camelot-eks",
                 "default",
-                b"vpc-06987bc0cd6d8aaad-different-state",
+                b"vpc-bbbb2222-different-state",
             )
             .await
             .unwrap();

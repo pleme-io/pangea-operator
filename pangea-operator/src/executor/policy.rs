@@ -255,7 +255,7 @@ pub fn evaluate(
         // default for unconfigured templates. (Before this fix, the `else`
         // hardcoded AutoApply, so a create-only plan auto-applied even under
         // defaultDecision: requireApproval — root cause of the 2026-06-20
-        // akeyless-dev unapproved-apply incident.)
+        // unapproved-apply incident.)
         fallback
     };
 
@@ -852,7 +852,7 @@ mod tests {
         assert_eq!(out.evaluation.require_approval_count, 1);
     }
 
-    // ── Regression: the 2026-06-20 akeyless-dev unapproved-apply incident ──
+    // ── Regression: the 2026-06-20 unapproved-apply incident ───────────────
     // A greenfield/create-only plan arrives with an EMPTY drift slice
     // (`drift_details()` enumerates drift on existing resources, not creates).
     // The aggregate must still honour `defaultDecision`, NOT silently auto-apply.
