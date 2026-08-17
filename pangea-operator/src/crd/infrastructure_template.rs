@@ -49,8 +49,8 @@ pub struct DestroyAuthorization {
     pub authorized_by: String,
 
     /// Why. Free text, and it is read by a human during an incident, so
-    /// "cleanup" is a worse answer than "superseded by camelot-eks-v2, ticket
-    /// ASM-nnnnn".
+    /// "cleanup" is a worse answer than "superseded by example-cluster-v2,
+    /// ticket PROJ-nnnnn".
     pub reason: String,
 
     /// The template this authorization is for, by name.
@@ -747,10 +747,9 @@ pub struct ProviderCredentials {
 
     /// Akeyless credentials configuration. Used by templates whose Ruby
     /// workspace declares an inline `provider :akeyless do api_key_login(
-    /// access_id:, access_key:) end` block (e.g.
-    /// workspaces/akeyless-dev-shaar-concentrator, added 2026-07-21 for
-    /// Pangea::Architectures::ShaarAkeyless — Step 0 of
-    /// theory/SHAAR-CAMELOT-BINDING.md §4). Ruby-side authority model, same
+    /// access_id:, access_key:) end` block (e.g. a workspace built on a
+    /// `Pangea::Architectures::*` composition that provisions Akeyless auth
+    /// methods and secrets). Ruby-side authority model, same
     /// as GitHub: the referenced Secret's data keys (typically
     /// `AKEYLESS_ACCESS_ID` / `AKEYLESS_ACCESS_KEY` / optionally
     /// `AKEYLESS_API_GATEWAY`) are installed verbatim as env vars by the
@@ -760,8 +759,8 @@ pub struct ProviderCredentials {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub akeyless: Option<AkeylessCredentials>,
 
-    /// Datadog credentials configuration. Used by the absorbed Datadog
-    /// estate workspace (workspaces/akeyless-datadog), whose shard entry
+    /// Datadog credentials configuration. Used by an absorbed Datadog
+    /// estate workspace (e.g. workspaces/example-datadog), whose shard entry
     /// points declare `provider :datadog` with `ENV.fetch`. Without this
     /// field the chart's `providerCredentials.datadog` was silently
     /// DROPPED by serde -- no error, no condition -- and every RPC fell
@@ -2400,15 +2399,16 @@ mod tests {
 
     // The regression test for the defect this field closes.
     //
-    // The delivery chart (helmworks lareira-akeyless-datadog) rendered
-    // providerCredentials.datadog and the operator declared no such field. With
-    // no deny_unknown_fields serde DROPPED it silently: the CR was accepted, the
-    // spec parsed, and the credential simply was not there. Nothing failed, and
-    // every RPC fell back to the pod's ambient credential chain.
+    // A delivery chart rendered providerCredentials.datadog and the operator
+    // declared no such field. With no deny_unknown_fields serde DROPPED it
+    // silently: the CR was accepted, the spec parsed, and the credential simply
+    // was not there. Nothing failed, and every RPC fell back to the pod's
+    // ambient credential chain.
     //
-    // The YAML below is copied verbatim from `helm template` output, so this
-    // asserts against what the chart actually emits rather than a fixture that
-    // agrees with the struct by construction.
+    // The YAML below is the chart's own `helm template` output with the
+    // workspace/namespace identifiers genericized, so this asserts against the
+    // shape the chart actually emits rather than a fixture that agrees with the
+    // struct by construction.
     #[test]
     fn the_delivery_charts_rendered_spec_carries_its_datadog_credential() {
         let rendered = r#"
@@ -2416,8 +2416,8 @@ source:
   gitRepository:
     url: "https://github.com/pleme-io/pangea-architectures.git"
     ref: "main"
-    path: "workspaces/akeyless-datadog/generated/shards/monitors.rb"
-pangeaNamespace: "akeyless-datadog"
+    path: "workspaces/example-datadog/generated/shards/monitors.rb"
+pangeaNamespace: "example-datadog"
 destroyProtection: true
 refreshInterval: "30m"
 defaultDecision: requireApproval

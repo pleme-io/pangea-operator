@@ -160,7 +160,7 @@ spec:
                       A destroy authorization is a moment, not a property. Without an expiry, one written during a migration stays valid forever and silently arms every future deletion of that CR — which is how a break-glass becomes the normal path.
                     type: string
                   reason:
-                    description: Why. Free text, and it is read by a human during an incident, so "cleanup" is a worse answer than "superseded by camelot-eks-v2, ticket ASM-nnnnn".
+                    description: Why. Free text, and it is read by a human during an incident, so "cleanup" is a worse answer than "superseded by example-cluster-v2, ticket PROJ-nnnnn".
                     type: string
                   template:
                     description: |-
@@ -347,7 +347,7 @@ spec:
                 nullable: true
                 properties:
                   akeyless:
-                    description: 'Akeyless credentials configuration. Used by templates whose Ruby workspace declares an inline `provider :akeyless do api_key_login( access_id:, access_key:) end` block (e.g. workspaces/akeyless-dev-shaar-concentrator, added 2026-07-21 for Pangea::Architectures::ShaarAkeyless — Step 0 of theory/SHAAR-CAMELOT-BINDING.md §4). Ruby-side authority model, same as GitHub: the referenced Secret''s data keys (typically `AKEYLESS_ACCESS_ID` / `AKEYLESS_ACCESS_KEY` / optionally `AKEYLESS_API_GATEWAY`) are installed verbatim as env vars by the generic `iter_secret_refs` injection loop; the Ruby workspace reads them via `ENV.fetch(...)`. The operator never renders its own `provider "akeyless" { ... }` block.'
+                    description: 'Akeyless credentials configuration. Used by templates whose Ruby workspace declares an inline `provider :akeyless do api_key_login( access_id:, access_key:) end` block (e.g. a workspace built on a `Pangea::Architectures::*` composition that provisions Akeyless auth methods and secrets). Ruby-side authority model, same as GitHub: the referenced Secret''s data keys (typically `AKEYLESS_ACCESS_ID` / `AKEYLESS_ACCESS_KEY` / optionally `AKEYLESS_API_GATEWAY`) are installed verbatim as env vars by the generic `iter_secret_refs` injection loop; the Ruby workspace reads them via `ENV.fetch(...)`. The operator never renders its own `provider "akeyless" { ... }` block.'
                     nullable: true
                     properties:
                       secretRef:
@@ -415,7 +415,7 @@ spec:
                     - secretRef
                     type: object
                   datadog:
-                    description: Datadog credentials configuration. Used by the absorbed Datadog estate workspace (workspaces/akeyless-datadog), whose shard entry points declare `provider :datadog` with `ENV.fetch`. Without this field the chart's `providerCredentials.datadog` was silently DROPPED by serde -- no error, no condition -- and every RPC fell back to the pod's ambient credential chain.
+                    description: Datadog credentials configuration. Used by an absorbed Datadog estate workspace (e.g. workspaces/example-datadog), whose shard entry points declare `provider :datadog` with `ENV.fetch`. Without this field the chart's `providerCredentials.datadog` was silently DROPPED by serde -- no error, no condition -- and every RPC fell back to the pod's ambient credential chain.
                     nullable: true
                     properties:
                       secretRef:
@@ -2098,7 +2098,7 @@ spec:
                 nullable: true
                 properties:
                   akeyless:
-                    description: 'Akeyless credentials configuration. Used by templates whose Ruby workspace declares an inline `provider :akeyless do api_key_login( access_id:, access_key:) end` block (e.g. workspaces/akeyless-dev-shaar-concentrator, added 2026-07-21 for Pangea::Architectures::ShaarAkeyless — Step 0 of theory/SHAAR-CAMELOT-BINDING.md §4). Ruby-side authority model, same as GitHub: the referenced Secret''s data keys (typically `AKEYLESS_ACCESS_ID` / `AKEYLESS_ACCESS_KEY` / optionally `AKEYLESS_API_GATEWAY`) are installed verbatim as env vars by the generic `iter_secret_refs` injection loop; the Ruby workspace reads them via `ENV.fetch(...)`. The operator never renders its own `provider "akeyless" { ... }` block.'
+                    description: 'Akeyless credentials configuration. Used by templates whose Ruby workspace declares an inline `provider :akeyless do api_key_login( access_id:, access_key:) end` block (e.g. a workspace built on a `Pangea::Architectures::*` composition that provisions Akeyless auth methods and secrets). Ruby-side authority model, same as GitHub: the referenced Secret''s data keys (typically `AKEYLESS_ACCESS_ID` / `AKEYLESS_ACCESS_KEY` / optionally `AKEYLESS_API_GATEWAY`) are installed verbatim as env vars by the generic `iter_secret_refs` injection loop; the Ruby workspace reads them via `ENV.fetch(...)`. The operator never renders its own `provider "akeyless" { ... }` block.'
                     nullable: true
                     properties:
                       secretRef:
@@ -2166,7 +2166,7 @@ spec:
                     - secretRef
                     type: object
                   datadog:
-                    description: Datadog credentials configuration. Used by the absorbed Datadog estate workspace (workspaces/akeyless-datadog), whose shard entry points declare `provider :datadog` with `ENV.fetch`. Without this field the chart's `providerCredentials.datadog` was silently DROPPED by serde -- no error, no condition -- and every RPC fell back to the pod's ambient credential chain.
+                    description: Datadog credentials configuration. Used by an absorbed Datadog estate workspace (e.g. workspaces/example-datadog), whose shard entry points declare `provider :datadog` with `ENV.fetch`. Without this field the chart's `providerCredentials.datadog` was silently DROPPED by serde -- no error, no condition -- and every RPC fell back to the pod's ambient credential chain.
                     nullable: true
                     properties:
                       secretRef:
@@ -2529,7 +2529,7 @@ spec:
                 nullable: true
                 properties:
                   akeyless:
-                    description: 'Akeyless credentials configuration. Used by templates whose Ruby workspace declares an inline `provider :akeyless do api_key_login( access_id:, access_key:) end` block (e.g. workspaces/akeyless-dev-shaar-concentrator, added 2026-07-21 for Pangea::Architectures::ShaarAkeyless — Step 0 of theory/SHAAR-CAMELOT-BINDING.md §4). Ruby-side authority model, same as GitHub: the referenced Secret''s data keys (typically `AKEYLESS_ACCESS_ID` / `AKEYLESS_ACCESS_KEY` / optionally `AKEYLESS_API_GATEWAY`) are installed verbatim as env vars by the generic `iter_secret_refs` injection loop; the Ruby workspace reads them via `ENV.fetch(...)`. The operator never renders its own `provider "akeyless" { ... }` block.'
+                    description: 'Akeyless credentials configuration. Used by templates whose Ruby workspace declares an inline `provider :akeyless do api_key_login( access_id:, access_key:) end` block (e.g. a workspace built on a `Pangea::Architectures::*` composition that provisions Akeyless auth methods and secrets). Ruby-side authority model, same as GitHub: the referenced Secret''s data keys (typically `AKEYLESS_ACCESS_ID` / `AKEYLESS_ACCESS_KEY` / optionally `AKEYLESS_API_GATEWAY`) are installed verbatim as env vars by the generic `iter_secret_refs` injection loop; the Ruby workspace reads them via `ENV.fetch(...)`. The operator never renders its own `provider "akeyless" { ... }` block.'
                     nullable: true
                     properties:
                       secretRef:
@@ -2597,7 +2597,7 @@ spec:
                     - secretRef
                     type: object
                   datadog:
-                    description: Datadog credentials configuration. Used by the absorbed Datadog estate workspace (workspaces/akeyless-datadog), whose shard entry points declare `provider :datadog` with `ENV.fetch`. Without this field the chart's `providerCredentials.datadog` was silently DROPPED by serde -- no error, no condition -- and every RPC fell back to the pod's ambient credential chain.
+                    description: Datadog credentials configuration. Used by an absorbed Datadog estate workspace (e.g. workspaces/example-datadog), whose shard entry points declare `provider :datadog` with `ENV.fetch`. Without this field the chart's `providerCredentials.datadog` was silently DROPPED by serde -- no error, no condition -- and every RPC fell back to the pod's ambient credential chain.
                     nullable: true
                     properties:
                       secretRef:
@@ -2873,7 +2873,7 @@ spec:
                     nullable: true
                     properties:
                       akeyless:
-                        description: 'Akeyless credentials configuration. Used by templates whose Ruby workspace declares an inline `provider :akeyless do api_key_login( access_id:, access_key:) end` block (e.g. workspaces/akeyless-dev-shaar-concentrator, added 2026-07-21 for Pangea::Architectures::ShaarAkeyless — Step 0 of theory/SHAAR-CAMELOT-BINDING.md §4). Ruby-side authority model, same as GitHub: the referenced Secret''s data keys (typically `AKEYLESS_ACCESS_ID` / `AKEYLESS_ACCESS_KEY` / optionally `AKEYLESS_API_GATEWAY`) are installed verbatim as env vars by the generic `iter_secret_refs` injection loop; the Ruby workspace reads them via `ENV.fetch(...)`. The operator never renders its own `provider "akeyless" { ... }` block.'
+                        description: 'Akeyless credentials configuration. Used by templates whose Ruby workspace declares an inline `provider :akeyless do api_key_login( access_id:, access_key:) end` block (e.g. a workspace built on a `Pangea::Architectures::*` composition that provisions Akeyless auth methods and secrets). Ruby-side authority model, same as GitHub: the referenced Secret''s data keys (typically `AKEYLESS_ACCESS_ID` / `AKEYLESS_ACCESS_KEY` / optionally `AKEYLESS_API_GATEWAY`) are installed verbatim as env vars by the generic `iter_secret_refs` injection loop; the Ruby workspace reads them via `ENV.fetch(...)`. The operator never renders its own `provider "akeyless" { ... }` block.'
                         nullable: true
                         properties:
                           secretRef:
@@ -2941,7 +2941,7 @@ spec:
                         - secretRef
                         type: object
                       datadog:
-                        description: Datadog credentials configuration. Used by the absorbed Datadog estate workspace (workspaces/akeyless-datadog), whose shard entry points declare `provider :datadog` with `ENV.fetch`. Without this field the chart's `providerCredentials.datadog` was silently DROPPED by serde -- no error, no condition -- and every RPC fell back to the pod's ambient credential chain.
+                        description: Datadog credentials configuration. Used by an absorbed Datadog estate workspace (e.g. workspaces/example-datadog), whose shard entry points declare `provider :datadog` with `ENV.fetch`. Without this field the chart's `providerCredentials.datadog` was silently DROPPED by serde -- no error, no condition -- and every RPC fell back to the pod's ambient credential chain.
                         nullable: true
                         properties:
                           secretRef:
@@ -3279,7 +3279,7 @@ spec:
                     nullable: true
                     properties:
                       akeyless:
-                        description: 'Akeyless credentials configuration. Used by templates whose Ruby workspace declares an inline `provider :akeyless do api_key_login( access_id:, access_key:) end` block (e.g. workspaces/akeyless-dev-shaar-concentrator, added 2026-07-21 for Pangea::Architectures::ShaarAkeyless — Step 0 of theory/SHAAR-CAMELOT-BINDING.md §4). Ruby-side authority model, same as GitHub: the referenced Secret''s data keys (typically `AKEYLESS_ACCESS_ID` / `AKEYLESS_ACCESS_KEY` / optionally `AKEYLESS_API_GATEWAY`) are installed verbatim as env vars by the generic `iter_secret_refs` injection loop; the Ruby workspace reads them via `ENV.fetch(...)`. The operator never renders its own `provider "akeyless" { ... }` block.'
+                        description: 'Akeyless credentials configuration. Used by templates whose Ruby workspace declares an inline `provider :akeyless do api_key_login( access_id:, access_key:) end` block (e.g. a workspace built on a `Pangea::Architectures::*` composition that provisions Akeyless auth methods and secrets). Ruby-side authority model, same as GitHub: the referenced Secret''s data keys (typically `AKEYLESS_ACCESS_ID` / `AKEYLESS_ACCESS_KEY` / optionally `AKEYLESS_API_GATEWAY`) are installed verbatim as env vars by the generic `iter_secret_refs` injection loop; the Ruby workspace reads them via `ENV.fetch(...)`. The operator never renders its own `provider "akeyless" { ... }` block.'
                         nullable: true
                         properties:
                           secretRef:
@@ -3347,7 +3347,7 @@ spec:
                         - secretRef
                         type: object
                       datadog:
-                        description: Datadog credentials configuration. Used by the absorbed Datadog estate workspace (workspaces/akeyless-datadog), whose shard entry points declare `provider :datadog` with `ENV.fetch`. Without this field the chart's `providerCredentials.datadog` was silently DROPPED by serde -- no error, no condition -- and every RPC fell back to the pod's ambient credential chain.
+                        description: Datadog credentials configuration. Used by an absorbed Datadog estate workspace (e.g. workspaces/example-datadog), whose shard entry points declare `provider :datadog` with `ENV.fetch`. Without this field the chart's `providerCredentials.datadog` was silently DROPPED by serde -- no error, no condition -- and every RPC fell back to the pod's ambient credential chain.
                         nullable: true
                         properties:
                           secretRef:
@@ -3922,7 +3922,7 @@ spec:
                 nullable: true
                 properties:
                   akeyless:
-                    description: 'Akeyless credentials configuration. Used by templates whose Ruby workspace declares an inline `provider :akeyless do api_key_login( access_id:, access_key:) end` block (e.g. workspaces/akeyless-dev-shaar-concentrator, added 2026-07-21 for Pangea::Architectures::ShaarAkeyless — Step 0 of theory/SHAAR-CAMELOT-BINDING.md §4). Ruby-side authority model, same as GitHub: the referenced Secret''s data keys (typically `AKEYLESS_ACCESS_ID` / `AKEYLESS_ACCESS_KEY` / optionally `AKEYLESS_API_GATEWAY`) are installed verbatim as env vars by the generic `iter_secret_refs` injection loop; the Ruby workspace reads them via `ENV.fetch(...)`. The operator never renders its own `provider "akeyless" { ... }` block.'
+                    description: 'Akeyless credentials configuration. Used by templates whose Ruby workspace declares an inline `provider :akeyless do api_key_login( access_id:, access_key:) end` block (e.g. a workspace built on a `Pangea::Architectures::*` composition that provisions Akeyless auth methods and secrets). Ruby-side authority model, same as GitHub: the referenced Secret''s data keys (typically `AKEYLESS_ACCESS_ID` / `AKEYLESS_ACCESS_KEY` / optionally `AKEYLESS_API_GATEWAY`) are installed verbatim as env vars by the generic `iter_secret_refs` injection loop; the Ruby workspace reads them via `ENV.fetch(...)`. The operator never renders its own `provider "akeyless" { ... }` block.'
                     nullable: true
                     properties:
                       secretRef:
@@ -3990,7 +3990,7 @@ spec:
                     - secretRef
                     type: object
                   datadog:
-                    description: Datadog credentials configuration. Used by the absorbed Datadog estate workspace (workspaces/akeyless-datadog), whose shard entry points declare `provider :datadog` with `ENV.fetch`. Without this field the chart's `providerCredentials.datadog` was silently DROPPED by serde -- no error, no condition -- and every RPC fell back to the pod's ambient credential chain.
+                    description: Datadog credentials configuration. Used by an absorbed Datadog estate workspace (e.g. workspaces/example-datadog), whose shard entry points declare `provider :datadog` with `ENV.fetch`. Without this field the chart's `providerCredentials.datadog` was silently DROPPED by serde -- no error, no condition -- and every RPC fell back to the pod's ambient credential chain.
                     nullable: true
                     properties:
                       secretRef:
