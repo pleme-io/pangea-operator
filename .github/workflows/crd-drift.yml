@@ -32,11 +32,10 @@ jobs:
       # against ANY git operation from this checkout -- unset it before
       # configuring BOT_PAT or it silently wins instead.
       - name: Configure git credentials for private git dependencies (cargo)
-        env:
-          GIT_AUTH_TOKEN: ${{ secrets.BOT_PAT }}
-        run: |
-          git config --global url."https://x-access-token:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"
-          git config --unset-all http.https://github.com/.extraheader || true
+        uses: pleme-io/actions/git-credentials@main
+        with:
+          bot-pat: ${{ secrets.BOT_PAT }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
