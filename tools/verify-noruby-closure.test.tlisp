@@ -1,0 +1,25 @@
+;; Tests for the pure half of verify-noruby-closure.
+;;
+;; The nix half is NOT tested here and cannot be from a darwin workstation: the
+;; attrs are `-amd64`, so `nix path-info --derivation` fails to resolve before
+;; any logic runs. Said plainly rather than papered over — what is covered is
+;; the matching and the exclusion, which is where a silent wrong answer lives.
+;;
+;; Run: TLISP_TEST=1 tatara-script --test <stdlib + run + this>
+
+(deftest ruby-hits-matches-every-pattern-arm
+  (assert (= (length (ruby-hits (list "/nix/store/x-libruby-3.2"))) 1) "libruby")
+  (assert (= (length (ruby-hits (list "/nix/store/x-ruby-3.2.2"))) 1) "ruby-3")
+  (assert (= (length (ruby-hits (list "/nix/store/x-rb-sys-0.9"))) 1) "rb-sys")
+  (assert (= (length (ruby-hits (list "/nix/store/x-magnus-0.6"))) 1) "magnus")
+  (assert (= (length (ruby-hits (list "/nix/store/x-pangea-ruby-eval"))) 1) "pangea-ruby-eval"))
+
+(deftest ruby-hits-does-not-match-innocents
+  (assert (= (length (ruby-hits (list "/nix/store/x-openssl-3.0"))) 0) "an unrelated path is not a hit")
+  (assert (= (length (ruby-hits (list "/nix/store/x-rustc-1.97"))) 0) "and neither is the compiler")
+  (assert (= (length (ruby-hits (list))) 0) "an empty closure yields no hits"))
+
+(deftest matching-is-case-insensitive
+  ;; The shell used `grep -Eic`; the port lowercases before matching. A path
+  ;; carrying LibRuby must not slip through because the case differs.
+  (assert (= (length (ruby-hits (list "/nix/store/x-LibRuby-3.2"))) 1) "uppercase still matches"))

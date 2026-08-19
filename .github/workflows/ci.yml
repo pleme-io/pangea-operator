@@ -72,9 +72,9 @@ jobs:
       # just an eval.
       - name: nix build — native amd64 embedded operator image (the real shipped artifact)
         id: build
-        run: |
-          OUT=$(nix build .#dockerImage-operator-embedded-amd64 --no-link --print-build-logs --print-out-paths)
-          echo "out-path=${OUT}" >> "$GITHUB_OUTPUT"
+        uses: pleme-io/actions/nix-build@main
+        with:
+          flake-ref: .#dockerImage-operator-embedded-amd64
       # Write half of the substituter config above -- without this, the
       # store path this job just built (or substituted) is never pushed
       # back, so sui only ever helps a run that happens to follow one that
@@ -115,9 +115,9 @@ jobs:
       # derivation reachable from the machines we actually work on.
       - name: nix build — native amd64 Ruby-free operator image (the FedRAMP variant)
         id: build-noruby
-        run: |
-          OUT=$(nix build .#dockerImage-operator-noruby-amd64 --no-link --print-build-logs --print-out-paths)
-          echo "out-path=${OUT}" >> "$GITHUB_OUTPUT"
+        uses: pleme-io/actions/nix-build@main
+        with:
+          flake-ref: .#dockerImage-operator-noruby-amd64
 
       - name: Push built Ruby-free image to super-cache (sui)
         uses: pleme-io/actions/super-cache-save@main
@@ -146,25 +146,9 @@ jobs:
       # output is a .tar.gz whose runtime closure is nearly empty — a scan
       # of it would be the vacuous-zero above, dressed as a real check.
       - name: Assert the Ruby-free image is actually Ruby-free
-        run: |
-          set -uo pipefail
-          PAT='libruby|ruby-3|rb-sys|magnus|pangea-ruby-eval'
-          scan() { nix-store -q --requisites "$1" | grep -v -- '-noruby'; }
-          NORUBY_DRV=$(nix path-info --derivation .#dockerImage-operator-noruby-amd64)
-          EMBED_DRV=$(nix path-info --derivation .#dockerImage-operator-embedded-amd64)
-          n_total=$(scan "$NORUBY_DRV" | wc -l | tr -d ' ')
-          n_ruby=$(scan "$NORUBY_DRV" | grep -Eic "$PAT" || true)
-          e_ruby=$(scan "$EMBED_DRV" | grep -Eic "$PAT" || true)
-          echo "noruby: scanned=$n_total ruby=$n_ruby | embedded: ruby=$e_ruby"
-          if [ "$e_ruby" -eq 0 ]; then
-            echo "::error::the Ruby pattern found 0 hits in the EMBEDDED closure, so a 0 in the variant proves nothing — fix the pattern, do not relax the gate"
-            exit 1
-          fi
-          if [ "$n_ruby" -ne 0 ]; then
-            echo "::error::$n_ruby Ruby paths inside the -noruby closure (scanned $n_total)"
-            scan "$NORUBY_DRV" | grep -Ei "$PAT"
-            exit 1
-          fi
+        uses: pleme-io/actions/tatara-script@main
+        with:
+          script-file: tools/verify-noruby-closure.tlisp
 
   cargo-test:
     # Runs inside `.#ruby-eval` via the shared substrate reusable workflow
@@ -260,11 +244,13 @@ jobs:
       # actions/checkout's THIS-repo-scoped extraheader first (it silently
       # wins over url.insteadOf by prefix match if left in place).
       - name: Configure git credentials for private git dependencies (cargo)
-        env:
-          GIT_AUTH_TOKEN: ${{ secrets.BOT_PAT || secrets.GITHUB_TOKEN }}
-        run: |
-          git config --global url."https://x-access-token:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"
-          git config --unset-all http.https://github.com/.extraheader || true
+        # The BOT_PAT > GITHUB_TOKEN order AND the load-bearing extraheader-unset
+        # live in the action, once, instead of being hand-repeated here — which
+        # is what its own description says it exists for.
+        uses: pleme-io/actions/git-credentials@main
+        with:
+          bot-pat: ${{ secrets.BOT_PAT }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: cargo test -p pangea-operator --no-default-features (no libruby, no magma)
         env:
           CARGO_NET_GIT_FETCH_WITH_CLI: "true"

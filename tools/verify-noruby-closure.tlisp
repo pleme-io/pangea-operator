@@ -1,0 +1,79 @@
+;; verify-noruby-closure — the -noruby image really carries no Ruby.
+;;
+;; DESHELLIFIED 2026-08-19 from .github/workflows/ci.yml, semantics preserved
+;; exactly. It scans the DERIVATION's requisites rather than the output path's,
+;; because the output is a .tar.gz whose runtime closure is nearly empty — a
+;; scan of that would be a vacuous zero dressed as a real check.
+;;
+;; THE CALIBRATION IS THE POINT, and it is why this was worth porting rather
+;; than dropping: a 0 in the -noruby closure only means something if the same
+;; pattern finds hits in the EMBEDDED closure. Without that, a typo'd pattern
+;; reports a perfect result forever. The shell had this guard; so does this,
+;; and the port would be worthless if it lost it.
+;;
+;; Exit codes: 0 clean · 1 Ruby found where it must not be · 3 the gate cannot
+;; speak (nix unavailable, or the pattern matched nothing in the embedded
+;; closure).
+
+(define PATTERN "libruby|ruby-3|rb-sys|magnus|pangea-ruby-eval")
+(define NORUBY-ATTR ".#dockerImage-operator-noruby-amd64")
+(define EMBED-ATTR ".#dockerImage-operator-embedded-amd64")
+
+(define (drv-of attr)
+  (let ((r (proc:must (list "nix" "path-info" "--derivation" attr))))
+    (cond
+      ((erro:err? r)
+        (log-error (string-append "cannot resolve the derivation for " attr))
+        (exit 3))
+      (else (string-trim (erro:value r))))))
+
+;; The `-noruby` paths themselves are excluded, exactly as the shell's
+;; `grep -v -- '-noruby'` did: the variant's own store paths carry the word and
+;; would otherwise count as hits against it.
+(define (requisites drv)
+  (let ((r (proc:must (list "nix-store" "-q" "--requisites" drv))))
+    (cond
+      ((erro:err? r)
+        (log-error (string-append "cannot read requisites of " drv))
+        (exit 3))
+      (else
+        (filter
+          (lambda (l) (and (not (equal? l "")) (not (string-contains? l "-noruby"))))
+          (string-split (erro:value r) "\n"))))))
+
+(define (ruby-hits paths)
+  (filter (lambda (p) (re-match? PATTERN (string-lowercase p))) paths))
+
+(define (report n-total n-ruby e-ruby hits)
+  (print-line
+    (string-append "noruby: scanned=" (string-format "{}" n-total)
+                   " ruby=" (string-format "{}" n-ruby)
+                   " | embedded: ruby=" (string-format "{}" e-ruby)))
+  (cond
+    ((= e-ruby 0)
+      (log-error
+        (string-append "the Ruby pattern found 0 hits in the EMBEDDED closure, so a 0 "
+                       "in the variant proves nothing — fix the pattern, do not relax the gate"))
+      (exit 3))
+    ((not (= n-ruby 0))
+      (log-error
+        (string-append (string-format "{}" n-ruby) " Ruby paths inside the -noruby closure "
+                       "(scanned " (string-format "{}" n-total) ")"))
+      (reduce (fn (a p) (print-line p) a) 0 hits)
+      (exit 1))
+    (else
+      (log-info
+        (string-append "noruby closure is Ruby-free across " (string-format "{}" n-total)
+                       " requisites, calibrated against " (string-format "{}" e-ruby)
+                       " hits in the embedded closure"))
+      (exit 0))))
+
+(define (main)
+  (let* ((noruby-paths (requisites (drv-of NORUBY-ATTR)))
+         (embed-paths (requisites (drv-of EMBED-ATTR)))
+         (hits (ruby-hits noruby-paths)))
+    (report (length noruby-paths) (length hits) (length (ruby-hits embed-paths)) hits)))
+
+(if (equal? (env-get "TLISP_TEST" "") "")
+  (main)
+  (log-info "TLISP_TEST=1 — loaded; main skipped (the harness drives the predicates)"))
