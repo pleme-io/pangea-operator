@@ -258,9 +258,64 @@ fn provider_config_object(
             }
         }
         ProviderKind::GitHub => {
-            let token = first_present(data, &["token", "password", "GITHUB_TOKEN"])?;
             let mut obj = serde_json::Map::new();
-            obj.insert("token".to_string(), serde_json::Value::String(token));
+
+            // ── ★ GITHUB APP AUTH IS PREFERRED, AND THE OPERATOR MINTS NOTHING ──
+            // The `github` Terraform provider carries a native `app_auth` block
+            // and does the JWT signing + installation-token exchange itself. So
+            // App support here is a PASS-THROUGH of three fields, not a token
+            // minting loop in the operator — no expiry to track, no refresh, and
+            // no bearer at rest in this process.
+            //
+            // Why it is preferred over a PAT, measured 2026-08-22:
+            //   * A PAT is a PERSON. The credential this replaces was one
+            //     operator's classic `repo` + `admin:org` token holding
+            //     org-owner-equivalent control of ~997 repos — and it was found
+            //     DEAD (401 on every endpoint), which is why the reconciler had
+            //     been suspended.
+            //   * Rate limit: an installation gets 12,500/hr against a user
+            //     PAT's 5,000, and it scales with org size. That is the direct
+            //     fix for the measured 5000/5000 starvation that queued 18 jobs
+            //     for ~40 minutes with zero runners.
+            //   * Revocation is uninstalling, not hunting for who minted what.
+            //
+            // `pem_file` is the provider's attribute name and takes the KEY
+            // MATERIAL, not a path — the name is upstream's, and it is a trap
+            // worth naming rather than rediscovering.
+            let app = (
+                first_present(data, &["app_id", "APP_ID", "GITHUB_APP_ID"]),
+                first_present(
+                    data,
+                    &["installation_id", "INSTALLATION_ID", "GITHUB_APP_INSTALLATION_ID"],
+                ),
+                first_present(
+                    data,
+                    &["private_key", "pem_file", "PRIVATE_KEY", "GITHUB_APP_PEM_FILE"],
+                ),
+            );
+            if let (Some(id), Some(installation_id), Some(pem)) = app {
+                let mut auth = serde_json::Map::new();
+                auth.insert("id".to_string(), serde_json::Value::String(id));
+                auth.insert(
+                    "installation_id".to_string(),
+                    serde_json::Value::String(installation_id),
+                );
+                auth.insert("pem_file".to_string(), serde_json::Value::String(pem));
+                // A provider BLOCK renders as an array of objects in provider
+                // JSON, even when the schema permits exactly one.
+                obj.insert(
+                    "app_auth".to_string(),
+                    serde_json::Value::Array(vec![serde_json::Value::Object(auth)]),
+                );
+            } else {
+                // ★ PARTIAL APP CREDENTIALS FALL BACK RATHER THAN HALF-CONFIGURE.
+                // Two of three fields is not App auth; emitting it would produce
+                // a provider that fails at plan time with a schema error instead
+                // of an auth error, which sends the reader to the wrong place.
+                let token = first_present(data, &["token", "password", "GITHUB_TOKEN"])?;
+                obj.insert("token".to_string(), serde_json::Value::String(token));
+            }
+
             if let Some(owner) = first_present(data, &["owner", "GITHUB_OWNER"]) {
                 obj.insert("owner".to_string(), serde_json::Value::String(owner));
             }
@@ -468,6 +523,74 @@ mod tests {
         // The shape magma's with_provider_config consumes is a bare attr
         // object: exactly one key, the provider's ConfigureProvider attr.
         assert_eq!(obj.as_object().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn github_app_auth_is_preferred_over_a_token() {
+        // All three App fields present AND a token: App wins. A PAT that
+        // lingers in the secret must not silently keep the reconciler on the
+        // person-tied credential the App exists to retire.
+        let d = data(&[
+            ("app_id", "4685620"),
+            ("installation_id", "155780635"),
+            ("private_key", "-----BEGIN RSA PRIVATE KEY-----\nx\n-----END RSA PRIVATE KEY-----"),
+            ("token", "ghp_should_be_ignored"),
+        ]);
+        let obj = provider_config_object(ProviderKind::GitHub, &d, None).expect("resolves");
+        let o = obj.as_object().unwrap();
+        assert!(!o.contains_key("token"), "a bearer must not be emitted alongside app_auth");
+        let auth = o["app_auth"].as_array().expect("app_auth renders as a block array");
+        assert_eq!(auth.len(), 1);
+        assert_eq!(auth[0]["id"], "4685620");
+        assert_eq!(auth[0]["installation_id"], "155780635");
+        assert!(auth[0]["pem_file"].as_str().unwrap().starts_with("-----BEGIN"));
+    }
+
+    #[test]
+    fn github_partial_app_credentials_fall_back_rather_than_half_configure() {
+        // ★ Two of three is NOT App auth. Emitting a partial app_auth block
+        // produces a SCHEMA error at plan time instead of an auth error, which
+        // sends the reader to entirely the wrong place.
+        let d = data(&[
+            ("app_id", "4685620"),
+            ("installation_id", "155780635"),
+            ("token", "ghp_yyy"),
+        ]);
+        let obj = provider_config_object(ProviderKind::GitHub, &d, None).expect("resolves");
+        let o = obj.as_object().unwrap();
+        assert!(!o.contains_key("app_auth"), "partial app creds must not emit a block");
+        assert_eq!(o["token"], "ghp_yyy");
+    }
+
+    #[test]
+    fn github_partial_app_credentials_with_no_token_yields_none() {
+        // Nothing usable at all: None, not a half-built provider.
+        let d = data(&[("app_id", "4685620")]);
+        assert!(provider_config_object(ProviderKind::GitHub, &d, None).is_none());
+    }
+
+    #[test]
+    fn github_app_tolerates_the_env_style_key_names() {
+        // ESO projects Akeyless paths into env-shaped keys; both spellings
+        // must resolve or the secret works in one delivery path and not the other.
+        let d = data(&[
+            ("GITHUB_APP_ID", "1"),
+            ("GITHUB_APP_INSTALLATION_ID", "2"),
+            ("GITHUB_APP_PEM_FILE", "pem"),
+        ]);
+        let obj = provider_config_object(ProviderKind::GitHub, &d, None).expect("resolves");
+        assert_eq!(obj["app_auth"][0]["id"], "1");
+    }
+
+    #[test]
+    fn github_token_only_still_works_unchanged() {
+        // The pre-existing path must be byte-identical — every consumer that
+        // has not moved to an App keeps working.
+        let d = data(&[("GITHUB_TOKEN", "ghp_yyy"), ("owner", "pleme-io")]);
+        let obj = provider_config_object(ProviderKind::GitHub, &d, None).expect("resolves");
+        assert_eq!(obj["token"], "ghp_yyy");
+        assert_eq!(obj["owner"], "pleme-io");
+        assert!(obj.as_object().unwrap().get("app_auth").is_none());
     }
 
     #[test]
