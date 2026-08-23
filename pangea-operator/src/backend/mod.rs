@@ -16,6 +16,7 @@ mod tofu_pg_state_backend;
 pub use artifact_store::ArtifactStore;
 pub use config::{
     AwsCredentialsConfig, BackendConfigGenerator, CloudflareCredentialsConfig,
+    GitHubAppCredentialsConfig,
     PorkbunCredentialsConfig,
 };
 pub use lock::{LockGuard, StateLock};

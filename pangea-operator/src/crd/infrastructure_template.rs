@@ -835,10 +835,26 @@ impl ProviderKind {
         match self {
             ProviderKind::Aws => true,
             ProviderKind::Cloudflare => true,
-            // GitHub: the Ruby `provider :github do { token gh_token }`
-            // block in workspace renderers (e.g. github_org_workspace.rb)
-            // inlines the token via ENV. Operator emits only the env-var
-            // injection, no providers.tf.json block.
+            // GitHub: authority is CONDITIONAL and this constant states only
+            // the default. `false` means "the operator does not emit a github
+            // block merely because the kind is declared" — which is right,
+            // because github_org_workspace.rb renders
+            // `provider :github do { token gh_token }` whenever a token is
+            // available.
+            //
+            // ★ The exception, and where it actually lives: when the resolved
+            // Secret carries GitHub APP credentials (app_id + installation_id +
+            // private_key, all three), `BackendConfigGenerator::
+            // generate_provider_config` DOES emit a github block carrying
+            // `app_auth`, and the Ruby side then emits nothing because its
+            // block is guarded on the token being present. Exactly one side
+            // emits, and the credential's SHAPE decides which.
+            //
+            // The condition cannot live in this function: it is a `const fn`
+            // over the kind, and the answer depends on the contents of a Secret
+            // resolved at reconcile time. Putting it here would require either
+            // lying or threading runtime state into a const — so the decision
+            // sits at the emission site, and this comment is the pointer to it.
             ProviderKind::GitHub => false,
             // Porkbun: same operator-side model as AWS/Cloudflare — the
             // workspace's Ruby DSL surface (e.g. platform_dns.rb) declares

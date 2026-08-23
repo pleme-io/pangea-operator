@@ -172,6 +172,55 @@ pub async fn resolve_provider_config(
         None
     };
 
+    // ── ★ GITHUB APP CREDENTIALS — PRESENT OR ABSENT, NEVER PARTIAL ──────
+    // All three keys or none. A partial set is treated as absent rather than
+    // as an error, and that is deliberate in both directions:
+    //
+    //   * half-configuring the provider is worse than not configuring it —
+    //     `app_auth` with a missing pem authenticates as nobody and the error
+    //     surfaces from the provider, far from the Secret that caused it;
+    //   * erroring would break every workspace still using the token path,
+    //     which is most of them, on a Secret that legitimately has no App
+    //     credentials in it.
+    //
+    // So absence is the safe fallback: the Ruby `provider :github` block stays
+    // authoritative, exactly as before.
+    let gh_app_creds = if let Some(gh) = &provider_creds.github {
+        let ns = gh.secret_ref.namespace.as_deref().unwrap_or(&default_ns);
+        let secret_api: Api<Secret> = Api::namespaced(state.client.clone(), ns);
+        let secret =
+            secret_api
+                .get(&gh.secret_ref.name)
+                .await
+                .map_err(|_| Error::SecretNotFound {
+                    namespace: ns.to_string(),
+                    name: gh.secret_ref.name.clone(),
+                })?;
+        let data = secret.data.unwrap_or_default();
+        let pick = |keys: &[&str]| -> Option<String> {
+            keys.iter().find_map(|k| {
+                data.get(*k)
+                    .map(|v| String::from_utf8_lossy(&v.0).to_string())
+            })
+        };
+        match (
+            pick(&["app_id", "appId", "GITHUB_APP_ID"]),
+            pick(&["installation_id", "installationId", "GITHUB_APP_INSTALLATION_ID"]),
+            pick(&["private_key", "privateKey", "pem", "GITHUB_APP_PRIVATE_KEY"]),
+        ) {
+            (Some(app_id), Some(installation_id), Some(pem)) => {
+                Some(crate::backend::GitHubAppCredentialsConfig {
+                    app_id,
+                    installation_id,
+                    pem,
+                })
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+
     let aws_region = provider_creds
         .aws
         .as_ref()
@@ -182,6 +231,7 @@ pub async fn resolve_provider_config(
         aws_creds.as_ref(),
         cf_creds.as_ref(),
         pb_creds.as_ref(),
+        gh_app_creds.as_ref(),
     ))
 }
 
