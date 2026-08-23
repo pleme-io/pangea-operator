@@ -225,9 +225,28 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # ── ★ ONE VARIANT, AND IT IS THE RUBY-FREE ONE (2026-08-23) ────
+        # `embedded` used to be the primary image. It cannot be built any
+        # more, and that is a consequence rather than a regression: Ruby left
+        # the crate's DEFAULT features, `rootFeatures` is inert on the gen
+        # path (flake.nix:455), and gen resolves DEFAULT features into the
+        # build spec — so both variants now compile the same Ruby-free
+        # binary, and only this one packages itself consistently with that.
+        # The embedded image additionally assembled a RUBYLIB for an
+        # interpreter its binary no longer links, which is why it fails.
+        #
+        # A Ruby image is still reachable: it needs a SECOND committed build
+        # spec, which flake.nix already names as the requirement. The attr
+        # stays in the flake for that day.
+        #
+        # The tag keeps its `embedded-amd64` prefix DELIBERATELY, for one
+        # release. camelot's ImagePolicy matches `^embedded-amd64-r<n>-<sha>$`,
+        # and switching both at once leaves a window where no published tag
+        # matches — the policy resolves nothing and autobump stops, silently.
+        # The policy is being widened to accept both prefixes first; the
+        # rename follows once a tag under the new prefix exists.
         variant:
-          - { attr: dockerImage-operator-embedded-amd64, tag: embedded-amd64, ignoreFile: .trivyignore }
-          - { attr: dockerImage-operator-noruby-amd64, tag: noruby-amd64, ignoreFile: .trivyignore.noruby }
+          - { attr: dockerImage-operator-noruby-amd64, tag: embedded-amd64, ignoreFile: .trivyignore.noruby }
     uses: pleme-io/substrate/.github/workflows/image-push.yml@main
     with:
       imageAttr: ${{ matrix.variant.attr }}
@@ -296,9 +315,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # One variant, the Ruby-free one — see the image-rio matrix above for
+        # why, and why the tag prefix does not move in the same commit.
         variant:
-          - { attr: dockerImage-operator-embedded-amd64, tag: embedded-amd64, ignoreFile: .trivyignore }
-          - { attr: dockerImage-operator-noruby-amd64, tag: noruby-amd64, ignoreFile: .trivyignore.noruby }
+          - { attr: dockerImage-operator-noruby-amd64, tag: embedded-amd64, ignoreFile: .trivyignore.noruby }
     uses: pleme-io/substrate/.github/workflows/image-push.yml@main
     with:
       imageAttr: ${{ matrix.variant.attr }}
