@@ -162,3 +162,27 @@ lto = true
 codegen-units = 1
 opt-level = "z"
 strip = true
+
+# ── ★ THE LAVA CHAIN, PINNED BY GIT REV ──────────────────────────────────
+# lava's compile path (record iteration, shape-typed record fields, terraform
+# import blocks) is what lets this operator render the estate with no Ruby in
+# the process. Those changes are committed and unpublished, and the three
+# crates form a chain: lava-eval needs lava-arch needs lava-core.
+#
+# Patched here rather than waiting on three crates.io releases, for two
+# reasons. Publishing is irreversible — a version cannot be withdrawn, only
+# yanked — and it would have to happen three times in order before this image
+# could build at all. And a `path` patch cannot ship: it resolves only on the
+# machine that wrote it. A git rev is reproducible, pinned, and reviewable.
+#
+# It lives at the WORKSPACE ROOT because that is the only place
+# [patch.crates-io] applies. A patch in a member manifest is silently ignored,
+# and a member `path` dependency does not reach a TRANSITIVE registry dep —
+# which is why lava-eval kept resolving the published lava-arch and failing on
+# a missing add_import.
+#
+# Replace with plain version requirements once the three crates are published.
+[patch.crates-io]
+lava-core = { git = "https://github.com/pleme-io/lava-core", rev = "f7530d06a52c3356d81415c6611c5ccd2c8cbd06" }
+lava-arch = { git = "https://github.com/pleme-io/lava-arch", rev = "8ac90dc2f119c7d7681e84594b02cc1abe58bae8" }
+lava-eval = { git = "https://github.com/pleme-io/lava-eval", rev = "34f7c3532ac968b51621b359c4fca906797a8cb3" }
