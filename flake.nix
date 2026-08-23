@@ -411,7 +411,21 @@
           # empty target and reproduce exactly the bug this closes — an env
           # var pointing at nothing, discovered only when a CR is applied
           # months later.
-          extraContents = _: [
+          # ── ★ A LIST, NOT A FUNCTION ────────────────────────────────
+          # hardened.mkPackageImage declares `extraContents ? []` and uses it
+          # as `[ package ] ++ extraContents` (substrate
+          # lib/build/oci/hardened-base.nix:545,625). Passing a lambda made
+          # the whole image fail at EVAL with "expected a list but found a
+          # function", four seconds into a step named "Build image with Nix"
+          # — which reads like a build failure and is not one.
+          #
+          # The lambda bought nothing: `imagePkgs` is already in scope here,
+          # so the argument was discarded (`_:`) anyway. Substrate has a
+          # SECOND builder whose extraContents genuinely is a function
+          # (lib/build/go/tool-image-flake.nix), which is where the shape
+          # came from — same option name, two contracts, and no error until
+          # eval.
+          extraContents = [
             (imagePkgs.runCommand "lava-dashboard-catalog" { } ''
               mkdir -p $out/usr/share/lava/dashboards
               n=$(find ${inputs.lava-architectures}/dashboards -name '*.tlisp' | wc -l)

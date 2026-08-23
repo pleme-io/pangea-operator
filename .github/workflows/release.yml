@@ -279,7 +279,13 @@ jobs:
   # is reachable from this pool (see extraSubstituters below), unlike
   # Mode-1's now-retired pool.
   image-fallback:
-    name: container image → ghcr.io (camelot-builder-pleme-eks / override, ${{ matrix.variant.tag }})
+    # ★ The runner is INTERPOLATED, never a literal. This line used to read
+    # "camelot-builder-pleme-eks" while the job actually ran on ubuntu-24.04
+    # (resolve-runner picks hosted for a PUBLIC repo), and that single stale
+    # literal sent a stall investigation at a dead self-hosted ARC pool — the
+    # job name is the first thing anyone reads and it was describing a runner
+    # this job has not used since the repo went public.
+    name: container image → ghcr.io (${{ needs.resolve-runner.outputs.runner }}, ${{ matrix.variant.tag }})
     needs: resolve-runner
     if: needs.resolve-runner.outputs.use-rio-cache != 'true'
     # Same two-row variant table as image-rio — see the block comment above
