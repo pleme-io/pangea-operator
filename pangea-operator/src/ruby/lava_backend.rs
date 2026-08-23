@@ -228,22 +228,68 @@ fn bindings_from_variables(
             Value::Number(n) => b.set_str(k.clone(), n.to_string()),
             Value::Bool(v) => b.set_str(k.clone(), v.to_string()),
             Value::Array(items) => {
-                let mut out = Vec::with_capacity(items.len());
-                for (i, it) in items.iter().enumerate() {
-                    match it {
-                        Value::String(v) => out.push(v.clone()),
-                        Value::Number(n) => out.push(n.to_string()),
-                        Value::Bool(v) => out.push(v.to_string()),
-                        _ => {
+                // ── ★ AN ARRAY OF OBJECTS IS A RECORD LIST ────────────────
+                // This is what lets a catalogue reach lava at all. The org
+                // workspace is 997 rows each with a name, description,
+                // visibility and flags; before records existed the only
+                // encodings were parallel lists (which for-each cannot
+                // express) or a delimited blob (which makes the architecture
+                // parse its own input).
+                //
+                // Decided by the FIRST element's shape and then required of
+                // every element, rather than per-element: a list that is
+                // half scalars and half objects is a malformed input, and
+                // silently binding the scalar half would render a document
+                // missing rows nobody could account for.
+                let first_is_object = items.first().is_some_and(Value::is_object);
+                if first_is_object {
+                    let mut rows = Vec::with_capacity(items.len());
+                    for (i, it) in items.iter().enumerate() {
+                        let Value::Object(map) = it else {
                             return Err(BackendError::Evaluator(format!(
-                                "variable {k:?}[{i}] is structured; lava binds lists of \
-                                 scalars, and serialising structure into a binding would \
-                                 evaluate cleanly while meaning something else"
-                            )))
+                                "variable {k:?}[{i}] is not an object, but {k:?}[0] is — a \
+                                 record list must be uniform, and binding only the object \
+                                 rows would render a document silently missing the rest"
+                            )));
+                        };
+                        let mut row = std::collections::BTreeMap::new();
+                        for (field, v) in map {
+                            let scalar = match v {
+                                Value::String(x) => x.clone(),
+                                Value::Number(x) => x.to_string(),
+                                Value::Bool(x) => x.to_string(),
+                                Value::Null => String::new(),
+                                _ => {
+                                    return Err(BackendError::Evaluator(format!(
+                                        "variable {k:?}[{i}].{field} is structured; a record \
+                                         field is a scalar, and nesting belongs in the \
+                                         architecture where it is typed"
+                                    )))
+                                }
+                            };
+                            row.insert(field.clone(), scalar);
+                        }
+                        rows.push(row);
+                    }
+                    b.set_records(k.clone(), rows);
+                } else {
+                    let mut out = Vec::with_capacity(items.len());
+                    for (i, it) in items.iter().enumerate() {
+                        match it {
+                            Value::String(v) => out.push(v.clone()),
+                            Value::Number(n) => out.push(n.to_string()),
+                            Value::Bool(v) => out.push(v.to_string()),
+                            _ => {
+                                return Err(BackendError::Evaluator(format!(
+                                    "variable {k:?}[{i}] is structured; lava binds lists of \
+                                     scalars, and serialising structure into a binding would \
+                                     evaluate cleanly while meaning something else"
+                                )))
+                            }
                         }
                     }
+                    b.set_list(k.clone(), out);
                 }
-                b.set_list(k.clone(), out);
             }
             Value::Null => {
                 return Err(BackendError::Evaluator(format!(
@@ -746,10 +792,14 @@ mod compile_tests {
         // something else — the failure would surface as a wrong document,
         // not an error.
         let b = LavaCompilerBackend::new("/nonexistent");
+        // NOTE `[{"a": 1}]` is deliberately absent from this list now: an
+        // array of objects is a RECORD LIST, which is how a catalogue reaches
+        // lava at all. What remains refused is structure that has no binding
+        // shape — a bare object, a null, and (covered in
+        // record_variable_tests) a nested field inside a record row.
         for bad in [
             serde_json::json!({"nested": 1}),
             serde_json::json!(null),
-            serde_json::json!([{"a": 1}]),
         ] {
             let req = CompileRequest {
                 source: Some(ARCH.to_string()),
@@ -809,5 +859,108 @@ mod compile_tests {
             template_name: None,
         };
         assert!(b.compile(req).await.is_ok());
+    }
+}
+
+#[cfg(test)]
+mod record_variable_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    const ARCH: &str = r#"
+(deflava-architecture rows
+  :inputs ((:items ()))
+  :resources ((for-each ((i it) (enumerate items))
+    (github-repository "{it_name}" :name "{it_name}" :archived "{it_archived}"))))
+"#;
+
+    fn vars(pairs: &[(&str, serde_json::Value)]) -> HashMap<String, serde_json::Value> {
+        pairs.iter().map(|(k, v)| ((*k).to_string(), v.clone())).collect()
+    }
+
+    async fn compile(v: HashMap<String, serde_json::Value>) -> Result<CompileResult, BackendError> {
+        LavaCompilerBackend::new("/nonexistent")
+            .compile(CompileRequest {
+                source: Some(ARCH.to_string()),
+                template_path: None,
+                rubylib_paths: vec![],
+                variables: v,
+                template_name: None,
+            })
+            .await
+    }
+
+    #[tokio::test]
+    async fn an_array_of_objects_binds_as_a_record_list() {
+        // ★ THE WIRE THE CATALOGUE TRAVELS. Without this, `variables` refused
+        // structure outright and a 997-row catalogue had no way to reach lava
+        // at all — no CRD change was needed, only this shape being accepted.
+        let got = compile(vars(&[(
+            "items",
+            serde_json::json!([
+                {"name": "alpha", "archived": false},
+                {"name": "beta",  "archived": true},
+            ]),
+        )]))
+        .await
+        .expect("a record list must bind");
+        let v = got.synthesis_value.unwrap();
+        let repos = &v["resource"]["github_repository"];
+        assert_eq!(repos.as_object().unwrap().len(), 2);
+        // Booleans survive as booleans through the whole wire: JSON bool ->
+        // record field -> shape-typed on whole-value reference.
+        assert_eq!(repos["alpha"]["archived"], false);
+        assert_eq!(repos["beta"]["archived"], true);
+    }
+
+    #[tokio::test]
+    async fn a_scalar_array_still_binds_as_a_list() {
+        // The record branch is chosen by the FIRST element's shape; a scalar
+        // array must be untouched by it.
+        const L: &str = r#"
+(deflava-architecture l
+  :inputs ((:azs ()))
+  :resources ((for-each ((i az) (enumerate azs))
+    (aws-subnet "s-{i}" :availability-zone "{az}"))))
+"#;
+        let got = LavaCompilerBackend::new("/nonexistent")
+            .compile(CompileRequest {
+                source: Some(L.to_string()),
+                template_path: None,
+                rubylib_paths: vec![],
+                variables: vars(&[("azs", serde_json::json!(["us-east-2a", "us-east-2b"]))]),
+                template_name: None,
+            })
+            .await
+            .expect("a scalar list must still bind");
+        let v = got.synthesis_value.unwrap();
+        assert_eq!(v["resource"]["aws_subnet"]["s-1"]["availability_zone"], "us-east-2b");
+    }
+
+    #[tokio::test]
+    async fn a_mixed_array_is_refused_rather_than_half_bound() {
+        // ★ A list half scalars and half objects is malformed input. Binding
+        // only the object rows renders a document silently missing the rest —
+        // resources nobody can account for being absent.
+        let err = compile(vars(&[(
+            "items",
+            serde_json::json!([{"name": "alpha"}, "beta"]),
+        )]))
+        .await
+        .expect_err("a mixed list must be refused");
+        let m = format!("{err}");
+        assert!(m.contains("uniform"), "the error must say why: {m}");
+        assert!(m.contains("items"), "and name the variable: {m}");
+    }
+
+    #[tokio::test]
+    async fn a_nested_field_inside_a_record_is_refused() {
+        let err = compile(vars(&[(
+            "items",
+            serde_json::json!([{"name": "alpha", "deep": {"a": 1}}]),
+        )]))
+        .await
+        .expect_err("nested structure must be refused");
+        assert!(format!("{err}").contains("deep"), "must name the field");
     }
 }
