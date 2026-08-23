@@ -43,7 +43,34 @@ repository.workspace = true
 # beside the current one), migrate the CRs to the tlisp/architecture source
 # shapes, then invert. Two-variant publishing needs either a gen fix so
 # rootFeatures reaches the image, or a second committed build spec.
-default = ["graphql", "grpc", "embedded_ruby", "executor_magma", "magma_rubygems"]
+# ── ★ RUBY-FREE BY DEFAULT (2026-08-23) ─────────────────────────────────
+# `embedded_ruby` and `magma_rubygems` are both OPT-IN now. Turning either
+# on is still one flag — `--features embedded_ruby` — so the Ruby build is
+# available, it is simply no longer what you get by not choosing.
+#
+# What changed to make this safe, because the note above correctly said it
+# was not: config.rs prescribed `compiler.backend = "embedded"` as a fixed
+# literal while main.rs PANICS on `embedded` without the feature, so
+# inverting used to crash every unmigrated deployment on startup. The
+# prescription now follows the feature (config.rs DEFAULT_COMPILER_BACKEND),
+# so a Ruby-free binary prescribes `lava`, which it can always construct.
+#
+# And lava can now do the job it could not: LavaCompilerBackend::compile
+# renders `(deflava-architecture …)` to terraform.json, and
+# list_architectures enumerates the image catalogue. Those were the two
+# typed gaps that made a Ruby-free operator undeployable rather than merely
+# unbuilt.
+#
+# BOTH are dropped, not just embedded_ruby: magma_rubygems pulls Ruby into
+# the closure on its own — measured, dropping embedded_ruby alone took the
+# operator from 76 runtime deps to 75 and left Ruby among them. Removing
+# embedded_ruby is necessary and not sufficient.
+#
+# What an image loses by default: `compute_gem_tree_attestation` returns
+# None, so a Gemfile.lock in a workspace is not attested. On a boundary that
+# cannot run Ruby there is no Gemfile to attest, and a build that wants both
+# asks for `magma_rubygems` explicitly.
+default = ["graphql", "grpc", "executor_magma"]
 graphql = ["async-graphql", "async-graphql-axum"]
 grpc = ["tonic", "prost"]
 # In-process CRuby evaluator (M8.2 of the hollow-out plan). When OFF (the

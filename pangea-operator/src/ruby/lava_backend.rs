@@ -41,9 +41,19 @@ use super::backend::{
 /// path it looked in.
 const DEFAULT_CATALOG: &str = "/usr/share/lava/dashboards";
 
+/// Where the image keeps its `(deflava-architecture …)` catalogue.
+///
+/// Separate from the dashboard catalogue on purpose. They are different
+/// vocabularies rendering to different targets — Grafana JSON versus
+/// terraform.json — and a name colliding across them should resolve to
+/// the one the caller asked for, not to whichever directory was searched
+/// first.
+const DEFAULT_ARCH_CATALOG: &str = "/usr/share/lava/architectures";
+
 #[derive(Clone, Debug)]
 pub struct LavaCompilerBackend {
     catalog: PathBuf,
+    architectures: PathBuf,
 }
 
 impl Default for LavaCompilerBackend {
@@ -57,7 +67,16 @@ impl LavaCompilerBackend {
     pub fn new(catalog: impl Into<PathBuf>) -> Self {
         Self {
             catalog: catalog.into(),
+            architectures: PathBuf::from(DEFAULT_ARCH_CATALOG),
         }
+    }
+
+    /// Point the architecture catalogue somewhere else. Used by tests and
+    /// by an image that lays its catalogue out differently.
+    #[must_use]
+    pub fn with_architectures(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.architectures = dir.into();
+        self
     }
 
     #[must_use]
@@ -66,6 +85,47 @@ impl LavaCompilerBackend {
             std::env::var("LAVA_DASHBOARD_CATALOG")
                 .unwrap_or_else(|_| DEFAULT_CATALOG.to_string()),
         )
+        .with_architectures(
+            std::env::var("LAVA_ARCHITECTURE_CATALOG")
+                .unwrap_or_else(|_| DEFAULT_ARCH_CATALOG.to_string()),
+        )
+    }
+
+    /// Resolve an architecture name to its `.tlisp` source.
+    ///
+    /// Same bare-identifier check as the dashboard loader, for the same
+    /// reason: a catalogue lookup that accepted `..` turns a CR field into
+    /// a path traversal.
+    fn load_arch_source(&self, name: &str) -> Result<String, BackendError> {
+        check_bare_identifier(name, "architecture")?;
+        let path = self.architectures.join(format!("{name}.tlisp"));
+        std::fs::read_to_string(&path).map_err(|e| {
+            BackendError::Evaluator(format!(
+                "architecture {name:?} not found in the image catalogue at {}: {e}",
+                self.architectures.display()
+            ))
+        })
+    }
+
+    /// Evaluate a `(deflava-architecture …)` source with typed bindings and
+    /// render it to terraform JSON.
+    ///
+    /// ── ★ BINDINGS ARE TYPED, NOT SPLICED ────────────────────────────
+    /// The dashboard path substitutes `{key}` textually because Grafana
+    /// documents are templated that way. Architectures are not: lava takes
+    /// an `InputBindings` and the evaluator resolves names itself, so a
+    /// caller's value can never become syntax. That difference is the whole
+    /// reason this path can accept variables from a CR at all.
+    pub fn render_architecture_terraform(
+        &self,
+        src: &str,
+        variables: &std::collections::HashMap<String, serde_json::Value>,
+    ) -> Result<serde_json::Value, BackendError> {
+        let bindings = bindings_from_variables(variables)?;
+        let arch = lava_eval::eval_architecture(src, &bindings)
+            .map_err(|e| BackendError::Evaluator(format!("lava evaluation failed: {e}")))?;
+        arch.render_terraform_json()
+            .map_err(|e| BackendError::Evaluator(format!("lava render failed: {e}")))
     }
 
     /// Resolve a catalogue entry to its `.tlisp` source.
@@ -75,16 +135,7 @@ impl LavaCompilerBackend {
     /// would turn a name into a path traversal, which is precisely the
     /// class this whole backend exists to close.
     fn load_architecture(&self, name: &str) -> Result<String, BackendError> {
-        if name.is_empty()
-            || !name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-        {
-            return Err(BackendError::Evaluator(format!(
-                "dashboard architecture name {name:?} is not a bare identifier \
-                 (letters, digits, '-' and '_' only)"
-            )));
-        }
+        check_bare_identifier(name, "dashboard architecture")?;
         let path = self.catalog.join(format!("{name}.tlisp"));
         std::fs::read_to_string(&path).map_err(|e| {
             BackendError::Evaluator(format!(
@@ -123,6 +174,92 @@ impl LavaCompilerBackend {
             }
         }
     }
+}
+
+/// Reject anything that is not a bare identifier before it reaches the
+/// filesystem.
+///
+/// Shared by both catalogues. A lookup that accepted `..` would turn a CR
+/// field into a path traversal, which is the class this whole backend
+/// exists to close — so it is checked once, in one place, rather than
+/// re-implemented per catalogue where one copy could drift lenient.
+fn check_bare_identifier(name: &str, what: &str) -> Result<(), BackendError> {
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(BackendError::Evaluator(format!(
+            "{what} name {name:?} is not a bare identifier \
+             (letters, digits, '-' and '_' only)"
+        )));
+    }
+    Ok(())
+}
+
+/// Convert a compile request's `variables` into lava `InputBindings`.
+///
+/// ── ★ WHAT IS DELIBERATELY REFUSED ───────────────────────────────────
+/// lava's binding surface is scalars and lists-of-scalars, and this maps
+/// onto it exactly rather than flattening. A nested object, or a list
+/// containing one, is REFUSED with the offending key named — because the
+/// alternative is serialising it to a string, which produces a binding
+/// that evaluates without error and means something different from what
+/// the caller wrote. Structure belongs in the architecture, where it is
+/// typed, not smuggled through a variable.
+///
+/// Numbers and booleans become their text. That is not a loss: lava
+/// re-types a scalar by shape at evaluation, so `8080` arrives as a JSON
+/// number in the rendered document, and a value that must stay text
+/// (a zero-padded id) survives because that re-typing is round-trip
+/// checked upstream.
+fn bindings_from_variables(
+    variables: &std::collections::HashMap<String, serde_json::Value>,
+) -> Result<lava_eval::InputBindings, BackendError> {
+    use serde_json::Value;
+    let mut b = lava_eval::InputBindings::new();
+    // Sorted so a rendering is reproducible regardless of HashMap order —
+    // the same reason the goldens this is diffed against are key-sorted.
+    let mut keys: Vec<&String> = variables.keys().collect();
+    keys.sort();
+    for k in keys {
+        match &variables[k] {
+            Value::String(v) => b.set_str(k.clone(), v.clone()),
+            Value::Number(n) => b.set_str(k.clone(), n.to_string()),
+            Value::Bool(v) => b.set_str(k.clone(), v.to_string()),
+            Value::Array(items) => {
+                let mut out = Vec::with_capacity(items.len());
+                for (i, it) in items.iter().enumerate() {
+                    match it {
+                        Value::String(v) => out.push(v.clone()),
+                        Value::Number(n) => out.push(n.to_string()),
+                        Value::Bool(v) => out.push(v.to_string()),
+                        _ => {
+                            return Err(BackendError::Evaluator(format!(
+                                "variable {k:?}[{i}] is structured; lava binds lists of \
+                                 scalars, and serialising structure into a binding would \
+                                 evaluate cleanly while meaning something else"
+                            )))
+                        }
+                    }
+                }
+                b.set_list(k.clone(), out);
+            }
+            Value::Null => {
+                return Err(BackendError::Evaluator(format!(
+                    "variable {k:?} is null; lava has no null binding, and treating it as \
+                     an empty string would silently substitute the wrong value"
+                )))
+            }
+            Value::Object(_) => {
+                return Err(BackendError::Evaluator(format!(
+                    "variable {k:?} is an object; structure belongs in the architecture, \
+                     not in a variable"
+                )))
+            }
+        }
+    }
+    Ok(b)
 }
 
 /// Substitute `{key}` placeholders from a flat parameter object.
@@ -183,12 +320,50 @@ fn bind_params(src: &str, params: &serde_json::Value) -> Result<String, BackendE
 
 #[async_trait]
 impl CompilerBackend for LavaCompilerBackend {
-    async fn list_architectures(&self, _gem: &str) -> Result<ArchListing, BackendError> {
-        Err(BackendError::Evaluator(
-            "the lava backend renders dashboards only; architecture listing needs the \
-             embedded Ruby backend"
-                .to_string(),
-        ))
+    /// Enumerate the image's architecture catalogue.
+    ///
+    /// The `gem` argument is ignored, and that is the honest answer rather
+    /// than a shrug: a gem is a Ruby packaging unit. lava architectures are
+    /// baked into the image as `.tlisp`, so there is exactly one catalogue
+    /// and no per-gem partition to filter by. Erroring on a gem name would
+    /// break callers that pass one for the Ruby backend's benefit; silently
+    /// returning a filtered-empty list would read as "this gem has no
+    /// architectures", which is worse than either.
+    async fn list_architectures(&self, gem: &str) -> Result<ArchListing, BackendError> {
+        let dir = &self.architectures;
+        let entries = std::fs::read_dir(dir).map_err(|e| {
+            BackendError::Evaluator(format!(
+                "architecture catalogue {} is unreadable: {e}",
+                dir.display()
+            ))
+        })?;
+        let mut names: Vec<String> = Vec::new();
+        for e in entries.flatten() {
+            let path = e.path();
+            if path.extension().and_then(|x| x.to_str()) != Some("tlisp") {
+                continue;
+            }
+            if let Some(stem) = path.file_stem().and_then(|x| x.to_str()) {
+                // A file whose name is not a bare identifier could never be
+                // LOADED by name, so listing it would advertise something
+                // unreachable.
+                if check_bare_identifier(stem, "architecture").is_ok() {
+                    names.push(stem.to_string());
+                }
+            }
+        }
+        names.sort();
+        Ok(ArchListing {
+            // Echoed back verbatim. The catalogue is not partitioned by gem
+            // (see the doc comment), so this is the caller's own label
+            // returned unchanged rather than a claim that these
+            // architectures came from that gem.
+            gem: gem.to_string(),
+            classes: names,
+            // No version: a gem has one, an image catalogue does not, and
+            // inventing a value here would be a claim nothing backs.
+            version: None,
+        })
     }
 
     async fn smoke_test(&self, _req: SmokeRequest) -> Result<FixtureOutcome, BackendError> {
@@ -199,12 +374,54 @@ impl CompilerBackend for LavaCompilerBackend {
         ))
     }
 
-    async fn compile(&self, _req: CompileRequest) -> Result<CompileResult, BackendError> {
-        Err(BackendError::Evaluator(
-            "the lava backend renders dashboards only; Pangea DSL compilation needs the \
-             embedded Ruby backend"
-                .to_string(),
-        ))
+    /// Compile an architecture to terraform JSON, with no Ruby in the
+    /// process.
+    ///
+    /// Source resolution, in order, because a caller that supplied inline
+    /// source meant it:
+    ///   1. `source`      — inline `.tlisp`, used verbatim
+    ///   2. `template_name` — a catalogue entry
+    ///   3. `template_path` — its file stem, so a caller that only ever had
+    ///                        a path still resolves
+    ///
+    /// `rubylib_paths` is ignored and cannot matter: it prepends to a Ruby
+    /// `$LOAD_PATH`, and there is no interpreter here. Erroring on it would
+    /// break every caller that populates it unconditionally for the
+    /// embedded backend's benefit.
+    async fn compile(&self, req: CompileRequest) -> Result<CompileResult, BackendError> {
+        let src = if let Some(inline) = req.source.as_deref() {
+            inline.to_string()
+        } else {
+            let name = req
+                .template_name
+                .clone()
+                .or_else(|| {
+                    req.template_path.as_deref().and_then(|p| {
+                        std::path::Path::new(p)
+                            .file_stem()
+                            .and_then(|x| x.to_str())
+                            .map(str::to_string)
+                    })
+                })
+                .ok_or_else(|| {
+                    BackendError::Evaluator(
+                        "compile request carries no source, template_name or template_path — \
+                         nothing identifies what to render"
+                            .to_string(),
+                    )
+                })?;
+            self.load_arch_source(&name)?
+        };
+
+        let value = self.render_architecture_terraform(&src, &req.variables)?;
+        // Pretty for the on-disk form tofu and humans read; the typed value
+        // travels beside it so magma consumers skip a parse round-trip.
+        let terraform_json = serde_json::to_string_pretty(&value)
+            .map_err(|e| BackendError::Evaluator(format!("serialize terraform json: {e}")))?;
+        Ok(CompileResult {
+            terraform_json,
+            synthesis_value: Some(value),
+        })
     }
 
     async fn compile_any(&self, _req: CompileAnyRequest) -> Result<CompileAnyResult, BackendError> {
@@ -338,11 +555,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_compile_methods_report_a_typed_gap_rather_than_an_empty_answer() {
-        let b = LavaCompilerBackend::new("/nonexistent");
+    async fn an_unreadable_catalogue_is_an_error_not_an_empty_listing() {
+        // ── ★ THIS TEST USED TO ASSERT THE OPPOSITE ────────────────────
+        // It pinned "dashboards only" — the typed gap that made a
+        // Ruby-free operator undeployable, and which compile/
+        // list_architectures now close. What it was PROTECTING is still
+        // exactly right and is kept: an empty listing reads as "this gem
+        // has no architectures", which is worse than an error, so a
+        // catalogue that cannot be read must say so.
+        let b = LavaCompilerBackend::new("/nonexistent").with_architectures("/nonexistent-arch");
         let e = b.list_architectures("pangea-aws").await.unwrap_err();
-        // An empty listing would read as "this gem has no architectures".
-        assert!(e.to_string().contains("dashboards only"), "{e}");
+        assert!(
+            e.to_string().contains("unreadable"),
+            "an absent catalogue must be reported, never rendered as an empty list: {e}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_real_catalogue_lists_only_loadable_architectures() {
+        let dir = std::env::temp_dir().join(format!("lava-arch-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("aws-sg.tlisp"), "").unwrap();
+        std::fs::write(dir.join("dns_zone.tlisp"), "").unwrap();
+        // Neither of these can ever be LOADED by name, so listing them
+        // would advertise something unreachable.
+        std::fs::write(dir.join("not a bare name.tlisp"), "").unwrap();
+        std::fs::write(dir.join("README.md"), "").unwrap();
+
+        let b = LavaCompilerBackend::new("/nonexistent").with_architectures(&dir);
+        let got = b.list_architectures("some-gem").await.unwrap();
+        assert_eq!(got.classes, vec!["aws-sg".to_string(), "dns_zone".to_string()]);
+        // The gem label is echoed, never invented — the catalogue is not
+        // partitioned by gem and pretending otherwise would be a claim
+        // nothing backs.
+        assert_eq!(got.gem, "some-gem");
+        assert_eq!(got.version, None);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
 
@@ -400,5 +648,166 @@ impl CompilerBackend for DispatchingCompilerBackend {
             SourceKind::Lisp => self.lava.render_dashboard(source, extend_modules, kind).await,
             _ => self.ruby.render_dashboard(source, extend_modules, kind).await,
         }
+    }
+}
+
+#[cfg(test)]
+mod compile_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// The smallest architecture that renders a real resource, written
+    /// inline so the test does not depend on an image catalogue.
+    const ARCH: &str = r#"
+(deflava-interface probe
+  :doc "test"
+  :inputs ((:name :type :string :required #t)
+    (:sg :type :string :required #t)
+    (:cidrs :type (:list-of :string) :required #t))
+  :outputs ((:sg-id :type :string)))
+
+(deflava-architecture probe
+  :inputs ((:name "p") (:sg "sg-0") (:cidrs ("10.0.0.0/8")))
+  :resources ((aws-security-group-rule
+     "{name}-in"
+     :type "ingress"
+     :from-port 22
+     :to-port 22
+     :protocol "tcp"
+     :cidr-blocks "{cidrs}"
+     :security-group-id "{sg}"))
+  :outputs (:sg_id "{sg}")
+  :result (probe :sg-id "{sg}"))
+"#;
+
+    fn vars(pairs: &[(&str, serde_json::Value)]) -> HashMap<String, serde_json::Value> {
+        pairs.iter().map(|(k, v)| ((*k).to_string(), v.clone())).collect()
+    }
+
+    #[tokio::test]
+    async fn compile_renders_terraform_json_with_no_ruby() {
+        // ★ THE POINT OF THE WHOLE EXERCISE. This is the method that
+        // returned "the lava backend renders dashboards only" — the single
+        // Err that made a Ruby-free operator undeployable.
+        let b = LavaCompilerBackend::new("/nonexistent-dashboards");
+        let req = CompileRequest {
+            source: Some(ARCH.to_string()),
+            template_path: None,
+            rubylib_paths: vec![],
+            variables: vars(&[
+                ("name", serde_json::json!("probe")),
+                ("sg", serde_json::json!("sg-abc")),
+                ("cidrs", serde_json::json!(["203.0.113.0/32"])),
+            ]),
+            template_name: None,
+        };
+        let got = b.compile(req).await.expect("lava must compile an architecture");
+        let v = got.synthesis_value.expect("typed value travels beside the string");
+        let rule = &v["resource"]["aws_security_group_rule"]["probe-in"];
+        assert_eq!(rule["security_group_id"], "sg-abc");
+        assert_eq!(rule["cidr_blocks"][0], "203.0.113.0/32");
+        // A bare integer in the source stays a JSON NUMBER. terraform's
+        // schema wants a number here, and a stringified "22" is the shape
+        // that diverges from the Ruby oracle.
+        assert_eq!(rule["from_port"], 22);
+        assert_eq!(v["output"]["sg_id"]["value"], "sg-abc");
+        // The string form is the same document, not a second rendering.
+        let reparsed: serde_json::Value =
+            serde_json::from_str(&got.terraform_json).expect("terraform_json parses");
+        assert_eq!(reparsed, v, "the two surfaces must never disagree");
+    }
+
+    #[tokio::test]
+    async fn a_list_variable_binds_as_a_list_not_a_joined_string() {
+        // Comma-joining a list is the tempting shortcut and it renders a
+        // DIFFERENT document — one cidr_blocks entry containing a comma,
+        // which terraform accepts and applies wrongly.
+        let b = LavaCompilerBackend::new("/nonexistent");
+        let req = CompileRequest {
+            source: Some(ARCH.to_string()),
+            template_path: None,
+            rubylib_paths: vec![],
+            variables: vars(&[
+                ("name", serde_json::json!("p")),
+                ("sg", serde_json::json!("sg-1")),
+                ("cidrs", serde_json::json!(["10.0.0.0/8", "192.168.0.0/16"])),
+            ]),
+            template_name: None,
+        };
+        let v = b.compile(req).await.unwrap().synthesis_value.unwrap();
+        let cidrs = &v["resource"]["aws_security_group_rule"]["p-in"]["cidr_blocks"];
+        assert!(cidrs.is_array(), "must be an array, got {cidrs}");
+        assert_eq!(cidrs.as_array().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn structured_variables_are_refused_rather_than_stringified() {
+        // Serialising an object into a binding evaluates cleanly and means
+        // something else — the failure would surface as a wrong document,
+        // not an error.
+        let b = LavaCompilerBackend::new("/nonexistent");
+        for bad in [
+            serde_json::json!({"nested": 1}),
+            serde_json::json!(null),
+            serde_json::json!([{"a": 1}]),
+        ] {
+            let req = CompileRequest {
+                source: Some(ARCH.to_string()),
+                template_path: None,
+                rubylib_paths: vec![],
+                variables: vars(&[("name", serde_json::json!("p")), ("bad", bad.clone())]),
+                template_name: None,
+            };
+            let err = b.compile(req).await.expect_err("structure must be refused");
+            let msg = format!("{err}");
+            assert!(msg.contains("bad"), "the error must NAME the key: {msg}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_request_identifying_nothing_is_an_error_not_an_empty_render() {
+        let b = LavaCompilerBackend::new("/nonexistent");
+        let req = CompileRequest {
+            source: None,
+            template_path: None,
+            rubylib_paths: vec![],
+            variables: HashMap::new(),
+            template_name: None,
+        };
+        let err = b.compile(req).await.expect_err("nothing to render is an error");
+        assert!(format!("{err}").contains("nothing identifies"));
+    }
+
+    #[tokio::test]
+    async fn a_traversing_template_name_never_reaches_the_filesystem() {
+        let b = LavaCompilerBackend::new("/nonexistent").with_architectures("/nonexistent-arch");
+        let req = CompileRequest {
+            source: None,
+            template_path: None,
+            rubylib_paths: vec![],
+            variables: HashMap::new(),
+            template_name: Some("../../etc/passwd".to_string()),
+        };
+        let err = b.compile(req).await.expect_err("traversal must be refused");
+        assert!(
+            format!("{err}").contains("bare identifier"),
+            "must be refused as a name, not attempted as a path: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn rubylib_paths_are_ignored_rather_than_rejected() {
+        // Callers populate this unconditionally for the embedded backend.
+        // Erroring would break them for a field that cannot matter when
+        // there is no interpreter.
+        let b = LavaCompilerBackend::new("/nonexistent");
+        let req = CompileRequest {
+            source: Some(ARCH.to_string()),
+            template_path: None,
+            rubylib_paths: vec!["/opt/gems/lib".to_string()],
+            variables: vars(&[("name", serde_json::json!("p")), ("sg", serde_json::json!("s"))]),
+            template_name: None,
+        };
+        assert!(b.compile(req).await.is_ok());
     }
 }

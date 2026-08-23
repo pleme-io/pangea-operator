@@ -5,7 +5,7 @@
     "Cargo.toml": "0b30df079faead095367aac7b6d647a7114e4fab08bf9fff393af7db18a0ec72",
     "pangea-cli/Cargo.toml": "f3f970097f7914011f23728fe42e3aed3085ec83bacdea24f37cdc9c19cfe965",
     "pangea-operator-mcp/Cargo.toml": "72a01f5815a03b1c418697a985ede13816d4f5aec385332ec436e2155713dea8",
-    "pangea-operator/Cargo.toml": "ffaf1c70750a3ead001b79804f0bd467fa9c6481de2b857ac9729a26f4c52207",
+    "pangea-operator/Cargo.toml": "b2a8ae62ab550bbe865866018d9034dea45dbff1637e879351caaf1f9a5c23fb",
     "pangea-ruby-eval/Cargo.toml": "a65712c95619fda84a8cebaa9f887919acf4e71f4125f085797dfaf478eb380a",
     "pangea-types/Cargo.toml": "bba5d0bee1d04b3ddaefa9f7234a1e5a11e3388dd89e62a3deb4a91b66cd4abc"
   },
@@ -10652,74 +10652,6 @@
         "build_dependencies": [],
         "features": []
       },
-      "magma-rubygems-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e": {
-        "runtime_dependencies": [
-          {
-            "name": "blake3",
-            "package_key": "blake3-1.8.5",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "hex",
-            "package_key": "hex-0.4.3",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "serde",
-            "package_key": "serde-1.0.228",
-            "kind": "normal",
-            "features": [
-              "derive"
-            ],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "serde_json",
-            "package_key": "serde_json-1.0.150",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "sha2",
-            "package_key": "sha2-0.10.9",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "thiserror",
-            "package_key": "thiserror-2.0.18",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          }
-        ],
-        "build_dependencies": [],
-        "features": []
-      },
       "magma-state-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e": {
         "runtime_dependencies": [
           {
@@ -12853,16 +12785,6 @@
             "tree": "target"
           },
           {
-            "name": "magma_rubygems",
-            "package_key": "magma-rubygems-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
             "name": "magma_state",
             "package_key": "magma-state-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e",
             "kind": "normal",
@@ -12948,16 +12870,6 @@
             ],
             "uses_default_features": true,
             "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "pangea_ruby_eval",
-            "package_key": "pangea-ruby-eval-0.1.0",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
             "target": null,
             "tree": "target"
           },
@@ -13333,11 +13245,9 @@
           "async-graphql",
           "async-graphql-axum",
           "default",
-          "embedded_ruby",
           "executor_magma",
           "graphql",
           "grpc",
-          "magma_rubygems",
           "prost",
           "tonic"
         ]
@@ -30691,9 +30601,6 @@
     "magma-providers-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e": {
       "edition": "2024"
     },
-    "magma-rubygems-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e": {
-      "edition": "2024"
-    },
     "magma-state-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e": {
       "edition": "2024"
     },
@@ -31768,7 +31675,6 @@
     "magma-plugin-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e": "sha256-u49rSs1u8g256ivIKKeZ0iVPEFtk5F6ji2J6aRhYYwY=",
     "magma-protocol-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e": "sha256-u49rSs1u8g256ivIKKeZ0iVPEFtk5F6ji2J6aRhYYwY=",
     "magma-providers-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e": "sha256-u49rSs1u8g256ivIKKeZ0iVPEFtk5F6ji2J6aRhYYwY=",
-    "magma-rubygems-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e": "sha256-u49rSs1u8g256ivIKKeZ0iVPEFtk5F6ji2J6aRhYYwY=",
     "magma-state-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e": "sha256-u49rSs1u8g256ivIKKeZ0iVPEFtk5F6ji2J6aRhYYwY=",
     "magma-stream-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e": "sha256-u49rSs1u8g256ivIKKeZ0iVPEFtk5F6ji2J6aRhYYwY=",
     "magma-test-laws-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e": "sha256-u49rSs1u8g256ivIKKeZ0iVPEFtk5F6ji2J6aRhYYwY=",

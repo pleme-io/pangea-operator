@@ -168,6 +168,19 @@ pub struct ExecutorSurface {
     pub verbose: bool,
 }
 
+/// The compiler backend `prescribed_default()` names, chosen by what this
+/// binary can actually construct.
+///
+/// `embedded` needs the magnus interpreter linked in; `lava` needs nothing
+/// beyond the crate itself and is available in every build. Naming a backend
+/// the binary lacks is a startup panic by design, so the prescription is
+/// tied to the feature rather than to a hope about how the image was built.
+#[cfg(feature = "embedded_ruby")]
+pub const DEFAULT_COMPILER_BACKEND: &str = "embedded";
+/// See [`DEFAULT_COMPILER_BACKEND`].
+#[cfg(not(feature = "embedded_ruby"))]
+pub const DEFAULT_COMPILER_BACKEND: &str = "lava";
+
 /// Pangea DSL compiler backend selection.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -661,7 +674,21 @@ impl TieredConfig for OperatorConfig {
             verbose: false,
         };
         c.compiler = CompilerConfig {
-            backend: "embedded".to_string(),
+            // ── ★ THE DEFAULT FOLLOWS THE FEATURE, AND MUST ──────────────
+            // main.rs PANICS on `embedded` when embedded_ruby is not
+            // compiled in — deliberately, rather than falling back to the
+            // sunset HTTP sidecar. A fixed "embedded" here therefore made a
+            // Ruby-free build crash on startup for every deployment that had
+            // not already migrated, which is precisely why the Ruby-free
+            // configuration could not become the default even though it
+            // compiled clean and passed the suite.
+            //
+            // Selecting by cfg removes that coupling: a build that HAS the
+            // interpreter still prescribes it, and a build that does not
+            // prescribes lava, which is present in both. The illegal
+            // combination — prescribing a backend this binary cannot
+            // construct — now has no way to be written.
+            backend: DEFAULT_COMPILER_BACKEND.to_string(),
             endpoint: "http://localhost:8082".to_string(),
             ruby_workers: 1,
         };
@@ -794,6 +821,14 @@ mod tests {
         assert_eq!(p.executor.packer_timeout_secs, 2700);
         assert_eq!(p.executor.ruby_binary, None);
         assert!(!p.executor.verbose);
+        // Feature-dependent by construction — see DEFAULT_COMPILER_BACKEND.
+        // Asserting the literal "embedded" here is what would fail a
+        // Ruby-free build, and the value it would be asserting is one that
+        // build cannot honour.
+        assert_eq!(p.compiler.backend, DEFAULT_COMPILER_BACKEND);
+        #[cfg(not(feature = "embedded_ruby"))]
+        assert_eq!(p.compiler.backend, "lava", "a Ruby-free build must prescribe lava");
+        #[cfg(feature = "embedded_ruby")]
         assert_eq!(p.compiler.backend, "embedded");
         assert_eq!(p.compiler.endpoint, "http://localhost:8082");
         assert_eq!(p.compiler.ruby_workers, 1);
