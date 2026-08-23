@@ -259,12 +259,19 @@ jobs:
       scanFailOnSeverity: "UNKNOWN"
       scanIgnoreFile: ${{ matrix.variant.ignoreFile }}
     secrets:
-      # BOT_PAT carries write:packages for ghcr.io/pleme-io/* — the proven
-      # ghcr-push token (matches caixa-/helm-auto-release.yml). `secrets: inherit`
-      # passes it only as secrets.BOT_PAT, but image-push expects GHCR_TOKEN, so it
-      # fell back to GITHUB_TOKEN — which lacks package-write on this org package
-      # (push failed: permission_denied: write_package). Map it explicitly.
-      GHCR_TOKEN: ${{ secrets.BOT_PAT }}
+      # ── ★ THE JOB'S OWN GITHUB_TOKEN, NOT A PAT ────────────────────────
+      # This used to map BOT_PAT, because GITHUB_TOKEN "lacks package-write on
+      # this org package (push failed: permission_denied: write_package)".
+      # That was a true observation of a FIXABLE state, not a property of
+      # GITHUB_TOKEN: the package was not LINKED to this repository, and GHCR
+      # derives package permissions from the linked repo. Linked, the job's own
+      # token has write_package here — and it is scoped to this repository, it
+      # expires with the job, and nobody rotates it.
+      #
+      # No credential is needed for dependency fetching either. `magma` is the
+      # only pleme-io git dependency in Cargo.lock and it is PUBLIC, so the
+      # netrc that BOT_PAT used to populate has nothing left to authenticate.
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # The DEFAULT variant for every push-triggered merge: no rio-local cache
   # (unreachable off rio's LAN), runner is `camelot-builder-pleme-eks`
@@ -324,25 +331,18 @@ jobs:
       scanFailOnSeverity: "UNKNOWN"
       scanIgnoreFile: ${{ matrix.variant.ignoreFile }}
     secrets:
-      GHCR_TOKEN: ${{ secrets.BOT_PAT }}
-      # BOT_PAT must be passed SEPARATELY even though GHCR_TOKEN carries the
-      # same value. An explicit `secrets:` block does NOT inherit, so every
-      # secret the reusable reads must be mapped by the NAME IT READS — and
-      # image-push.yml reads BOTH: `GHCR_TOKEN` for the ghcr push, and
-      # `BOT_PAT` for the Nix git-fetch netrc (image-push.yml, "Prepare Nix
-      # netrc for private git fetches").
-      #
-      # Mapping only GHCR_TOKEN left BOT_PAT empty inside the reusable, so the
-      # netrc was written with a BLANK password and every private git fetch in
-      # the Nix sandbox failed with:
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # image-push reads BOT_PAT separately, for the Nix git-fetch netrc, and
+      # an explicit `secrets:` block does not inherit — so an unmapped secret
+      # is absent rather than an error, which is how it once failed silently
+      # with a BLANK netrc password and
       #   fatal: could not read Username for 'https://github.com'
-      #   Unable to checkout <rev> from https://github.com/pleme-io/magma
-      # The image build never produced a tag, so nothing could autobump and a
-      # committed magma fix could not deploy.
       #
-      # It fails SILENTLY because image-push declares BOT_PAT `required: false`
-      # — an unmapped secret is absent, not an error.
-      BOT_PAT: ${{ secrets.BOT_PAT }}
+      # It is mapped to GITHUB_TOKEN rather than removed because a netrc entry
+      # with a VALID credential is harmless while a blank one is not, and this
+      # repo's only pleme-io git dependency (magma) is public — so the netrc
+      # authenticates nothing that needs authenticating either way.
+      BOT_PAT: ${{ secrets.GITHUB_TOKEN }}
 
   # ── The standalone post-publish cve-scan job that used to live here is
   # REMOVED (2026-07-19) — root cause + fix history below.
@@ -507,7 +507,13 @@ jobs:
       # wins instead (the exact bug image-push.yml's ccfd349 fixed).
       - name: Configure git credentials for private git dependencies (cargo)
         env:
-          GIT_AUTH_TOKEN: ${{ secrets.BOT_PAT }}
+          # This repo has no PRIVATE pleme-io git dependency: magma is the only
+          # one in Cargo.lock and it is public. The rewrite is kept anyway
+          # because the `extraheader` unset below is the load-bearing half —
+          # actions/checkout leaves a this-repo-scoped credential matched by URL
+          # PREFIX against any git operation, which silently wins over whatever
+          # is configured here. Removing the step would take that unset with it.
+          GIT_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config --global url."https://x-access-token:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"
           git config --unset-all http.https://github.com/.extraheader || true
