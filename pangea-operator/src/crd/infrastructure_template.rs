@@ -169,15 +169,22 @@ pub struct InfrastructureTemplateSpec {
     #[serde(default)]
     pub suspend: bool,
 
-    /// IaC backend to use for plan/apply on this CR. Accepts `tofu`
-    /// (default — OpenTofu subprocess) or `magma` (in-process Rust
-    /// library via the `executor_magma` feature). When unset, falls
-    /// back to the operator-wide default from the `PANGEA_EXECUTOR`
-    /// env var, then to `tofu`.
+    /// IaC backend for plan/apply on this CR.
     ///
-    /// Both backends coexist indefinitely; this field is the per-CR
-    /// opt-in for magma during the burn-in period. Per
-    /// `theory/MAGMA-OPERATOR-BACKEND.md` §VI.
+    /// `magma` (in-process Rust, provider gRPC driven directly, no
+    /// subprocess) is **the default** and resolves when this field is unset
+    /// and `PANGEA_EXECUTOR` is unset. `tofu` is reachable only by naming it
+    /// explicitly here or in the env, and is refused outright when
+    /// `PANGEA_FORBID_TOFU` is set — which it is in the fleet default.
+    ///
+    /// CORRECTED 2026-08-25: this description previously read "`tofu`
+    /// (default — OpenTofu subprocess)" and called magma "the per-CR opt-in
+    /// during the burn-in period". Both were false for months —
+    /// `ExecutorBackend::resolve` has fallen back to `Magma` since
+    /// 2026-06-02. The text mattered because it is rendered INTO THE CRD
+    /// SCHEMA, so every author reading `kubectl explain` was told the
+    /// subprocess backend was the default. Verify a live CR's actual backend
+    /// from `status.executor`, never from this description.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executor: Option<String>,
 

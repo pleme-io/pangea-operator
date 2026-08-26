@@ -15,14 +15,27 @@
 /// Which `IacExecutor` impl handles a reconcile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutorBackend {
-    /// OpenTofu subprocess (`TofuExecutor`). Default.
+    /// OpenTofu subprocess (`TofuExecutor`). NOT the default and never the
+    /// implicit one — reachable only by an explicit `executor: tofu` on a CR
+    /// or `PANGEA_EXECUTOR=tofu`, and refused outright when
+    /// `PANGEA_FORBID_TOFU` is set. Retained, not deleted, per ★★ MODULARIZE,
+    /// DON'T DELETE: retirement is a typed flag, so reviving it is a config
+    /// change rather than a rebuild from memory.
     Tofu,
-    /// magma library, in-process (`MagmaExecutor`). Opt-in via CR or env.
+    /// magma library, in-process (`MagmaExecutor`). THE DEFAULT since
+    /// 2026-06-02 — no subprocess, no `tofu` binary, provider gRPC driven
+    /// directly.
     Magma,
 }
 
 impl ExecutorBackend {
-    /// Resolution order: CR override → env default → Tofu fallback.
+    /// Resolution order: CR override → env default → **Magma**.
+    ///
+    /// The fallback is magma and has been since 2026-06-02. This doc said
+    /// "Tofu fallback" long after the code stopped doing that; the comment at
+    /// the fallback itself was correct the whole time. A stale doc on a
+    /// DEFAULT is worse than a stale doc on a behaviour, because nobody
+    /// exercises the default deliberately enough to notice it is wrong.
     ///
     /// Both inputs are case-insensitive. Unrecognized values fall
     /// through to the next layer rather than panicking so a typo in
