@@ -37,7 +37,7 @@ use super::template::cycle_receipts::{record_reconcile_cycle, truncate_for_statu
 use super::template::events::record_event;
 use super::template::finalizer::{add_finalizer, has_finalizer, remove_finalizer};
 use super::template::freshness::{
-    evaluate_source_freshness, git_rev_parse_head, observe_head, Freshness, GitCredential,
+    evaluate_source_freshness, materialize_repo, observe_head, Freshness, GitCredential,
 };
 use super::template::provider_creds::resolve_provider_config;
 use super::template::secret_files::write_secret_files;
@@ -1193,69 +1193,26 @@ async fn handle_compiling(
         // not durable execution state and stays on disk by design.
         let repo_dir = workspace.path.join("_repo");
 
-        // Resolve git credentials if specified (factored so the
-        // freshness gate's `observe_head` reuses the same auth env).
-        let env_vars = git_auth_env(template, state, &workspace).await?;
+        // Resolve the git credential into MEMORY. The askpass trio
+        // (`_git_user`, `_git_pass`, `_git_askpass.sh`) is gone: no token
+        // reaches the workspace, and with it goes the operator's last
+        // `/bin/sh` dependency — which the distroless image never had.
+        let cred = git_credential(template, state).await?;
 
-        // Clone or update (with 120s timeout)
+        // Materialize the source tree in-process (shallow, delete-and-
+        // reclone). This ALSO yields the revision that landed, so the
+        // separate `git rev-parse HEAD` that used to follow is redundant —
+        // and it was a second, independent break: it propagated through a
+        // bare `?` and failed the whole compile.
         let git_timeout = Duration::from_secs(120);
-        let git_result = if repo_dir.exists() {
-            let mut cmd = tokio::process::Command::new("git");
-            cmd.args(["fetch", "origin", &git_ref.r#ref])
-                .current_dir(&repo_dir)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped());
-            for (k, v) in &env_vars {
-                cmd.env(k, v);
-            }
-            match tokio::time::timeout(git_timeout, cmd.output()).await {
-                Ok(Ok(output)) if output.status.success() => {
-                    let checkout = tokio::process::Command::new("git")
-                        .args(["checkout", "FETCH_HEAD"])
-                        .current_dir(&repo_dir)
-                        .output()
-                        .await
-                        .map_err(|e| Error::Io(e))?;
-                    checkout.status.success()
-                }
-                Ok(Ok(_)) => false,
-                Ok(Err(e)) => return Err(Error::Io(e)),
-                Err(_) => return Err(Error::Timeout(120)),
-            }
-        } else {
-            let mut cmd = tokio::process::Command::new("git");
-            cmd.args([
-                "clone",
-                "--depth=1",
-                "--branch",
-                &git_ref.r#ref,
-                &git_ref.url,
-                &repo_dir.to_string_lossy(),
-            ])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
-            for (k, v) in &env_vars {
-                cmd.env(k, v);
-            }
-            match tokio::time::timeout(git_timeout, cmd.output()).await {
-                Ok(Ok(output)) => output.status.success(),
-                Ok(Err(e)) => return Err(Error::Io(e)),
-                Err(_) => return Err(Error::Timeout(120)),
-            }
-        };
+        let head =
+            materialize_repo(&git_ref.url, &git_ref.r#ref, &repo_dir, &cred, git_timeout).await?;
 
-        if !git_result {
-            return Err(Error::Compilation(format!(
-                "Failed to clone/fetch git repository: {}",
-                git_ref.url
-            )));
-        }
-
-        // The clone/fetch landed — record exactly which commit this
-        // compile is about to consume. Before this, NO status field
-        // could express "the compile is stale" (staleness was
-        // unrepresentable in the wrong direction).
-        compiled_revision = Some(git_rev_parse_head(&repo_dir).await?);
+        // The clone landed — record exactly which commit this compile is
+        // about to consume. Before this, NO status field could express
+        // "the compile is stale" (staleness was unrepresentable in the
+        // wrong direction).
+        compiled_revision = Some(head);
 
         // For gitRepository sources, do NOT read the file into memory
         // and ship it as a `source` string — that would lose the
@@ -1622,85 +1579,6 @@ async fn git_credential(
         username,
         token: String::from_utf8_lossy(&token.0).to_string(),
     })
-}
-
-/// Assemble the git auth env for a template's `gitRepository` source:
-/// resolves the referenced Secret, writes the askpass trio into the
-/// workspace, and returns the `GIT_ASKPASS` env pair. Empty when the
-/// source has no `secretRef` (public repo).
-///
-/// ★ SUPERSEDED on the freshness path by [`git_credential`], which holds
-/// the token in memory. This still serves the CLONE path, which is still
-/// a `git` subprocess and therefore still broken in the current image —
-/// a second break on a different code path, closed in P2.
-async fn git_auth_env(
-    template: &InfrastructureTemplate,
-    state: &ControllerState,
-    workspace: &crate::executor::Workspace,
-) -> Result<Vec<(String, String)>> {
-    let mut env_vars = Vec::new();
-    let Some(git_ref) = &template.spec.source.git_repository else {
-        return Ok(env_vars);
-    };
-    if let Some(secret_ref) = &git_ref.secret_ref {
-        let ns = secret_ref
-            .namespace
-            .clone()
-            .or_else(|| template.namespace())
-            .unwrap_or_default();
-        let secret_api: Api<Secret> = Api::namespaced(state.client.clone(), &ns);
-        let secret = secret_api
-            .get(&secret_ref.name)
-            .await
-            .map_err(|_| Error::SecretNotFound {
-                namespace: ns.clone(),
-                name: secret_ref.name.clone(),
-            })?;
-
-        if let Some(data) = &secret.data {
-            // Support HTTPS token auth via username/password
-            if let Some(token) = data.get("password").or_else(|| data.get("token")) {
-                let username = data
-                    .get("username")
-                    .map(|v| String::from_utf8_lossy(&v.0).to_string())
-                    .unwrap_or_else(|| "git".to_string());
-                let password = String::from_utf8_lossy(&token.0).to_string();
-                // Write credentials to separate files (avoids shell injection).
-                //
-                // `_git_pass` holds the PAT, so it is created at 0600 by
-                // `open(2)` rather than at 0644-and-chmod'ed. The username is
-                // not a credential and stays an ordinary file.
-                workspace.write_file("_git_user", &username).await?;
-                workspace
-                    .write_secret_file("_git_pass", &password, 0o600)
-                    .await?;
-                // GIT_ASKPASS script reads from files — no interpolation
-                let user_path = workspace.path.join("_git_user");
-                let pass_path = workspace.path.join("_git_pass");
-                let script_content = format!(
-                    "#!/bin/sh\ncase \"$1\" in\n*Username*) cat '{}' ;;\n*Password*) cat '{}' ;;\nesac",
-                    user_path.display(),
-                    pass_path.display(),
-                );
-                // 0700 at creation. The previous form wrote the script then
-                // chmod'ed it with the result discarded — a failed chmod left
-                // a non-executable GIT_ASKPASS and git fell through to
-                // prompting, which is the hang this function's tail comment
-                // was added to prevent.
-                let askpass_script = workspace
-                    .write_secret_file("_git_askpass.sh", &script_content, 0o700)
-                    .await?;
-                env_vars.push((
-                    "GIT_ASKPASS".to_string(),
-                    askpass_script.to_string_lossy().to_string(),
-                ));
-            }
-        }
-    }
-    // Harden EVERY git invocation (clone/fetch on the mutation path, and
-    // ls-remote on the freshness path) so a misconfigured credential helper
-    // FAILS FAST instead of hanging to the timeout → Unknown → stale-proceed.
-    Ok(crate::controller::template::freshness::non_interactive_git_env(&env_vars))
 }
 
 /// Outcome of [`source_freshness_gate`].

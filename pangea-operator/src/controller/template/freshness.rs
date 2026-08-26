@@ -285,6 +285,118 @@ fn select_ref(refs: &[gix::protocol::handshake::Ref], git_ref: &str) -> Option<S
     None
 }
 
+/// Materialize `git_ref` of `url` into `dest` and return the revision
+/// that landed — the in-process replacement for
+/// `git clone --depth=1 --branch <ref>` / `git fetch` + `git checkout
+/// FETCH_HEAD`.
+///
+/// ★ DELETE-AND-RECLONE, deliberately. The subprocess version kept an
+/// incremental path (`fetch origin <ref>` then `checkout FETCH_HEAD`)
+/// whose leniency is not reproducible in-process: gitoxide has no
+/// `reset --hard` porcelain, and it does not write `FETCH_HEAD` at all,
+/// so "check out whatever FETCH_HEAD names" has no faithful equivalent.
+/// Emulating it would mean hand-rolling a worktree reset and guessing at
+/// git's conflict handling — new failure modes in exchange for skipping a
+/// download that is already `--depth=1`, i.e. ONE commit's tree, on a
+/// path that runs at most once per refresh interval.
+///
+/// The cost is real and bounded: a shallow re-clone per compile instead
+/// of an incremental fetch. The benefit is that the checked-out tree is a
+/// fresh function of (url, ref) with no accumulated local state — which
+/// also retires the class where a half-applied checkout left `_repo` on a
+/// commit nobody recorded.
+///
+/// `dest` is `<workspace>/_repo` by construction at the call site, so the
+/// removal cannot reach sibling workspace state.
+pub async fn materialize_repo(
+    url: &str,
+    git_ref: &str,
+    dest: &std::path::Path,
+    cred: &GitCredential,
+    timeout: std::time::Duration,
+) -> Result<String> {
+    let secs = timeout.as_secs();
+    let (u, r, d, c) = (
+        url.to_string(),
+        git_ref.to_string(),
+        dest.to_path_buf(),
+        cred.clone(),
+    );
+    let handle = tokio::task::spawn_blocking(move || clone_blocking(&u, &r, &d, &c));
+    // Same honest limit as `observe_head`: this bounds the WAIT, not the
+    // work — `timeout` abandons a `spawn_blocking` handle rather than
+    // cancelling it. The subprocess it replaces had the mirror-image bug
+    // (`kill_on_drop(false)` orphaned a live `git`).
+    tokio::time::timeout(timeout, handle)
+        .await
+        .map_err(|_| Error::Timeout(secs))?
+        .map_err(|e| Error::Io(std::io::Error::other(e)))?
+}
+
+/// Blocking core of [`materialize_repo`].
+fn clone_blocking(
+    url: &str,
+    git_ref: &str,
+    dest: &std::path::Path,
+    cred: &GitCredential,
+) -> Result<String> {
+    let io_err = |e: String| Error::Io(std::io::Error::other(e));
+
+    if dest.exists() {
+        std::fs::remove_dir_all(dest).map_err(Error::Io)?;
+    }
+    std::fs::create_dir_all(dest).map_err(Error::Io)?;
+
+    let mut prep = gix::prepare_clone(url, dest)
+        .map_err(|e| io_err(format!("clone {url}: {e}")))?
+        .with_ref_name(Some(git_ref))
+        .map_err(|e| io_err(format!("clone {url}: bad ref {git_ref}: {e}")))?
+        // `--depth=1`: one commit's tree, matching the subprocess it
+        // replaces. The compiler only ever reads the worktree.
+        .with_shallow(gix::remote::fetch::Shallow::DepthAtRemote(
+            std::num::NonZeroU32::new(1).expect("1 is non-zero"),
+        ));
+
+    if let GitCredential::Basic { username, token } = cred {
+        let account = gix::sec::identity::Account {
+            username: username.clone(),
+            password: token.clone(),
+            oauth_refresh_token: None,
+        };
+        // In memory, exactly as on the freshness path. Setting an explicit
+        // helper also suppresses gix's ambient-credential-helper default.
+        prep = prep.configure_connection(move |conn| {
+            let account = account.clone();
+            conn.set_credentials(move |action| match action {
+                gix::credentials::helper::Action::Get(ctx) => {
+                    Ok(Some(gix::credentials::protocol::Outcome {
+                        identity: account.clone(),
+                        next: ctx.into(),
+                    }))
+                }
+                _ => Ok(None),
+            });
+            Ok(())
+        });
+    }
+
+    let interrupt = std::sync::atomic::AtomicBool::new(false);
+    let (mut checkout, _fetch_outcome) = prep
+        .fetch_then_checkout(gix::progress::Discard, &interrupt)
+        .map_err(|e| io_err(format!("clone/fetch {url} {git_ref}: {e}")))?;
+    let (repo, _checkout_outcome) = checkout
+        .main_worktree(gix::progress::Discard, &interrupt)
+        .map_err(|e| io_err(format!("checkout {url} {git_ref}: {e}")))?;
+
+    // The revision that actually landed, read from the repo rather than
+    // re-derived — this is the value `status.compiledRevision` records,
+    // and it is hex by construction.
+    let id = repo
+        .head_id()
+        .map_err(|e| io_err(format!("HEAD after clone of {url} {git_ref}: {e}")))?;
+    Ok(id.to_string())
+}
+
 /// Augment a git auth env with the NON-INTERACTIVE guardrails that make
 /// a misconfigured credential helper FAIL FAST instead of hanging to the
 /// timeout (the concrete cause of the persistent `Unknown`/frozen-HEAD
