@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "a7ab1e4d389848ea56d4ea722d0075a71779cb357e3d3f4e9f7888a638b39d92",
+  "cargo_lock_sha256": "6440d02e7baf606658aa4e088c3a23a0d2f2dc542abc28fa3c2a28d159c3ca3f",
   "manifest_sha256": {
     "Cargo.toml": "43d36ac0d6761a36d580b2d7618d5ac36613adf6ae90df78034591e576abc196",
     "pangea-cli/Cargo.toml": "f3f970097f7914011f23728fe42e3aed3085ec83bacdea24f37cdc9c19cfe965",
     "pangea-operator-mcp/Cargo.toml": "72a01f5815a03b1c418697a985ede13816d4f5aec385332ec436e2155713dea8",
-    "pangea-operator/Cargo.toml": "b13037ff52888cf6450c9b61d6a3d06a9077acbd3e898f7af33e08f9ba7eb210",
+    "pangea-operator/Cargo.toml": "750bca69ca9f4ac25d42d29f677e06913c8d87f9990645bb0ef47eedb8e461f3",
     "pangea-ruby-eval/Cargo.toml": "a65712c95619fda84a8cebaa9f887919acf4e71f4125f085797dfaf478eb380a",
     "pangea-types/Cargo.toml": "bba5d0bee1d04b3ddaefa9f7234a1e5a11e3388dd89e62a3deb4a91b66cd4abc"
   },
@@ -2062,6 +2062,13 @@
           "runtime"
         ]
       },
+      "bitflags-1.3.2": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": [
+          "default"
+        ]
+      },
       "bitflags-2.11.1": {
         "runtime_dependencies": [
           {
@@ -2513,6 +2520,22 @@
         "build_dependencies": [],
         "features": []
       },
+      "clru-0.6.3": {
+        "runtime_dependencies": [
+          {
+            "name": "hashbrown",
+            "package_key": "hashbrown-0.16.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
       "cmake-0.1.58": {
         "runtime_dependencies": [
           {
@@ -2643,6 +2666,25 @@
         "build_dependencies": [],
         "features": []
       },
+      "crc32fast-1.5.1": {
+        "runtime_dependencies": [
+          {
+            "name": "cfg_if",
+            "package_key": "cfg-if-1.0.4",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default",
+          "std"
+        ]
+      },
       "cron-0.15.0": {
         "runtime_dependencies": [
           {
@@ -2705,6 +2747,7 @@
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": [
+          "default",
           "std"
         ]
       },
@@ -3401,6 +3444,74 @@
         "build_dependencies": [],
         "features": []
       },
+      "dashmap-6.2.1": {
+        "runtime_dependencies": [
+          {
+            "name": "cfg_if",
+            "package_key": "cfg-if-1.0.4",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "crossbeam_utils",
+            "package_key": "crossbeam-utils-0.8.21",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "hashbrown",
+            "package_key": "hashbrown-0.14.5",
+            "kind": "normal",
+            "features": [
+              "raw"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "lock_api",
+            "package_key": "lock_api-0.4.14",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "once_cell",
+            "package_key": "once_cell-1.21.4",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "parking_lot_core",
+            "package_key": "parking_lot_core-0.9.12",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
       "data-encoding-2.11.0": {
         "runtime_dependencies": [],
         "build_dependencies": [],
@@ -3464,6 +3575,99 @@
       },
       "deadpool-runtime-0.1.4": {
         "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
+      },
+      "defmt-1.1.1": {
+        "runtime_dependencies": [
+          {
+            "name": "bitflags",
+            "package_key": "bitflags-1.3.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "defmt_macros",
+            "package_key": "defmt-macros-1.1.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "host"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "alloc"
+        ]
+      },
+      "defmt-macros-1.1.1": {
+        "runtime_dependencies": [
+          {
+            "name": "defmt_parser",
+            "package_key": "defmt-parser-1.0.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "proc_macro2",
+            "package_key": "proc-macro2-1.0.106",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "quote",
+            "package_key": "quote-1.0.45",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "syn",
+            "package_key": "syn-2.0.117",
+            "kind": "normal",
+            "features": [
+              "extra-traits",
+              "full"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "defmt-parser-1.0.0": {
+        "runtime_dependencies": [
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
         "build_dependencies": [],
         "features": []
       },
@@ -4101,6 +4305,25 @@
         "build_dependencies": [],
         "features": []
       },
+      "faster-hex-0.10.0": {
+        "runtime_dependencies": [
+          {
+            "name": "heapless",
+            "package_key": "heapless-0.8.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": "cfg(not(feature = \"alloc\"))",
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "alloc",
+          "std"
+        ]
+      },
       "fastrand-2.4.1": {
         "runtime_dependencies": [],
         "build_dependencies": [],
@@ -4183,6 +4406,32 @@
           "toml",
           "yaml"
         ]
+      },
+      "filetime-0.2.29": {
+        "runtime_dependencies": [
+          {
+            "name": "cfg_if",
+            "package_key": "cfg-if-1.0.4",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "libc",
+            "package_key": "libc-0.2.186",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": "cfg(unix)",
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
       },
       "find-msvc-tools-0.1.9": {
         "runtime_dependencies": [],
@@ -5165,6 +5414,5114 @@
         "build_dependencies": [],
         "features": []
       },
+      "gix-0.83.0": {
+        "runtime_dependencies": [
+          {
+            "name": "gix_actor",
+            "package_key": "gix-actor-0.41.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_attributes",
+            "package_key": "gix-attributes-0.33.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_command",
+            "package_key": "gix-command-0.9.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_commitgraph",
+            "package_key": "gix-commitgraph-0.37.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_config",
+            "package_key": "gix-config-0.56.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_credentials",
+            "package_key": "gix-credentials-0.38.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_date",
+            "package_key": "gix-date-0.15.6",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_diff",
+            "package_key": "gix-diff-0.63.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_discover",
+            "package_key": "gix-discover-0.51.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_error",
+            "package_key": "gix-error-0.2.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_features",
+            "package_key": "gix-features-0.48.1",
+            "kind": "normal",
+            "features": [
+              "once_cell",
+              "progress"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_filter",
+            "package_key": "gix-filter-0.30.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_fs",
+            "package_key": "gix-fs-0.21.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_glob",
+            "package_key": "gix-glob-0.26.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hash",
+            "package_key": "gix-hash-0.25.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hashtable",
+            "package_key": "gix-hashtable-0.15.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_ignore",
+            "package_key": "gix-ignore-0.21.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_index",
+            "package_key": "gix-index-0.51.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_lock",
+            "package_key": "gix-lock-23.0.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_negotiate",
+            "package_key": "gix-negotiate-0.31.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_object",
+            "package_key": "gix-object-0.60.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_odb",
+            "package_key": "gix-odb-0.80.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_pack",
+            "package_key": "gix-pack-0.70.0",
+            "kind": "normal",
+            "features": [
+              "object-cache-dynamic"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_path",
+            "package_key": "gix-path-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_pathspec",
+            "package_key": "gix-pathspec-0.18.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_prompt",
+            "package_key": "gix-prompt-0.15.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_protocol",
+            "package_key": "gix-protocol-0.61.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_ref",
+            "package_key": "gix-ref-0.63.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_refspec",
+            "package_key": "gix-refspec-0.41.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_revision",
+            "package_key": "gix-revision-0.45.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_revwalk",
+            "package_key": "gix-revwalk-0.31.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_sec",
+            "package_key": "gix-sec-0.14.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_shallow",
+            "package_key": "gix-shallow-0.12.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_submodule",
+            "package_key": "gix-submodule-0.30.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_tempfile",
+            "package_key": "gix-tempfile-23.0.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_trace",
+            "package_key": "gix-trace-0.1.21",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_transport",
+            "package_key": "gix-transport-0.57.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_traverse",
+            "package_key": "gix-traverse-0.57.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_url",
+            "package_key": "gix-url-0.36.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_utils",
+            "package_key": "gix-utils-0.3.6",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_validate",
+            "package_key": "gix-validate-0.11.4",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_worktree",
+            "package_key": "gix-worktree-0.52.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_worktree_state",
+            "package_key": "gix-worktree-state-0.30.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "nonempty",
+            "package_key": "nonempty-0.12.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "smallvec",
+            "package_key": "smallvec-1.15.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "attributes",
+          "blocking-http-transport-reqwest",
+          "blocking-http-transport-reqwest-rust-tls",
+          "blocking-network-client",
+          "command",
+          "credentials",
+          "excludes",
+          "index",
+          "revision",
+          "sha1",
+          "tree-editor",
+          "worktree-mutation"
+        ]
+      },
+      "gix-actor-0.41.2": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [
+              "std",
+              "unicode"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_date",
+            "package_key": "gix-date-0.15.6",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_error",
+            "package_key": "gix-error-0.2.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "gix-archive-0.32.0": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_date",
+            "package_key": "gix-date-0.15.6",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_error",
+            "package_key": "gix-error-0.2.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_object",
+            "package_key": "gix-object-0.60.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_worktree_stream",
+            "package_key": "gix-worktree-stream-0.32.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "sha1"
+        ]
+      },
+      "gix-attributes-0.33.2": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [
+              "std",
+              "unicode"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_glob",
+            "package_key": "gix-glob-0.26.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_path",
+            "package_key": "gix-path-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_quote",
+            "package_key": "gix-quote-0.7.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_trace",
+            "package_key": "gix-trace-0.1.21",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "kstring",
+            "package_key": "kstring-2.0.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "smallvec",
+            "package_key": "smallvec-1.15.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "unicode_bom",
+            "package_key": "unicode-bom-2.0.3",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "gix-bitmap-0.3.3": {
+        "runtime_dependencies": [
+          {
+            "name": "gix_error",
+            "package_key": "gix-error-0.2.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "gix-blame-0.13.0": {
+        "runtime_dependencies": [
+          {
+            "name": "gix_commitgraph",
+            "package_key": "gix-commitgraph-0.37.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_date",
+            "package_key": "gix-date-0.15.6",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_diff",
+            "package_key": "gix-diff-0.63.0",
+            "kind": "normal",
+            "features": [
+              "blob"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_error",
+            "package_key": "gix-error-0.2.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hash",
+            "package_key": "gix-hash-0.25.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_object",
+            "package_key": "gix-object-0.60.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_revwalk",
+            "package_key": "gix-revwalk-0.31.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_trace",
+            "package_key": "gix-trace-0.1.21",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_traverse",
+            "package_key": "gix-traverse-0.57.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_worktree",
+            "package_key": "gix-worktree-0.52.0",
+            "kind": "normal",
+            "features": [
+              "attributes"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "smallvec",
+            "package_key": "smallvec-1.15.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "sha1"
+        ]
+      },
+      "gix-chunk-0.7.3": {
+        "runtime_dependencies": [
+          {
+            "name": "gix_error",
+            "package_key": "gix-error-0.2.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "gix-command-0.9.2": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [
+              "std",
+              "unicode"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_path",
+            "package_key": "gix-path-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_quote",
+            "package_key": "gix-quote-0.7.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_trace",
+            "package_key": "gix-trace-0.1.21",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "shell_words",
+            "package_key": "shell-words-1.1.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "gix-commitgraph-0.37.1": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [
+              "std"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_chunk",
+            "package_key": "gix-chunk-0.7.3",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_error",
+            "package_key": "gix-error-0.2.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hash",
+            "package_key": "gix-hash-0.25.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "memmap2",
+            "package_key": "memmap2-0.9.11",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "nonempty",
+            "package_key": "nonempty-0.12.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "sha1"
+        ]
+      },
+      "gix-config-0.56.0": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [
+              "std"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_config_value",
+            "package_key": "gix-config-value-0.18.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_features",
+            "package_key": "gix-features-0.48.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_glob",
+            "package_key": "gix-glob-0.26.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_path",
+            "package_key": "gix-path-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_ref",
+            "package_key": "gix-ref-0.63.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_sec",
+            "package_key": "gix-sec-0.14.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "smallvec",
+            "package_key": "smallvec-1.15.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "unicode_bom",
+            "package_key": "unicode-bom-2.0.3",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "sha1"
+        ]
+      },
+      "gix-config-value-0.18.1": {
+        "runtime_dependencies": [
+          {
+            "name": "bitflags",
+            "package_key": "bitflags-2.11.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [
+              "std"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_path",
+            "package_key": "gix-path-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "libc",
+            "package_key": "libc-0.2.186",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": "cfg(not(windows))",
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "gix-credentials-0.38.2": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [
+              "std"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_command",
+            "package_key": "gix-command-0.9.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_config_value",
+            "package_key": "gix-config-value-0.18.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_date",
+            "package_key": "gix-date-0.15.6",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_path",
+            "package_key": "gix-path-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_prompt",
+            "package_key": "gix-prompt-0.15.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_sec",
+            "package_key": "gix-sec-0.14.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_trace",
+            "package_key": "gix-trace-0.1.21",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_url",
+            "package_key": "gix-url-0.36.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "gix-date-0.15.6": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [
+              "std"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_error",
+            "package_key": "gix-error-0.2.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "itoa",
+            "package_key": "itoa-1.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "jiff",
+            "package_key": "jiff-0.2.35",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "gix-diff-0.63.0": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_command",
+            "package_key": "gix-command-0.9.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_filter",
+            "package_key": "gix-filter-0.30.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_fs",
+            "package_key": "gix-fs-0.21.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hash",
+            "package_key": "gix-hash-0.25.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "imara_diff",
+            "package_key": "gix-imara-diff-0.2.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_object",
+            "package_key": "gix-object-0.60.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_path",
+            "package_key": "gix-path-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_tempfile",
+            "package_key": "gix-tempfile-23.0.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_trace",
+            "package_key": "gix-trace-0.1.21",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_traverse",
+            "package_key": "gix-traverse-0.57.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_worktree",
+            "package_key": "gix-worktree-0.52.0",
+            "kind": "normal",
+            "features": [
+              "attributes"
+            ],
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "blob",
+          "sha1"
+        ]
+      },
+      "gix-dir-0.25.0": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_discover",
+            "package_key": "gix-discover-0.51.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_fs",
+            "package_key": "gix-fs-0.21.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_ignore",
+            "package_key": "gix-ignore-0.21.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_index",
+            "package_key": "gix-index-0.51.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_object",
+            "package_key": "gix-object-0.60.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_path",
+            "package_key": "gix-path-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_pathspec",
+            "package_key": "gix-pathspec-0.18.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_trace",
+            "package_key": "gix-trace-0.1.21",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_utils",
+            "package_key": "gix-utils-0.3.6",
+            "kind": "normal",
+            "features": [
+              "bstr"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_worktree",
+            "package_key": "gix-worktree-0.52.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "sha1"
+        ]
+      },
+      "gix-discover-0.51.0": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [
+              "std",
+              "unicode"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_fs",
+            "package_key": "gix-fs-0.21.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_path",
+            "package_key": "gix-path-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_ref",
+            "package_key": "gix-ref-0.63.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_sec",
+            "package_key": "gix-sec-0.14.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "sha1"
+        ]
+      },
+      "gix-error-0.2.5": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [
+              "std"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "gix-features-0.48.1": {
+        "runtime_dependencies": [
+          {
+            "name": "bytes",
+            "package_key": "bytes-1.11.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "crc32fast",
+            "package_key": "crc32fast-1.5.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_path",
+            "package_key": "gix-path-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_trace",
+            "package_key": "gix-trace-0.1.21",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_utils",
+            "package_key": "gix-utils-0.3.6",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "libc",
+            "package_key": "libc-0.2.186",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": "cfg(unix)",
+            "tree": "target"
+          },
+          {
+            "name": "once_cell",
+            "package_key": "once_cell-1.21.4",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "prodash",
+            "package_key": "prodash-31.0.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "walkdir",
+            "package_key": "walkdir-2.5.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "zlib_rs",
+            "package_key": "zlib-rs-0.6.7",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "crc32",
+          "default",
+          "fs-read-dir",
+          "io-pipe",
+          "once_cell",
+          "prodash",
+          "progress",
+          "walkdir",
+          "zlib"
+        ]
+      },
+      "gix-filter-0.30.0": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [
+              "std"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "encoding_rs",
+            "package_key": "encoding_rs-0.8.35",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_attributes",
+            "package_key": "gix-attributes-0.33.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_command",
+            "package_key": "gix-command-0.9.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hash",
+            "package_key": "gix-hash-0.25.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_object",
+            "package_key": "gix-object-0.60.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_packetline",
+            "package_key": "gix-packetline-0.21.5",
+            "kind": "normal",
+            "features": [
+              "blocking-io"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_path",
+            "package_key": "gix-path-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_quote",
+            "package_key": "gix-quote-0.7.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_trace",
+            "package_key": "gix-trace-0.1.21",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_utils",
+            "package_key": "gix-utils-0.3.6",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "smallvec",
+            "package_key": "smallvec-1.15.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "sha1"
+        ]
+      },
+      "gix-fs-0.21.2": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "fastrand",
+            "package_key": "fastrand-2.4.1",
+            "kind": "normal",
+            "features": [
+              "std"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_features",
+            "package_key": "gix-features-0.48.1",
+            "kind": "normal",
+            "features": [
+              "fs-read-dir"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_path",
+            "package_key": "gix-path-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_utils",
+            "package_key": "gix-utils-0.3.6",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "gix-glob-0.26.1": {
+        "runtime_dependencies": [
+          {
+            "name": "bitflags",
+            "package_key": "bitflags-2.11.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [
+              "std"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_features",
+            "package_key": "gix-features-0.48.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_path",
+            "package_key": "gix-path-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "gix-hash-0.25.1": {
+        "runtime_dependencies": [
+          {
+            "name": "faster_hex",
+            "package_key": "faster-hex-0.10.0",
+            "kind": "normal",
+            "features": [
+              "std"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_features",
+            "package_key": "gix-features-0.48.1",
+            "kind": "normal",
+            "features": [
+              "progress"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "sha1_checked",
+            "package_key": "sha1-checked-0.10.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default",
+          "sha1"
+        ]
+      },
+      "gix-hashtable-0.15.2": {
+        "runtime_dependencies": [
+          {
+            "name": "gix_hash",
+            "package_key": "gix-hash-0.25.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "hashbrown",
+            "package_key": "hashbrown-0.17.1",
+            "kind": "normal",
+            "features": [
+              "inline-more"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "parking_lot",
+            "package_key": "parking_lot-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "sha1"
+        ]
+      },
+      "gix-ignore-0.21.1": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [
+              "std",
+              "unicode"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_glob",
+            "package_key": "gix-glob-0.26.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_path",
+            "package_key": "gix-path-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_trace",
+            "package_key": "gix-trace-0.1.21",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "unicode_bom",
+            "package_key": "unicode-bom-2.0.3",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "gix-imara-diff-0.2.5": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "hashbrown",
+            "package_key": "hashbrown-0.17.1",
+            "kind": "normal",
+            "features": [
+              "default-hasher",
+              "inline-more"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default"
+        ]
+      },
+      "gix-index-0.51.0": {
+        "runtime_dependencies": [
+          {
+            "name": "bitflags",
+            "package_key": "bitflags-2.11.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "filetime",
+            "package_key": "filetime-0.2.29",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "fnv",
+            "package_key": "fnv-1.0.7",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_bitmap",
+            "package_key": "gix-bitmap-0.3.3",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_features",
+            "package_key": "gix-features-0.48.1",
+            "kind": "normal",
+            "features": [
+              "progress"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_fs",
+            "package_key": "gix-fs-0.21.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hash",
+            "package_key": "gix-hash-0.25.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_lock",
+            "package_key": "gix-lock-23.0.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_object",
+            "package_key": "gix-object-0.60.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_traverse",
+            "package_key": "gix-traverse-0.57.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_utils",
+            "package_key": "gix-utils-0.3.6",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_validate",
+            "package_key": "gix-validate-0.11.4",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "hashbrown",
+            "package_key": "hashbrown-0.16.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "itoa",
+            "package_key": "itoa-1.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "libc",
+            "package_key": "libc-0.2.186",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": "cfg(unix)",
+            "tree": "target"
+          },
+          {
+            "name": "memmap2",
+            "package_key": "memmap2-0.9.11",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "rustix",
+            "package_key": "rustix-1.1.4",
+            "kind": "normal",
+            "features": [
+              "fs",
+              "std"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": "cfg(unix)",
+            "tree": "target"
+          },
+          {
+            "name": "smallvec",
+            "package_key": "smallvec-1.15.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "sha1"
+        ]
+      },
+      "gix-lock-23.0.1": {
+        "runtime_dependencies": [
+          {
+            "name": "gix_tempfile",
+            "package_key": "gix-tempfile-23.0.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_utils",
+            "package_key": "gix-utils-0.3.6",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "gix-merge-0.16.0": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_command",
+            "package_key": "gix-command-0.9.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_diff",
+            "package_key": "gix-diff-0.63.0",
+            "kind": "normal",
+            "features": [
+              "blob"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_filter",
+            "package_key": "gix-filter-0.30.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_fs",
+            "package_key": "gix-fs-0.21.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hash",
+            "package_key": "gix-hash-0.25.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "imara_diff",
+            "package_key": "gix-imara-diff-0.2.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_index",
+            "package_key": "gix-index-0.51.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_object",
+            "package_key": "gix-object-0.60.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_path",
+            "package_key": "gix-path-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_quote",
+            "package_key": "gix-quote-0.7.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_revision",
+            "package_key": "gix-revision-0.45.0",
+            "kind": "normal",
+            "features": [
+              "merge_base"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_revwalk",
+            "package_key": "gix-revwalk-0.31.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_tempfile",
+            "package_key": "gix-tempfile-23.0.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_trace",
+            "package_key": "gix-trace-0.1.21",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_worktree",
+            "package_key": "gix-worktree-0.52.0",
+            "kind": "normal",
+            "features": [
+              "attributes"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "nonempty",
+            "package_key": "nonempty-0.12.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "sha1"
+        ]
+      },
+      "gix-negotiate-0.31.0": {
+        "runtime_dependencies": [
+          {
+            "name": "bitflags",
+            "package_key": "bitflags-2.11.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_commitgraph",
+            "package_key": "gix-commitgraph-0.37.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_date",
+            "package_key": "gix-date-0.15.6",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hash",
+            "package_key": "gix-hash-0.25.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_object",
+            "package_key": "gix-object-0.60.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_revwalk",
+            "package_key": "gix-revwalk-0.31.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "sha1"
+        ]
+      },
+      "gix-object-0.60.0": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [
+              "std",
+              "unicode"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_actor",
+            "package_key": "gix-actor-0.41.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_date",
+            "package_key": "gix-date-0.15.6",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_features",
+            "package_key": "gix-features-0.48.1",
+            "kind": "normal",
+            "features": [
+              "progress"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hash",
+            "package_key": "gix-hash-0.25.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hashtable",
+            "package_key": "gix-hashtable-0.15.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_utils",
+            "package_key": "gix-utils-0.3.6",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_validate",
+            "package_key": "gix-validate-0.11.4",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "itoa",
+            "package_key": "itoa-1.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "smallvec",
+            "package_key": "smallvec-1.15.1",
+            "kind": "normal",
+            "features": [
+              "write"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "sha1"
+        ]
+      },
+      "gix-odb-0.80.0": {
+        "runtime_dependencies": [
+          {
+            "name": "arc_swap",
+            "package_key": "arc-swap-1.9.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_features",
+            "package_key": "gix-features-0.48.1",
+            "kind": "normal",
+            "features": [
+              "crc32",
+              "walkdir",
+              "zlib"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_fs",
+            "package_key": "gix-fs-0.21.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hash",
+            "package_key": "gix-hash-0.25.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hashtable",
+            "package_key": "gix-hashtable-0.15.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_object",
+            "package_key": "gix-object-0.60.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_pack",
+            "package_key": "gix-pack-0.70.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_path",
+            "package_key": "gix-path-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_quote",
+            "package_key": "gix-quote-0.7.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "memmap2",
+            "package_key": "memmap2-0.9.11",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "parking_lot",
+            "package_key": "parking_lot-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "tempfile",
+            "package_key": "tempfile-3.27.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "sha1"
+        ]
+      },
+      "gix-pack-0.70.0": {
+        "runtime_dependencies": [
+          {
+            "name": "clru",
+            "package_key": "clru-0.6.3",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_chunk",
+            "package_key": "gix-chunk-0.7.3",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_error",
+            "package_key": "gix-error-0.2.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_features",
+            "package_key": "gix-features-0.48.1",
+            "kind": "normal",
+            "features": [
+              "crc32",
+              "progress",
+              "zlib"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hash",
+            "package_key": "gix-hash-0.25.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hashtable",
+            "package_key": "gix-hashtable-0.15.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_object",
+            "package_key": "gix-object-0.60.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_path",
+            "package_key": "gix-path-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_tempfile",
+            "package_key": "gix-tempfile-23.0.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": true,
+            "target": "cfg(not(target_arch = \"wasm32\"))",
+            "tree": "target"
+          },
+          {
+            "name": "memmap2",
+            "package_key": "memmap2-0.9.11",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "parking_lot",
+            "package_key": "parking_lot-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "smallvec",
+            "package_key": "smallvec-1.15.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "object-cache-dynamic",
+          "sha1",
+          "streaming-input"
+        ]
+      },
+      "gix-packetline-0.21.5": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [
+              "std"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "faster_hex",
+            "package_key": "faster-hex-0.10.0",
+            "kind": "normal",
+            "features": [
+              "std"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_trace",
+            "package_key": "gix-trace-0.1.21",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "blocking-io",
+          "default"
+        ]
+      },
+      "gix-path-0.12.5": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [
+              "std"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_trace",
+            "package_key": "gix-trace-0.1.21",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_validate",
+            "package_key": "gix-validate-0.11.4",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "gix-pathspec-0.18.1": {
+        "runtime_dependencies": [
+          {
+            "name": "bitflags",
+            "package_key": "bitflags-2.11.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [
+              "std"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_attributes",
+            "package_key": "gix-attributes-0.33.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_config_value",
+            "package_key": "gix-config-value-0.18.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_glob",
+            "package_key": "gix-glob-0.26.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_path",
+            "package_key": "gix-path-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "gix-prompt-0.15.1": {
+        "runtime_dependencies": [
+          {
+            "name": "gix_command",
+            "package_key": "gix-command-0.9.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_config_value",
+            "package_key": "gix-config-value-0.18.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "parking_lot",
+            "package_key": "parking_lot-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": "cfg(unix)",
+            "tree": "target"
+          },
+          {
+            "name": "rustix",
+            "package_key": "rustix-1.1.4",
+            "kind": "normal",
+            "features": [
+              "termios"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": "cfg(unix)",
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "gix-protocol-0.61.0": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [
+              "std",
+              "unicode"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_credentials",
+            "package_key": "gix-credentials-0.38.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_date",
+            "package_key": "gix-date-0.15.6",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_features",
+            "package_key": "gix-features-0.48.1",
+            "kind": "normal",
+            "features": [
+              "progress"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hash",
+            "package_key": "gix-hash-0.25.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_lock",
+            "package_key": "gix-lock-23.0.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_negotiate",
+            "package_key": "gix-negotiate-0.31.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_object",
+            "package_key": "gix-object-0.60.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_ref",
+            "package_key": "gix-ref-0.63.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_refspec",
+            "package_key": "gix-refspec-0.41.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_revwalk",
+            "package_key": "gix-revwalk-0.31.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_shallow",
+            "package_key": "gix-shallow-0.12.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_trace",
+            "package_key": "gix-trace-0.1.21",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_transport",
+            "package_key": "gix-transport-0.57.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_utils",
+            "package_key": "gix-utils-0.3.6",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "maybe_async",
+            "package_key": "maybe-async-0.2.11",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "host"
+          },
+          {
+            "name": "nonempty",
+            "package_key": "nonempty-0.12.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "blocking-client",
+          "fetch",
+          "handshake",
+          "sha1"
+        ]
+      },
+      "gix-quote-0.7.2": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [
+              "std"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_error",
+            "package_key": "gix-error-0.2.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_utils",
+            "package_key": "gix-utils-0.3.6",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "gix-ref-0.63.0": {
+        "runtime_dependencies": [
+          {
+            "name": "gix_actor",
+            "package_key": "gix-actor-0.41.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_features",
+            "package_key": "gix-features-0.48.1",
+            "kind": "normal",
+            "features": [
+              "walkdir"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_fs",
+            "package_key": "gix-fs-0.21.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hash",
+            "package_key": "gix-hash-0.25.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_lock",
+            "package_key": "gix-lock-23.0.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_object",
+            "package_key": "gix-object-0.60.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_path",
+            "package_key": "gix-path-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_tempfile",
+            "package_key": "gix-tempfile-23.0.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_utils",
+            "package_key": "gix-utils-0.3.6",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_validate",
+            "package_key": "gix-validate-0.11.4",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "memmap2",
+            "package_key": "memmap2-0.9.11",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "sha1"
+        ]
+      },
+      "gix-refspec-0.41.0": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [
+              "std"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_error",
+            "package_key": "gix-error-0.2.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_glob",
+            "package_key": "gix-glob-0.26.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hash",
+            "package_key": "gix-hash-0.25.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_revision",
+            "package_key": "gix-revision-0.45.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_validate",
+            "package_key": "gix-validate-0.11.4",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "smallvec",
+            "package_key": "smallvec-1.15.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "sha1"
+        ]
+      },
+      "gix-revision-0.45.0": {
+        "runtime_dependencies": [
+          {
+            "name": "bitflags",
+            "package_key": "bitflags-2.11.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [
+              "std"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_commitgraph",
+            "package_key": "gix-commitgraph-0.37.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_date",
+            "package_key": "gix-date-0.15.6",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_error",
+            "package_key": "gix-error-0.2.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hash",
+            "package_key": "gix-hash-0.25.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hashtable",
+            "package_key": "gix-hashtable-0.15.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_object",
+            "package_key": "gix-object-0.60.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_revwalk",
+            "package_key": "gix-revwalk-0.31.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_trace",
+            "package_key": "gix-trace-0.1.21",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "nonempty",
+            "package_key": "nonempty-0.12.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "describe",
+          "merge_base",
+          "sha1"
+        ]
+      },
+      "gix-revwalk-0.31.0": {
+        "runtime_dependencies": [
+          {
+            "name": "gix_commitgraph",
+            "package_key": "gix-commitgraph-0.37.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_date",
+            "package_key": "gix-date-0.15.6",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_error",
+            "package_key": "gix-error-0.2.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hash",
+            "package_key": "gix-hash-0.25.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hashtable",
+            "package_key": "gix-hashtable-0.15.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_object",
+            "package_key": "gix-object-0.60.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "smallvec",
+            "package_key": "smallvec-1.15.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "sha1"
+        ]
+      },
+      "gix-sec-0.14.2": {
+        "runtime_dependencies": [
+          {
+            "name": "bitflags",
+            "package_key": "bitflags-2.11.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "libc",
+            "package_key": "libc-0.2.186",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": "cfg(not(windows))",
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "gix-shallow-0.12.1": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hash",
+            "package_key": "gix-hash-0.25.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_lock",
+            "package_key": "gix-lock-23.0.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "nonempty",
+            "package_key": "nonempty-0.12.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "sha1"
+        ]
+      },
+      "gix-status-0.30.0": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "filetime",
+            "package_key": "filetime-0.2.29",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_diff",
+            "package_key": "gix-diff-0.63.0",
+            "kind": "normal",
+            "features": [
+              "blob"
+            ],
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_dir",
+            "package_key": "gix-dir-0.25.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_features",
+            "package_key": "gix-features-0.48.1",
+            "kind": "normal",
+            "features": [
+              "progress"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_filter",
+            "package_key": "gix-filter-0.30.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_fs",
+            "package_key": "gix-fs-0.21.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hash",
+            "package_key": "gix-hash-0.25.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_index",
+            "package_key": "gix-index-0.51.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_object",
+            "package_key": "gix-object-0.60.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_path",
+            "package_key": "gix-path-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_pathspec",
+            "package_key": "gix-pathspec-0.18.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_worktree",
+            "package_key": "gix-worktree-0.52.0",
+            "kind": "normal",
+            "features": [
+              "attributes"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "sha1",
+          "worktree-rewrites"
+        ]
+      },
+      "gix-submodule-0.30.0": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_config",
+            "package_key": "gix-config-0.56.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_path",
+            "package_key": "gix-path-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_pathspec",
+            "package_key": "gix-pathspec-0.18.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_refspec",
+            "package_key": "gix-refspec-0.41.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_url",
+            "package_key": "gix-url-0.36.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "sha1"
+        ]
+      },
+      "gix-tempfile-23.0.2": {
+        "runtime_dependencies": [
+          {
+            "name": "dashmap",
+            "package_key": "dashmap-6.2.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_fs",
+            "package_key": "gix-fs-0.21.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "libc",
+            "package_key": "libc-0.2.186",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": "cfg(not(windows))",
+            "tree": "target"
+          },
+          {
+            "name": "parking_lot",
+            "package_key": "parking_lot-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "tempfile",
+            "package_key": "tempfile-3.27.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default",
+          "hp-hashmap"
+        ]
+      },
+      "gix-trace-0.1.21": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": [
+          "default"
+        ]
+      },
+      "gix-transport-0.57.2": {
+        "runtime_dependencies": [
+          {
+            "name": "base64",
+            "package_key": "base64-0.22.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [
+              "std",
+              "unicode"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_command",
+            "package_key": "gix-command-0.9.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_credentials",
+            "package_key": "gix-credentials-0.38.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_features",
+            "package_key": "gix-features-0.48.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_packetline",
+            "package_key": "gix-packetline-0.21.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_quote",
+            "package_key": "gix-quote-0.7.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_sec",
+            "package_key": "gix-sec-0.14.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_url",
+            "package_key": "gix-url-0.36.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "reqwest",
+            "package_key": "reqwest-0.13.4",
+            "kind": "normal",
+            "features": [
+              "blocking",
+              "charset",
+              "http2"
+            ],
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "base64",
+          "blocking-client",
+          "default",
+          "gix-credentials",
+          "http-client",
+          "http-client-reqwest",
+          "http-client-reqwest-rust-tls",
+          "reqwest"
+        ]
+      },
+      "gix-traverse-0.57.0": {
+        "runtime_dependencies": [
+          {
+            "name": "bitflags",
+            "package_key": "bitflags-2.11.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_commitgraph",
+            "package_key": "gix-commitgraph-0.37.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_date",
+            "package_key": "gix-date-0.15.6",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hash",
+            "package_key": "gix-hash-0.25.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hashtable",
+            "package_key": "gix-hashtable-0.15.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_object",
+            "package_key": "gix-object-0.60.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_revwalk",
+            "package_key": "gix-revwalk-0.31.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "smallvec",
+            "package_key": "smallvec-1.15.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "sha1"
+        ]
+      },
+      "gix-url-0.36.2": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [
+              "std"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_path",
+            "package_key": "gix-path-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "percent_encoding",
+            "package_key": "percent-encoding-2.3.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "gix-utils-0.3.6": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [
+              "std"
+            ],
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "fastrand",
+            "package_key": "fastrand-2.4.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "getrandom",
+            "package_key": "getrandom-0.4.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": "cfg(not(all(target_arch = \"wasm32\", target_os = \"unknown\")))",
+            "tree": "target"
+          },
+          {
+            "name": "unicode_normalization",
+            "package_key": "unicode-normalization-0.1.25",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "bstr"
+        ]
+      },
+      "gix-validate-0.11.4": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [
+              "std"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "gix-worktree-0.52.0": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_attributes",
+            "package_key": "gix-attributes-0.33.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_fs",
+            "package_key": "gix-fs-0.21.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_glob",
+            "package_key": "gix-glob-0.26.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hash",
+            "package_key": "gix-hash-0.25.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_ignore",
+            "package_key": "gix-ignore-0.21.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_index",
+            "package_key": "gix-index-0.51.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_object",
+            "package_key": "gix-object-0.60.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_path",
+            "package_key": "gix-path-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_validate",
+            "package_key": "gix-validate-0.11.4",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "attributes",
+          "sha1"
+        ]
+      },
+      "gix-worktree-state-0.30.0": {
+        "runtime_dependencies": [
+          {
+            "name": "bstr",
+            "package_key": "bstr-1.12.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_features",
+            "package_key": "gix-features-0.48.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_filter",
+            "package_key": "gix-filter-0.30.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_fs",
+            "package_key": "gix-fs-0.21.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_index",
+            "package_key": "gix-index-0.51.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_object",
+            "package_key": "gix-object-0.60.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_path",
+            "package_key": "gix-path-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_worktree",
+            "package_key": "gix-worktree-0.52.0",
+            "kind": "normal",
+            "features": [
+              "attributes"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "io_close",
+            "package_key": "io-close-0.3.7",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "sha1"
+        ]
+      },
+      "gix-worktree-stream-0.32.0": {
+        "runtime_dependencies": [
+          {
+            "name": "gix_attributes",
+            "package_key": "gix-attributes-0.33.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_error",
+            "package_key": "gix-error-0.2.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_features",
+            "package_key": "gix-features-0.48.1",
+            "kind": "normal",
+            "features": [
+              "io-pipe",
+              "progress"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_filter",
+            "package_key": "gix-filter-0.30.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_fs",
+            "package_key": "gix-fs-0.21.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_hash",
+            "package_key": "gix-hash-0.25.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_object",
+            "package_key": "gix-object-0.60.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_path",
+            "package_key": "gix-path-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix_traverse",
+            "package_key": "gix-traverse-0.57.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "parking_lot",
+            "package_key": "parking_lot-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "sha1"
+        ]
+      },
       "glob-0.3.3": {
         "runtime_dependencies": [],
         "build_dependencies": [],
@@ -5383,6 +10740,29 @@
           "default"
         ]
       },
+      "hash32-0.3.1": {
+        "runtime_dependencies": [
+          {
+            "name": "byteorder",
+            "package_key": "byteorder-1.5.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "hashbrown-0.14.5": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": [
+          "raw"
+        ]
+      },
       "hashbrown-0.15.5": {
         "runtime_dependencies": [
           {
@@ -5474,9 +10854,23 @@
         ]
       },
       "hashbrown-0.17.1": {
-        "runtime_dependencies": [],
+        "runtime_dependencies": [
+          {
+            "name": "foldhash",
+            "package_key": "foldhash-0.2.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          }
+        ],
         "build_dependencies": [],
-        "features": []
+        "features": [
+          "default-hasher",
+          "inline-more"
+        ]
       },
       "hashlink-0.10.0": {
         "runtime_dependencies": [
@@ -5581,6 +10975,32 @@
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "heapless-0.8.0": {
+        "runtime_dependencies": [
+          {
+            "name": "hash32",
+            "package_key": "hash32-0.3.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "stable_deref_trait",
+            "package_key": "stable_deref_trait-1.2.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
             "optional": false,
             "target": null,
             "tree": "target"
@@ -6212,6 +11632,7 @@
         "features": [
           "aws-lc-rs",
           "http1",
+          "http2",
           "log",
           "logging",
           "native-tokio",
@@ -6991,6 +12412,22 @@
         "build_dependencies": [],
         "features": []
       },
+      "io-close-0.3.7": {
+        "runtime_dependencies": [
+          {
+            "name": "libc",
+            "package_key": "libc-0.2.186",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": "cfg(unix)",
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
       "ipnet-2.12.0": {
         "runtime_dependencies": [],
         "build_dependencies": [],
@@ -7030,6 +12467,101 @@
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": []
+      },
+      "jiff-0.2.35": {
+        "runtime_dependencies": [
+          {
+            "name": "jcore",
+            "package_key": "jiff-core-0.1.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "jiff_static",
+            "package_key": "jiff-static-0.2.35",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": "cfg(any())",
+            "tree": "host"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "alloc",
+          "default",
+          "perf-inline",
+          "std",
+          "tz-fat",
+          "tz-system",
+          "tzdb-bundle-platform",
+          "tzdb-concatenated",
+          "tzdb-zoneinfo"
+        ]
+      },
+      "jiff-core-0.1.0": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": [
+          "alloc",
+          "default",
+          "std",
+          "tz-fat"
+        ]
+      },
+      "jiff-static-0.2.35": {
+        "runtime_dependencies": [
+          {
+            "name": "jcore",
+            "package_key": "jiff-core-0.1.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "proc_macro2",
+            "package_key": "proc-macro2-1.0.106",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "quote",
+            "package_key": "quote-1.0.45",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "syn",
+            "package_key": "syn-2.0.117",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default",
+          "tz-fat"
+        ]
       },
       "jobserver-0.1.34": {
         "runtime_dependencies": [
@@ -7284,6 +12816,26 @@
         ],
         "build_dependencies": [],
         "features": []
+      },
+      "kstring-2.0.2": {
+        "runtime_dependencies": [
+          {
+            "name": "static_assertions",
+            "package_key": "static_assertions-1.1.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default",
+          "std",
+          "unsafe"
+        ]
       },
       "kube-0.99.0": {
         "runtime_dependencies": [
@@ -11247,6 +16799,48 @@
           "default"
         ]
       },
+      "maybe-async-0.2.11": {
+        "runtime_dependencies": [
+          {
+            "name": "proc_macro2",
+            "package_key": "proc-macro2-1.0.106",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "quote",
+            "package_key": "quote-1.0.45",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "syn",
+            "package_key": "syn-2.0.117",
+            "kind": "normal",
+            "features": [
+              "full",
+              "visit-mut"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default",
+          "is_sync"
+        ]
+      },
       "md-5-0.10.6": {
         "runtime_dependencies": [
           {
@@ -11281,6 +16875,22 @@
           "default",
           "std"
         ]
+      },
+      "memmap2-0.9.11": {
+        "runtime_dependencies": [
+          {
+            "name": "libc",
+            "package_key": "libc-0.2.186",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": "cfg(unix)",
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
       },
       "mime-0.3.17": {
         "runtime_dependencies": [],
@@ -11458,6 +17068,14 @@
         "build_dependencies": [],
         "features": [
           "alloc",
+          "std"
+        ]
+      },
+      "nonempty-0.12.0": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": [
+          "default",
           "std"
         ]
       },
@@ -12612,6 +18230,23 @@
             "uses_default_features": true,
             "optional": false,
             "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gix",
+            "package_key": "gix-0.83.0",
+            "kind": "normal",
+            "features": [
+              "blocking-http-transport-reqwest-rust-tls",
+              "blocking-network-client",
+              "revision",
+              "sha1",
+              "tree-editor",
+              "worktree-mutation"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": "cfg(unix)",
             "tree": "target"
           },
           {
@@ -14236,7 +19871,8 @@
         "build_dependencies": [],
         "features": [
           "default",
-          "fallback"
+          "fallback",
+          "require-cas"
         ]
       },
       "potential_utf-0.1.5": {
@@ -14615,6 +20251,26 @@
           "colors",
           "default",
           "yansi"
+        ]
+      },
+      "prodash-31.0.0": {
+        "runtime_dependencies": [
+          {
+            "name": "parking_lot",
+            "package_key": "parking_lot-0.12.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default",
+          "parking_lot",
+          "progress-tree"
         ]
       },
       "prost-0.13.5": {
@@ -16327,6 +21983,26 @@
             "tree": "target"
           },
           {
+            "name": "encoding_rs",
+            "package_key": "encoding_rs-0.8.35",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": "cfg(not(all(target_arch = \"wasm32\", any(target_os = \"unknown\", target_os = \"none\"))))",
+            "tree": "target"
+          },
+          {
+            "name": "futures_channel",
+            "package_key": "futures-channel-0.3.32",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": "cfg(not(all(target_arch = \"wasm32\", any(target_os = \"unknown\", target_os = \"none\"))))",
+            "tree": "target"
+          },
+          {
             "name": "futures_core",
             "package_key": "futures-core-0.3.32",
             "kind": "normal",
@@ -16334,6 +22010,26 @@
             "uses_default_features": false,
             "optional": false,
             "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "futures_util",
+            "package_key": "futures-util-0.3.32",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "h2",
+            "package_key": "h2-0.4.14",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": "cfg(not(all(target_arch = \"wasm32\", any(target_os = \"unknown\", target_os = \"none\"))))",
             "tree": "target"
           },
           {
@@ -16415,6 +22111,16 @@
             "features": [],
             "uses_default_features": true,
             "optional": false,
+            "target": "cfg(not(all(target_arch = \"wasm32\", any(target_os = \"unknown\", target_os = \"none\"))))",
+            "tree": "target"
+          },
+          {
+            "name": "mime",
+            "package_key": "mime-0.3.17",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
             "target": "cfg(not(all(target_arch = \"wasm32\", any(target_os = \"unknown\", target_os = \"none\"))))",
             "tree": "target"
           },
@@ -16582,6 +22288,9 @@
           "__rustls",
           "__rustls-aws-lc-rs",
           "__tls",
+          "blocking",
+          "charset",
+          "http2",
           "json",
           "rustls"
         ]
@@ -18156,9 +23865,38 @@
         ],
         "build_dependencies": [],
         "features": [
+          "compress",
           "default",
           "std"
         ]
+      },
+      "sha1-checked-0.10.0": {
+        "runtime_dependencies": [
+          {
+            "name": "digest",
+            "package_key": "digest-0.10.7",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "sha1",
+            "package_key": "sha1-0.10.6",
+            "kind": "normal",
+            "features": [
+              "compress"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
       },
       "sha2-0.10.9": {
         "runtime_dependencies": [
@@ -19033,7 +24771,8 @@
         "features": [
           "const_generics",
           "const_new",
-          "serde"
+          "serde",
+          "write"
         ]
       },
       "socket2-0.5.10": {
@@ -23793,6 +29532,11 @@
           "std"
         ]
       },
+      "unicode-bom-2.0.3": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
+      },
       "unicode-ident-1.0.24": {
         "runtime_dependencies": [],
         "build_dependencies": [],
@@ -24601,6 +30345,16 @@
         ],
         "build_dependencies": [],
         "features": []
+      },
+      "zlib-rs-0.6.7": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": [
+          "c-allocator",
+          "default",
+          "rust-allocator",
+          "std"
+        ]
       },
       "zmij-1.0.21": {
         "runtime_dependencies": [],
@@ -29926,6 +35680,9 @@
         "path": "lib.rs"
       }
     },
+    "bitflags-1.3.2": {
+      "edition": "2018"
+    },
     "bitflags-2.11.1": {
       "edition": "2021"
     },
@@ -29993,6 +35750,9 @@
     "clap_lex-1.1.0": {
       "edition": "2024"
     },
+    "clru-0.6.3": {
+      "edition": "2024"
+    },
     "cmake-0.1.58": {
       "edition": "2021"
     },
@@ -30040,6 +35800,10 @@
     },
     "crc-catalog-2.5.0": {
       "edition": "2018"
+    },
+    "crc32fast-1.5.1": {
+      "edition": "2021",
+      "build_script": "build.rs"
     },
     "cron-0.15.0": {
       "edition": "2021"
@@ -30097,6 +35861,9 @@
       "edition": "2021",
       "proc_macro": true
     },
+    "dashmap-6.2.1": {
+      "edition": "2018"
+    },
     "data-encoding-2.11.0": {
       "edition": "2018"
     },
@@ -30104,6 +35871,19 @@
       "edition": "2021"
     },
     "deadpool-runtime-0.1.4": {
+      "edition": "2021"
+    },
+    "defmt-1.1.1": {
+      "edition": "2021",
+      "build_script": "build.rs",
+      "links": "defmt"
+    },
+    "defmt-macros-1.1.1": {
+      "edition": "2021",
+      "proc_macro": true,
+      "build_script": "build.rs"
+    },
+    "defmt-parser-1.0.0": {
       "edition": "2021"
     },
     "der-0.7.10": {
@@ -30194,12 +35974,18 @@
     "fast_chemail-0.9.6": {
       "edition": "2015"
     },
+    "faster-hex-0.10.0": {
+      "edition": "2018"
+    },
     "fastrand-2.4.1": {
       "edition": "2018"
     },
     "figment-0.10.19": {
       "edition": "2018",
       "build_script": "build.rs"
+    },
+    "filetime-0.2.29": {
+      "edition": "2018"
     },
     "find-msvc-tools-0.1.9": {
       "edition": "2018"
@@ -30300,6 +36086,174 @@
       "edition": "2024",
       "build_script": "build.rs"
     },
+    "gix-0.83.0": {
+      "edition": "2021"
+    },
+    "gix-actor-0.41.2": {
+      "edition": "2024"
+    },
+    "gix-archive-0.32.0": {
+      "edition": "2021"
+    },
+    "gix-attributes-0.33.2": {
+      "edition": "2024"
+    },
+    "gix-bitmap-0.3.3": {
+      "edition": "2024"
+    },
+    "gix-blame-0.13.0": {
+      "edition": "2021"
+    },
+    "gix-chunk-0.7.3": {
+      "edition": "2024"
+    },
+    "gix-command-0.9.2": {
+      "edition": "2024"
+    },
+    "gix-commitgraph-0.37.1": {
+      "edition": "2024"
+    },
+    "gix-config-0.56.0": {
+      "edition": "2021"
+    },
+    "gix-config-value-0.18.1": {
+      "edition": "2024"
+    },
+    "gix-credentials-0.38.2": {
+      "edition": "2024"
+    },
+    "gix-date-0.15.6": {
+      "edition": "2024"
+    },
+    "gix-diff-0.63.0": {
+      "edition": "2021"
+    },
+    "gix-dir-0.25.0": {
+      "edition": "2021"
+    },
+    "gix-discover-0.51.0": {
+      "edition": "2021"
+    },
+    "gix-error-0.2.5": {
+      "edition": "2024"
+    },
+    "gix-features-0.48.1": {
+      "edition": "2024"
+    },
+    "gix-filter-0.30.0": {
+      "edition": "2021"
+    },
+    "gix-fs-0.21.2": {
+      "edition": "2024"
+    },
+    "gix-glob-0.26.1": {
+      "edition": "2024"
+    },
+    "gix-hash-0.25.1": {
+      "edition": "2024"
+    },
+    "gix-hashtable-0.15.2": {
+      "edition": "2024"
+    },
+    "gix-ignore-0.21.1": {
+      "edition": "2024"
+    },
+    "gix-imara-diff-0.2.5": {
+      "edition": "2024"
+    },
+    "gix-index-0.51.0": {
+      "edition": "2021"
+    },
+    "gix-lock-23.0.1": {
+      "edition": "2024"
+    },
+    "gix-merge-0.16.0": {
+      "edition": "2021"
+    },
+    "gix-negotiate-0.31.0": {
+      "edition": "2021"
+    },
+    "gix-object-0.60.0": {
+      "edition": "2021"
+    },
+    "gix-odb-0.80.0": {
+      "edition": "2021"
+    },
+    "gix-pack-0.70.0": {
+      "edition": "2021"
+    },
+    "gix-packetline-0.21.5": {
+      "edition": "2024"
+    },
+    "gix-path-0.12.5": {
+      "edition": "2024"
+    },
+    "gix-pathspec-0.18.1": {
+      "edition": "2024"
+    },
+    "gix-prompt-0.15.1": {
+      "edition": "2024"
+    },
+    "gix-protocol-0.61.0": {
+      "edition": "2021"
+    },
+    "gix-quote-0.7.2": {
+      "edition": "2024"
+    },
+    "gix-ref-0.63.0": {
+      "edition": "2021"
+    },
+    "gix-refspec-0.41.0": {
+      "edition": "2021"
+    },
+    "gix-revision-0.45.0": {
+      "edition": "2021"
+    },
+    "gix-revwalk-0.31.0": {
+      "edition": "2021"
+    },
+    "gix-sec-0.14.2": {
+      "edition": "2024"
+    },
+    "gix-shallow-0.12.1": {
+      "edition": "2024"
+    },
+    "gix-status-0.30.0": {
+      "edition": "2021"
+    },
+    "gix-submodule-0.30.0": {
+      "edition": "2021"
+    },
+    "gix-tempfile-23.0.2": {
+      "edition": "2024"
+    },
+    "gix-trace-0.1.21": {
+      "edition": "2024"
+    },
+    "gix-transport-0.57.2": {
+      "edition": "2024"
+    },
+    "gix-traverse-0.57.0": {
+      "edition": "2021"
+    },
+    "gix-url-0.36.2": {
+      "edition": "2024"
+    },
+    "gix-utils-0.3.6": {
+      "edition": "2024"
+    },
+    "gix-validate-0.11.4": {
+      "edition": "2024"
+    },
+    "gix-worktree-0.52.0": {
+      "edition": "2021"
+    },
+    "gix-worktree-state-0.30.0": {
+      "edition": "2021"
+    },
+    "gix-worktree-stream-0.32.0": {
+      "edition": "2021"
+    },
     "glob-0.3.3": {
       "edition": "2015"
     },
@@ -30308,6 +36262,12 @@
     },
     "handlebars-6.4.1": {
       "edition": "2024"
+    },
+    "hash32-0.3.1": {
+      "edition": "2015"
+    },
+    "hashbrown-0.14.5": {
+      "edition": "2021"
     },
     "hashbrown-0.15.5": {
       "edition": "2021"
@@ -30326,6 +36286,10 @@
     },
     "headers-core-0.3.0": {
       "edition": "2015"
+    },
+    "heapless-0.8.0": {
+      "edition": "2021",
+      "build_script": "build.rs"
     },
     "heck-0.4.1": {
       "edition": "2018"
@@ -30433,6 +36397,9 @@
     "inventory-0.3.24": {
       "edition": "2021"
     },
+    "io-close-0.3.7": {
+      "edition": "2018"
+    },
     "ipnet-2.12.0": {
       "edition": "2018"
     },
@@ -30444,6 +36411,16 @@
     },
     "itoa-1.0.18": {
       "edition": "2021"
+    },
+    "jiff-0.2.35": {
+      "edition": "2021"
+    },
+    "jiff-core-0.1.0": {
+      "edition": "2021"
+    },
+    "jiff-static-0.2.35": {
+      "edition": "2021",
+      "proc_macro": true
     },
     "jobserver-0.1.34": {
       "edition": "2021"
@@ -30464,6 +36441,9 @@
     },
     "kotae-0.1.1": {
       "edition": "2024"
+    },
+    "kstring-2.0.2": {
+      "edition": "2021"
     },
     "kube-0.99.0": {
       "edition": "2021"
@@ -30627,6 +36607,10 @@
     "matchit-0.8.4": {
       "edition": "2021"
     },
+    "maybe-async-0.2.11": {
+      "edition": "2021",
+      "proc_macro": true
+    },
     "md-5-0.10.6": {
       "edition": "2018",
       "lib_target": {
@@ -30635,6 +36619,9 @@
       }
     },
     "memchr-2.8.1": {
+      "edition": "2021"
+    },
+    "memmap2-0.9.11": {
       "edition": "2021"
     },
     "mime-0.3.17": {
@@ -30655,6 +36642,9 @@
     },
     "nom-7.1.3": {
       "edition": "2018"
+    },
+    "nonempty-0.12.0": {
+      "edition": "2021"
     },
     "normalize-line-endings-0.3.0": {
       "edition": "2015"
@@ -30906,6 +36896,9 @@
     },
     "procfs-core-0.16.0": {
       "edition": "2018"
+    },
+    "prodash-31.0.0": {
+      "edition": "2021"
     },
     "prometheus-0.13.4": {
       "edition": "2018",
@@ -31206,6 +37199,9 @@
     },
     "sha1-0.10.6": {
       "edition": "2018"
+    },
+    "sha1-checked-0.10.0": {
+      "edition": "2021"
     },
     "sha2-0.10.9": {
       "edition": "2018"
@@ -31513,6 +37509,9 @@
     "unicode-bidi-0.3.18": {
       "edition": "2018"
     },
+    "unicode-bom-2.0.3": {
+      "edition": "2018"
+    },
     "unicode-ident-1.0.24": {
       "edition": "2021"
     },
@@ -31651,6 +37650,9 @@
     "zerovec-derive-0.11.3": {
       "edition": "2021",
       "proc_macro": true
+    },
+    "zlib-rs-0.6.7": {
+      "edition": "2021"
     },
     "zmij-1.0.21": {
       "edition": "2021",
