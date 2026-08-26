@@ -175,17 +175,32 @@ pub struct ExecutorSurface {
 /// beyond the crate itself and is available in every build. Naming a backend
 /// the binary lacks is a startup panic by design, so the prescription is
 /// tied to the feature rather than to a hope about how the image was built.
-#[cfg(feature = "embedded_ruby")]
-pub const DEFAULT_COMPILER_BACKEND: &str = "embedded";
-/// See [`DEFAULT_COMPILER_BACKEND`].
-#[cfg(not(feature = "embedded_ruby"))]
+///
+/// ── ★ LAVA UNCONDITIONALLY, 2026-08-25 ───────────────────────────────
+/// This was cfg-selected: `embedded` when the interpreter was linked in,
+/// `lava` otherwise. The reasoning was sound — never prescribe a backend
+/// the binary cannot construct — but it made the SHIPPED default
+/// `embedded`, because `embedded_ruby` is a default feature.
+///
+/// lava is present in EVERY build, so prescribing it unconditionally
+/// cannot name an unconstructible backend; the protection the cfg gave
+/// is preserved by lava's universality rather than by the branch.
+///
+/// What the branch cost while it stood: the default path reached `git`
+/// 14 times to fetch gems, and embedded unrestricted CRuby — no `$SAFE`,
+/// no taint, no timeout, no restricted binding — in this operator's
+/// address space, where `Kernel#system` and backticks are reachable from
+/// CR content on the fleet control plane. `embedded` remains available by
+/// name for workspaces that still author Ruby.
 pub const DEFAULT_COMPILER_BACKEND: &str = "lava";
 
 /// Pangea DSL compiler backend selection.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CompilerConfig {
-    /// `embedded` (magnus, default) or `http` (sunset sidecar)
+    /// `lava` (tatara-lisp, in-process, no Ruby, no subprocess — THE
+    /// DEFAULT), `embedded` (magnus CRuby + GemCache), or `http` (sunset
+    /// sidecar, explicit opt-in only).
     /// (`PANGEA_COMPILER_BACKEND`).
     pub backend: String,
     /// HTTP sidecar endpoint for the legacy backend (`COMPILER_ENDPOINT`).
@@ -855,6 +870,18 @@ mod tests {
         let p = OperatorConfig::prescribed_default();
         assert_eq!(p.executor.backend.as_deref(), Some("magma"));
         assert!(p.executor.forbid_tofu);
+    }
+
+    #[test]
+    fn the_prescribed_compiler_backend_shells_out_for_nothing() {
+        // The shipped default must be the backend that spawns no processes and
+        // links no interpreter. This is pinned as a TEST because the executor's
+        // equivalent default drifted in the docs for months while the code was
+        // right — a default nobody exercises deliberately is exactly the kind
+        // that rots unnoticed.
+        let p = OperatorConfig::prescribed_default();
+        assert_eq!(p.compiler.backend, "lava");
+        assert_eq!(DEFAULT_COMPILER_BACKEND, "lava");
     }
 
     #[test]
