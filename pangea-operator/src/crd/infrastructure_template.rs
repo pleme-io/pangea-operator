@@ -79,6 +79,17 @@ const fn default_destroy_protection() -> bool {
     true
 }
 
+/// The import half of the same rule: `import → plan → apply, never destroy`
+/// must be what SILENCE means, not what an opt-in buys.
+///
+/// Peer of [`default_destroy_protection`] and for the identical reason — a
+/// bare `#[serde(default)]` on a bool yields `false`, and here that silent
+/// `false` meant create-instead-of-import: a plan proposing to CREATE
+/// resources that already exist, failing at apply with `422 already exists`.
+const fn default_auto_on_conflict() -> bool {
+    true
+}
+
 #[derive(CustomResource, Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[kube(
     group = "pangea.pleme.io",
@@ -1057,11 +1068,38 @@ pub struct PorkbunCredentials {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportPolicy {
-    /// Master switch. When `false` (default), no auto-import fires
-    /// regardless of `naturalIds` or bundled defaults — you stay on
-    /// today's per-address `importHints`-only behaviour. When
-    /// `true`, every `create`-action is a candidate for auto-import.
-    #[serde(default)]
+    /// Master switch. When `true` (**the default since 2026-08-26**),
+    /// every `create`-action is a candidate for auto-import. Set it
+    /// `false` to stay on per-address `importHints`-only behaviour.
+    ///
+    /// ── ★ WHY THE DEFAULT FLIPPED ────────────────────────────────────
+    /// It used to default to `false`, which meant a template that said
+    /// nothing about importing got **create-instead-of-import**: the
+    /// plan proposes to CREATE a resource that already exists, and the
+    /// apply fails with `422 already exists` per resource. That is the
+    /// same "dangerous posture reached by SAYING NOTHING" that
+    /// `destroy_protection` closed on the deletion path — silence chose
+    /// the unsafe branch, and only a template that remembered to opt in
+    /// got the intended import → plan → apply → never-destroy
+    /// algorithm.
+    ///
+    /// Measured on camelot 2026-08-26: 5 of 21 live templates carried
+    /// `autoOnConflict: false`, all by omission rather than by a stated
+    /// decision.
+    ///
+    /// Defaulting to `true` is safe because it is a CANDIDACY switch,
+    /// not an action: an address still needs an id from
+    /// `importHints` → `naturalIds` → the operator-bundled defaults. A
+    /// resource with no resolvable natural id imports nothing and stays
+    /// a plain `create`. So the flip cannot invent an import; it can
+    /// only stop one from being skipped.
+    ///
+    /// **The default lives in [`default_auto_on_conflict`] and is read
+    /// through [`ImportPolicy::auto_on_conflict_or_default`]** — an
+    /// ABSENT `importPolicy` block resolves the same way as a present
+    /// one with the field omitted. Both are silence, and silence must
+    /// mean one thing.
+    #[serde(default = "default_auto_on_conflict")]
     pub auto_on_conflict: bool,
 
     /// Per-resource-type natural-ID extraction templates. Keys are
@@ -1073,6 +1111,29 @@ pub struct ImportPolicy {
     /// Empty map = fall through to operator-bundled defaults.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub natural_ids: BTreeMap<String, String>,
+}
+
+impl ImportPolicy {
+    /// Resolve auto-import for a template whose `importPolicy` may be
+    /// ABSENT ENTIRELY.
+    ///
+    /// ── ★ WHY THIS IS A METHOD AND NOT `.map(…).unwrap_or(false)` ────
+    /// There are two ways to say nothing — omit the `autoOnConflict`
+    /// field, or omit the whole `importPolicy` block — and before this
+    /// existed they disagreed. The field default was applied by serde
+    /// while three separate call sites hand-wrote `.unwrap_or(false)`
+    /// for the absent-block case, so flipping the serde default alone
+    /// would have left a template with no `importPolicy:` on the OLD
+    /// behaviour while an empty `importPolicy: {}` got the new one.
+    ///
+    /// Same shape as the defect this whole change closes: the unsafe
+    /// branch reached by silence. Routing every reader through one
+    /// method means the two spellings of silence cannot drift apart,
+    /// and a future change to the default lands in one place.
+    #[must_use]
+    pub fn auto_on_conflict_or_default(policy: Option<&Self>) -> bool {
+        policy.map_or_else(default_auto_on_conflict, |p| p.auto_on_conflict)
+    }
 }
 
 /// Typed classification of a provider conflict surfaced by a failed
@@ -2364,6 +2425,61 @@ impl InfrastructureTemplate {
 mod tests {
     use super::*;
     use kube::CustomResourceExt;
+
+    // ── ★ SILENCE MUST MEAN import → plan → apply, NEVER DESTROY ─────────
+    // These pin the DEFAULTS, not a spelled-out spec. The defect they close
+    // was reached by a template saying nothing, and before them the `false`
+    // default was pinned by no test at all — flipping it broke zero of 1314.
+    // An unpinned default is one refactor away from silently reverting.
+
+    /// The whole point: a spec that mentions no import policy still imports.
+    #[test]
+    fn an_absent_import_policy_still_auto_imports() {
+        assert!(
+            ImportPolicy::auto_on_conflict_or_default(None),
+            "a template that says nothing about importing must still IMPORT, \
+             not propose create-instead-of-import"
+        );
+    }
+
+    /// The second spelling of silence — the block is present but empty.
+    /// This is the one the serde default covers; the test exists because the
+    /// two spellings used to disagree.
+    #[test]
+    fn an_empty_import_policy_block_matches_an_absent_one() {
+        let empty: ImportPolicy = serde_json::from_str("{}").expect("empty policy parses");
+        assert_eq!(
+            empty.auto_on_conflict,
+            ImportPolicy::auto_on_conflict_or_default(None),
+            "`importPolicy: {{}}` and no importPolicy at all are both SILENCE \
+             and must resolve identically"
+        );
+        assert!(empty.auto_on_conflict);
+    }
+
+    /// Opting OUT stays possible and stays explicit — the flip changed what
+    /// silence means, not what a stated decision means.
+    #[test]
+    fn an_explicit_false_is_still_honoured() {
+        let off: ImportPolicy =
+            serde_json::from_str(r#"{"autoOnConflict":false}"#).expect("parses");
+        assert!(!off.auto_on_conflict);
+        assert!(!ImportPolicy::auto_on_conflict_or_default(Some(&off)));
+    }
+
+    /// The deletion half of the same rule, pinned beside the import half so
+    /// the pair is read together.
+    #[test]
+    fn a_spec_that_says_nothing_is_destroy_protected() {
+        assert!(
+            default_destroy_protection(),
+            "silence must not disarm destroy protection"
+        );
+        assert!(
+            default_auto_on_conflict(),
+            "silence must not disarm auto-import"
+        );
+    }
 
     #[test]
     fn crd_still_generates_with_cycle_fields() {

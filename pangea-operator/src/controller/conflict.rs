@@ -96,12 +96,8 @@ pub fn effective_policy(template: &InfrastructureTemplate) -> ConflictResolution
 /// so the existing fleet templates (which already opt into auto-import)
 /// get the convergence guarantee with **no spec change**.
 pub fn is_enabled(template: &InfrastructureTemplate, policy: &ConflictResolutionPolicy) -> bool {
-    let auto_on_conflict = template
-        .spec
-        .import_policy
-        .as_ref()
-        .map(|p| p.auto_on_conflict)
-        .unwrap_or(false);
+    let auto_on_conflict =
+        crate::crd::ImportPolicy::auto_on_conflict_or_default(template.spec.import_policy.as_ref());
     policy.enabled.unwrap_or(auto_on_conflict)
 }
 

@@ -4823,12 +4823,8 @@ async fn run_import_prepass(
 
     let executor = state.executor_for(template);
 
-    let auto_import = template
-        .spec
-        .import_policy
-        .as_ref()
-        .map(|p| p.auto_on_conflict)
-        .unwrap_or(false);
+    let auto_import =
+        crate::crd::ImportPolicy::auto_on_conflict_or_default(template.spec.import_policy.as_ref());
 
     // Short-circuit when neither auto-import nor declared hints fire.
     if template.spec.import_hints.is_empty() && !auto_import {

@@ -151,7 +151,7 @@ pub fn resolve_import_targets(
     use crate::controller::template_controller::substitute_import_id;
     use std::collections::HashSet;
 
-    let auto_import = import_policy.map(|p| p.auto_on_conflict).unwrap_or(false);
+    let auto_import = crate::crd::ImportPolicy::auto_on_conflict_or_default(import_policy);
     let create_set: HashSet<&str> = create_addresses.iter().map(String::as_str).collect();
 
     let mut targets: Vec<ImportTarget> = Vec::new();
