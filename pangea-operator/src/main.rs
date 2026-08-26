@@ -163,11 +163,16 @@ async fn main() -> Result<()> {
     );
 
     // Construct the compiler backend. Selection:
-    //   PANGEA_COMPILER_BACKEND=http      (default)  → sidecar over HTTP
+    //   PANGEA_COMPILER_BACKEND unset     (DEFAULT)  → lava: tatara-lisp,
+    //                                                  in-process, no Ruby,
+    //                                                  no subprocess
+    //   PANGEA_COMPILER_BACKEND=lava                 → the same, named
     //   PANGEA_COMPILER_BACKEND=embedded             → magnus + GemCache
     //                                                  (only when feature
     //                                                  `embedded_ruby` is
     //                                                  compiled in)
+    //   PANGEA_COMPILER_BACKEND=http                 → sidecar (LEGACY/sunset,
+    //                                                  explicit opt-in only)
     // See theory/PANGEA-WORKSPACE-RECONCILIATION.md § M8.2.
     let compiler_endpoint = op_cfg.compiler.endpoint.clone();
     // Sidecar sunset (2026-06-02): default to in-process magnus. The HTTP
@@ -218,15 +223,43 @@ async fn main() -> Result<()> {
             // is unrestricted in-process CRuby — no $SAFE, no timeout,
             // no restricted binding — sharing this operator's address
             // space and credentials on the fleet control plane.
-            "lava" => {
-                info!("Compiler backend: lava (tatara-lisp dashboards, no Ruby)");
+            "lava" | "" => {
+                info!("Compiler backend: lava (tatara-lisp, no Ruby, no subprocess)");
                 std::sync::Arc::new(pangea_operator::ruby::LavaCompilerBackend::from_env())
             }
-            _ => {
-                info!(endpoint = %compiler_endpoint, "Compiler backend: HTTP sidecar (LEGACY/sunset — embedded is the strategy)");
+            "http" => {
+                info!(endpoint = %compiler_endpoint, "Compiler backend: HTTP sidecar (LEGACY/sunset — explicitly requested)");
                 pangea_operator::controller::architecture_gem_controller::http_backend(
                     compiler_endpoint.clone(),
                 )
+            }
+            // ── THE DEFAULT IS LAVA ───────────────────────────────────────
+            //
+            // It used to be this arm, falling through to the HTTP sidecar the
+            // comment two screens up already called sunset — so an operator
+            // that named no backend got the one nobody wanted. An unrecognized
+            // value landed there too, which turned a typo into a silent
+            // downgrade onto legacy transport.
+            //
+            // lava is the default because it is the only backend that shells
+            // out for nothing: tatara-lisp evaluated in-process by lava_eval,
+            // rendered to terraform JSON, handed to magma over provider gRPC.
+            // The embedded Ruby backend reaches git 14 times to fetch gems and
+            // embeds unrestricted CRuby — no $SAFE, no taint, no timeout — in
+            // this operator's address space, where `Kernel#system` is reachable
+            // from CR content on the fleet control plane.
+            //
+            // An unrecognized value now warns and still lands on lava rather
+            // than silently choosing anything else.
+            other => {
+                if !other.is_empty() {
+                    tracing::warn!(
+                        requested = %other,
+                        "unrecognized PANGEA_COMPILER_BACKEND; using lava (the default).                          Known values: lava, embedded, http"
+                    );
+                }
+                info!("Compiler backend: lava (tatara-lisp, no Ruby, no subprocess)");
+                std::sync::Arc::new(pangea_operator::ruby::LavaCompilerBackend::from_env())
             }
         };
 
