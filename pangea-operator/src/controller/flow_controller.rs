@@ -291,11 +291,10 @@ async fn reconcile_flow(
                             // MONOTONE: a step may raise protection, never
                             // lower it. `unwrap_or` allowed Some(false) on one
                             // step to unprotect it inside a protected flow.
-                            destroy_protection:
-                                crate::crd::step_destroy_protection(
-                                    flow.spec.destroy_protection,
-                                    step.destroy_protection,
-                                ),
+                            destroy_protection: crate::crd::step_destroy_protection(
+                                flow.spec.destroy_protection,
+                                step.destroy_protection,
+                            ),
                             retry_policy: None,
                             provider_credentials: None,
                             compliance_profiles: vec![],

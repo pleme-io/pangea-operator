@@ -205,7 +205,11 @@ pub async fn resolve_provider_config(
         };
         match (
             pick(&["app_id", "appId", "GITHUB_APP_ID"]),
-            pick(&["installation_id", "installationId", "GITHUB_APP_INSTALLATION_ID"]),
+            pick(&[
+                "installation_id",
+                "installationId",
+                "GITHUB_APP_INSTALLATION_ID",
+            ]),
             pick(&["private_key", "privateKey", "pem", "GITHUB_APP_PRIVATE_KEY"]),
         ) {
             (Some(app_id), Some(installation_id), Some(pem)) => {
@@ -336,11 +340,20 @@ fn provider_config_object(
                 first_present(data, &["app_id", "APP_ID", "GITHUB_APP_ID"]),
                 first_present(
                     data,
-                    &["installation_id", "INSTALLATION_ID", "GITHUB_APP_INSTALLATION_ID"],
+                    &[
+                        "installation_id",
+                        "INSTALLATION_ID",
+                        "GITHUB_APP_INSTALLATION_ID",
+                    ],
                 ),
                 first_present(
                     data,
-                    &["private_key", "pem_file", "PRIVATE_KEY", "GITHUB_APP_PEM_FILE"],
+                    &[
+                        "private_key",
+                        "pem_file",
+                        "PRIVATE_KEY",
+                        "GITHUB_APP_PEM_FILE",
+                    ],
                 ),
             );
             if let (Some(id), Some(installation_id), Some(pem)) = app {
@@ -583,17 +596,28 @@ mod tests {
         let d = data(&[
             ("app_id", "4685620"),
             ("installation_id", "155780635"),
-            ("private_key", "-----BEGIN RSA PRIVATE KEY-----\nx\n-----END RSA PRIVATE KEY-----"),
+            (
+                "private_key",
+                "-----BEGIN RSA PRIVATE KEY-----\nx\n-----END RSA PRIVATE KEY-----",
+            ),
             ("token", "ghp_should_be_ignored"),
         ]);
         let obj = provider_config_object(ProviderKind::GitHub, &d, None).expect("resolves");
         let o = obj.as_object().unwrap();
-        assert!(!o.contains_key("token"), "a bearer must not be emitted alongside app_auth");
-        let auth = o["app_auth"].as_array().expect("app_auth renders as a block array");
+        assert!(
+            !o.contains_key("token"),
+            "a bearer must not be emitted alongside app_auth"
+        );
+        let auth = o["app_auth"]
+            .as_array()
+            .expect("app_auth renders as a block array");
         assert_eq!(auth.len(), 1);
         assert_eq!(auth[0]["id"], "4685620");
         assert_eq!(auth[0]["installation_id"], "155780635");
-        assert!(auth[0]["pem_file"].as_str().unwrap().starts_with("-----BEGIN"));
+        assert!(auth[0]["pem_file"]
+            .as_str()
+            .unwrap()
+            .starts_with("-----BEGIN"));
     }
 
     #[test]
@@ -608,7 +632,10 @@ mod tests {
         ]);
         let obj = provider_config_object(ProviderKind::GitHub, &d, None).expect("resolves");
         let o = obj.as_object().unwrap();
-        assert!(!o.contains_key("app_auth"), "partial app creds must not emit a block");
+        assert!(
+            !o.contains_key("app_auth"),
+            "partial app creds must not emit a block"
+        );
         assert_eq!(o["token"], "ghp_yyy");
     }
 

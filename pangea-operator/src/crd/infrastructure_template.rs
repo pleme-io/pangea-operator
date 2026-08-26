@@ -2484,10 +2484,9 @@ importHints:
             .provider_credentials
             .as_ref()
             .expect("providerCredentials present");
-        let datadog = creds
-            .datadog
-            .as_ref()
-            .expect("datadog credential must survive deserialization -- silently dropping it is the bug");
+        let datadog = creds.datadog.as_ref().expect(
+            "datadog credential must survive deserialization -- silently dropping it is the bug",
+        );
         assert_eq!(datadog.secret_ref.name, "dd-provider-credentials");
 
         // And it must reach the generic resolver loop, which is what actually
@@ -2529,7 +2528,9 @@ providerCredentials:
 "#;
         let spec: InfrastructureTemplateSpec =
             serde_yaml::from_str(rendered).expect("unknown provider keys do NOT fail parsing");
-        let creds = spec.provider_credentials.expect("providerCredentials present");
+        let creds = spec
+            .provider_credentials
+            .expect("providerCredentials present");
 
         // Parsed happily, and carries nothing at all.
         assert!(creds.iter_secret_refs().is_empty());
@@ -2710,12 +2711,21 @@ mod dialect_tests {
 
     #[test]
     fn json_is_unaffected_and_an_explicit_declaration_still_beats_the_sniff() {
-        assert_eq!(Dialect::Auto.resolve("  {\"resource\": {}}"), ResolvedDialect::Json);
+        assert_eq!(
+            Dialect::Auto.resolve("  {\"resource\": {}}"),
+            ResolvedDialect::Json
+        );
         // An explicit dialect overrides what the body looks like, in BOTH
         // directions — that is what makes the field worth having.
         assert_eq!(Dialect::Lava.resolve("require 'x'"), ResolvedDialect::Lava);
-        assert_eq!(Dialect::Ruby.resolve("(deflava-architecture x)"), ResolvedDialect::Ruby);
-        assert_eq!(Dialect::Json.resolve("(deflava-architecture x)"), ResolvedDialect::Json);
+        assert_eq!(
+            Dialect::Ruby.resolve("(deflava-architecture x)"),
+            ResolvedDialect::Ruby
+        );
+        assert_eq!(
+            Dialect::Json.resolve("(deflava-architecture x)"),
+            ResolvedDialect::Json
+        );
     }
 
     fn an_absent_dialect_field_deserializes_to_auto() {

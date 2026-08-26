@@ -100,8 +100,7 @@ impl LavaCompilerBackend {
     #[must_use]
     pub fn from_env() -> Self {
         Self::new(
-            std::env::var("LAVA_DASHBOARD_CATALOG")
-                .unwrap_or_else(|_| DEFAULT_CATALOG.to_string()),
+            std::env::var("LAVA_DASHBOARD_CATALOG").unwrap_or_else(|_| DEFAULT_CATALOG.to_string()),
         )
         .with_architectures(
             std::env::var("LAVA_ARCHITECTURE_CATALOG")
@@ -564,7 +563,9 @@ mod tests {
     #[test]
     fn a_missing_catalogue_entry_names_where_it_looked() {
         let b = LavaCompilerBackend::new("/nonexistent-catalog");
-        let e = b.render_architecture("workload-overview", None).unwrap_err();
+        let e = b
+            .render_architecture("workload-overview", None)
+            .unwrap_err();
         let msg = e.to_string();
         assert!(msg.contains("workload-overview"), "{msg}");
         assert!(msg.contains("/nonexistent-catalog"), "{msg}");
@@ -648,7 +649,10 @@ mod tests {
 
         let b = LavaCompilerBackend::new("/nonexistent").with_architectures(&dir);
         let got = b.list_architectures("some-gem").await.unwrap();
-        assert_eq!(got.classes, vec!["aws-sg".to_string(), "dns_zone".to_string()]);
+        assert_eq!(
+            got.classes,
+            vec!["aws-sg".to_string(), "dns_zone".to_string()]
+        );
         // The gem label is echoed, never invented — the catalogue is not
         // partitioned by gem and pretending otherwise would be a claim
         // nothing backs.
@@ -709,8 +713,16 @@ impl CompilerBackend for DispatchingCompilerBackend {
         kind: SourceKind,
     ) -> Result<String, BackendError> {
         match kind {
-            SourceKind::Lisp => self.lava.render_dashboard(source, extend_modules, kind).await,
-            _ => self.ruby.render_dashboard(source, extend_modules, kind).await,
+            SourceKind::Lisp => {
+                self.lava
+                    .render_dashboard(source, extend_modules, kind)
+                    .await
+            }
+            _ => {
+                self.ruby
+                    .render_dashboard(source, extend_modules, kind)
+                    .await
+            }
         }
     }
 }
@@ -745,7 +757,10 @@ mod compile_tests {
 "#;
 
     fn vars(pairs: &[(&str, serde_json::Value)]) -> HashMap<String, serde_json::Value> {
-        pairs.iter().map(|(k, v)| ((*k).to_string(), v.clone())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), v.clone()))
+            .collect()
     }
 
     #[tokio::test]
@@ -765,8 +780,13 @@ mod compile_tests {
             ]),
             template_name: None,
         };
-        let got = b.compile(req).await.expect("lava must compile an architecture");
-        let v = got.synthesis_value.expect("typed value travels beside the string");
+        let got = b
+            .compile(req)
+            .await
+            .expect("lava must compile an architecture");
+        let v = got
+            .synthesis_value
+            .expect("typed value travels beside the string");
         let rule = &v["resource"]["aws_security_group_rule"]["probe-in"];
         assert_eq!(rule["security_group_id"], "sg-abc");
         assert_eq!(rule["cidr_blocks"][0], "203.0.113.0/32");
@@ -815,10 +835,7 @@ mod compile_tests {
         // lava at all. What remains refused is structure that has no binding
         // shape — a bare object, a null, and (covered in
         // record_variable_tests) a nested field inside a record row.
-        for bad in [
-            serde_json::json!({"nested": 1}),
-            serde_json::json!(null),
-        ] {
+        for bad in [serde_json::json!({"nested": 1}), serde_json::json!(null)] {
             let req = CompileRequest {
                 source: Some(ARCH.to_string()),
                 template_path: None,
@@ -842,7 +859,10 @@ mod compile_tests {
             variables: HashMap::new(),
             template_name: None,
         };
-        let err = b.compile(req).await.expect_err("nothing to render is an error");
+        let err = b
+            .compile(req)
+            .await
+            .expect_err("nothing to render is an error");
         assert!(format!("{err}").contains("nothing identifies"));
     }
 
@@ -873,7 +893,10 @@ mod compile_tests {
             source: Some(ARCH.to_string()),
             template_path: None,
             rubylib_paths: vec!["/opt/gems/lib".to_string()],
-            variables: vars(&[("name", serde_json::json!("p")), ("sg", serde_json::json!("s"))]),
+            variables: vars(&[
+                ("name", serde_json::json!("p")),
+                ("sg", serde_json::json!("s")),
+            ]),
             template_name: None,
         };
         assert!(b.compile(req).await.is_ok());
@@ -893,7 +916,10 @@ mod record_variable_tests {
 "#;
 
     fn vars(pairs: &[(&str, serde_json::Value)]) -> HashMap<String, serde_json::Value> {
-        pairs.iter().map(|(k, v)| ((*k).to_string(), v.clone())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), v.clone()))
+            .collect()
     }
 
     async fn compile(v: HashMap<String, serde_json::Value>) -> Result<CompileResult, BackendError> {
@@ -952,7 +978,10 @@ mod record_variable_tests {
             .await
             .expect("a scalar list must still bind");
         let v = got.synthesis_value.unwrap();
-        assert_eq!(v["resource"]["aws_subnet"]["s-1"]["availability_zone"], "us-east-2b");
+        assert_eq!(
+            v["resource"]["aws_subnet"]["s-1"]["availability_zone"],
+            "us-east-2b"
+        );
     }
 
     #[tokio::test]

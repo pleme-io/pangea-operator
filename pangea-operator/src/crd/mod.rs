@@ -47,8 +47,10 @@ pub use infrastructure_template::{
 
 // Re-export InfrastructureFlow types
 pub use infrastructure_flow::{
-    BackoffStrategy, DestroyOrder, FlowPhase, FlowRetryPolicy, FlowStep, FlowStepStatus,
-    FlowTemplateRef, InfrastructureFlow, InfrastructureFlowSpec, InfrastructureFlowStatus, step_destroy_protection,};
+    step_destroy_protection, BackoffStrategy, DestroyOrder, FlowPhase, FlowRetryPolicy, FlowStep,
+    FlowStepStatus, FlowTemplateRef, InfrastructureFlow, InfrastructureFlowSpec,
+    InfrastructureFlowStatus,
+};
 
 // Re-export PangeaNamespace types (SecretRef renamed to avoid collision)
 pub use pangea_namespace::{
@@ -91,8 +93,8 @@ pub use compliance_binding::{
 
 // Re-export PangeaDashboard types
 pub use pangea_dashboard::{
-    DashboardLanguage, DashboardSource, PangeaDashboard, PangeaDashboardPhase,
-    PangeaDashboardSpec, PangeaDashboardStatus,
+    DashboardLanguage, DashboardSource, PangeaDashboard, PangeaDashboardPhase, PangeaDashboardSpec,
+    PangeaDashboardStatus,
 };
 
 // Re-export ArchitectureGem types (M1 — workspace reconciliation hardening)
@@ -737,7 +739,11 @@ mod crd_emit {
     // to write a CR for it.
 
     /// Recursively visit every schema object in a parsed CRD document.
-    fn walk_schemas(node: &serde_yaml::Value, path: &str, out: &mut Vec<(String, serde_yaml::Mapping)>) {
+    fn walk_schemas(
+        node: &serde_yaml::Value,
+        path: &str,
+        out: &mut Vec<(String, serde_yaml::Mapping)>,
+    ) {
         match node {
             serde_yaml::Value::Mapping(m) => {
                 if m.contains_key(serde_yaml::Value::from("type"))
@@ -829,12 +835,16 @@ mod crd_emit {
             .into_iter()
             .filter(|(p, _)| !EMPTY_BY_DESIGN.contains(&p.as_str()))
             .filter(|(_, m)| {
-                let is_object = m.get(serde_yaml::Value::from("type")).and_then(|t| t.as_str())
+                let is_object = m
+                    .get(serde_yaml::Value::from("type"))
+                    .and_then(|t| t.as_str())
                     == Some("object");
                 let has_props = m.contains_key(serde_yaml::Value::from("properties"));
                 let has_addl = m.contains_key(serde_yaml::Value::from("additionalProperties"));
                 let preserves = m
-                    .get(serde_yaml::Value::from("x-kubernetes-preserve-unknown-fields"))
+                    .get(serde_yaml::Value::from(
+                        "x-kubernetes-preserve-unknown-fields",
+                    ))
                     .and_then(|p| p.as_bool())
                     .unwrap_or(false);
                 is_object && !has_props && !has_addl && !preserves

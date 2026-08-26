@@ -470,9 +470,7 @@ mod tests {
     /// file entirely.
     #[test]
     fn test_generate_provider_config_no_providers_returns_none() {
-        let config = BackendConfigGenerator::generate_provider_config(None, None, None, None,
-            None,
-        );
+        let config = BackendConfigGenerator::generate_provider_config(None, None, None, None, None);
         assert!(
             config.is_none(),
             "no operator-side providers must produce None, not an empty block"
@@ -534,14 +532,9 @@ mod github_app_provider_tests {
             installation_id: "155727405".to_string(),
             pem: opaque.to_string(),
         };
-        let config = BackendConfigGenerator::generate_provider_config(
-            None,
-            None,
-            None,
-            None,
-            Some(&creds),
-        )
-        .expect("app credentials alone produce a provider block");
+        let config =
+            BackendConfigGenerator::generate_provider_config(None, None, None, None, Some(&creds))
+                .expect("app credentials alone produce a provider block");
         let auth = &config["provider"]["github"]["app_auth"];
         // ARRAY, not object: a provider block renders as an array of objects in
         // provider JSON even where exactly one is permitted. An object here

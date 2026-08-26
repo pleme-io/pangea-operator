@@ -37,8 +37,8 @@ use tracing::{debug, error, info, instrument, warn};
 use crate::crd::{
     Condition, DashboardLanguage, DashboardSource, PangeaDashboard, PangeaDashboardPhase,
 };
-use crate::ruby::backend::SourceKind;
 use crate::error::Error;
+use crate::ruby::backend::SourceKind;
 
 use super::{create_condition, ControllerState, DEFAULT_REQUEUE_INTERVAL, SHORT_REQUEUE_INTERVAL};
 

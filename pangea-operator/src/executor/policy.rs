@@ -666,7 +666,14 @@ mod tests {
         // Same witness on the path that still gates, so lowering the default
         // did not cost this test its coverage of the approval counter.
         let destroys: Vec<_> = (0..1870)
-            .map(|i| drift(&format!("github_repository.repo_{i}"), "delete", "low", vec![]))
+            .map(|i| {
+                drift(
+                    &format!("github_repository.repo_{i}"),
+                    "delete",
+                    "low",
+                    vec![],
+                )
+            })
             .collect();
         let out = evaluate(&[], Some(PolicyDecision::RequireApproval), &destroys);
         assert_eq!(out.evaluation.evaluated_count, 1870);
@@ -1005,7 +1012,10 @@ mod tests {
             out.annotated_drifts[1].matched_policy.as_deref(),
             Some("<default-nondestructive>")
         );
-        assert_eq!(out.annotated_drifts[1].policy_decision.as_deref(), Some("autoApply"));
+        assert_eq!(
+            out.annotated_drifts[1].policy_decision.as_deref(),
+            Some("autoApply")
+        );
         // The aggregate moves to AutoApply, and that is correct rather than a
         // loosening: the matched rule is itself AutoApply, and BOTH drifts are
         // creates. Nothing here was configured to require approval — the old
@@ -1014,7 +1024,10 @@ mod tests {
         // still win; the assertion below proves the matched rule still governs
         // its own drift.
         assert_eq!(out.aggregate, PolicyDecision::AutoApply);
-        assert_eq!(out.annotated_drifts[0].matched_policy.as_deref(), Some("rio-dns-only"));
+        assert_eq!(
+            out.annotated_drifts[0].matched_policy.as_deref(),
+            Some("rio-dns-only")
+        );
     }
 
     #[test]
@@ -1296,7 +1309,10 @@ mod nondestructive_default_tests {
     #[test]
     fn a_delete_still_requires_approval() {
         let out = eval(&[d("github_issue_label.acude-label-bug", "delete")]);
-        assert_eq!(out.evaluation.require_approval_count, 1, "a destroy must never auto-apply");
+        assert_eq!(
+            out.evaluation.require_approval_count, 1,
+            "a destroy must never auto-apply"
+        );
     }
 
     #[test]
@@ -1324,10 +1340,19 @@ mod nondestructive_default_tests {
         // that sat 103 minutes waiting for a human on 2026-08-13.
         let mut plan = vec![d("github_repository.acude", "create")];
         for label in [
-            "bug", "dependencies", "documentation", "enhancement",
-            "good-first-issue", "help-wanted", "security", "question",
+            "bug",
+            "dependencies",
+            "documentation",
+            "enhancement",
+            "good-first-issue",
+            "help-wanted",
+            "security",
+            "question",
         ] {
-            plan.push(d(&format!("github_issue_label.acude-label-{label}"), "create"));
+            plan.push(d(
+                &format!("github_issue_label.acude-label-{label}"),
+                "create",
+            ));
         }
         let out = eval(&plan);
         assert_eq!(out.evaluation.auto_apply_count, 9);

@@ -1002,7 +1002,10 @@ mod tests {
         );
     }
 
-    fn auth(template: &str, expires_at: &str) -> crate::crd::infrastructure_template::DestroyAuthorization {
+    fn auth(
+        template: &str,
+        expires_at: &str,
+    ) -> crate::crd::infrastructure_template::DestroyAuthorization {
         crate::crd::infrastructure_template::DestroyAuthorization {
             authorized_by: "drzzln".into(),
             reason: "superseded".into(),
@@ -1012,26 +1015,43 @@ mod tests {
     }
 
     fn at(s: &str) -> chrono::DateTime<chrono::Utc> {
-        chrono::DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&chrono::Utc)
+        chrono::DateTime::parse_from_rfc3339(s)
+            .unwrap()
+            .with_timezone(&chrono::Utc)
     }
 
     #[test]
     fn authority_requires_presence_match_and_freshness() {
         let now = at("2026-08-13T00:00:00Z");
-        assert_eq!(destroy_authority(None, "camelot-eks", now), DestroyAuthority::Absent);
         assert_eq!(
-            destroy_authority(Some(&auth("camelot-eks", "2026-08-14T00:00:00Z")), "camelot-eks", now),
+            destroy_authority(None, "camelot-eks", now),
+            DestroyAuthority::Absent
+        );
+        assert_eq!(
+            destroy_authority(
+                Some(&auth("camelot-eks", "2026-08-14T00:00:00Z")),
+                "camelot-eks",
+                now
+            ),
             DestroyAuthority::Granted
         );
         // The copy-paste case a templating pass produces.
         assert_eq!(
-            destroy_authority(Some(&auth("some-other-template", "2026-08-14T00:00:00Z")), "camelot-eks", now),
+            destroy_authority(
+                Some(&auth("some-other-template", "2026-08-14T00:00:00Z")),
+                "camelot-eks",
+                now
+            ),
             DestroyAuthority::Absent,
             "an authorization naming another template must not authorize this one"
         );
         // A break-glass is a moment, not a property.
         assert_eq!(
-            destroy_authority(Some(&auth("camelot-eks", "2026-08-12T00:00:00Z")), "camelot-eks", now),
+            destroy_authority(
+                Some(&auth("camelot-eks", "2026-08-12T00:00:00Z")),
+                "camelot-eks",
+                now
+            ),
             DestroyAuthority::Absent,
             "an expired authorization is no authorization"
         );
@@ -1045,8 +1065,14 @@ mod tests {
 
     #[test]
     fn unprotected_always_destroys_whatever_drove_the_delete() {
-        assert_eq!(deletion_decision(false, false, DestroyAuthority::Granted), DeletionDecision::Destroy);
-        assert_eq!(deletion_decision(false, true, DestroyAuthority::Granted), DeletionDecision::Destroy);
+        assert_eq!(
+            deletion_decision(false, false, DestroyAuthority::Granted),
+            DeletionDecision::Destroy
+        );
+        assert_eq!(
+            deletion_decision(false, true, DestroyAuthority::Granted),
+            DeletionDecision::Destroy
+        );
     }
 
     #[test]

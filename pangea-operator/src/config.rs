@@ -842,7 +842,10 @@ mod tests {
         // build cannot honour.
         assert_eq!(p.compiler.backend, DEFAULT_COMPILER_BACKEND);
         #[cfg(not(feature = "embedded_ruby"))]
-        assert_eq!(p.compiler.backend, "lava", "a Ruby-free build must prescribe lava");
+        assert_eq!(
+            p.compiler.backend, "lava",
+            "a Ruby-free build must prescribe lava"
+        );
         #[cfg(feature = "embedded_ruby")]
         assert_eq!(p.compiler.backend, "embedded");
         assert_eq!(p.compiler.endpoint, "http://localhost:8082");

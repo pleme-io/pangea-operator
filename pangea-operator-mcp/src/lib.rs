@@ -301,7 +301,10 @@ mod classification_tests {
 
     fn outcome_of(s: &str) -> String {
         let v: Value = serde_json::from_str(s).expect("every answer is valid JSON");
-        v["outcome"].as_str().expect("carries a discriminant").to_owned()
+        v["outcome"]
+            .as_str()
+            .expect("carries a discriminant")
+            .to_owned()
     }
 
     /// **THE WHOLE VALUE OF THIS ADOPTION.** Before, every failure was
@@ -320,7 +323,11 @@ mod classification_tests {
             );
         }
         for blind in [500, 502, 503] {
-            assert_eq!(outcome_of(&err(&api_error(blind))), "blind", "status {blind}");
+            assert_eq!(
+                outcome_of(&err(&api_error(blind))),
+                "blind",
+                "status {blind}"
+            );
         }
     }
 
