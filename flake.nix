@@ -400,6 +400,7 @@
           env = [
             "PANGEA_COMPILER_BACKEND=lava"
             "LAVA_DASHBOARD_CATALOG=/usr/share/lava/dashboards"
+            "LAVA_ARCHITECTURE_CATALOG=/usr/share/lava/architectures"
           ];
           # The catalogue those two env vars are useless without. Copied from
           # the lava-architectures input rather than vendored, so adding a
@@ -437,6 +438,32 @@
               fi
               find ${inputs.lava-architectures}/dashboards -name '*.tlisp' \
                 -exec install -Dm444 {} $out/usr/share/lava/dashboards/ \;
+              echo "lava catalogue: $n dashboards"
+            '')
+            # ── ★ THE ARCHITECTURE CATALOGUE ────────────────────────────
+            # LavaCompilerBackend::compile resolves a named architecture from
+            # /usr/share/lava/architectures. Nothing put files there, so a
+            # compile by template_name would have failed at RECONCILE with
+            # "architecture not found in the image catalogue" — after the
+            # image shipped, on a cluster, for a template that looked
+            # correctly configured.
+            #
+            # The same `find … -exec install` shape as the dashboards above,
+            # and for the same reason: it fails loudly when the upstream
+            # directory is missing or empty, where `cp -r` of an absent
+            # directory produces an empty target and reproduces exactly the
+            # bug this closes.
+            (imagePkgs.runCommand "lava-architecture-catalog" { } ''
+              mkdir -p $out/usr/share/lava/architectures
+              n=$(find ${inputs.lava-architectures}/architectures -name '*.tlisp' | wc -l)
+              if [ "$n" -eq 0 ]; then
+                echo "lava-architectures ships no architectures/*.tlisp — the" \
+                     "catalogue would be empty and every compile by name would" \
+                     "fail at reconcile" >&2
+                exit 1
+              fi
+              find ${inputs.lava-architectures}/architectures -name '*.tlisp' \
+                -exec install -Dm444 {} $out/usr/share/lava/architectures/ \;
               echo "lava catalogue: $n architectures"
             '')
           ];

@@ -1712,11 +1712,11 @@
     "lava-architectures": {
       "flake": false,
       "locked": {
-        "lastModified": 1786510786,
-        "narHash": "sha256-jOiM1tqG/fgMOD++1SjhhgULbkS/Dm/yex65EgQm95w=",
+        "lastModified": 1787515723,
+        "narHash": "sha256-huTVBDgXOZ4+HKR+WkvEat1EShd9YnKpg/u/RsYl/uY=",
         "owner": "pleme-io",
         "repo": "lava-architectures",
-        "rev": "f9259c9c7d6762b9d8842e7b7eafdfa88e7fbb10",
+        "rev": "8aa098d665818c0db57d0365c67e94220dd6550b",
         "type": "github"
       },
       "original": {
