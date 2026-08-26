@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "795615973ede1b1dd6bff69b68e6ec08d7ba69d05ce6e5ddc333e79f8d58c11d",
+  "cargo_lock_sha256": "a7ab1e4d389848ea56d4ea722d0075a71779cb357e3d3f4e9f7888a638b39d92",
   "manifest_sha256": {
-    "Cargo.toml": "dbc8ae54eecc215bec437f9e8e39ecd18c987cd2c992993ed93a0c539d0799d5",
+    "Cargo.toml": "43d36ac0d6761a36d580b2d7618d5ac36613adf6ae90df78034591e576abc196",
     "pangea-cli/Cargo.toml": "f3f970097f7914011f23728fe42e3aed3085ec83bacdea24f37cdc9c19cfe965",
     "pangea-operator-mcp/Cargo.toml": "72a01f5815a03b1c418697a985ede13816d4f5aec385332ec436e2155713dea8",
-    "pangea-operator/Cargo.toml": "64c28911776c6300cf6eaee29afc405b3126a5702b52d6cd75883a3ca52f180f",
+    "pangea-operator/Cargo.toml": "b13037ff52888cf6450c9b61d6a3d06a9077acbd3e898f7af33e08f9ba7eb210",
     "pangea-ruby-eval/Cargo.toml": "a65712c95619fda84a8cebaa9f887919acf4e71f4125f085797dfaf478eb380a",
     "pangea-types/Cargo.toml": "bba5d0bee1d04b3ddaefa9f7234a1e5a11e3388dd89e62a3deb4a91b66cd4abc"
   },
@@ -8249,7 +8249,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "lava-eval-0.2.3-a394fc4d5504c12b1bf675f832e00572be769b38": {
+      "lava-eval-0.2.4-1b8959e92067e1bbbaa3dfad4b54d4a79098de69": {
         "runtime_dependencies": [
           {
             "name": "indexmap",
@@ -12664,7 +12664,7 @@
           },
           {
             "name": "lava_eval",
-            "package_key": "lava-eval-0.2.3-a394fc4d5504c12b1bf675f832e00572be769b38",
+            "package_key": "lava-eval-0.2.4-1b8959e92067e1bbbaa3dfad4b54d4a79098de69",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -30490,7 +30490,7 @@
     "lava-core-0.2.3-f7530d06a52c3356d81415c6611c5ccd2c8cbd06": {
       "edition": "2024"
     },
-    "lava-eval-0.2.3-a394fc4d5504c12b1bf675f832e00572be769b38": {
+    "lava-eval-0.2.4-1b8959e92067e1bbbaa3dfad4b54d4a79098de69": {
       "edition": "2024"
     },
     "lava-schema-0.1.7": {
@@ -31660,7 +31660,7 @@
   "git_nar_sha256": {
     "lava-arch-0.2.2-689108f00d72d5c2f0ca0c27ada5249d2c151f07": "sha256-UHoSGOxln1vxRgBjpeOdUn0zSmn/6CgmUVLV65YvTCk=",
     "lava-core-0.2.3-f7530d06a52c3356d81415c6611c5ccd2c8cbd06": "sha256-MWQDubZDMIY4+IMoo1Z2sPYjZnIe5KoY66Ial9RQ7bI=",
-    "lava-eval-0.2.3-a394fc4d5504c12b1bf675f832e00572be769b38": "sha256-5diag4hZX5iwsw5tgKmly23+nXZ5ymHM+fFM5f1TWjs=",
+    "lava-eval-0.2.4-1b8959e92067e1bbbaa3dfad4b54d4a79098de69": "sha256-tf8drv6kfaTZhz2iWiIh4iVz/TubcKgjrxAKeO/l/Rs=",
     "magma-apply-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e": "sha256-u49rSs1u8g256ivIKKeZ0iVPEFtk5F6ji2J6aRhYYwY=",
     "magma-attest-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e": "sha256-u49rSs1u8g256ivIKKeZ0iVPEFtk5F6ji2J6aRhYYwY=",
     "magma-backend-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e": "sha256-u49rSs1u8g256ivIKKeZ0iVPEFtk5F6ji2J6aRhYYwY=",

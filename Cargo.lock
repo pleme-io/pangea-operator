@@ -2432,8 +2432,8 @@ dependencies = [
 
 [[package]]
 name = "lava-eval"
-version = "0.2.3"
-source = "git+https://github.com/pleme-io/lava-eval?rev=a394fc4d5504c12b1bf675f832e00572be769b38#a394fc4d5504c12b1bf675f832e00572be769b38"
+version = "0.2.4"
+source = "git+https://github.com/pleme-io/lava-eval?rev=1b8959e92067e1bbbaa3dfad4b54d4a79098de69#1b8959e92067e1bbbaa3dfad4b54d4a79098de69"
 dependencies = [
  "indexmap",
  "lava-arch",
@@ -7051,10 +7051,5 @@ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 
 [[patch.unused]]
 name = "lava-arch"
-version = "0.2.2"
-source = "git+https://github.com/pleme-io/lava-arch?rev=8ac90dc2f119c7d7681e84594b02cc1abe58bae8#8ac90dc2f119c7d7681e84594b02cc1abe58bae8"
-
-[[patch.unused]]
-name = "lava-eval"
 version = "0.2.3"
-source = "git+https://github.com/pleme-io/lava-eval?rev=34f7c3532ac968b51621b359c4fca906797a8cb3#34f7c3532ac968b51621b359c4fca906797a8cb3"
+source = "git+https://github.com/pleme-io/lava-arch?rev=035f2f547e299048d96484ef118bada964f96d47#035f2f547e299048d96484ef118bada964f96d47"

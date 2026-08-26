@@ -42,10 +42,25 @@ if [[ -n "$before" ]] && [[ "$before" == "$(cat "$spec")" ]]; then
 fi
 echo "regen-noruby-spec: $spec CHANGED — review before committing"
 
-# The property that makes this spec worth having, asserted rather than
-# assumed: a variant that resolved to the same features as the canonical
-# spec builds fine, ships, and is simply not the variant anyone asked
-# for. Nothing would error.
+# ── ★ WHAT THIS ASSERTS, AND WHY IT CHANGED (2026-08-26) ─────────────
+# The property worth gating is that NO SHIPPED SPEC CARRIES embedded_ruby.
+# Asserted rather than assumed, because a spec that quietly regained Ruby
+# would build fine, ship, and simply not be the thing anyone asked for —
+# nothing would error, and the tag would still say noruby.
+#
+# It used to assert something subtly different: that canonical MINUS
+# variant contained embedded_ruby — i.e. "the variant is the one that
+# drops Ruby". That held only while `default` still included Ruby. Ruby
+# has now left the default feature set, so canonical does not carry it
+# either, the difference can never contain it, and the old guard could
+# never pass again. It failed on exactly the change it was written to
+# protect: Ruby actually leaving.
+#
+# The variant is now DEGENERATE — it resolves to the same features as
+# canonical, minus the `default` marker. It is deliberately retained
+# rather than deleted (★★ MODULARIZE, DON'T DELETE): the two-spec
+# machinery is what makes a Ruby-bearing build expressible again, and
+# reinstating one is a feature list, not a rebuild of this tooling.
 python3 - "$root" <<'PY'
 import json, sys, pathlib
 root = pathlib.Path(sys.argv[1])
@@ -54,12 +69,20 @@ variant = json.loads((root / "Cargo.noruby.build-spec.json").read_text())
 key = next(k for k in canon["crates"] if k.startswith("pangea-operator"))
 c = set(canon["crates"][key]["features"])
 v = set(variant["crates"][key]["features"])
-missing = {"embedded_ruby", "default"} - (c - v)
-if missing:
+# The invariant: Ruby ships in NEITHER spec. Checked on both sides, because
+# the whole point is that the image is Ruby-free, not that the two specs
+# differ in a particular way.
+ruby = [name for name, feats in (("canonical", c), ("variant", v)) if "embedded_ruby" in feats]
+if ruby:
     sys.exit(
-        f"regen-noruby-spec: FAILED — the variant still carries {sorted(missing)}.\n"
+        f"regen-noruby-spec: FAILED — embedded_ruby is present in: {sorted(ruby)}.\n"
         f"  canonical: {sorted(c)}\n  variant  : {sorted(v)}\n"
-        "A variant that resolves to the same features as canonical is not a variant."
+        "A build that carries Ruby must not ship under a Ruby-free tag."
     )
-print(f"regen-noruby-spec: variant subtracts {sorted(c - v)} — correct")
+if not (c - v):
+    print("regen-noruby-spec: variant is degenerate (same features as canonical) — "
+          "expected now that Ruby has left the default feature set")
+else:
+    print(f"regen-noruby-spec: variant subtracts {sorted(c - v)}")
+print("regen-noruby-spec: embedded_ruby absent from both specs — correct")
 PY

@@ -181,8 +181,17 @@ strip = true
 # which is why lava-eval kept resolving the published lava-arch and failing on
 # a missing add_import.
 #
+# ★ THE REVS HERE MUST MATCH the member manifest's, and both must be at or
+# ahead of the commit that introduced the symbol you are calling. They drifted
+# once and it cost a release: the patch pinned lava-eval at 34f7c353 while the
+# member manifest pinned a394fc4d, so Cargo.lock carried TWO lava-eval entries
+# and the build failed E0599 `no method named set_records` — because NEITHER
+# rev contained set_records, which landed later on main. A pin is only as good
+# as the commit it names; bumping the code without bumping the pin fails in CI
+# and nowhere else.
+#
 # Replace with plain version requirements once the three crates are published.
 [patch.crates-io]
 lava-core = { git = "https://github.com/pleme-io/lava-core", rev = "f7530d06a52c3356d81415c6611c5ccd2c8cbd06" }
-lava-arch = { git = "https://github.com/pleme-io/lava-arch", rev = "8ac90dc2f119c7d7681e84594b02cc1abe58bae8" }
-lava-eval = { git = "https://github.com/pleme-io/lava-eval", rev = "34f7c3532ac968b51621b359c4fca906797a8cb3" }
+lava-arch = { git = "https://github.com/pleme-io/lava-arch", rev = "035f2f547e299048d96484ef118bada964f96d47" }
+lava-eval = { git = "https://github.com/pleme-io/lava-eval", rev = "1b8959e92067e1bbbaa3dfad4b54d4a79098de69" }
