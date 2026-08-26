@@ -1316,7 +1316,15 @@ async fn handle_compiling(
     let terraform_json = match compile_front_end(template, &content) {
         // Already Terraform JSON — no compilation step.
         ResolvedDialect::Json => content,
-        ResolvedDialect::Ruby => {
+        // ★ Ruby and Lava SHARE this arm because they share a destination:
+        // both are handed to whichever `CompilerBackend` is configured. They
+        // are distinct VARIANTS rather than one, because they are distinct
+        // declarations — see the Dialect docs. Keeping them separate at the
+        // type level and joined here is deliberate: it records that the two
+        // are different intents that currently happen to lower the same way,
+        // so the day they stop lowering the same way this match stops
+        // compiling instead of silently doing the wrong one.
+        ResolvedDialect::Ruby | ResolvedDialect::Lava => {
             // Ruby DSL — dispatch via the CompilerBackend trait. Pre-M8.2
             // this was a direct reqwest to the compiler sidecar; now the
             // backend chooses HTTP-or-embedded.

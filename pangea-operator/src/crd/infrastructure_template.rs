@@ -565,6 +565,19 @@ pub enum Dialect {
     Auto,
     /// Pangea Ruby DSL — compiled through the `CompilerBackend`.
     Ruby,
+    /// tatara-lisp (lava) architecture — compiled through the
+    /// `CompilerBackend`, same as Ruby.
+    ///
+    /// ★ A SEPARATE VARIANT EVEN THOUGH IT SHARES A CODE PATH, because
+    /// the two are not the same DECLARATION. Before this existed, a
+    /// `.tlisp` body resolved to `Ruby` — the routing happened to work
+    /// (both go to whichever backend is configured, and that backend is
+    /// lava), but the type said "Ruby" about a body that is not Ruby.
+    /// That is only harmless while the configured backend happens to be
+    /// lava; point it at an embedded-Ruby backend and tatara-lisp source
+    /// gets handed to a Ruby interpreter with nothing having lied
+    /// detectably.
+    Lava,
     /// Already-rendered Terraform JSON — passed through untouched.
     Json,
 }
@@ -580,6 +593,8 @@ pub enum ResolvedDialect {
     /// Compile through the `CompilerBackend` (embedded magnus or the
     /// HTTP sidecar).
     Ruby,
+    /// Compile tatara-lisp through the `CompilerBackend`.
+    Lava,
     /// Use the body as Terraform JSON with no compilation step.
     Json,
 }
@@ -594,9 +609,20 @@ impl Dialect {
             // `trim_start().starts_with('{')` test, same verdict — so
             // that every CR without a `dialect` compiles down the same
             // path it did before this type existed.
+            Dialect::Lava => ResolvedDialect::Lava,
             Dialect::Auto => {
-                if body.trim_start().starts_with('{') {
+                let head = body.trim_start();
+                if head.starts_with('{') {
                     ResolvedDialect::Json
+                } else if head.starts_with('(') {
+                    // ★ ADDED 2026-08-26. tatara-lisp is parenthesised from
+                    // its first byte, so this is the same KIND of cheap,
+                    // honest sniff the `{` test already was — and it is
+                    // strictly narrowing: a body starting `(` was previously
+                    // called Ruby, and no Pangea Ruby workspace begins with
+                    // an open paren (they open with `require` or `template`).
+                    // So nothing that used to resolve Ruby stops doing so.
+                    ResolvedDialect::Lava
                 } else {
                     ResolvedDialect::Ruby
                 }
@@ -2655,6 +2681,43 @@ mod dialect_tests {
     // ── the default reproduces the old behaviour exactly ─────────────
 
     #[test]
+    #[test]
+    fn a_tatara_lisp_body_resolves_to_lava_not_ruby() {
+        // ★ THE POINT OF THE VARIANT. Before it existed this body resolved
+        // to `Ruby`, which was only harmless while the configured backend
+        // happened to be lava. The type now says what the body IS.
+        let body = "(deflava-architecture github-org-repos\n  :provider github)";
+        assert_eq!(Dialect::Auto.resolve(body), ResolvedDialect::Lava);
+    }
+
+    #[test]
+    fn the_lava_sniff_does_not_steal_anything_that_was_ruby() {
+        // Strictly narrowing, asserted rather than assumed: a Pangea Ruby
+        // workspace opens with `require` or `template`, never an open paren,
+        // so adding the `(` arm cannot reclassify existing Ruby bodies.
+        for ruby in [
+            "require 'pangea/architectures/github_org_workspace'\ntemplate :x do\nend",
+            "template :pleme_io_opensource_repos_0 do\n  ...\nend",
+            "# leading comment\nrequire 'x'",
+        ] {
+            assert_eq!(
+                Dialect::Auto.resolve(ruby),
+                ResolvedDialect::Ruby,
+                "must stay Ruby: {ruby:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn json_is_unaffected_and_an_explicit_declaration_still_beats_the_sniff() {
+        assert_eq!(Dialect::Auto.resolve("  {\"resource\": {}}"), ResolvedDialect::Json);
+        // An explicit dialect overrides what the body looks like, in BOTH
+        // directions — that is what makes the field worth having.
+        assert_eq!(Dialect::Lava.resolve("require 'x'"), ResolvedDialect::Lava);
+        assert_eq!(Dialect::Ruby.resolve("(deflava-architecture x)"), ResolvedDialect::Ruby);
+        assert_eq!(Dialect::Json.resolve("(deflava-architecture x)"), ResolvedDialect::Json);
+    }
+
     fn an_absent_dialect_field_deserializes_to_auto() {
         // Every InfrastructureTemplate in the fleet predates this field.
         // If this stops holding, all of them change compile path at once.
@@ -2743,10 +2806,11 @@ mod dialect_tests {
     }
 
     #[test]
-    fn the_three_executable_dialects_round_trip_on_the_wire() {
+    fn the_four_executable_dialects_round_trip_on_the_wire() {
         for (wire, value) in [
             ("\"auto\"", Dialect::Auto),
             ("\"ruby\"", Dialect::Ruby),
+            ("\"lava\"", Dialect::Lava),
             ("\"json\"", Dialect::Json),
         ] {
             assert_eq!(serde_json::from_str::<Dialect>(wire).unwrap(), value);
@@ -2778,7 +2842,7 @@ mod dialect_tests {
         names.sort_unstable();
         assert_eq!(
             names,
-            ["auto", "json", "ruby"],
+            ["auto", "json", "lava", "ruby"],
             "the admission-time allowlist must be exactly the dialects we can execute"
         );
     }
