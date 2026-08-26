@@ -357,6 +357,31 @@ reqwest.workspace = true
 # matching. Already pulled in transitively by tracing-subscriber et al.
 regex = "1"
 
+# In-process git. THE OPERATOR IMAGE SHIPS NO `git` AND NO `sh` (it is
+# distroless-static), so every `Command::new("git")` ENOENTs at runtime —
+# which is what froze every git-sourced template at its last-observed
+# revision. The capability is embedded in the binary instead of added to
+# the image: a linked library is not a subprocess, and this is the fleet's
+# ★ NO SHELL law applied to its own control plane.
+#
+# Feature string copied VERBATIM from sui/Cargo.toml:296-304 rather than
+# re-derived — `blocking-http-transport-reqwest-rust-tls` rides the
+# reqwest+rustls already in this workspace (Cargo.toml:107), so no OpenSSL
+# and no curl enter a distroless-static image. A wrong feature set builds
+# clean on darwin and breaks only the musl-static leg.
+#
+# NOT git2: that is libgit2 (C) + OpenSSL, which under `pkgsStatic`
+# (flake.nix:261-288) reintroduces the exact C-toolchain shape this change
+# exists to remove.
+gix = { version = "0.83", default-features = false, features = [
+    "sha1",
+    "blocking-network-client",
+    "blocking-http-transport-reqwest-rust-tls",
+    "worktree-mutation",
+    "revision",
+    "tree-editor",
+] }
+
 # Utilities
 chrono = { workspace = true, features = ["serde"] }
 cron.workspace = true

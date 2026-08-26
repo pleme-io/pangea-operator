@@ -37,7 +37,7 @@ use super::template::cycle_receipts::{record_reconcile_cycle, truncate_for_statu
 use super::template::events::record_event;
 use super::template::finalizer::{add_finalizer, has_finalizer, remove_finalizer};
 use super::template::freshness::{
-    evaluate_source_freshness, git_rev_parse_head, observe_head, Freshness,
+    evaluate_source_freshness, git_rev_parse_head, observe_head, Freshness, GitCredential,
 };
 use super::template::provider_creds::resolve_provider_config;
 use super::template::secret_files::write_secret_files;
@@ -1572,12 +1572,67 @@ async fn handle_compiling(
     Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
 }
 
+/// Resolve a template's `gitRepository` credential into MEMORY.
+///
+/// The in-process sibling of [`git_auth_env`], and its eventual
+/// replacement. It takes no `&Workspace` — deliberately, and that absence
+/// is the point: with no workspace in scope there is no path by which this
+/// function could write a token to disk, so the askpass trio is
+/// unwritable here rather than merely unwritten. `git_auth_env` survives
+/// only because the clone path still shells out; it dies in P2.
+///
+/// Empty (`Anonymous`) when the source has no `secretRef` — a public repo.
+async fn git_credential(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+) -> Result<GitCredential> {
+    let Some(git_ref) = &template.spec.source.git_repository else {
+        return Ok(GitCredential::Anonymous);
+    };
+    let Some(secret_ref) = &git_ref.secret_ref else {
+        return Ok(GitCredential::Anonymous);
+    };
+    let ns = secret_ref
+        .namespace
+        .clone()
+        .or_else(|| template.namespace())
+        .unwrap_or_default();
+    let secret_api: Api<Secret> = Api::namespaced(state.client.clone(), &ns);
+    let secret = secret_api
+        .get(&secret_ref.name)
+        .await
+        .map_err(|_| Error::SecretNotFound {
+            namespace: ns.clone(),
+            name: secret_ref.name.clone(),
+        })?;
+    let Some(data) = &secret.data else {
+        return Ok(GitCredential::Anonymous);
+    };
+    // Same key precedence as `git_auth_env` (`password` then `token`,
+    // username defaulting to "git") so the two paths cannot disagree about
+    // which credential a template uses while both exist.
+    let Some(token) = data.get("password").or_else(|| data.get("token")) else {
+        return Ok(GitCredential::Anonymous);
+    };
+    let username = data
+        .get("username")
+        .map(|v| String::from_utf8_lossy(&v.0).to_string())
+        .unwrap_or_else(|| "git".to_string());
+    Ok(GitCredential::Basic {
+        username,
+        token: String::from_utf8_lossy(&token.0).to_string(),
+    })
+}
+
 /// Assemble the git auth env for a template's `gitRepository` source:
 /// resolves the referenced Secret, writes the askpass trio into the
 /// workspace, and returns the `GIT_ASKPASS` env pair. Empty when the
-/// source has no `secretRef` (public repo). Factored out of
-/// `handle_compiling` so the freshness gate's `observe_head`
-/// (`git ls-remote`, no clone) authenticates identically.
+/// source has no `secretRef` (public repo).
+///
+/// ★ SUPERSEDED on the freshness path by [`git_credential`], which holds
+/// the token in memory. This still serves the CLONE path, which is still
+/// a `git` subprocess and therefore still broken in the current image —
+/// a second break on a different code path, closed in P2.
 async fn git_auth_env(
     template: &InfrastructureTemplate,
     state: &ControllerState,
@@ -1694,8 +1749,15 @@ async fn observe_source_freshness(
     let Some(git_ref) = &template.spec.source.git_repository else {
         return Ok(Freshness::Unknown);
     };
-    let env = git_auth_env(template, state, workspace).await?;
-    match observe_head(&git_ref.url, &git_ref.r#ref, &env).await {
+    // ★ The freshness path no longer touches the workspace. `git_auth_env`
+    // wrote `_git_user`, `_git_pass` (the installation token) and a
+    // `#!/bin/sh` askpass script to disk on EVERY freshness tick — roughly
+    // every refresh interval, forever. This path now holds the credential
+    // in memory only. `workspace` stays in the signature because the clone
+    // path still needs it until P2.
+    let _ = workspace;
+    let cred = git_credential(template, state).await?;
+    match observe_head(&git_ref.url, &git_ref.r#ref, &cred).await {
         Ok(head) => {
             update_freshness_status(template, &ObservationOutcome::Observed(head.clone()), state)
                 .await?;
@@ -6306,9 +6368,7 @@ pub fn classify_plan_delta(
 /// unexpected input.
 fn canonicalize_state_bytes(bytes: &[u8]) -> Vec<u8> {
     match serde_json::from_slice::<serde_json::Value>(bytes) {
-        Ok(value) => {
-            serde_json::to_vec(&sort_json_keys(value)).unwrap_or_else(|_| bytes.to_vec())
-        }
+        Ok(value) => serde_json::to_vec(&sort_json_keys(value)).unwrap_or_else(|_| bytes.to_vec()),
         Err(_) => bytes.to_vec(),
     }
 }
@@ -7013,8 +7073,7 @@ mod plan_approval_hash_tests {
         // that hash must NOT equal the human's stored approval.
         let plan_text = "Plan: 50 to add, 0 to change, 0 to destroy.";
 
-        let first_plan_hash =
-            plan_approval_hash(plan_text, Some(b"vpc-aaaa1111-partial-state"));
+        let first_plan_hash = plan_approval_hash(plan_text, Some(b"vpc-aaaa1111-partial-state"));
         let approved_plan_hash = first_plan_hash.clone(); // human approves via kubectl patch
 
         // Workspace::clean() wiped state; state_path() now reads back
@@ -8002,7 +8061,9 @@ mod unapproved_destructive_escalation_tests {
     fn the_destructive_gate_alone_does_not_catch_a_duplicate_create() {
         let fresh = vec![drift("datadog_monitor.cpu_high", "create")];
         assert!(find_unapproved_destructive_escalation(&[], &fresh).is_none());
-        assert!(find_unimported_create(&["datadog_monitor.cpu_high".to_string()], &fresh).is_some());
+        assert!(
+            find_unimported_create(&["datadog_monitor.cpu_high".to_string()], &fresh).is_some()
+        );
     }
 
     #[test]
@@ -8012,7 +8073,10 @@ mod unapproved_destructive_escalation_tests {
         // apply the cached plan verbatim -- the mass-duplication case.
         let outcome = ImportPrepass {
             imported: vec![],
-            failed: vec!["datadog_monitor.a".to_string(), "datadog_monitor.b".to_string()],
+            failed: vec![
+                "datadog_monitor.a".to_string(),
+                "datadog_monitor.b".to_string(),
+            ],
         };
         assert!(outcome.attempted());
     }
@@ -9512,7 +9576,10 @@ mod plan_delta_tests {
         let plan = plan_content_fingerprint(PLAN_A);
         let s1 = state_fingerprint(Some(STATE_1));
         let s2 = state_fingerprint(Some(STATE_2));
-        assert_ne!(s1, s2, "the two states must differ for this to mean anything");
+        assert_ne!(
+            s1, s2,
+            "the two states must differ for this to mean anything"
+        );
 
         assert_eq!(
             classify_plan_delta(Some(&plan), Some(&s1), &plan, &s2),
