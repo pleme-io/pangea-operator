@@ -17,12 +17,30 @@
 //!
 //! ## What this backend implements
 //!
-//! Only `render_dashboard`. The four compile/list/smoke methods have no
-//! bodies in the trait, so they must be present — they return a typed
-//! not-implemented rather than a wrong answer, the same shape
-//! `EmbeddedCompilerBackend::compile_any` already uses. A lava backend
-//! that silently returned an empty architecture listing would read as
-//! "this gem has no architectures", which is worse than an error.
+//! `compile`, `list_architectures` and `render_dashboard` are real.
+//! `compile` accepts inline `.tlisp` or a catalogue name and renders
+//! terraform JSON through `lava_eval::eval_architecture`, returning the
+//! typed value beside the string so magma consumers skip a parse
+//! round-trip. That completes the shell-free chain end to end:
+//!
+//! ```text
+//! .tlisp → lava_eval → terraform JSON (+ typed value) → magma → provider gRPC → Postgres
+//! ```
+//!
+//! Zero subprocesses on that path, and no CRuby in the address space.
+//!
+//! `compile_any` and `smoke_test` return a typed not-implemented rather
+//! than a wrong answer — the same shape `EmbeddedCompilerBackend::compile_any`
+//! uses. A lava backend that silently returned an empty architecture listing
+//! would read as "this gem has no architectures", which is worse than an
+//! error.
+//!
+//! CORRECTED 2026-08-25: this section read "Only `render_dashboard`. The four
+//! compile/list/smoke methods have no bodies" long after `compile` was
+//! implemented and covered by `compile_renders_terraform_json_with_no_ruby`.
+//! The staleness was load-bearing in the wrong direction — anyone evaluating
+//! lava as the operator's intermediary reads this header first, and it told
+//! them the thing they needed was missing.
 
 use std::path::PathBuf;
 
