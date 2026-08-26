@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "29907ac62dacf149954963f084283717c2354ec98a4a3b432f71dd8c3a008367",
+  "cargo_lock_sha256": "795615973ede1b1dd6bff69b68e6ec08d7ba69d05ce6e5ddc333e79f8d58c11d",
   "manifest_sha256": {
     "Cargo.toml": "dbc8ae54eecc215bec437f9e8e39ecd18c987cd2c992993ed93a0c539d0799d5",
     "pangea-cli/Cargo.toml": "f3f970097f7914011f23728fe42e3aed3085ec83bacdea24f37cdc9c19cfe965",
     "pangea-operator-mcp/Cargo.toml": "72a01f5815a03b1c418697a985ede13816d4f5aec385332ec436e2155713dea8",
-    "pangea-operator/Cargo.toml": "b2a8ae62ab550bbe865866018d9034dea45dbff1637e879351caaf1f9a5c23fb",
+    "pangea-operator/Cargo.toml": "64c28911776c6300cf6eaee29afc405b3126a5702b52d6cd75883a3ca52f180f",
     "pangea-ruby-eval/Cargo.toml": "a65712c95619fda84a8cebaa9f887919acf4e71f4125f085797dfaf478eb380a",
     "pangea-types/Cargo.toml": "bba5d0bee1d04b3ddaefa9f7234a1e5a11e3388dd89e62a3deb4a91b66cd4abc"
   },
@@ -8127,7 +8127,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "lava-arch-0.2.2-8ac90dc2f119c7d7681e84594b02cc1abe58bae8": {
+      "lava-arch-0.2.2-689108f00d72d5c2f0ca0c27ada5249d2c151f07": {
         "runtime_dependencies": [
           {
             "name": "indexmap",
@@ -8249,7 +8249,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "lava-eval-0.2.3-34f7c3532ac968b51621b359c4fca906797a8cb3": {
+      "lava-eval-0.2.3-a394fc4d5504c12b1bf675f832e00572be769b38": {
         "runtime_dependencies": [
           {
             "name": "indexmap",
@@ -8265,7 +8265,7 @@
           },
           {
             "name": "lava_arch",
-            "package_key": "lava-arch-0.2.2-8ac90dc2f119c7d7681e84594b02cc1abe58bae8",
+            "package_key": "lava-arch-0.2.2-689108f00d72d5c2f0ca0c27ada5249d2c151f07",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -12664,7 +12664,7 @@
           },
           {
             "name": "lava_eval",
-            "package_key": "lava-eval-0.2.3-34f7c3532ac968b51621b359c4fca906797a8cb3",
+            "package_key": "lava-eval-0.2.3-a394fc4d5504c12b1bf675f832e00572be769b38",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -30484,13 +30484,13 @@
     "lalrpop-util-0.22.2": {
       "edition": "2021"
     },
-    "lava-arch-0.2.2-8ac90dc2f119c7d7681e84594b02cc1abe58bae8": {
+    "lava-arch-0.2.2-689108f00d72d5c2f0ca0c27ada5249d2c151f07": {
       "edition": "2024"
     },
     "lava-core-0.2.3-f7530d06a52c3356d81415c6611c5ccd2c8cbd06": {
       "edition": "2024"
     },
-    "lava-eval-0.2.3-34f7c3532ac968b51621b359c4fca906797a8cb3": {
+    "lava-eval-0.2.3-a394fc4d5504c12b1bf675f832e00572be769b38": {
       "edition": "2024"
     },
     "lava-schema-0.1.7": {
@@ -31658,9 +31658,9 @@
     }
   },
   "git_nar_sha256": {
-    "lava-arch-0.2.2-8ac90dc2f119c7d7681e84594b02cc1abe58bae8": "sha256-ipbpvwRCzgnCMqakRAfJw9XNYe/+zFySS2WGTN7DLLc=",
+    "lava-arch-0.2.2-689108f00d72d5c2f0ca0c27ada5249d2c151f07": "sha256-UHoSGOxln1vxRgBjpeOdUn0zSmn/6CgmUVLV65YvTCk=",
     "lava-core-0.2.3-f7530d06a52c3356d81415c6611c5ccd2c8cbd06": "sha256-MWQDubZDMIY4+IMoo1Z2sPYjZnIe5KoY66Ial9RQ7bI=",
-    "lava-eval-0.2.3-34f7c3532ac968b51621b359c4fca906797a8cb3": "sha256-v2qXPdXDHRJ0yIVD8JKwPn+yFlUUcavA3L0zH3FFwcw=",
+    "lava-eval-0.2.3-a394fc4d5504c12b1bf675f832e00572be769b38": "sha256-5diag4hZX5iwsw5tgKmly23+nXZ5ymHM+fFM5f1TWjs=",
     "magma-apply-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e": "sha256-u49rSs1u8g256ivIKKeZ0iVPEFtk5F6ji2J6aRhYYwY=",
     "magma-attest-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e": "sha256-u49rSs1u8g256ivIKKeZ0iVPEFtk5F6ji2J6aRhYYwY=",
     "magma-backend-0.1.22-af94559ea32f1ed132c9dda5c82618635e6e910e": "sha256-u49rSs1u8g256ivIKKeZ0iVPEFtk5F6ji2J6aRhYYwY=",
