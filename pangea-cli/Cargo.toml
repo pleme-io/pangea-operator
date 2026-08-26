@@ -47,7 +47,7 @@ indicatif = "0.18"
 
 # Config and paths
 directories = "5"
-toml = "0.8"
+toml = "1.1"
 
 # Error handling
 thiserror.workspace = true
