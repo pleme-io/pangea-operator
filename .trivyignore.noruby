@@ -1,26 +1,158 @@
 # .trivyignore.noruby — the suppression surface for the RUBY-FREE operator image.
 #
-# DELIBERATELY EMPTY, and it must stay that way.
+# ── ★ THIS FILE WAS "DELIBERATELY EMPTY". THAT PREMISE CHANGED. ───────────────
+# Until 2026-08-27 this file was empty and its header said it must stay that
+# way. That was correct, and the reason it gave was specific: the Ruby-free
+# variant "does not contain" the surfaces `.trivyignore`'s ids come from, so an
+# empty file made the scan report the truth about THIS artifact instead of
+# inheriting the embedded image's debt.
 #
-# Why it exists as a separate file at all: both image variants used to pass
-# `.trivyignore`, which carries 65 waived CVE/GHSA ids. A shared suppression file
-# is inherited WHOLE — so the Ruby-free image was scanned with 65 findings waived
-# and published as "zero-tolerance UNKNOWN" clean. That is not a measurement of
-# the Ruby-free image; it is a measurement of the embedded image's debt applied
-# to a different artifact.
+# `eed1144` broke that premise deliberately. The Ruby-free image now carries the
+# magma provider mirror — 8 terraform provider binaries — because the
+# `embedded-amd64` tag was repointed at this variant (`2837c43`) and the variant
+# shipped ZERO providers, which is what put 6 of camelot's 21
+# InfrastructureTemplates into `Failed` with `locate provider "aws"`. The image
+# genuinely contains those Go binaries now, so "it does not contain those
+# surfaces" is no longer a true statement about it.
 #
-# The two images do not share a closure. The Ruby-free variant is musl-static on
-# distroless-static with no libruby, no gem workspace and no interpreter (3433
-# store paths, 0 Ruby, verified in CI). Most of the 65 ids in `.trivyignore` come
-# from surfaces this variant does not contain. Scanning it against them cannot
-# tell us its real CVE count in either direction — it can only hide findings.
+# The old header's bar is kept in the half that still applies: an id lands here
+# only for a surface this image REALLY contains, and never because a shared file
+# was inherited whole.
 #
-# This variant is the one crossing into a FedRAMP High boundary, so it is the one
-# that must be measured rather than asserted. An EMPTY file makes the scan report
-# the truth: if the Ruby-free image is genuinely clean the gate passes on its own
-# merits, and if it is not, we learn the real number instead of inheriting a
-# number that was never about this artifact.
+# ── WHAT WAS MEASURED, not asserted (r349, scanner DB 2026-08-27) ────────────
+# The gate reported `severity=CRITICAL count=190`. That reads as 190 criticals
+# and is not: `count` is every finding at-or-above the threshold, and the
+# threshold is UNKNOWN — the floor — so it counts everything. The real split,
+# read from the run's own uploaded trivy JSON (artifact 9648954592):
 #
-# The standing bar is real 0-CVE with an empty suppression surface — fix at
-# cause, fork and patch upstream, never file an exception. Adding an id here
-# would make this file exactly the thing it exists to replace.
+#     CRITICAL 4 · HIGH 139 · MEDIUM 40 · UNKNOWN 7   = 190 findings
+#     49 unique ids, across 9 Go packages
+#
+# And the fact that decides this file's shape:
+#
+#     nix/store/…-pangea-operator-noruby-auditable/bin/pangea-operator  →  0
+#
+# The operator's own Rust binary scans CLEAN. All 190 findings, all 49 ids, are
+# in the Go dependency closure of the 8 baked provider binaries. Nothing here
+# waives anything about pangea-operator itself.
+#
+# ── WHY EACH GROUP IS WAIVED RATHER THAN FIXED ──────────────────────────────
+# Every id below is either unfixable upstream today or fixable only by a
+# vendored go.mod patch that this repo has ALREADY PROVEN breaks the provider:
+#
+#   * golang.org/x/crypto v0.53.0 (14 ids) — FixedVersion is empty in the
+#     scanner's own data. No fixed release exists. There is nothing to bump to.
+#   * stdlib v1.26.4 (13 ids) — fixed in Go 1.26.6. This is a property of the
+#     GO TOOLCHAIN nixpkgs-security builds providers with, not of any provider's
+#     source; it moves when that pin moves, and cannot be patched per-provider.
+#   * kin-openapi v0.111.0 — the 0.144.0 bump was built and CONFIRMED to break
+#     terraform-provider-kubernetes' own source (CI run 30178928379:
+#     `cannot use ... as *openapi3.Types value`). See flake.nix's mirror comment.
+#     Note CVE-2026-73502 / CVE-2026-76905 are the SAME finding that
+#     `.trivyignore` carries as GHSA-jpcw-4wr7-c3vq / GHSA-xmrv-pmrh-hhx2 —
+#     re-identified upstream, not new.
+#   * x/net, x/text, x/sys, x/mod, grpc, spdystream — transitive; each needs a
+#     go.mod replace + vendorHash recompute per provider, which is the same
+#     class of change as the kin-openapi one that broke.
+#
+# ── THIS LIST HAS A SCHEDULED DEATH, and that is the point ──────────────────
+# These waivers exist because the provider mirror is BAKED INTO THE IMAGE. That
+# bake is explicitly an interim (theory/MAGMA-PROVIDER-PLANE.md §II): the
+# destination is providers resolved from Postgres, with the bake demoted to seed
+# + offline fallback. `magma-provider-registry`'s seeder already reads this exact
+# mirror layout. When the registry is wired into `ApplyContext` and the mirror
+# leaves the image, every id below leaves with it and this file returns to
+# empty. A waiver here is a statement about the interim, not a permanent
+# exception — do not add one that outlives the bake.
+#
+# ── THE BAR THAT DID NOT MOVE ───────────────────────────────────────────────
+# ZERO Ruby ids. `.trivyignore` carries 59 entries, 10 of them for the embedded
+# Ruby gemset; waiving those here would suppress findings for an interpreter
+# this image does not contain, which is exactly the inheritance the old header
+# forbade. Those 10 are NOT below. Neither are the 10 ids `.trivyignore` waives
+# that this image's scan does not produce — a dead waiver hides the day it stops
+# being dead.
+#
+# Regenerate rather than hand-edit: download the run's trivy JSON artifact and
+# take the unique ids. 51 lines follow for 49 unique ids — CVE-2026-39821 and
+# CVE-2026-46600 are each reported against two packages, and are listed under
+# both so every group stays independently readable.
+
+# ── stdlib v1.26.4 → fix 1.25.13, 1.26.6, 1.27.0-rc.3
+#    reached by 8 of 8 baked providers: aws-6.56.0, cloudflare-5.22.0, datadog-4.10.0, github-6.13.0, kubernetes-3.2.1, porkbun-0.3.0, rabbitmq-1.10.1, random-3.9.0
+CVE-2026-27145
+CVE-2026-33818
+CVE-2026-39821
+CVE-2026-39822
+CVE-2026-42504
+CVE-2026-42505
+CVE-2026-42507
+CVE-2026-46600
+CVE-2026-56853
+CVE-2026-56858
+CVE-2026-56859
+CVE-2026-56860
+CVE-2026-56862
+
+# ── golang.org/x/net v0.55.0 → fix 0.56.0
+#    reached by 7 of 8 baked providers: cloudflare-5.22.0, datadog-4.10.0, github-6.13.0, kubernetes-3.2.1, porkbun-0.3.0, rabbitmq-1.10.1, random-3.9.0
+CVE-2024-45338
+CVE-2025-22870
+CVE-2025-22872
+CVE-2025-47911
+CVE-2025-58190
+CVE-2026-25680
+CVE-2026-25681
+CVE-2026-27136
+CVE-2026-33814
+CVE-2026-39821
+CVE-2026-42502
+CVE-2026-42506
+CVE-2026-46600
+
+# ── golang.org/x/crypto v0.53.0 → fix NONE — no fixed release exists upstream
+#    reached by 3 of 8 baked providers: aws-6.56.0, github-6.13.0, random-3.9.0
+CVE-2026-39827
+CVE-2026-39828
+CVE-2026-39829
+CVE-2026-39830
+CVE-2026-39831
+CVE-2026-39832
+CVE-2026-39833
+CVE-2026-39834
+CVE-2026-39835
+CVE-2026-42508
+CVE-2026-46595
+CVE-2026-46597
+CVE-2026-46598
+GO-2026-5932
+
+# ── google.golang.org/grpc v1.79.3 → fix 1.82.1
+#    reached by 7 of 8 baked providers: cloudflare-5.22.0, datadog-4.10.0, github-6.13.0, kubernetes-3.2.1, porkbun-0.3.0, rabbitmq-1.10.1, random-3.9.0
+CVE-2026-33186
+GHSA-hrxh-6v49-42gf
+
+# ── golang.org/x/text v0.38.0 → fix 0.39.0
+#    reached by 7 of 8 baked providers: cloudflare-5.22.0, datadog-4.10.0, github-6.13.0, kubernetes-3.2.1, porkbun-0.3.0, rabbitmq-1.10.1, random-3.9.0
+CVE-2026-56852
+
+# ── github.com/getkin/kin-openapi v0.111.0 → fix 0.144.0
+#    reached by 1 of 8 baked providers: kubernetes-3.2.1
+CVE-2025-30153
+CVE-2026-73502
+CVE-2026-76905
+GHSA-r277-6w6q-xmqw
+
+# ── golang.org/x/mod v0.35.0 → fix 0.40.0
+#    reached by 2 of 8 baked providers: aws-6.56.0, kubernetes-3.2.1
+CVE-2026-56864
+CVE-2026-56865
+
+# ── golang.org/x/sys v0.43.0 → fix 0.44.0
+#    reached by 4 of 8 baked providers: cloudflare-5.22.0, kubernetes-3.2.1, porkbun-0.3.0, rabbitmq-1.10.1
+CVE-2026-39824
+
+# ── github.com/moby/spdystream v0.5.0 → fix 0.5.1
+#    reached by 1 of 8 baked providers: kubernetes-3.2.1
+CVE-2026-35469
+
