@@ -280,11 +280,35 @@
                   # (the cve-mitigations catalog), not the bare escape hatch.
                   hardenedSecurityPkgs.terraform-providers.hashicorp_aws
                 ] ++ (with imagePkgs.terraform-providers; [
-                  # No newer upstream release exists for these three on ANY
+                  # ── hashicorp_random REMOVED 2026-08-27: SERVED NATIVELY ──
+                  # magma now implements the `random` provider in-process
+                  # (magma-provider-random), registered in this operator at
+                  # executor/magma.rs's `native_provider_router`. The Go
+                  # binary is no longer reachable and is no longer shipped.
+                  #
+                  # It was the largest single CVE contributor in this image:
+                  # 36 of 190 findings, ahead of aws (11), for a provider
+                  # that makes NO network calls at all. 13 of the 49 waived
+                  # ids were unique to it — every one a golang.org/x/crypto
+                  # CVE with NO fixed release upstream, i.e. exactly the
+                  # group that could never have been patched. They leave with
+                  # the binary rather than being waived forever.
+                  #
+                  # ★ ORDERING IS LOAD-BEARING: the registration must exist
+                  # BEFORE the binary is dropped, or every random_* resource
+                  # fails with `locate provider` at reconcile — the outage
+                  # this whole line of work started from. Enforced by
+                  # `the_router_serves_random_natively` in executor/magma.rs.
+                  #
+                  # To revert: restore `hashicorp_random` here AND remove the
+                  # `with_native("random", ...)` registration. Either alone is
+                  # merely wasteful; dropping the registration while the
+                  # binary is absent is the outage.
+                  #
+                  # No newer upstream release exists for these two on ANY
                   # channel (verified 2026-07-19, re-verified 2026-07-24) —
                   # stays on the primary pin. See .trivyignore for the
                   # residual CVE citations.
-                  hashicorp_random
                   porkbun
                   cyrilgdn_rabbitmq
                   # datadog: needed for the absorbed Datadog estate

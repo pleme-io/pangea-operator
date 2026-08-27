@@ -80,6 +80,34 @@ use crate::executor::iac_executor::IacExecutor;
 use crate::executor::plan_change::PlannedChange;
 use crate::executor::tofu::TofuResult;
 
+/// Which providers this operator serves IN-PROCESS, and which still fall
+/// through to a Go subprocess.
+///
+/// ── ★ WHY THIS EXISTS AT ALL ─────────────────────────────────────────
+/// Measured on release r349 (trivy artifact 9648954592): this operator's
+/// own Rust binary scans **0 findings**, while the 8 terraform provider
+/// binaries baked into the image carry **190 findings / 49 unique ids**.
+/// The largest single contributor is `terraform-provider-random` at 36 —
+/// a provider that makes no network calls whatsoever.
+///
+/// Registering a name here routes it to a native Rust implementation with
+/// no subprocess, no gRPC and no Go closure. Removing the registration
+/// puts it straight back on the Go binary, so migration is per-provider
+/// and reversible — there is no flag day, and a provider can be rolled
+/// back without rebuilding anything but this list.
+///
+/// **A provider must stay in `magmaProviderMirrorFor` (flake.nix) until
+/// it is registered here.** Dropping the binary first would make every
+/// resource of that type fail with `locate provider` — which is exactly
+/// the outage that produced this work.
+fn native_provider_router() -> Arc<dyn magma_apply::engine::ProviderFactory> {
+    Arc::new(
+        magma_apply::engine::RoutingProviderFactory::new().with_native("random", || {
+            Box::new(magma_provider_random::RandomProvider::new())
+        }),
+    )
+}
+
 // ── Import concurrency guard ──────────────────────────────────────
 //
 // `template_controller::run_import_prepass` dispatches every resolved
@@ -1097,7 +1125,8 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
         if self.cfg.structural_apply {
             return None;
         }
-        let mut ctx = magma_apply::engine::ApplyContext::new(work_dir.to_path_buf());
+        let mut ctx = magma_apply::engine::ApplyContext::new(work_dir.to_path_buf())
+            .with_provider_factory(native_provider_router());
         for (name, value) in self.build_provider_configs(cfg) {
             ctx = ctx.with_provider_config(name, value);
         }
@@ -1859,7 +1888,8 @@ where
         // installs magma's default samba mutation pacer (1 req/s) so a bulk
         // apply can't burst past a provider's secondary rate limit.
         // Per the MAGMA-NATIVE EXECUTION directive.
-        let mut ctx = magma_apply::engine::ApplyContext::new(work_dir.to_path_buf());
+        let mut ctx = magma_apply::engine::ApplyContext::new(work_dir.to_path_buf())
+            .with_provider_factory(native_provider_router());
         // Forward each provider's ConfigureProvider value. Two sources,
         // merged per `build_provider_configs`:
         //   * rendered `provider "<name>" { .. }` blocks (the Ruby DSL's
@@ -2139,7 +2169,8 @@ where
         // workspace's provider blocks, falling back to the pod env. Infallible:
         // per-resource delete failures collect into `outcome.failed` and flip
         // the TofuResult to an error below.
-        let mut ctx = magma_apply::engine::ApplyContext::new(work_dir.to_path_buf());
+        let mut ctx = magma_apply::engine::ApplyContext::new(work_dir.to_path_buf())
+            .with_provider_factory(native_provider_router());
         // Provider creds: same two-source merge as apply
         // (`build_provider_configs`) — `spec.providerCredentials` base
         // (resolved from k8s Secrets) augmented by any rendered
@@ -2287,7 +2318,8 @@ where
             // with an empty provider config (the provider falls back to
             // its own env credentials), matching `apply()`'s existing
             // `if let Ok(cfg) = ...` tolerance.
-            let mut ctx = magma_apply::engine::ApplyContext::new(work_dir.to_path_buf());
+            let mut ctx = magma_apply::engine::ApplyContext::new(work_dir.to_path_buf())
+            .with_provider_factory(native_provider_router());
             if let Ok(cfg) = self.load_config_routed(work_dir).await {
                 for (name, value) in self.build_provider_configs(&cfg) {
                     ctx = ctx.with_provider_config(name, value);
@@ -2638,12 +2670,35 @@ mod pacer_wiring_tests {
     /// Counted at the SOURCE because the defect is a missing call — a
     /// behavioural test would need a live provider and would still pass, since
     /// an independently-paced context applies perfectly well.
+    /// The file's PRODUCTION source — everything above the first test
+    /// module.
+    ///
+    /// ── ★ WHY THIS IS NOT PARANOIA ───────────────────────────────────
+    /// These tests search the file for `ApplyContext::new(...)`, and the
+    /// matcher line that performs the search CONTAINS that literal. So a
+    /// whole-file scan makes each test match its own source, and each
+    /// other's.
+    ///
+    /// The pacer test above shipped that way and passed ANYWAY, by
+    /// coincidence: its self-match was satisfied because its own assert
+    /// message mentions `with_shared_pacer` inside the 40-line window.
+    /// Adding a second test broke the coincidence and surfaced both
+    /// self-matches at once — which is how this was found, not by
+    /// inspection.
+    ///
+    /// Cutting at the first `#[cfg(test)]` removes the class rather than
+    /// re-tuning a window: no test can match its own matcher.
+    fn production_source() -> &'static str {
+        let src = include_str!("magma.rs");
+        src.split("#[cfg(test)]").next().unwrap_or(src)
+    }
+
     #[test]
     fn every_apply_context_receives_the_shared_pacer() {
         // PER-SITE, not a count. Equal totals is the weaker property and it
         // passes on a file where one site is wired twice and another not at
         // all — which is exactly the shape a copy-paste produces.
-        let src = include_str!("magma.rs");
+        let src = production_source();
         let lines: Vec<&str> = src.lines().collect();
         const WINDOW: usize = 40;
         let unwired: Vec<usize> = lines
@@ -2664,6 +2719,69 @@ mod pacer_wiring_tests {
              — an un-shared context is not unpaced, it paces INDEPENDENTLY, \
              which looks correct at the call site while multiplying the \
              credential's real ceiling by the number of contexts"
+        );
+    }
+
+    /// Every `ApplyContext` must also receive the native-provider router.
+    ///
+    /// Same shape, and the same reason, as the pacer test above: the
+    /// defect is a MISSING CALL, so it is counted at the source. A context
+    /// built without the router is not broken in any visible way — it
+    /// simply resolves every provider to a Go subprocess, which is exactly
+    /// today's behaviour, so nothing fails and nothing says so. It would
+    /// only surface once a provider's binary is dropped from
+    /// `magmaProviderMirrorFor`, as `locate provider` at reconcile time in
+    /// production.
+    ///
+    /// PER-SITE rather than a count, for the reason the pacer test gives:
+    /// equal totals still pass on a file where one site is wired twice and
+    /// another not at all, which is the shape a copy-paste produces.
+    #[test]
+    fn every_apply_context_receives_the_native_provider_router() {
+        let src = production_source();
+        let lines: Vec<&str> = src.lines().collect();
+        const WINDOW: usize = 40;
+        let unwired: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.contains("ApplyContext::new(work_dir.to_path_buf())"))
+            .filter(|(i, _)| {
+                let end = (i + WINDOW).min(lines.len());
+                !lines[*i..end]
+                    .iter()
+                    .any(|l| l.contains("with_provider_factory"))
+            })
+            .map(|(i, _)| i + 1)
+            .collect();
+        assert!(
+            unwired.is_empty(),
+            "ApplyContext built without the native-provider router at line(s) \
+             {unwired:?} — that context resolves every provider to a Go \
+             subprocess, which looks identical to correct until a provider is \
+             dropped from the image mirror and every resource of that type \
+             fails with `locate provider`"
+        );
+    }
+
+    /// The router must actually serve what the image no longer ships.
+    ///
+    /// ★ THIS IS THE CROSS-REPO INVARIANT, and it is the dangerous one:
+    /// the provider list lives in `nix`'s `flake.nix`
+    /// (`magmaProviderMirrorFor`) and the registration lives here. They can
+    /// disagree in BOTH directions, and only one direction is loud —
+    /// registered-but-still-baked merely wastes image space, while
+    /// dropped-but-unregistered is a production outage.
+    ///
+    /// This asserts the half that is checkable from inside this repo: that
+    /// `random` is registered. Dropping it from the mirror without this
+    /// line present is the mistake that produced the original incident.
+    #[test]
+    fn the_router_serves_random_natively() {
+        let src = production_source();
+        assert!(
+            src.contains(r#"with_native("random""#),
+            "random must be served in-process before it is dropped from \
+             magmaProviderMirrorFor in nix/flake.nix"
         );
     }
 }
