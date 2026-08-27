@@ -220,6 +220,86 @@
       # glibc nixpkgs instead of the musl-static target every other
       # binary in this repo already uses. No libruby, no glibc, no shell,
       # no package manager: CA roots and /etc/passwd only.
+  # ── magma provider-mirror, SHARED BY BOTH IMAGES ────────────────────
+  # Hoisted 2026-08-27. It used to live inside mkEmbeddedOperatorImage,
+  # so the Ruby-free image shipped ZERO providers -- and once the
+  # `embedded-amd64` TAG was repointed at the noruby variant (2837c43),
+  # every magma apply and every import prepass on camelot failed with
+  #   locate provider "aws": no .terraform/providers dir ... run `init` first
+  # 6 of 21 templates were Failed on exactly this. The block comment below
+  # already stated the design; only one of the two images honoured it.
+  #
+  # The provider LIST must exist once. Two copies would diverge silently,
+  # and the failure mode is a hard ProviderUnavailable months later.
+  magmaProviderMirrorFor = imageSystem:
+    let
+      imagePkgs = import nixpkgs { system = imageSystem; config.allowUnfree = true; };
+      securityPkgs = import nixpkgs-security { system = imageSystem; config.allowUnfree = true; };
+      hardenedSecurityPkgs = (import "${substrate}/lib/security/mk-hardened-pkgs.nix" { inherit lib; }) {
+        pkgs = securityPkgs;
+        mitigations = [ "terraform-provider-aws-grpc-bump" ];
+      };
+
+              # ── magma provider-mirror (★★ MAGMA-NATIVE / StageProvider) ──
+              # Bake provider plugin binaries into the IMAGE (durable, roll-
+              # surviving) instead of relying on the ephemeral
+              # `.terraform/providers` emptyDir, which is wiped on pod roll.
+              # MAGMA_PROVIDER_DIR below points magma's locate_provider at
+              # this closure. Provider set = union of `required_providers`
+              # across the rio Pangea architectures; extend when a new one
+              # appears (surfaces as a ProviderUnavailable anomaly otherwise).
+              mirror = imagePkgs.buildEnv {
+                name = "magma-provider-mirror";
+                paths = (with securityPkgs.terraform-providers; [
+                  # cloudflare/github/kubernetes: no newer upstream release
+                  # picks up grpc >= 1.82.1 (Round 3, .trivyignore) — stay on
+                  # the nixpkgs-security escape hatch, unchanged since Round 1.
+                  #
+                  # kubernetes ALSO carries the GHSA-jpcw-4wr7-c3vq /
+                  # GHSA-r277-6w6q-xmqw kin-openapi findings (.trivyignore
+                  # Round 4 + Round 5) — a vendored go.mod patch bumping
+                  # kin-openapi 0.111.0 -> 0.144.0 was attempted
+                  # (substrate's terraform-provider-kubernetes-kin-openapi-bump
+                  # cve-mitigation, left in the catalog unwired as a record) and
+                  # CONFIRMED, via a real CI build, to break the provider's own
+                  # source: kin-openapi 0.144.0 changed `Schema.Type` from a
+                  # plain string to `*openapi3.Types` and diverged the
+                  # openapi2/openapi3 SchemaRef split, and
+                  # terraform-provider-kubernetes's manifest/openapi/*.go still
+                  # uses the pre-change shape (confirmed compile failure, CI run
+                  # 30178928379: "cannot use ... as *openapi3.Types value").
+                  # This is the empirical version of Round 4's own risk
+                  # assessment ("a bare go.mod replace is materially riskier
+                  # than a version bump") — not a lower-risk case, a confirmed
+                  # one.
+                  cloudflare_cloudflare
+                  integrations_github
+                  hashicorp_kubernetes
+                ]) ++ [
+                  # aws: Round 3's real fix — sourced via hardenedSecurityPkgs
+                  # (the cve-mitigations catalog), not the bare escape hatch.
+                  hardenedSecurityPkgs.terraform-providers.hashicorp_aws
+                ] ++ (with imagePkgs.terraform-providers; [
+                  # No newer upstream release exists for these three on ANY
+                  # channel (verified 2026-07-19, re-verified 2026-07-24) —
+                  # stays on the primary pin. See .trivyignore for the
+                  # residual CVE citations.
+                  hashicorp_random
+                  porkbun
+                  cyrilgdn_rabbitmq
+                  # datadog: needed for the absorbed Datadog estate
+                  # (pangea-datadog-absorb). On the primary pin deliberately —
+                  # it carries no CVE escape-hatch requirement, so it does not
+                  # belong in the securityPkgs block above. There is no
+                  # `tofu init` fallback (PANGEA_FORBID_TOFU + magma's
+                  # locate_provider reads MAGMA_PROVIDER_DIR), so an absent
+                  # provider here is a hard ProviderUnavailable, not a slow path.
+                  datadog_datadog
+                ]);
+              };
+        in
+    mirror;
+
       mkNoRubyOperatorImage = imageSystem:
         let
           # THE OVERLAY IS THE FIX, and substrate already wrote it.
@@ -401,6 +481,29 @@
             "PANGEA_COMPILER_BACKEND=lava"
             "LAVA_DASHBOARD_CATALOG=/usr/share/lava/dashboards"
             "LAVA_ARCHITECTURE_CATALOG=/usr/share/lava/architectures"
+            # ── ★ THE PROVIDERS THIS IMAGE SHIPPED WITHOUT ────────────────
+            # Added 2026-08-27. This env var and the mirror in extraContents
+            # below were present ONLY in mkEmbeddedOperatorImage, so the
+            # Ruby-free image carried no terraform provider binaries at all.
+            # It went live the moment the `embedded-amd64` TAG was repointed
+            # at this variant (2837c43): magma's locate_provider found
+            # neither MAGMA_PROVIDER_DIR nor the workspace's
+            # `.terraform/providers` (an emptyDir, wiped by the very pod roll
+            # that deploys a new image), and every apply AND every import
+            # prepass failed with
+            #   locate provider "aws": no .terraform/providers dir … run `init` first
+            # 6 of 21 camelot templates were Failed on this, in two shapes
+            # that read as unrelated: three "Magma execution failed" and
+            # three "Applying refused: import failed … still wants to CREATE
+            # it". The second shape is the never-destroy guard working
+            # correctly ON TOP of this bug — the import could not run, so the
+            # plan fell back to create, so the guard refused to duplicate a
+            # live resource.
+            #
+            # There is deliberately NO `tofu init` fallback here
+            # (PANGEA_FORBID_TOFU + magma reads MAGMA_PROVIDER_DIR), so an
+            # absent mirror is a hard failure rather than a slow path.
+            "MAGMA_PROVIDER_DIR=${magmaProviderMirrorFor imageSystem}"
           ];
           # The catalogue those two env vars are useless without. Copied from
           # the lava-architectures input rather than vendored, so adding a
@@ -427,6 +530,12 @@
           # came from — same option name, two contracts, and no error until
           # eval.
           extraContents = [
+            # The provider closure MAGMA_PROVIDER_DIR above points at. Listed
+            # here so nix actually copies it into the image — an env var
+            # naming a store path that the image does not contain is the same
+            # "points at nothing" failure the lava-catalogue comment below
+            # guards against, and it fails identically at reconcile-time.
+            (magmaProviderMirrorFor imageSystem)
             (imagePkgs.runCommand "lava-dashboard-catalog" { } ''
               mkdir -p $out/usr/share/lava/dashboards
               n=$(find ${inputs.lava-architectures}/dashboards -name '*.tlisp' | wc -l)
@@ -633,64 +742,7 @@
             mkdir -p $out
             printf '%s\n' ${lib.concatMapStringsSep " " (src: lib.escapeShellArg "${src}") (builtins.attrValues pangeaInputsChecked)} > $out/path-gem-refs
           '';
-
-          # ── magma provider-mirror (★★ MAGMA-NATIVE / StageProvider) ──
-          # Bake provider plugin binaries into the IMAGE (durable, roll-
-          # surviving) instead of relying on the ephemeral
-          # `.terraform/providers` emptyDir, which is wiped on pod roll.
-          # MAGMA_PROVIDER_DIR below points magma's locate_provider at
-          # this closure. Provider set = union of `required_providers`
-          # across the rio Pangea architectures; extend when a new one
-          # appears (surfaces as a ProviderUnavailable anomaly otherwise).
-          magmaProviderMirror = imagePkgs.buildEnv {
-            name = "magma-provider-mirror";
-            paths = (with securityPkgs.terraform-providers; [
-              # cloudflare/github/kubernetes: no newer upstream release
-              # picks up grpc >= 1.82.1 (Round 3, .trivyignore) — stay on
-              # the nixpkgs-security escape hatch, unchanged since Round 1.
-              #
-              # kubernetes ALSO carries the GHSA-jpcw-4wr7-c3vq /
-              # GHSA-r277-6w6q-xmqw kin-openapi findings (.trivyignore
-              # Round 4 + Round 5) — a vendored go.mod patch bumping
-              # kin-openapi 0.111.0 -> 0.144.0 was attempted
-              # (substrate's terraform-provider-kubernetes-kin-openapi-bump
-              # cve-mitigation, left in the catalog unwired as a record) and
-              # CONFIRMED, via a real CI build, to break the provider's own
-              # source: kin-openapi 0.144.0 changed `Schema.Type` from a
-              # plain string to `*openapi3.Types` and diverged the
-              # openapi2/openapi3 SchemaRef split, and
-              # terraform-provider-kubernetes's manifest/openapi/*.go still
-              # uses the pre-change shape (confirmed compile failure, CI run
-              # 30178928379: "cannot use ... as *openapi3.Types value").
-              # This is the empirical version of Round 4's own risk
-              # assessment ("a bare go.mod replace is materially riskier
-              # than a version bump") — not a lower-risk case, a confirmed
-              # one.
-              cloudflare_cloudflare
-              integrations_github
-              hashicorp_kubernetes
-            ]) ++ [
-              # aws: Round 3's real fix — sourced via hardenedSecurityPkgs
-              # (the cve-mitigations catalog), not the bare escape hatch.
-              hardenedSecurityPkgs.terraform-providers.hashicorp_aws
-            ] ++ (with imagePkgs.terraform-providers; [
-              # No newer upstream release exists for these three on ANY
-              # channel (verified 2026-07-19, re-verified 2026-07-24) —
-              # stays on the primary pin. See .trivyignore for the
-              # residual CVE citations.
-              hashicorp_random
-              porkbun
-              cyrilgdn_rabbitmq
-              # datadog: needed for the absorbed Datadog estate
-              # (pangea-datadog-absorb). On the primary pin deliberately —
-              # it carries no CVE escape-hatch requirement, so it does not
-              # belong in the securityPkgs block above. There is no
-              # `tofu init` fallback (PANGEA_FORBID_TOFU + magma's
-              # locate_provider reads MAGMA_PROVIDER_DIR), so an absent
-              # provider here is a hard ProviderUnavailable, not a slow path.
-              datadog_datadog
-            ]);
-          };
+          magmaProviderMirror = magmaProviderMirrorFor imageSystem;
         in
         builders.mkCrate2nixDockerImage {
           serviceName = "pangea-operator";
