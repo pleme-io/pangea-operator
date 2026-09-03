@@ -283,6 +283,22 @@ async fn main() -> Result<()> {
     // connect failure logs + continues with the un-pooled `state` (never
     // crashes the operator). See `ControllerState::with_db_pool` +
     // docs/design/0005-autonomic-convergence-on-magma.md.
+    // Dedicated readiness-probe pool, deliberately NOT the workload pool.
+    //
+    // /readyz ran on a clone of the magma pool, which caps at 5 connections.
+    // A plan/apply wave holds those 5, so the probe's schema check queued
+    // behind real work and blew its own 2s bound — measured on camelot-eks
+    // 2026-08-05, "readiness probe: schema-presence check timed out after 2s"
+    // interleaved with "magma: state saved" from the same process. The
+    // operator reported itself unready precisely BECAUSE it was busy doing
+    // its job, which is the same false-signal asymmetry the helmrelease
+    // already corrected for liveness (10s x 6) without reaching the shared
+    // pool underneath readiness.
+    //
+    // One connection is enough: the probe is two `LIMIT 0` schema reads.
+    // Isolation is the point, not throughput.
+    let mut probe_pool: Option<Arc<tokio::sync::RwLock<sqlx::PgPool>>> = None;
+
     let state = match env::var("PGPASSWORD").ok().filter(|p| !p.is_empty()) {
         None => {
             info!("no PGPASSWORD; magma state backend not wired, magma falls back to tofu");
@@ -312,13 +328,35 @@ async fn main() -> Result<()> {
                 "Wiring Postgres pool for magma state backend"
             );
 
+            let probe_options = connect_options.clone();
+
             match sqlx::postgres::PgPoolOptions::new()
-                .max_connections(5)
+                .max_connections(op_cfg.database.pool_max_connections.max(1))
                 .connect_with(connect_options)
                 .await
             {
                 Ok(pool) => {
                     info!("Connected to pangea_state; magma state backend wired");
+                    // Best-effort, exactly like the table ensures below: if
+                    // the probe pool cannot be built we fall back to the
+                    // shared pool at the health-server wiring, which is the
+                    // pre-existing behaviour rather than a regression.
+                    match sqlx::postgres::PgPoolOptions::new()
+                        .max_connections(1)
+                        .acquire_timeout(std::time::Duration::from_secs(2))
+                        .connect_with(probe_options)
+                        .await
+                    {
+                        Ok(p) => {
+                            probe_pool = Some(Arc::new(tokio::sync::RwLock::new(p)));
+                            info!("Readiness probe pool wired (isolated from the magma pool)");
+                        }
+                        Err(e) => warn!(
+                            error = %e,
+                            "failed to wire the dedicated readiness pool; \
+                             /readyz falls back to sharing the magma pool"
+                        ),
+                    }
                     let state = state.with_db_pool(pool);
                     // Ensure the durable artifact table exists before any
                     // magma plan/apply persists rendered config / plan /
@@ -372,7 +410,10 @@ async fn main() -> Result<()> {
     // pulled from the Service endpoints while Postgres — or its
     // schema — is unavailable.
     let health_metrics = metrics.clone();
-    let health_ready_pool = state.db_pool.clone();
+    // Prefer the isolated probe pool; fall back to the shared magma pool so a
+    // probe-pool failure degrades to the previous behaviour rather than
+    // leaving /readyz with no DB to check at all.
+    let health_ready_pool = probe_pool.clone().or_else(|| state.db_pool.clone());
     let health_addr = config.health_addr;
     let health_shutting_down = shutting_down.clone();
     tokio::spawn(async move {
