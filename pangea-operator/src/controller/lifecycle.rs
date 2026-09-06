@@ -194,6 +194,25 @@ fn assert_phase_exhaustive(p: Phase) {
 pub enum Trigger {
     /// `validate_source` succeeded (Pending → Compiling).
     SourceValidated,
+    /// Source validation REJECTED the spec — no inline/configMapRef/
+    /// gitRepository body and no `templateName` naming a lava catalogue
+    /// architecture.
+    ///
+    /// ── WHY THIS WAS MISSING, AND WHY THAT MATTERED ──
+    /// Every other step models its own failure: `CompileFailedThreshold`,
+    /// `InitFailed`, `PlanRefusedOrFailed`, `ApplyFailed`, `DestroyFailed`.
+    /// Source validation was the only one without, so `Pending` had exactly
+    /// ONE outgoing edge (`SourceValidated → Compiling`) and a rejected source
+    /// left the handler setting `Failed` outside the table.
+    ///
+    /// The CI forcing-functions could not catch it: `no_traps` asks whether a
+    /// phase has AN outgoing edge (Pending had one) and reachability held. They
+    /// verify the table's internal properties, not that the table covers what
+    /// the handlers actually do. Only the runtime `FSM ILLEGAL EDGE` warning
+    /// finds that, and only when the path is exercised — which happened for the
+    /// first time on 2026-09-06, on the first CR ever to fail source validation
+    /// on this cluster.
+    SourceInvalid,
     /// `Verifying`/`Verified` synthetic pass-through (gem-readiness gate is a
     /// no-op today; see `theory/PANGEA-WORKSPACE-RECONCILIATION.md`).
     GemsAssumedReady,
@@ -293,6 +312,18 @@ pub static EXPLICIT_TRANSITIONS: &[Transition] = &[
         Trigger::SourceValidated,
         Phase::Compiling,
         EdgeKind::Forward,
+    ),
+    // The failure sibling of the edge above. Placed beside it deliberately: a
+    // step whose success is tabled and whose failure is not is exactly the
+    // asymmetry that let this gap sit unnoticed.
+    t(
+        Phase::Pending,
+        Trigger::SourceInvalid,
+        Phase::Failed,
+        // Remediation, matching CompileFailedThreshold and every other
+        // failure edge in this table — Failed is recoverable via
+        // FailureBackoffElapsed, so this is not a teardown.
+        EdgeKind::Remediation,
     ),
     t(
         Phase::Verifying,
