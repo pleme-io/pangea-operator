@@ -341,6 +341,230 @@
         in
         mirror;
 
+      # ══ THE OPERATOR VARIANT CATALOG ═══════════════════════════════════════
+      #
+      # One row per build. The row IS the decision, and everything that differs
+      # between variants is DERIVED from it — so the facts that must agree
+      # cannot be set independently.
+      #
+      # ── WHY THIS EXISTS (the defect it retires) ──
+      # Three builders hand-rolled the same shape, and two facts that are really
+      # ONE choice were written separately in each:
+      #
+      #   which BUILD SPEC    decides whether `embedded_ruby` reaches the compiler
+      #   which PACKAGE SET   decides whether libruby can be linked at all
+      #
+      # `mkEmbeddedOperatorImage` picked dynamic-glibc pkgs (correct for Ruby)
+      # and the CANONICAL spec (which carries no Ruby), so it built the Ruby-free
+      # binary and wrapped it in ruby/git/opentofu/packer it could not call — for
+      # months, every layer green. Nothing compared the halves because nothing
+      # OWNED both.
+      #
+      # Here `carriesRuby` owns both. A variant cannot select a Ruby package set
+      # without the Ruby spec, or vice versa, because it selects neither — it
+      # declares one bit and the builder derives the rest.
+      operatorVariants = {
+        noruby = {
+          specFile = "Cargo.noruby.build-spec.json";
+          carriesRuby = false;
+          description = "Ruby-free, musl-static (the FedRAMP-boundary build)";
+        };
+        ruby = {
+          specFile = "Cargo.ruby.build-spec.json";
+          carriesRuby = true;
+          description = "embedded CRuby via magnus, glibc-dynamic";
+        };
+      };
+
+      # Build one variant's binary. `carriesRuby` decides the package set, the
+      # crate overrides and the linkage; the caller decides nothing else.
+      mkOperatorBin =
+        {
+          variant,
+          buildSystem,
+          auditable ? true,
+        }:
+        let
+          v =
+            operatorVariants.${variant} or (throw ''
+              unknown operator variant "${variant}". Known:
+              ${lib.concatMapStringsSep "\n" (n: "  ${n}: ${operatorVariants.${n}.description}") (
+                builtins.attrNames operatorVariants
+              )}
+            '');
+
+          basePkgs = import nixpkgs {
+            system = buildSystem;
+            config.allowUnfree = true;
+            overlays = lib.optionals (!v.carriesRuby) [
+              ((import "${substrate}/lib/build/rust/overlay.nix").mkRustOverlay {
+                fenix = substrate.inputs.fenix;
+                system = buildSystem;
+                targets = [ "x86_64-unknown-linux-musl" ];
+              })
+            ];
+          };
+
+          # ── THE DERIVED PAIRING, and the correct default ──
+          # Ruby-free -> pkgsStatic (musl; what every other binary here ships).
+          # Ruby       -> plain dynamic glibc, because magnus/rb-sys links
+          # libruby.so and a static-musl binary has no dynamic linker to resolve
+          # it through. Getting this pairing wrong by hand is what produced the
+          # mislabelled image.
+          buildPkgs = if v.carriesRuby then basePkgs else basePkgs.pkgsStatic;
+
+          ruby = basePkgs.ruby_3_3;
+          libclang = basePkgs.llvmPackages.libclang.lib;
+
+          rubyEnv = {
+            LIBCLANG_PATH = "${libclang}/lib";
+            RUBY = "${ruby}/bin/ruby";
+            # bindgen runs its OWN libclang and does not inherit the nix
+            # cc-wrapper's include flags, so `stdenv.cc.libc.dev` in
+            # nativeBuildInputs is not enough — measured on rio 2026-09-06:
+            #   ruby/defines.h:16:10: fatal error: 'stdio.h' file not found
+            # Same expression the ruby-eval devShell carries as bindgenLibcArgs.
+            BINDGEN_EXTRA_CLANG_ARGS = lib.optionalString buildPkgs.stdenv.isLinux "-I${buildPkgs.stdenv.cc.libc.dev}/include";
+          };
+
+          rubyOverrides = lib.optionalAttrs v.carriesRuby {
+            rb-sys =
+              oldAttrs:
+              rubyEnv
+              // {
+                nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ]) ++ [
+                  libclang
+                  basePkgs.pkg-config
+                  ruby
+                  basePkgs.stdenv.cc.libc.dev
+                ];
+                buildInputs = (oldAttrs.buildInputs or [ ]) ++ [ ruby ];
+              };
+            magnus = oldAttrs: { buildInputs = (oldAttrs.buildInputs or [ ]) ++ [ ruby ]; };
+            pangea-ruby-eval =
+              oldAttrs:
+              rubyEnv
+              // {
+                nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ]) ++ [
+                  libclang
+                  basePkgs.pkg-config
+                  basePkgs.stdenv.cc.libc.dev
+                ];
+                buildInputs = (oldAttrs.buildInputs or [ ]) ++ [ ruby ];
+              };
+          };
+
+          lockfileBuilder = import "${substrate}/lib/build/rust/lockfile-builder.nix" { pkgs = buildPkgs; };
+          plemeCrateOverrides = (import "${substrate}/lib/build/rust/pleme-crate-overrides.nix") buildPkgs.stdenv.hostPlatform.rust.rustcTarget;
+
+          project = lockfileBuilder.mkProject {
+            src = self;
+            name = "pangea-operator-${variant}";
+            inherit (v) specFile;
+            defaultCrateOverrides =
+              buildPkgs.defaultCrateOverrides
+              // plemeCrateOverrides
+              // {
+                # Stopgap: routes tsunagu through the flake-input fetcher rather
+                # than a sandboxed fetchgit with no credentials.
+                tsunagu = _oldAttrs: { src = inputs.tsunagu; };
+                # executor_magma is a DEFAULT feature, so magma-protocol is in
+                # EVERY variant's graph and needs protoc in all of them.
+                magma-protocol = oldAttrs: {
+                  nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ]) ++ [ basePkgs.protobuf ];
+                  PROTOC = "${basePkgs.protobuf}/bin/protoc";
+                };
+                pangea-operator = oldAttrs: {
+                  extraRustcOpts = (oldAttrs.extraRustcOpts or [ ]) ++ [
+                    "-Ccodegen-units=16"
+                    "-Copt-level=2"
+                    "-Clto=off"
+                  ];
+                };
+              }
+              // rubyOverrides;
+          };
+
+          rawBin = project.workspaceMembers."pangea-operator".build;
+
+          # Make the binary SCANNABLE, or a CVE gate over it is a green that
+          # inspected nothing: trivy on a Nix image reports `packages: 0`
+          # without the embedded audit data.
+          auditData =
+            (import "${substrate}/lib/build/rust/cargo-audit-data.nix" { }).mkCargoAuditData basePkgs
+              {
+                name = "pangea-operator-${variant}";
+                lockFile = ./Cargo.lock;
+                rootCrate = "pangea-operator";
+              };
+        in
+        basePkgs.runCommand "pangea-operator-${variant}"
+          {
+            nativeBuildInputs = lib.optionals v.carriesRuby [ basePkgs.makeWrapper ];
+            passthru = {
+              inherit (v) carriesRuby specFile;
+              inherit rawBin;
+            };
+          }
+          (
+            ''
+              mkdir -p $out/bin
+              cp ${rawBin}/bin/pangea-operator $out/bin/pangea-operator
+              chmod +w $out/bin/pangea-operator
+            ''
+            + lib.optionalString auditable ''
+              ${(import "${substrate}/lib/build/rust/cargo-audit-data.nix" { }).injectCommand {
+                inherit auditData;
+                target = "$out/bin/pangea-operator";
+                objcopy = "${basePkgs.binutils}/bin/objcopy";
+              }}
+            ''
+            + lib.optionalString v.carriesRuby ''
+              # libruby on the runtime linker path EXPLICITLY — nix's incidental
+              # auto-RPATH is fragile to a nixpkgs bump.
+              mv $out/bin/pangea-operator $out/bin/.pangea-operator-unwrapped
+              makeWrapper $out/bin/.pangea-operator-unwrapped $out/bin/pangea-operator --prefix LD_LIBRARY_PATH : ${ruby}/lib
+            ''
+          );
+
+      # ── EVERY VARIANT IS VERIFIED AGAINST ITS OWN DECLARATION ──────────────
+      # Not just the Ruby one. `--capabilities` reports the features the binary
+      # was ACTUALLY compiled with; this asserts they match the catalog row in
+      # BOTH directions. A check that only asserted "ruby has ruby" would pass
+      # forever against a `noruby` variant that silently grew the feature.
+      mkVariantCapabilityCheck =
+        { variant, buildSystem }:
+        let
+          v = operatorVariants.${variant};
+          checkPkgs = import nixpkgs { system = buildSystem; };
+          bin = mkOperatorBin { inherit variant buildSystem; };
+          expected = if v.carriesRuby then "true" else "false";
+        in
+        checkPkgs.runCommand "pangea-operator-${variant}-capabilities-match"
+          { nativeBuildInputs = [ checkPkgs.jq ]; }
+          ''
+            caps=$(${bin}/bin/pangea-operator --capabilities)
+            echo "$caps"
+
+            actual=$(echo "$caps" | jq -r .embedded_ruby)
+            if [ "$actual" != "${expected}" ]; then
+              echo "FAIL: variant '${variant}' declares carriesRuby=${expected} but the binary reports embedded_ruby=$actual." >&2
+              echo "The spec ${v.specFile} did not deliver what the catalog claims. Regenerate it, or fix the catalog row — they are one decision." >&2
+              exit 1
+            fi
+
+            # The advertised backend list is DERIVED from the feature flags in
+            # capabilities.rs, so a disagreement means that derivation broke.
+            if [ "${expected}" = "true" ]; then
+              echo "$caps" | jq -e '.backends | index("embedded")' >/dev/null || { echo "FAIL: embedded_ruby set but 'embedded' not advertised." >&2; exit 1; }
+            else
+              echo "$caps" | jq -e '.backends | index("embedded")' >/dev/null && { echo "FAIL: no embedded_ruby but 'embedded' IS advertised." >&2; exit 1; }
+            fi
+
+            echo "OK: '${variant}' matches its declaration (${v.description})."
+            touch $out
+          '';
+
       mkNoRubyOperatorImage =
         imageSystem:
         let
@@ -410,92 +634,16 @@
           staticPkgs = imagePkgs.pkgsStatic;
           lockfileBuilder = import "${substrate}/lib/build/rust/lockfile-builder.nix" { pkgs = staticPkgs; };
           plemeCrateOverrides = (import "${substrate}/lib/build/rust/pleme-crate-overrides.nix") staticPkgs.stdenv.hostPlatform.rust.rustcTarget;
-          project = lockfileBuilder.mkProject {
-            src = self;
-            name = "pangea-operator-noruby";
-            specFile = "Cargo.noruby.build-spec.json";
-            defaultCrateOverrides =
-              staticPkgs.defaultCrateOverrides
-              // plemeCrateOverrides
-              // {
-                # Same stopgap as the `base` build above — routes tsunagu
-                # through the flake-input fetcher rather than a sandboxed
-                # fetchgit with no credentials.
-                tsunagu = _oldAttrs: { src = inputs.tsunagu; };
-                # magma-protocol needs protoc, and this override is a COPY of
-                # the one mkEmbeddedOperatorImage already carries — not a new
-                # discovery. `executor_magma` is a DEFAULT cargo feature, so it
-                # is in the Ruby-free spec too, and its build.rs falls back to
-                # protoc-bin-vendored when PROTOC is unset. The vendored binary
-                # is not materialized in the sandbox, so protoc_bin_path()
-                # panics:
-                #
-                #   internal: protoc not found
-                #   /build/protoc-bin-vendored-linux-x86_64-3.2.0/bin/protoc
-                #
-                # Measured on rio, 2026-08-12, at the FIRST build that ever got
-                # past the toolchain — the llvm-static blocker had been hiding
-                # this one behind it the whole time.
-                #
-                # The duplication is the real finding. Two image builders in one
-                # flake maintain two hand-copied override sets over the same
-                # workspace, so a fix landed in one is invisible to the other
-                # until its build reaches the same crate. `pending-operator-image-overrides:
-                # hoist the shared crate overrides to one binding both
-                # mkEmbeddedOperatorImage and mkNoRubyOperatorImage read.`
-                magma-protocol = oldAttrs: {
-                  nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ]) ++ [ imagePkgs.protobuf ];
-                  PROTOC = "${imagePkgs.protobuf}/bin/protoc";
-                };
-              };
+          # ── ONE BUILDER, PARAMETERIZED BY THE CATALOG ──────────────────
+          # Was 86 lines hand-rolling the project, the crate overrides, the
+          # audit-data injection and the auditable wrapper — all now derived
+          # from the `noruby` catalog row. The package set is derived too
+          # (musl-static, because the row says carriesRuby = false), which is
+          # the pairing that used to be a per-builder hand-decision.
+          bin = mkOperatorBin {
+            variant = "noruby";
+            buildSystem = imageSystem;
           };
-          rawBin = project.workspaceMembers."pangea-operator".build;
-
-          # ── MAKE THE BINARY SCANNABLE, or the CVE gate on this image is a
-          #    GREEN THAT INSPECTED NOTHING. Measured 2026-08-12 on the first
-          #    build that ever succeeded:
-          #
-          #      trivy image --input pangea-operator-noruby.tar.gz
-          #        -> results: 0   packages: 0   Metadata OS: None
-          #
-          #    Zero findings because zero targets. A distroless-static image
-          #    whose only content is a static Rust binary has no OS package DB
-          #    and no embedded dependency metadata, so trivy emits JSON with no
-          #    `Results` key and EXITS 0. `scanBeforePush: true` +
-          #    `scanFailOnSeverity: UNKNOWN` passes it. The image's own
-          #    .trivyignore.noruby being empty does not help: an empty
-          #    suppression surface over an empty measurement is still empty.
-          #
-          #    substrate diagnosed this on 2026-07-30 and PROVED it at the byte
-          #    level (cargo-audit-data.nix's header): stripping `.dep-v0` from
-          #    nixpkgs' ripgrep flips trivy from a real `Type: rustbinary` row
-          #    to Results-absent + exit 0. It then built the fix and, until now,
-          #    NOTHING IN THE FLEET CONSUMED IT -- zero call sites repo-wide.
-          #    This is the first.
-          #
-          #    What it proves, stated so it is not rounded up: a CVE-database
-          #    verdict against the RESOLVED DEPENDENCY GRAPH, keyed to the
-          #    scanner DB at scan epoch. It is not a closure theorem -- that is
-          #    closureInfo + vulnix, which can never see a crate advisory
-          #    because the whole runtime closure is one derivation NVD has no
-          #    entry for. The two are complements.
-          auditData =
-            (import "${substrate}/lib/build/rust/cargo-audit-data.nix" { }).mkCargoAuditData imagePkgs
-              {
-                name = "pangea-operator-noruby";
-                lockFile = ./Cargo.lock;
-                rootCrate = "pangea-operator";
-              };
-          bin = imagePkgs.runCommand "pangea-operator-noruby-auditable" { } ''
-            mkdir -p $out/bin
-            cp ${rawBin}/bin/pangea-operator $out/bin/pangea-operator
-            chmod +w $out/bin/pangea-operator
-            ${(import "${substrate}/lib/build/rust/cargo-audit-data.nix" { }).injectCommand {
-              inherit auditData;
-              target = "$out/bin/pangea-operator";
-              objcopy = "${imagePkgs.binutils}/bin/objcopy";
-            }}
-          '';
 
           hardened = import "${substrate}/lib/build/oci/hardened-base.nix" { pkgs = imagePkgs; };
           arch = if imageSystem == "aarch64-linux" then "arm64" else "amd64";
@@ -829,11 +977,17 @@
             health = 8080;
             metrics = 9090;
           };
-          rootFeatures = [
-            "default"
-            "embedded_ruby"
-            "executor_magma"
-          ];
+          # ── THE FIX THAT STOPS THIS IMAGE LYING ABOUT ITSELF ──────────────
+          # This was `rootFeatures = ["default" "embedded_ruby" "executor_magma"]`
+          # and it did NOTHING: rootFeatures is not honored on the
+          # lockfile-builder path, so the image shipped the Ruby-FREE binary
+          # while bundling ruby/git/opentofu/packer around it. substrate now
+          # THROWS on that argument rather than dropping it, and offers
+          # `specFile` as the seam that actually reaches the compiler.
+          #
+          # Read from the catalog, so the image and the standalone binary cannot
+          # drift onto different specs — they are one decision.
+          specFile = operatorVariants.ruby.specFile;
           extraContents =
             pkgs:
             (with pkgs; [
@@ -960,187 +1114,6 @@
             tsunagu = _oldAttrs: { src = inputs.tsunagu; };
           };
         };
-
-      # ── THE RUBY-CARRYING BINARY — the artifact `embedded` actually needs ──
-      #
-      # Built from `Cargo.ruby.build-spec.json`, the variant spec generated with
-      # `embedded_ruby` ON. This is the ONLY mechanism that reaches the compiler:
-      # `mkCrate2nixDockerImage` takes a `rootFeatures` argument, and that
-      # argument is NOT honored on the lockfile-builder path — which is why the
-      # image tagged `embedded-ruby` was building the Ruby-FREE binary. A
-      # variant spec is how `Cargo.noruby.build-spec.json` already works, in the
-      # other direction; this is the same lever pulled the other way.
-      #
-      # ── glibc-DYNAMIC, deliberately, and not a shortcut ──
-      # Every other binary this repo ships is musl-static. This one cannot be:
-      # `embedded_ruby` dynamically links libruby.so through magnus/rb-sys, and
-      # a static-musl binary has no dynamic linker to resolve it through. That
-      # is the same reason `mkEmbeddedOperatorImage` builds against plain
-      # nixpkgs, and it is a genuine property of linking CRuby rather than a
-      # limitation we chose.
-      #
-      # x86_64-linux only for now. Registering it under every host system is
-      # what once made `nix flake check` attempt an unreachable cross-build
-      # (see the note on mkEmbeddedOperatorImage's per-system registration).
-      mkRubyOperatorBin =
-        buildSystem:
-        let
-          rubyPkgs = import nixpkgs {
-            system = buildSystem;
-            config.allowUnfree = true;
-          };
-          ruby = rubyPkgs.ruby_3_3;
-          libclang = rubyPkgs.llvmPackages.libclang.lib;
-          # rb-sys's bindgen needs libclang AND libc headers; magnus needs the
-          # same libruby rb-sys embedded, or the gem load fails at runtime with
-          # `incompatible libruby-<ver>.so`. Both facts are copied from
-          # mkEmbeddedOperatorImage rather than rediscovered.
-          rubyEnv = {
-            LIBCLANG_PATH = "${libclang}/lib";
-            RUBY = "${ruby}/bin/ruby";
-            # ── bindgen needs the libc INCLUDE PATH, not just the package ──
-            # Measured on rio 2026-09-06: with `stdenv.cc.libc.dev` merely in
-            # nativeBuildInputs, rb-sys still failed with
-            #   ruby/defines.h:16:10: fatal error: 'stdio.h' file not found
-            # because bindgen runs its own libclang and does not inherit the
-            # nix wrapper's include flags. This is the SAME fact the ruby-eval
-            # devShell already carries as `bindgenLibcArgs` — lifted here
-            # rather than written a third time. Linux-only: darwin's
-            # stdenv.cc.libc has no `.dev` split, and bindgen finds the Xcode
-            # SDK headers through clang's own sysroot detection there.
-            BINDGEN_EXTRA_CLANG_ARGS = lib.optionalString rubyPkgs.stdenv.isLinux (
-              "-I${rubyPkgs.stdenv.cc.libc.dev}/include"
-            );
-          };
-          lockfileBuilder = import "${substrate}/lib/build/rust/lockfile-builder.nix" {
-            pkgs = rubyPkgs;
-          };
-          plemeCrateOverrides =
-            (import "${substrate}/lib/build/rust/pleme-crate-overrides.nix")
-              rubyPkgs.stdenv.hostPlatform.rust.rustcTarget;
-          project = lockfileBuilder.mkProject {
-            src = self;
-            name = "pangea-operator-ruby";
-            specFile = "Cargo.ruby.build-spec.json";
-            defaultCrateOverrides =
-              rubyPkgs.defaultCrateOverrides
-              // plemeCrateOverrides
-              // {
-                tsunagu = _oldAttrs: { src = inputs.tsunagu; };
-                rb-sys =
-                  oldAttrs:
-                  rubyEnv
-                  // {
-                    nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ]) ++ [
-                      libclang
-                      rubyPkgs.pkg-config
-                      ruby
-                      rubyPkgs.stdenv.cc.libc.dev
-                    ];
-                    buildInputs = (oldAttrs.buildInputs or [ ]) ++ [ ruby ];
-                  };
-                magnus = oldAttrs: {
-                  buildInputs = (oldAttrs.buildInputs or [ ]) ++ [ ruby ];
-                };
-                pangea-ruby-eval =
-                  oldAttrs:
-                  rubyEnv
-                  // {
-                    nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ]) ++ [
-                      libclang
-                      rubyPkgs.pkg-config
-                      rubyPkgs.stdenv.cc.libc.dev
-                    ];
-                    buildInputs = (oldAttrs.buildInputs or [ ]) ++ [ ruby ];
-                  };
-                magma-protocol = oldAttrs: {
-                  nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ]) ++ [ rubyPkgs.protobuf ];
-                  PROTOC = "${rubyPkgs.protobuf}/bin/protoc";
-                };
-                pangea-operator = oldAttrs: {
-                  extraRustcOpts = (oldAttrs.extraRustcOpts or [ ]) ++ [
-                    "-Ccodegen-units=16"
-                    "-Copt-level=2"
-                    "-Clto=off"
-                  ];
-                };
-              };
-          };
-        in
-        rubyPkgs.runCommand "pangea-operator-ruby"
-          {
-            # LD_LIBRARY_PATH at ruby's lib dir makes libruby resolution
-            # invariant to RPATH drift across a nixpkgs bump — the same
-            # reasoning as the embedded image's extraEnv.
-            nativeBuildInputs = [ rubyPkgs.makeWrapper ];
-            passthru.rubyLib = "${ruby}/lib";
-          }
-          ''
-            mkdir -p $out/bin
-            makeWrapper ${project.workspaceMembers."pangea-operator".build}/bin/pangea-operator \
-              $out/bin/pangea-operator \
-              --prefix LD_LIBRARY_PATH : ${ruby}/lib
-          '';
-
-      # ── THE DECLARATION IS VERIFIED AGAINST THE ARTIFACT ──────────────────
-      #
-      # A package named `-ruby` is a claim. `--capabilities` is the measurement:
-      # the binary reports the cargo features it was actually compiled with, so
-      # this check fails if the variant spec ever stops delivering the feature.
-      #
-      # This is the gate that would have caught the original defect. The
-      # `embedded-ruby` image carried ruby, git, opentofu and packer around a
-      # binary that could not call any of them, and every layer was green
-      # because nothing ever asked the binary what it could do.
-      #
-      # Anti-vacuity: it asserts `embedded_ruby == true` AND that `embedded`
-      # appears in the advertised backend list. A check that only ran the
-      # binary and looked for exit 0 would pass against the Ruby-free build.
-      mkRubyCapabilityCheck =
-        buildSystem:
-        let
-          checkPkgs = import nixpkgs { system = buildSystem; };
-          rubyBin = mkRubyOperatorBin buildSystem;
-        in
-        checkPkgs.runCommand "pangea-operator-ruby-carries-ruby"
-          {
-            nativeBuildInputs = [ checkPkgs.jq ];
-          }
-          ''
-            caps=$(${rubyBin}/bin/pangea-operator --capabilities)
-            echo "$caps"
-
-            if [ "$(echo "$caps" | jq -r .embedded_ruby)" != "true" ]; then
-              echo "FAIL: pangea-operator-ruby reports embedded_ruby=false." >&2
-              echo "The variant spec Cargo.ruby.build-spec.json did not deliver" >&2
-              echo "the feature. Regenerate it with the feature ON:" >&2
-              # One line, no continuation: a trailing backslash inside a
-              # double-quoted shell string is an ESCAPED QUOTE, not a line
-              # continuation, so the string never closes and bash dies with
-              # "unexpected EOF while looking for matching quote" — measured on
-              # rio 2026-09-06, after the binary had already built and printed
-              # its capabilities correctly.
-              echo "  gen build . --features graphql,grpc,executor_magma,embedded_ruby --out Cargo.ruby.build-spec.json" >&2
-              exit 1
-            fi
-
-            if ! echo "$caps" | jq -e '.backends | index("embedded")' >/dev/null; then
-              echo "FAIL: embedded_ruby is set but 'embedded' is absent from the" >&2
-              echo "advertised backends — capabilities.rs derives one from the" >&2
-              echo "other, so this means that derivation broke." >&2
-              exit 1
-            fi
-
-            echo "OK: this artifact genuinely carries Ruby and serves 'embedded'."
-            touch $out
-          '';
-
-      # One image per NATIVE system only — registering both arches under
-      # every host system (the pre-2026-07-17 shape) is what made `nix
-      # flake check` attempt an unreachable aarch64-linux cross-build from
-      # an x86_64-linux runner (ci.yml's own fix comment names this as the
-      # real fix still owed to flake.nix). amd64 lands under
-      # packages.x86_64-linux only; arm64 under packages.aarch64-linux only.
       embeddedOperatorExtension =
         system:
         let
@@ -1153,12 +1126,30 @@
             "dockerImage-operator-noruby-${arch}" = mkNoRubyOperatorImage system;
           }
           // lib.optionalAttrs (system == "x86_64-linux") {
-            # The Ruby-carrying binary. x86_64-linux only — see mkRubyOperatorBin.
-            "pangea-operator-ruby" = mkRubyOperatorBin system;
+            # Both variants' binaries, derived from the catalog. x86_64-linux
+            # only: registering a variant under every host system is what once
+            # made `nix flake check` attempt an unreachable cross-build.
+            "pangea-operator-ruby" = mkOperatorBin {
+              variant = "ruby";
+              buildSystem = system;
+            };
+            "pangea-operator-noruby-bin" = mkOperatorBin {
+              variant = "noruby";
+              buildSystem = system;
+            };
           };
-          checks.${system} = lib.optionalAttrs (system == "x86_64-linux") {
-            "pangea-operator-ruby-carries-ruby" = mkRubyCapabilityCheck system;
-          };
+          # EVERY variant is checked against its own catalog row. Derived with
+          # mapAttrs over the catalog, so a new variant brings its own check
+          # rather than needing one remembered.
+          checks.${system} = lib.optionalAttrs (system == "x86_64-linux") (
+            lib.mapAttrs' (
+              variantName: _v:
+              lib.nameValuePair "pangea-operator-${variantName}-capabilities-match" (mkVariantCapabilityCheck {
+                variant = variantName;
+                buildSystem = system;
+              })
+            ) operatorVariants
+          );
         };
 
       withEmbedded = lib.foldl' (acc: sys: lib.recursiveUpdate acc (embeddedOperatorExtension sys)) base [
