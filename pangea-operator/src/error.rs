@@ -85,6 +85,18 @@ pub enum Error {
     #[error("Configuration error: {0}")]
     Config(String),
 
+    /// The BUILD and the RUNTIME configuration disagree about a capability —
+    /// e.g. `PANGEA_COMPILER_BACKEND=embedded` against a binary compiled
+    /// without `embedded_ruby`.
+    ///
+    /// A distinct variant rather than a `Config(String)`, because this is not
+    /// a malformed value: every half is individually valid and only the PAIR
+    /// is wrong. Keeping it typed means a caller can match on it (and the
+    /// `IncompatibleBuild` payload names both halves) instead of matching on
+    /// the shape of a formatted string.
+    #[error(transparent)]
+    IncompatibleBuild(#[from] crate::capabilities::IncompatibleBuild),
+
     /// `ComplianceSchedule.spec.schedule` failed to parse as a cron
     /// expression, or the parsed expression has no future occurrences.
     /// Surfaces as `status.phase = Error` with this message rather than

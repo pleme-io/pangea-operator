@@ -1,5 +1,6 @@
 //! Pangea Operator - Kubernetes operator for Pangea infrastructure management.
 
+use pangea_operator::capabilities::Capabilities;
 use pangea_operator::drain::DrainOutcome;
 use pangea_operator::{
     controller::{
@@ -113,6 +114,25 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // What can this binary actually DO? Printed before tracing so the JSON
+    // stays clean for redirection, exactly like the two generator flags above.
+    //
+    // This exists because the artifact's NAME is not evidence of its contents:
+    // the image tagged `embedded-ruby` shipped the Ruby-free binary for months
+    // (`rootFeatures` is not honored on the lockfile-builder path, so the
+    // non-default feature never reached the compiler). Asking the binary is a
+    // measurement; reading the tag is an inference, and the inference was wrong.
+    //
+    //   pangea-operator --capabilities | jq .embedded_ruby
+    if env::args().any(|arg| arg == "--capabilities") {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&Capabilities::current())
+                .expect("Capabilities is a plain struct of bools and strings")
+        );
+        return Ok(());
+    }
+
     // Initialize tracing
     init_tracing()?;
 
@@ -138,6 +158,38 @@ async fn main() -> Result<()> {
     let resolved = pangea_operator::config::OperatorConfig::resolve();
     pangea_operator::config::OperatorConfig::log_provenance(resolved.provenance());
     let op_cfg = resolved.into_value();
+
+    // ── EARLY DETECTION: refuse an incompatible (build, run) pair ──────────
+    //
+    // Placed HERE deliberately: after config resolution (so we know what was
+    // asked for) and before `Client::try_default()` below (the first I/O). The
+    // process has connected to nothing, opened no pool, elected no leader and
+    // claimed no lease when it refuses, so the failure is a clean non-start
+    // rather than a half-initialized operator.
+    //
+    // This supersedes the `panic!` in the backend match ~50 lines down, which
+    // fired far later — after the k8s client, the metrics registry and the
+    // DB probe pool were already up. Same class caught, ~200 lines earlier,
+    // with an error that names both halves and the fix instead of a backtrace.
+    //
+    // The panic arm is KEPT as the unreachable backstop it now is: if a future
+    // edit moves or drops this call, that arm still refuses to fall back to a
+    // silently-different backend. Two guards for one class is deliberate here —
+    // the silent HTTP fallback this replaced is exactly how the operator once
+    // shipped serving a backend nobody selected.
+    if let Err(incompatible) = Capabilities::current().check(&op_cfg.compiler.backend) {
+        error!(
+            requested = %incompatible.requested.as_str(),
+            missing_feature = %incompatible.missing_feature,
+            available = %incompatible.available.join(","),
+            // The Display carries the actionable half — which of the two
+            // configurations to change. `return Err(..)` from main prints the
+            // DEBUG form, so without this line the operator sees a struct dump
+            // and none of the guidance.
+            "{incompatible}"
+        );
+        return Err(incompatible.into());
+    }
 
     let config = Config::from_operator(&op_cfg);
 

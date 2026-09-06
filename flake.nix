@@ -961,6 +961,162 @@
           };
         };
 
+      # ── THE RUBY-CARRYING BINARY — the artifact `embedded` actually needs ──
+      #
+      # Built from `Cargo.ruby.build-spec.json`, the variant spec generated with
+      # `embedded_ruby` ON. This is the ONLY mechanism that reaches the compiler:
+      # `mkCrate2nixDockerImage` takes a `rootFeatures` argument, and that
+      # argument is NOT honored on the lockfile-builder path — which is why the
+      # image tagged `embedded-ruby` was building the Ruby-FREE binary. A
+      # variant spec is how `Cargo.noruby.build-spec.json` already works, in the
+      # other direction; this is the same lever pulled the other way.
+      #
+      # ── glibc-DYNAMIC, deliberately, and not a shortcut ──
+      # Every other binary this repo ships is musl-static. This one cannot be:
+      # `embedded_ruby` dynamically links libruby.so through magnus/rb-sys, and
+      # a static-musl binary has no dynamic linker to resolve it through. That
+      # is the same reason `mkEmbeddedOperatorImage` builds against plain
+      # nixpkgs, and it is a genuine property of linking CRuby rather than a
+      # limitation we chose.
+      #
+      # x86_64-linux only for now. Registering it under every host system is
+      # what once made `nix flake check` attempt an unreachable cross-build
+      # (see the note on mkEmbeddedOperatorImage's per-system registration).
+      mkRubyOperatorBin =
+        buildSystem:
+        let
+          rubyPkgs = import nixpkgs {
+            system = buildSystem;
+            config.allowUnfree = true;
+          };
+          ruby = rubyPkgs.ruby_3_3;
+          libclang = rubyPkgs.llvmPackages.libclang.lib;
+          # rb-sys's bindgen needs libclang AND libc headers; magnus needs the
+          # same libruby rb-sys embedded, or the gem load fails at runtime with
+          # `incompatible libruby-<ver>.so`. Both facts are copied from
+          # mkEmbeddedOperatorImage rather than rediscovered.
+          rubyEnv = {
+            LIBCLANG_PATH = "${libclang}/lib";
+            RUBY = "${ruby}/bin/ruby";
+          };
+          lockfileBuilder = import "${substrate}/lib/build/rust/lockfile-builder.nix" {
+            pkgs = rubyPkgs;
+          };
+          plemeCrateOverrides =
+            (import "${substrate}/lib/build/rust/pleme-crate-overrides.nix")
+              rubyPkgs.stdenv.hostPlatform.rust.rustcTarget;
+          project = lockfileBuilder.mkProject {
+            src = self;
+            name = "pangea-operator-ruby";
+            specFile = "Cargo.ruby.build-spec.json";
+            defaultCrateOverrides =
+              rubyPkgs.defaultCrateOverrides
+              // plemeCrateOverrides
+              // {
+                tsunagu = _oldAttrs: { src = inputs.tsunagu; };
+                rb-sys =
+                  oldAttrs:
+                  rubyEnv
+                  // {
+                    nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ]) ++ [
+                      libclang
+                      rubyPkgs.pkg-config
+                      ruby
+                      rubyPkgs.stdenv.cc.libc.dev
+                    ];
+                    buildInputs = (oldAttrs.buildInputs or [ ]) ++ [ ruby ];
+                  };
+                magnus = oldAttrs: {
+                  buildInputs = (oldAttrs.buildInputs or [ ]) ++ [ ruby ];
+                };
+                pangea-ruby-eval =
+                  oldAttrs:
+                  rubyEnv
+                  // {
+                    nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ]) ++ [
+                      libclang
+                      rubyPkgs.pkg-config
+                      rubyPkgs.stdenv.cc.libc.dev
+                    ];
+                    buildInputs = (oldAttrs.buildInputs or [ ]) ++ [ ruby ];
+                  };
+                magma-protocol = oldAttrs: {
+                  nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ]) ++ [ rubyPkgs.protobuf ];
+                  PROTOC = "${rubyPkgs.protobuf}/bin/protoc";
+                };
+                pangea-operator = oldAttrs: {
+                  extraRustcOpts = (oldAttrs.extraRustcOpts or [ ]) ++ [
+                    "-Ccodegen-units=16"
+                    "-Copt-level=2"
+                    "-Clto=off"
+                  ];
+                };
+              };
+          };
+        in
+        rubyPkgs.runCommand "pangea-operator-ruby"
+          {
+            # LD_LIBRARY_PATH at ruby's lib dir makes libruby resolution
+            # invariant to RPATH drift across a nixpkgs bump — the same
+            # reasoning as the embedded image's extraEnv.
+            nativeBuildInputs = [ rubyPkgs.makeWrapper ];
+            passthru.rubyLib = "${ruby}/lib";
+          }
+          ''
+            mkdir -p $out/bin
+            makeWrapper ${project.workspaceMembers."pangea-operator".build}/bin/pangea-operator \
+              $out/bin/pangea-operator \
+              --prefix LD_LIBRARY_PATH : ${ruby}/lib
+          '';
+
+      # ── THE DECLARATION IS VERIFIED AGAINST THE ARTIFACT ──────────────────
+      #
+      # A package named `-ruby` is a claim. `--capabilities` is the measurement:
+      # the binary reports the cargo features it was actually compiled with, so
+      # this check fails if the variant spec ever stops delivering the feature.
+      #
+      # This is the gate that would have caught the original defect. The
+      # `embedded-ruby` image carried ruby, git, opentofu and packer around a
+      # binary that could not call any of them, and every layer was green
+      # because nothing ever asked the binary what it could do.
+      #
+      # Anti-vacuity: it asserts `embedded_ruby == true` AND that `embedded`
+      # appears in the advertised backend list. A check that only ran the
+      # binary and looked for exit 0 would pass against the Ruby-free build.
+      mkRubyCapabilityCheck =
+        buildSystem:
+        let
+          checkPkgs = import nixpkgs { system = buildSystem; };
+          rubyBin = mkRubyOperatorBin buildSystem;
+        in
+        checkPkgs.runCommand "pangea-operator-ruby-carries-ruby"
+          {
+            nativeBuildInputs = [ checkPkgs.jq ];
+          }
+          ''
+            caps=$(${rubyBin}/bin/pangea-operator --capabilities)
+            echo "$caps"
+
+            if [ "$(echo "$caps" | jq -r .embedded_ruby)" != "true" ]; then
+              echo "FAIL: pangea-operator-ruby reports embedded_ruby=false." >&2
+              echo "The variant spec Cargo.ruby.build-spec.json did not deliver" >&2
+              echo "the feature. Regenerate it with the feature ON:" >&2
+              echo "  gen build . --features graphql,grpc,executor_magma,embedded_ruby \" >&2
+              echo "    --out Cargo.ruby.build-spec.json" >&2
+              exit 1
+            fi
+
+            if ! echo "$caps" | jq -e '.backends | index("embedded")' >/dev/null; then
+              echo "FAIL: embedded_ruby is set but 'embedded' is absent from the" >&2
+              echo "advertised backends — capabilities.rs derives one from the" >&2
+              echo "other, so this means that derivation broke." >&2
+              exit 1
+            fi
+
+            echo "OK: this artifact genuinely carries Ruby and serves 'embedded'."
+            touch $out
+          '';
+
       # One image per NATIVE system only — registering both arches under
       # every host system (the pre-2026-07-17 shape) is what made `nix
       # flake check` attempt an unreachable aarch64-linux cross-build from
@@ -977,6 +1133,13 @@
             "dockerImage-operator-embedded-${arch}" = mkEmbeddedOperatorImage system;
             # Additive sibling — see mkNoRubyOperatorImage.
             "dockerImage-operator-noruby-${arch}" = mkNoRubyOperatorImage system;
+          }
+          // lib.optionalAttrs (system == "x86_64-linux") {
+            # The Ruby-carrying binary. x86_64-linux only — see mkRubyOperatorBin.
+            "pangea-operator-ruby" = mkRubyOperatorBin system;
+          };
+          checks.${system} = lib.optionalAttrs (system == "x86_64-linux") {
+            "pangea-operator-ruby-carries-ruby" = mkRubyCapabilityCheck system;
           };
         };
 

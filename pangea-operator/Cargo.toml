@@ -32,7 +32,12 @@ repository.workspace = true
 # features than the default set. But inverting alone is a live break, not an
 # improvement:
 #
-#   config.rs's prescribed default is `compiler.backend = "embedded"`, and
+#   [STALE as of 2026-08-25 — DEFAULT_COMPILER_BACKEND is now "lava"
+#   unconditionally, and config.rs carries the reasoning. Kept because the
+#   mechanism it describes is still exactly right, and because a comment that
+#   asserts a live break which no longer exists is worse than no comment: it
+#   argues against a flip that is now safe.]
+#   config.rs's prescribed default WAS `compiler.backend = "embedded"`, and
 #   main.rs deliberately PANICS on `embedded` when the feature is absent
 #   rather than silently falling back to the sunset HTTP sidecar. So flipping
 #   the default crashes the operator on startup for every deployment that has

@@ -39,6 +39,7 @@
 
 pub mod org_resolve;
 pub mod backend;
+pub mod capabilities;
 pub mod chart_values;
 // Typed shikumi progressive-discovery config surface (the operator's whole
 // env surface as one TieredConfig). See src/config.rs.
