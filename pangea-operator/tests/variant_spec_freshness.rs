@@ -129,3 +129,91 @@ fn every_variant_spec_is_tied_to_the_same_lock_as_the_canonical_one() {
         );
     }
 }
+
+/// A variant spec must still carry the feature it exists to deliver.
+///
+/// ── WHY FRESHNESS IS NOT ENOUGH ─────────────────────────────────────────────
+/// The test above proves each variant spec is tied to the current `Cargo.lock`.
+/// It says nothing about whether the spec still encodes the FEATURE DECISION
+/// that is the entire reason the variant exists — and a spec regenerated with
+/// the wrong `--features` line is perfectly fresh and completely wrong.
+///
+/// That is not hypothetical. `Cargo.ruby.build-spec.json` exists because
+/// `rootFeatures` is not honored on the lockfile-builder path, so the variant
+/// spec is the ONLY lever that reaches the compiler. Regenerating it with the
+/// default feature set would silently produce a second copy of the Ruby-free
+/// build under a name promising Ruby — which is precisely the defect the whole
+/// variant mechanism was introduced to fix (the `embedded-ruby` image shipped
+/// the Ruby-free binary for months on exactly this shape).
+///
+/// ── COST ──
+/// Pure JSON reading, no build, no toolchain. The alternative — building the
+/// artifact and asking it via `--capabilities` — is the stronger check and it
+/// exists too (flake `checks.x86_64-linux.pangea-operator-ruby-carries-ruby`),
+/// but it costs a full libruby-linking compile. This one runs in `cargo test`
+/// on every push, so the fast gate catches the common mistake and the slow gate
+/// catches everything.
+#[test]
+fn each_variant_spec_carries_the_feature_that_names_it() {
+    let root = repo_root();
+
+    // variant name -> (feature that MUST be present, feature that MUST NOT be)
+    // Both directions matter: a `noruby` spec that grew embedded_ruby is just
+    // as wrong as a `ruby` spec that lost it, and only checking presence would
+    // miss the first entirely.
+    let expectations: &[(&str, Option<&str>, Option<&str>)] = &[
+        ("Cargo.ruby.build-spec.json", Some("embedded_ruby"), None),
+        ("Cargo.noruby.build-spec.json", None, Some("embedded_ruby")),
+    ];
+
+    let mut checked = 0usize;
+    for (file, must_have, must_not_have) in expectations {
+        let path = root.join(file);
+        if !path.exists() {
+            // A variant that does not exist yet is not a failure — but it is
+            // also not evidence, so it must not be counted as one.
+            continue;
+        }
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+
+        // The spec records resolved features per crate. Rather than walk its
+        // shape (which `gen` owns and may restructure), ask the flat question
+        // the feature decision actually reduces to: does the string appear as a
+        // JSON feature value anywhere in this spec?
+        let quoted = |f: &str| format!("\"{f}\"");
+        let present = raw.contains(&quoted(must_have.or(*must_not_have).unwrap()));
+
+        if let Some(feature) = must_have {
+            assert!(
+                present,
+                "{file} must carry the `{feature}` feature — that is the only \
+                 reason this variant exists, and `rootFeatures` cannot supply it \
+                 at build time. Regenerate with the feature ON:\n  \
+                 gen build . --features graphql,grpc,executor_magma,{feature} \
+                 --out {file}"
+            );
+        }
+        if let Some(feature) = must_not_have {
+            assert!(
+                !present,
+                "{file} carries `{feature}`, which defeats the variant's purpose \
+                 — this spec exists to produce a build that CANNOT receive Ruby. \
+                 Regenerate with the default feature set."
+            );
+        }
+        checked += 1;
+    }
+
+    // ── ANTI-VACUITY ──
+    // Every expectation above is skipped when its file is absent, so a rename
+    // or a deleted spec would leave this test asserting nothing while passing.
+    // The count is the denominator, carried inside the assertion rather than
+    // trusted: at least the Ruby-free variant is tracked in git and must exist.
+    assert!(
+        checked > 0,
+        "no variant spec was checked — every expected file is missing. Either \
+         the specs were renamed (update `expectations`) or they were deleted \
+         (which would silently disable the variant mechanism entirely)."
+    );
+}
