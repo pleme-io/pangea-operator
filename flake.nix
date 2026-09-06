@@ -130,7 +130,15 @@
     };
   };
 
-  outputs = inputs @ { self, nixpkgs, nixpkgs-security, substrate, ruby-nix, ... }:
+  outputs =
+    inputs@{
+      self,
+      nixpkgs,
+      nixpkgs-security,
+      substrate,
+      ruby-nix,
+      ...
+    }:
     let
       lib = nixpkgs.lib;
 
@@ -180,11 +188,10 @@
       # error naming exactly which gem is missing from Gemfile, so the
       # bug cannot recur silently.
       gemfileSrc = builtins.readFile ./pangea-compiler/Gemfile;
-      gemfileMissing = lib.filter
-        (gemName:
-          !(lib.hasInfix "gem '${gemName}'," gemfileSrc
-            || lib.hasInfix "gem \"${gemName}\"," gemfileSrc))
-        (builtins.attrNames pangeaInputs);
+      gemfileMissing = lib.filter (
+        gemName:
+        !(lib.hasInfix "gem '${gemName}'," gemfileSrc || lib.hasInfix "gem \"${gemName}\"," gemfileSrc)
+      ) (builtins.attrNames pangeaInputs);
       pangeaInputsChecked = lib.warnIf (gemfileMissing != [ ]) ''
         [pangea-operator] flake.nix declared pangea-* inputs NOT
         referenced in pangea-compiler/Gemfile:
@@ -220,111 +227,122 @@
       # glibc nixpkgs instead of the musl-static target every other
       # binary in this repo already uses. No libruby, no glibc, no shell,
       # no package manager: CA roots and /etc/passwd only.
-  # ── magma provider-mirror, SHARED BY BOTH IMAGES ────────────────────
-  # Hoisted 2026-08-27. It used to live inside mkEmbeddedOperatorImage,
-  # so the Ruby-free image shipped ZERO providers -- and once the
-  # `embedded-amd64` TAG was repointed at the noruby variant (2837c43),
-  # every magma apply and every import prepass on camelot failed with
-  #   locate provider "aws": no .terraform/providers dir ... run `init` first
-  # 6 of 21 templates were Failed on exactly this. The block comment below
-  # already stated the design; only one of the two images honoured it.
-  #
-  # The provider LIST must exist once. Two copies would diverge silently,
-  # and the failure mode is a hard ProviderUnavailable months later.
-  magmaProviderMirrorFor = imageSystem:
-    let
-      imagePkgs = import nixpkgs { system = imageSystem; config.allowUnfree = true; };
-      securityPkgs = import nixpkgs-security { system = imageSystem; config.allowUnfree = true; };
-      hardenedSecurityPkgs = (import "${substrate}/lib/security/mk-hardened-pkgs.nix" { inherit lib; }) {
-        pkgs = securityPkgs;
-        mitigations = [ "terraform-provider-aws-grpc-bump" ];
-      };
+      # ── magma provider-mirror, SHARED BY BOTH IMAGES ────────────────────
+      # Hoisted 2026-08-27. It used to live inside mkEmbeddedOperatorImage,
+      # so the Ruby-free image shipped ZERO providers -- and once the
+      # `embedded-amd64` TAG was repointed at the noruby variant (2837c43),
+      # every magma apply and every import prepass on camelot failed with
+      #   locate provider "aws": no .terraform/providers dir ... run `init` first
+      # 6 of 21 templates were Failed on exactly this. The block comment below
+      # already stated the design; only one of the two images honoured it.
+      #
+      # The provider LIST must exist once. Two copies would diverge silently,
+      # and the failure mode is a hard ProviderUnavailable months later.
+      magmaProviderMirrorFor =
+        imageSystem:
+        let
+          imagePkgs = import nixpkgs {
+            system = imageSystem;
+            config.allowUnfree = true;
+          };
+          securityPkgs = import nixpkgs-security {
+            system = imageSystem;
+            config.allowUnfree = true;
+          };
+          hardenedSecurityPkgs = (import "${substrate}/lib/security/mk-hardened-pkgs.nix" { inherit lib; }) {
+            pkgs = securityPkgs;
+            mitigations = [ "terraform-provider-aws-grpc-bump" ];
+          };
 
-              # ── magma provider-mirror (★★ MAGMA-NATIVE / StageProvider) ──
-              # Bake provider plugin binaries into the IMAGE (durable, roll-
-              # surviving) instead of relying on the ephemeral
-              # `.terraform/providers` emptyDir, which is wiped on pod roll.
-              # MAGMA_PROVIDER_DIR below points magma's locate_provider at
-              # this closure. Provider set = union of `required_providers`
-              # across the rio Pangea architectures; extend when a new one
-              # appears (surfaces as a ProviderUnavailable anomaly otherwise).
-              mirror = imagePkgs.buildEnv {
-                name = "magma-provider-mirror";
-                paths = (with securityPkgs.terraform-providers; [
-                  # cloudflare/github/kubernetes: no newer upstream release
-                  # picks up grpc >= 1.82.1 (Round 3, .trivyignore) — stay on
-                  # the nixpkgs-security escape hatch, unchanged since Round 1.
-                  #
-                  # kubernetes ALSO carries the GHSA-jpcw-4wr7-c3vq /
-                  # GHSA-r277-6w6q-xmqw kin-openapi findings (.trivyignore
-                  # Round 4 + Round 5) — a vendored go.mod patch bumping
-                  # kin-openapi 0.111.0 -> 0.144.0 was attempted
-                  # (substrate's terraform-provider-kubernetes-kin-openapi-bump
-                  # cve-mitigation, left in the catalog unwired as a record) and
-                  # CONFIRMED, via a real CI build, to break the provider's own
-                  # source: kin-openapi 0.144.0 changed `Schema.Type` from a
-                  # plain string to `*openapi3.Types` and diverged the
-                  # openapi2/openapi3 SchemaRef split, and
-                  # terraform-provider-kubernetes's manifest/openapi/*.go still
-                  # uses the pre-change shape (confirmed compile failure, CI run
-                  # 30178928379: "cannot use ... as *openapi3.Types value").
-                  # This is the empirical version of Round 4's own risk
-                  # assessment ("a bare go.mod replace is materially riskier
-                  # than a version bump") — not a lower-risk case, a confirmed
-                  # one.
-                  cloudflare_cloudflare
-                  integrations_github
-                  hashicorp_kubernetes
-                ]) ++ [
-                  # aws: Round 3's real fix — sourced via hardenedSecurityPkgs
-                  # (the cve-mitigations catalog), not the bare escape hatch.
-                  hardenedSecurityPkgs.terraform-providers.hashicorp_aws
-                ] ++ (with imagePkgs.terraform-providers; [
-                  # ── hashicorp_random REMOVED 2026-08-27: SERVED NATIVELY ──
-                  # magma now implements the `random` provider in-process
-                  # (magma-provider-random), registered in this operator at
-                  # executor/magma.rs's `native_provider_router`. The Go
-                  # binary is no longer reachable and is no longer shipped.
-                  #
-                  # It was the largest single CVE contributor in this image:
-                  # 36 of 190 findings, ahead of aws (11), for a provider
-                  # that makes NO network calls at all. 13 of the 49 waived
-                  # ids were unique to it — every one a golang.org/x/crypto
-                  # CVE with NO fixed release upstream, i.e. exactly the
-                  # group that could never have been patched. They leave with
-                  # the binary rather than being waived forever.
-                  #
-                  # ★ ORDERING IS LOAD-BEARING: the registration must exist
-                  # BEFORE the binary is dropped, or every random_* resource
-                  # fails with `locate provider` at reconcile — the outage
-                  # this whole line of work started from. Enforced by
-                  # `the_router_serves_random_natively` in executor/magma.rs.
-                  #
-                  # To revert: restore `hashicorp_random` here AND remove the
-                  # `with_native("random", ...)` registration. Either alone is
-                  # merely wasteful; dropping the registration while the
-                  # binary is absent is the outage.
-                  #
-                  # No newer upstream release exists for these two on ANY
-                  # channel (verified 2026-07-19, re-verified 2026-07-24) —
-                  # stays on the primary pin. See .trivyignore for the
-                  # residual CVE citations.
-                  porkbun
-                  cyrilgdn_rabbitmq
-                  # datadog: needed for the absorbed Datadog estate
-                  # (pangea-datadog-absorb). On the primary pin deliberately —
-                  # it carries no CVE escape-hatch requirement, so it does not
-                  # belong in the securityPkgs block above. There is no
-                  # `tofu init` fallback (PANGEA_FORBID_TOFU + magma's
-                  # locate_provider reads MAGMA_PROVIDER_DIR), so an absent
-                  # provider here is a hard ProviderUnavailable, not a slow path.
-                  datadog_datadog
-                ]);
-              };
+          # ── magma provider-mirror (★★ MAGMA-NATIVE / StageProvider) ──
+          # Bake provider plugin binaries into the IMAGE (durable, roll-
+          # surviving) instead of relying on the ephemeral
+          # `.terraform/providers` emptyDir, which is wiped on pod roll.
+          # MAGMA_PROVIDER_DIR below points magma's locate_provider at
+          # this closure. Provider set = union of `required_providers`
+          # across the rio Pangea architectures; extend when a new one
+          # appears (surfaces as a ProviderUnavailable anomaly otherwise).
+          mirror = imagePkgs.buildEnv {
+            name = "magma-provider-mirror";
+            paths =
+              (with securityPkgs.terraform-providers; [
+                # cloudflare/github/kubernetes: no newer upstream release
+                # picks up grpc >= 1.82.1 (Round 3, .trivyignore) — stay on
+                # the nixpkgs-security escape hatch, unchanged since Round 1.
+                #
+                # kubernetes ALSO carries the GHSA-jpcw-4wr7-c3vq /
+                # GHSA-r277-6w6q-xmqw kin-openapi findings (.trivyignore
+                # Round 4 + Round 5) — a vendored go.mod patch bumping
+                # kin-openapi 0.111.0 -> 0.144.0 was attempted
+                # (substrate's terraform-provider-kubernetes-kin-openapi-bump
+                # cve-mitigation, left in the catalog unwired as a record) and
+                # CONFIRMED, via a real CI build, to break the provider's own
+                # source: kin-openapi 0.144.0 changed `Schema.Type` from a
+                # plain string to `*openapi3.Types` and diverged the
+                # openapi2/openapi3 SchemaRef split, and
+                # terraform-provider-kubernetes's manifest/openapi/*.go still
+                # uses the pre-change shape (confirmed compile failure, CI run
+                # 30178928379: "cannot use ... as *openapi3.Types value").
+                # This is the empirical version of Round 4's own risk
+                # assessment ("a bare go.mod replace is materially riskier
+                # than a version bump") — not a lower-risk case, a confirmed
+                # one.
+                cloudflare_cloudflare
+                integrations_github
+                hashicorp_kubernetes
+              ])
+              ++ [
+                # aws: Round 3's real fix — sourced via hardenedSecurityPkgs
+                # (the cve-mitigations catalog), not the bare escape hatch.
+                hardenedSecurityPkgs.terraform-providers.hashicorp_aws
+              ]
+              ++ (with imagePkgs.terraform-providers; [
+                # ── hashicorp_random REMOVED 2026-08-27: SERVED NATIVELY ──
+                # magma now implements the `random` provider in-process
+                # (magma-provider-random), registered in this operator at
+                # executor/magma.rs's `native_provider_router`. The Go
+                # binary is no longer reachable and is no longer shipped.
+                #
+                # It was the largest single CVE contributor in this image:
+                # 36 of 190 findings, ahead of aws (11), for a provider
+                # that makes NO network calls at all. 13 of the 49 waived
+                # ids were unique to it — every one a golang.org/x/crypto
+                # CVE with NO fixed release upstream, i.e. exactly the
+                # group that could never have been patched. They leave with
+                # the binary rather than being waived forever.
+                #
+                # ★ ORDERING IS LOAD-BEARING: the registration must exist
+                # BEFORE the binary is dropped, or every random_* resource
+                # fails with `locate provider` at reconcile — the outage
+                # this whole line of work started from. Enforced by
+                # `the_router_serves_random_natively` in executor/magma.rs.
+                #
+                # To revert: restore `hashicorp_random` here AND remove the
+                # `with_native("random", ...)` registration. Either alone is
+                # merely wasteful; dropping the registration while the
+                # binary is absent is the outage.
+                #
+                # No newer upstream release exists for these two on ANY
+                # channel (verified 2026-07-19, re-verified 2026-07-24) —
+                # stays on the primary pin. See .trivyignore for the
+                # residual CVE citations.
+                porkbun
+                cyrilgdn_rabbitmq
+                # datadog: needed for the absorbed Datadog estate
+                # (pangea-datadog-absorb). On the primary pin deliberately —
+                # it carries no CVE escape-hatch requirement, so it does not
+                # belong in the securityPkgs block above. There is no
+                # `tofu init` fallback (PANGEA_FORBID_TOFU + magma's
+                # locate_provider reads MAGMA_PROVIDER_DIR), so an absent
+                # provider here is a hard ProviderUnavailable, not a slow path.
+                datadog_datadog
+              ]);
+          };
         in
-    mirror;
+        mirror;
 
-      mkNoRubyOperatorImage = imageSystem:
+      mkNoRubyOperatorImage =
+        imageSystem:
         let
           # THE OVERLAY IS THE FIX, and substrate already wrote it.
           #
@@ -390,19 +408,16 @@
           # much less travelled claim than "this binary carries its own libc".
           # Idiom-first, and the idiom already exists.
           staticPkgs = imagePkgs.pkgsStatic;
-          lockfileBuilder =
-            import "${substrate}/lib/build/rust/lockfile-builder.nix" {
-              pkgs = staticPkgs;
-            };
-          plemeCrateOverrides =
-            (import "${substrate}/lib/build/rust/pleme-crate-overrides.nix")
-              staticPkgs.stdenv.hostPlatform.rust.rustcTarget;
+          lockfileBuilder = import "${substrate}/lib/build/rust/lockfile-builder.nix" { pkgs = staticPkgs; };
+          plemeCrateOverrides = (import "${substrate}/lib/build/rust/pleme-crate-overrides.nix") staticPkgs.stdenv.hostPlatform.rust.rustcTarget;
           project = lockfileBuilder.mkProject {
             src = self;
             name = "pangea-operator-noruby";
             specFile = "Cargo.noruby.build-spec.json";
             defaultCrateOverrides =
-              staticPkgs.defaultCrateOverrides // plemeCrateOverrides // {
+              staticPkgs.defaultCrateOverrides
+              // plemeCrateOverrides
+              // {
                 # Same stopgap as the `base` build above — routes tsunagu
                 # through the flake-input fetcher rather than a sandboxed
                 # fetchgit with no credentials.
@@ -429,8 +444,7 @@
                 # hoist the shared crate overrides to one binding both
                 # mkEmbeddedOperatorImage and mkNoRubyOperatorImage read.`
                 magma-protocol = oldAttrs: {
-                  nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ])
-                    ++ [ imagePkgs.protobuf ];
+                  nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ]) ++ [ imagePkgs.protobuf ];
                   PROTOC = "${imagePkgs.protobuf}/bin/protoc";
                 };
               };
@@ -466,8 +480,8 @@
           #    because the whole runtime closure is one derivation NVD has no
           #    entry for. The two are complements.
           auditData =
-            (import "${substrate}/lib/build/rust/cargo-audit-data.nix" { })
-              .mkCargoAuditData imagePkgs {
+            (import "${substrate}/lib/build/rust/cargo-audit-data.nix" { }).mkCargoAuditData imagePkgs
+              {
                 name = "pangea-operator-noruby";
                 lockFile = ./Cargo.lock;
                 rootCrate = "pangea-operator";
@@ -483,10 +497,7 @@
             }}
           '';
 
-          hardened =
-            import "${substrate}/lib/build/oci/hardened-base.nix" {
-              pkgs = imagePkgs;
-            };
+          hardened = import "${substrate}/lib/build/oci/hardened-base.nix" { pkgs = imagePkgs; };
           arch = if imageSystem == "aarch64-linux" then "arm64" else "amd64";
         in
         hardened.mkPackageImage {
@@ -601,9 +612,9 @@
             '')
           ];
           exposedPorts = {
-            "8080/tcp" = {};
-            "8081/tcp" = {};
-            "9090/tcp" = {};
+            "8080/tcp" = { };
+            "8081/tcp" = { };
+            "9090/tcp" = { };
           };
         };
 
@@ -627,9 +638,13 @@
       # a static-musl binary has no dynamic linker to resolve it through.
       # `LD_LIBRARY_PATH=${ruby}/lib` below only makes sense — and only
       # works — against this dynamic-glibc build.
-      mkEmbeddedOperatorImage = imageSystem:
+      mkEmbeddedOperatorImage =
+        imageSystem:
         let
-          imagePkgs = import nixpkgs { system = imageSystem; config.allowUnfree = true; };
+          imagePkgs = import nixpkgs {
+            system = imageSystem;
+            config.allowUnfree = true;
+          };
           # The nixpkgs-security escape hatch (see the flake input comment)
           # — sources ONLY opentofu/packer/4 of the 7 mirrored terraform
           # providers, each verified 2026-07-19 against the real upstream
@@ -652,7 +667,10 @@
           # nixpkgs-security's terraform-providers set) — a channel bump
           # cannot help these three; see .trivyignore for the residual CVE
           # citations.
-          securityPkgs = import nixpkgs-security { system = imageSystem; config.allowUnfree = true; };
+          securityPkgs = import nixpkgs-security {
+            system = imageSystem;
+            config.allowUnfree = true;
+          };
           # ── Round 3 (2026-07-24, GHSA-hrxh-6v49-42gf grpc-go < 1.82.1) ──
           # The fix line moved past every one of Round 1's bumps (all sat
           # at v1.79.3). Bumping nixpkgs-security's OWN pin again (checked
@@ -715,21 +733,23 @@
           # adding a flake input + push-app surface this repo doesn't use
           # (release.yml pushes via the shared image-push.yml reusable,
           # not a `nix run .#push-image-*` app).
-          gemWs = (import "${substrate}/lib/build/ruby/workspace.nix" {
-            inherit nixpkgs;
-            system = imageSystem;
-            inherit ruby-nix substrate;
-            forge = null;
-          }) {
-            name = "pangea-compiler";
-            self = ./pangea-compiler;
-            pathGems = pangeaInputsChecked;
-            gemsetPath = "/gemset.nix";
-            # ABI-coherence: the gem-workspace interpreter MUST match the
-            # libruby rb-sys/magnus embeds (imagePkgs.ruby_3_3), or magnus
-            # gem load fails with 'incompatible libruby-3.4.9.so'.
-            ruby = imagePkgs.ruby_3_3;
-          };
+          gemWs =
+            (import "${substrate}/lib/build/ruby/workspace.nix" {
+              inherit nixpkgs;
+              system = imageSystem;
+              inherit ruby-nix substrate;
+              forge = null;
+            })
+              {
+                name = "pangea-compiler";
+                self = ./pangea-compiler;
+                pathGems = pangeaInputsChecked;
+                gemsetPath = "/gemset.nix";
+                # ABI-coherence: the gem-workspace interpreter MUST match the
+                # libruby rb-sys/magnus embeds (imagePkgs.ruby_3_3), or magnus
+                # gem load fails with 'incompatible libruby-3.4.9.so'.
+                ruby = imagePkgs.ruby_3_3;
+              };
 
           # Compute the full $LOAD_PATH at Nix-build time by reading every
           # installed gemspec's `full_require_paths` directly via
@@ -749,9 +769,7 @@
           bundlerLibPaths = imagePkgs.lib.removeSuffix "\n" (builtins.readFile fullRubylibFile);
           fullRubylib = "${gemWs.rubylib}:${bundlerLibPaths}";
 
-          builders = import "${substrate}/lib/build/rust/crate2nix-builders.nix" {
-            pkgs = imagePkgs;
-          };
+          builders = import "${substrate}/lib/build/rust/crate2nix-builders.nix" { pkgs = imagePkgs; };
           arch = if imageSystem == "aarch64-linux" then "arm64" else "amd64";
 
           # Anchor every path-gem SOURCE into the image closure. RUBYLIB
@@ -764,7 +782,11 @@
           # closure.
           pathGemAnchor = imagePkgs.runCommand "pangea-pathgem-anchor" { } ''
             mkdir -p $out
-            printf '%s\n' ${lib.concatMapStringsSep " " (src: lib.escapeShellArg "${src}") (builtins.attrValues pangeaInputsChecked)} > $out/path-gem-refs
+            printf '%s\n' ${
+              lib.concatMapStringsSep " " (src: lib.escapeShellArg "${src}") (
+                builtins.attrValues pangeaInputsChecked
+              )
+            } > $out/path-gem-refs
           '';
           magmaProviderMirror = magmaProviderMirrorFor imageSystem;
         in
@@ -791,39 +813,46 @@
             health = 8080;
             metrics = 9090;
           };
-          rootFeatures = [ "default" "embedded_ruby" "executor_magma" ];
-          extraContents = pkgs: (with pkgs; [
-            ruby_3_3
-            git
-            busybox
-            gemWs.env
-          ]) ++ [
-            # opentofu / packer sourced from nixpkgs-security (see the
-            # flake input + securityPkgs comments above), not the primary
-            # `pkgs`/`nixpkgs` — both had CVE-flagged embedded Go deps at
-            # the primary pin's versions (opentofu: grpc-go CVE-2026-33186;
-            # packer: stale containerd/go-git/mongo-driver/x-pkgs), fixed
-            # by the newer upstream releases nixpkgs-security packages.
-            # opentofu stays on the BARE escape hatch — its newest tag
-            # (v1.12.5) doesn't bump grpc past v1.79.3 either (Round 3,
-            # .trivyignore); no fix to layer on yet.
-            securityPkgs.opentofu # TofuExecutor: unconditionally
-            # constructed at controller startup, resolved whenever
-            # spec.executor / PANGEA_EXECUTOR names tofu (PANGEA_FORBID_TOFU
-            # is the explicit kill-switch) — a real, tested,
-            # config-selectable fallback per MAGMA-NATIVE EXECUTION, not
-            # dead weight.
-            # packer: Round 3's real fix — 1.16.0 via hardenedSecurityPkgs
-            # (the cve-mitigations catalog; the bare nixpkgs-security escape
-            # hatch still only has 1.15.4).
-            hardenedSecurityPkgs.packer # PackerExecutor: unconditionally
-            # built, driven by the unconditionally-spawned
-            # PackerBuildController + sibling AmiTestController reconciling
-            # AMI builds — a separate, equally real concern from the
-            # tofu/magma question.
-            pathGemAnchor
-            magmaProviderMirror
+          rootFeatures = [
+            "default"
+            "embedded_ruby"
+            "executor_magma"
           ];
+          extraContents =
+            pkgs:
+            (with pkgs; [
+              ruby_3_3
+              git
+              busybox
+              gemWs.env
+            ])
+            ++ [
+              # opentofu / packer sourced from nixpkgs-security (see the
+              # flake input + securityPkgs comments above), not the primary
+              # `pkgs`/`nixpkgs` — both had CVE-flagged embedded Go deps at
+              # the primary pin's versions (opentofu: grpc-go CVE-2026-33186;
+              # packer: stale containerd/go-git/mongo-driver/x-pkgs), fixed
+              # by the newer upstream releases nixpkgs-security packages.
+              # opentofu stays on the BARE escape hatch — its newest tag
+              # (v1.12.5) doesn't bump grpc past v1.79.3 either (Round 3,
+              # .trivyignore); no fix to layer on yet.
+              securityPkgs.opentofu # TofuExecutor: unconditionally
+              # constructed at controller startup, resolved whenever
+              # spec.executor / PANGEA_EXECUTOR names tofu (PANGEA_FORBID_TOFU
+              # is the explicit kill-switch) — a real, tested,
+              # config-selectable fallback per MAGMA-NATIVE EXECUTION, not
+              # dead weight.
+              # packer: Round 3's real fix — 1.16.0 via hardenedSecurityPkgs
+              # (the cve-mitigations catalog; the bare nixpkgs-security escape
+              # hatch still only has 1.15.4).
+              hardenedSecurityPkgs.packer # PackerExecutor: unconditionally
+              # built, driven by the unconditionally-spawned
+              # PackerBuildController + sibling AmiTestController reconciling
+              # AMI builds — a separate, equally real concern from the
+              # tofu/magma question.
+              pathGemAnchor
+              magmaProviderMirror
+            ];
           extraEnv = [
             "RUST_LOG=info,pangea_operator=debug"
             "LOG_FORMAT=json"
@@ -847,22 +876,43 @@
             # provider's nixpkgs tree with no flattening needed.
             "MAGMA_PROVIDER_DIR=${magmaProviderMirror}"
           ];
-          buildInputs = [ ruby imagePkgs.openssl imagePkgs.postgresql imagePkgs.sqlite ];
-          nativeBuildInputs = [ libclang imagePkgs.pkg-config imagePkgs.cmake imagePkgs.perl ];
+          buildInputs = [
+            ruby
+            imagePkgs.openssl
+            imagePkgs.postgresql
+            imagePkgs.sqlite
+          ];
+          nativeBuildInputs = [
+            libclang
+            imagePkgs.pkg-config
+            imagePkgs.cmake
+            imagePkgs.perl
+          ];
           crateOverrides = {
-            rb-sys = oldAttrs: rubySharedEnv // {
-              nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ])
-                ++ [ libclang imagePkgs.pkg-config ruby imagePkgs.stdenv.cc.libc.dev ];
-              buildInputs = (oldAttrs.buildInputs or [ ]) ++ [ ruby ];
-            };
-            magnus = oldAttrs: {
-              buildInputs = (oldAttrs.buildInputs or [ ]) ++ [ ruby ];
-            };
-            pangea-ruby-eval = oldAttrs: rubySharedEnv // {
-              nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ])
-                ++ [ libclang imagePkgs.pkg-config imagePkgs.stdenv.cc.libc.dev ];
-              buildInputs = (oldAttrs.buildInputs or [ ]) ++ [ ruby ];
-            };
+            rb-sys =
+              oldAttrs:
+              rubySharedEnv
+              // {
+                nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ]) ++ [
+                  libclang
+                  imagePkgs.pkg-config
+                  ruby
+                  imagePkgs.stdenv.cc.libc.dev
+                ];
+                buildInputs = (oldAttrs.buildInputs or [ ]) ++ [ ruby ];
+              };
+            magnus = oldAttrs: { buildInputs = (oldAttrs.buildInputs or [ ]) ++ [ ruby ]; };
+            pangea-ruby-eval =
+              oldAttrs:
+              rubySharedEnv
+              // {
+                nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ]) ++ [
+                  libclang
+                  imagePkgs.pkg-config
+                  imagePkgs.stdenv.cc.libc.dev
+                ];
+                buildInputs = (oldAttrs.buildInputs or [ ]) ++ [ ruby ];
+              };
             # magma-protocol (tfplugin5/6 bindings, pulled in transitively
             # by executor_magma via magma-plugin) runs tonic-build in its
             # build.rs. That build.rs falls back to protoc-bin-vendored
@@ -871,8 +921,7 @@
             # Provide nix protobuf + set PROTOC so build.rs takes the
             # env-PROTOC branch.
             magma-protocol = oldAttrs: {
-              nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ])
-                ++ [ imagePkgs.protobuf ];
+              nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ]) ++ [ imagePkgs.protobuf ];
               PROTOC = "${imagePkgs.protobuf}/bin/protoc";
             };
             # The operator crate is enormous (embedded Ruby + magma + kube
@@ -880,8 +929,11 @@
             # codegen + disable LTO so peak compile memory stays low
             # enough to survive small CI builders.
             pangea-operator = oldAttrs: {
-              extraRustcOpts = (oldAttrs.extraRustcOpts or [ ])
-                ++ [ "-Ccodegen-units=16" "-Copt-level=2" "-Clto=off" ];
+              extraRustcOpts = (oldAttrs.extraRustcOpts or [ ]) ++ [
+                "-Ccodegen-units=16"
+                "-Copt-level=2"
+                "-Clto=off"
+              ];
             };
             # See the `tsunagu` flake-input comment near the top of this
             # file — this is the load-bearing half for the embedded
@@ -899,7 +951,8 @@
       # an x86_64-linux runner (ci.yml's own fix comment names this as the
       # real fix still owed to flake.nix). amd64 lands under
       # packages.x86_64-linux only; arm64 under packages.aarch64-linux only.
-      embeddedOperatorExtension = system:
+      embeddedOperatorExtension =
+        system:
         let
           arch = if system == "aarch64-linux" then "arm64" else "amd64";
         in
@@ -911,10 +964,10 @@
           };
         };
 
-      withEmbedded = lib.foldl'
-        (acc: sys: lib.recursiveUpdate acc (embeddedOperatorExtension sys))
-        base
-        [ "x86_64-linux" "aarch64-linux" ];
+      withEmbedded = lib.foldl' (acc: sys: lib.recursiveUpdate acc (embeddedOperatorExtension sys)) base [
+        "x86_64-linux"
+        "aarch64-linux"
+      ];
 
       # ruby-eval devShell — the SECOND thing ef86809's gen-pattern
       # conversion silently dropped (confirmed live: ci.yml's `cargo-test`
@@ -924,9 +977,13 @@
       # CRuby + libclang (rb-sys's bindgen needs both) on every supported
       # system, matching the embedded image's ruby (3.3) so gem C-extensions
       # built against 3.3 load under the same libruby ABI at test time.
-      rubyEvalShell = system:
+      rubyEvalShell =
+        system:
         let
-          pkgs = import nixpkgs { inherit system; config.allowUnfree = true; };
+          pkgs = import nixpkgs {
+            inherit system;
+            config.allowUnfree = true;
+          };
           ruby = pkgs.ruby_3_3;
           clang = pkgs.llvmPackages.libclang;
           # `stdenv.cc.libc.dev` is a glibc-only output — darwin's stdenv.cc.libc
@@ -935,8 +992,7 @@
           # 'dev' missing"). bindgen finds Xcode SDK headers on its own via
           # clang's built-in sysroot detection on darwin, so the explicit
           # libc include only applies — and is only needed — on Linux.
-          bindgenLibcArgs = pkgs.lib.optionalString pkgs.stdenv.isLinux
-            "-I${pkgs.stdenv.cc.libc.dev}/include ";
+          bindgenLibcArgs = pkgs.lib.optionalString pkgs.stdenv.isLinux "-I${pkgs.stdenv.cc.libc.dev}/include ";
         in
         {
           devShells.${system}.ruby-eval = pkgs.mkShell {
@@ -963,10 +1019,82 @@
           };
         };
 
-      extended = lib.foldl'
-        (acc: sys: lib.recursiveUpdate acc (rubyEvalShell sys))
-        withEmbedded
-        [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
+      extended = lib.foldl' (acc: sys: lib.recursiveUpdate acc (rubyEvalShell sys)) withEmbedded [
+        "x86_64-linux"
+        "aarch64-linux"
+        "x86_64-darwin"
+        "aarch64-darwin"
+      ];
+
+      # ── The module trio ──────────────────────────────────────────────────
+      #
+      # ★ WHY A CONTROLLER GETS A SYSTEM DAEMON AND NOT ONLY AN IMAGE.
+      #
+      # pangea-operator is a Kubernetes controller, and the reflex is that a
+      # controller is a Deployment. It does not have to be: kube-rs reads a
+      # kubeconfig, so the operator runs perfectly well OUT of the cluster it
+      # reconciles — and on a node that hosts its own apiserver, out-of-cluster
+      # is the simpler and stricter arrangement.
+      #
+      # This was not a preference. It was forced, and the forcing is worth
+      # recording because it is the shape of the whole problem:
+      #
+      #   * engenho REFUSES its own ServiceAccount token (401, measured
+      #     2026-09-01), so in-cluster config cannot work and a kubeconfig is
+      #     mandatory either way.
+      #   * The IaC state backend belongs on the host — it must outlive the
+      #     cluster it serves, because deleting engenho's data_dir mints a NEW
+      #     cluster (the per-cluster PKI seed makes that literal).
+      #   * Reaching a host postgres from a pod means either a TCP listener with
+      #     a password, or a hostPath mount of the socket — and engenho
+      #     deliberately refuses hostPath ("HostPathUnsupported", host-fs risk),
+      #     which is the right call and which I am not going to override.
+      #
+      # As a system daemon all three dissolve at once: the operator connects
+      # over the unix socket under PEER AUTH, so there is no password to store,
+      # rotate or leak — the kernel vouches for the uid. That is a credential
+      # REMOVED from the system, not one protected.
+      #
+      # `withUserDaemon = false` deliberately: this reconciles cloud
+      # infrastructure and holds the state ledger. It is not a per-user agent,
+      # and offering a user-scoped arm would invite exactly the second
+      # uncoordinated writer the operator's own single-writer design forbids.
+      #
+      # `daemonSubcommand = ""` because the binary IS the daemon — bare
+      # invocation runs the controller. Its few argv flags
+      # (--generate-crds / --generate-values-schema / --migrate) are one-shot
+      # operator verbs, not modes of the service.
+      #
+      # Configuration is ENVIRONMENT, not a config file: the operator reads 31
+      # env vars and no shikumi surface exists yet, so `withShikumiConfig` is
+      # false rather than emitting a file nothing reads. Adopting shikumi is
+      # worth doing and is a change to the OPERATOR, not to this wrapper.
+      # `pending-shikumi: pangea-operator reads 31 env vars directly`
+      trio = (import "${substrate}/lib/module-trio.nix" { inherit (nixpkgs) lib; }).mkModuleTrio {
+        name = "pangea-operator";
+        description = "pangea-operator — the declare/observe IaC control plane";
+        binaryName = "pangea-operator";
+        packageAttr = "pangea-operator";
+        hmNamespace = "services";
+        withSystemDaemon = true;
+        withUserDaemon = false;
+        daemonSubcommand = "";
+        withShikumiConfig = false;
+      };
+
+      # `packageAttr` names an attribute the module resolves from `pkgs`, so the
+      # overlay is what makes the trio's default reachable. Without it a
+      # consumer must set `services.pangea-operator.package` by hand, which is
+      # the kind of required-override that turns a default into a trap.
+      withTrio = lib.recursiveUpdate extended {
+        overlays.default = _final: _prev: { };
+        nixosModules.default = trio.nixosModule;
+        nixosModules.pangea-operator = trio.nixosModule;
+        darwinModules.default = trio.darwinModule;
+        darwinModules.pangea-operator = trio.darwinModule;
+        homeManagerModules.default = trio.homeManagerModule;
+        homeManagerModules.pangea-operator = trio.homeManagerModule;
+      };
     in
-    extended;
+    withTrio;
 }
