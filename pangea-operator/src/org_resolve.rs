@@ -93,6 +93,68 @@ fn b(v: bool) -> String {
     if v { "true".to_string() } else { "false".to_string() }
 }
 
+/// A branch-protection posture, as declared by `org.yaml`'s `branch_protection`.
+///
+/// ── THE AUTHORITY IS RUBY, AND THAT IS STATED ON PURPOSE ─────────────────
+/// These values mirror `Pangea::Architectures::OpenSourceRepo::PROFILES`
+/// (`pangea-architectures/lib/pangea/architectures/open_source_repo.rb:39`).
+/// That gem is where the policy is decided; this is a projection of it, and
+/// `presets_match_the_ruby_source` is what keeps the projection honest.
+///
+/// Modelled as a TABLE rather than a boolean because the presets differ in
+/// fields a boolean cannot carry — the previous `strict = (bp != "none")` gave
+/// `pilot` repos `standard`'s posture with nothing to notice it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BranchProtectionPreset {
+    pub required_reviews: u8,
+    pub dismiss_stale_reviews: bool,
+    pub require_signed_commits: bool,
+    pub require_linear_history: bool,
+    pub enforce_admins: bool,
+}
+
+impl BranchProtectionPreset {
+    pub const PILOT: Self = Self {
+        required_reviews: 0,
+        dismiss_stale_reviews: false,
+        require_signed_commits: false,
+        require_linear_history: false,
+        enforce_admins: false,
+    };
+    pub const STANDARD: Self = Self {
+        required_reviews: 1,
+        dismiss_stale_reviews: true,
+        require_signed_commits: false,
+        require_linear_history: false,
+        enforce_admins: false,
+    };
+    pub const HARDENED: Self = Self {
+        required_reviews: 2,
+        dismiss_stale_reviews: true,
+        require_signed_commits: true,
+        require_linear_history: true,
+        enforce_admins: true,
+    };
+
+    /// `None` means no protection — which includes `"none"` AND an unknown
+    /// name.
+    ///
+    /// An unknown preset resolving to "unprotected" is deliberate and is the
+    /// safe direction for a RESOLVER: it under-claims protection the plan will
+    /// then propose adding, rather than asserting a posture nobody defined.
+    /// The loud alternative belongs at catalogue-validation time, where the
+    /// typo can be reported against the row that contains it.
+    #[must_use]
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "pilot" => Some(Self::PILOT),
+            "standard" => Some(Self::STANDARD),
+            "hardened" => Some(Self::HARDENED),
+            _ => None,
+        }
+    }
+}
+
 /// Project one catalogue row plus its live observation into a record.
 ///
 /// `live` is `None` when the repo does not exist on GitHub.
@@ -118,9 +180,38 @@ pub fn record_for(row: &OrgRepoRow, live: Option<&LiveRepo>) -> RepoRecord {
 
     r.insert("repo_standard_labels".into(), b(row.standard_labels.unwrap_or(true)));
 
-    r.insert("repo_has_branch_protection".into(), b(protected));
-    r.insert("repo_bp_strict".into(), b(protected));
-    r.insert("repo_bp_enforce_admins".into(), b(false));
+    // ── BRANCH-PROTECTION PRESETS ARE A TABLE, NOT A BOOLEAN ─────────────
+    // This previously read `bp_strict = protected` and
+    // `bp_enforce_admins = false`, which collapses every preset into one bit.
+    // Measured against the live catalogue 2026-09-06: 5 of 1005 repos carry a
+    // preset — `standard` (cse-lint, tear, shigoto) and `pilot`
+    // (tatara-rust-ast, shiken) — and the two differ in exactly the fields the
+    // boolean erased. `pilot` means required_reviews 0 / dismiss_stale false;
+    // `standard` means 1 / true. Rendering both as "strict" silently gives two
+    // repos a protection posture nobody declared.
+    //
+    // This is the divergence `pangea-architectures/bin/lava-resolve-org`
+    // predicted in its header — "a Rust resolver would reimplement them and
+    // diverge silently" — and it was right. The fix is not to abandon the Rust
+    // resolver but to stop paraphrasing the policy: the table below mirrors
+    // `Pangea::Architectures::OpenSourceRepo::PROFILES`
+    // (lib/pangea/architectures/open_source_repo.rb:39), and
+    // `presets_match_the_ruby_source` pins the values so a drift is a red test
+    // rather than a quiet re-posture of somebody's repo.
+    let preset = BranchProtectionPreset::parse(&bp);
+    r.insert("repo_has_branch_protection".into(), b(preset.is_some()));
+    r.insert(
+        "repo_bp_strict".into(),
+        b(preset.is_some_and(|p| p.dismiss_stale_reviews)),
+    );
+    r.insert(
+        "repo_bp_enforce_admins".into(),
+        b(preset.is_some_and(|p| p.enforce_admins)),
+    );
+    r.insert(
+        "repo_bp_required_reviews".into(),
+        preset.map_or_else(|| "0".to_string(), |p| p.required_reviews.to_string()),
+    );
 
     // The CI shim is not modelled in org.yaml, so it is OFF and its three
     // companion fields are empty. They are still emitted: the architecture
@@ -239,6 +330,76 @@ pub async fn resolve(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The preset table must match the Ruby gem, which owns the policy.
+    ///
+    /// ── WHY A LITERAL TEST AND NOT A PARSER ──
+    /// Reading `open_source_repo.rb` at test time would tie this suite to a
+    /// sibling repo's checkout path and turn a missing clone into a green run.
+    /// Pinning the values here makes a drift a RED test that names the field,
+    /// and the doc comment names the file to reconcile against.
+    ///
+    /// If this fails, do not "fix" it by editing the numbers to match — read
+    /// the gem, decide which side is right, and change the one that is wrong.
+    #[test]
+    fn presets_match_the_ruby_source() {
+        // PROFILES[:pilot] — open_source_repo.rb:40
+        assert_eq!(BranchProtectionPreset::PILOT.required_reviews, 0);
+        assert!(!BranchProtectionPreset::PILOT.dismiss_stale_reviews);
+        assert!(!BranchProtectionPreset::PILOT.enforce_admins);
+
+        // PROFILES[:standard] — open_source_repo.rb:47
+        assert_eq!(BranchProtectionPreset::STANDARD.required_reviews, 1);
+        assert!(BranchProtectionPreset::STANDARD.dismiss_stale_reviews);
+        assert!(!BranchProtectionPreset::STANDARD.enforce_admins);
+
+        // PROFILES[:hardened]
+        assert_eq!(BranchProtectionPreset::HARDENED.required_reviews, 2);
+        assert!(BranchProtectionPreset::HARDENED.require_signed_commits);
+        assert!(BranchProtectionPreset::HARDENED.require_linear_history);
+    }
+
+    /// The regression this table exists to prevent.
+    ///
+    /// `bp_strict` used to be `(branch_protection != "none")`, which rendered
+    /// `pilot` and `standard` identically. Measured on the live catalogue:
+    /// tatara-rust-ast and shiken are `pilot`; cse-lint, tear and shigoto are
+    /// `standard`. Under the old code all five got the same posture.
+    #[test]
+    fn pilot_and_standard_are_not_the_same_posture() {
+        let row = |bp: &str| OrgRepoRow {
+            name: "r".into(),
+            branch_protection: Some(bp.to_string()),
+            ..Default::default()
+        };
+        let pilot = record_for(&row("pilot"), None);
+        let standard = record_for(&row("standard"), None);
+
+        assert_eq!(pilot["repo_has_branch_protection"], "true");
+        assert_eq!(standard["repo_has_branch_protection"], "true");
+
+        // The field the boolean erased.
+        assert_eq!(pilot["repo_bp_strict"], "false");
+        assert_eq!(standard["repo_bp_strict"], "true");
+        assert_eq!(pilot["repo_bp_required_reviews"], "0");
+        assert_eq!(standard["repo_bp_required_reviews"], "1");
+
+        // ANTI-VACUITY: the two records must actually differ. An assertion
+        // sweep that passed while both sides were equal is how the original
+        // defect survived.
+        assert_ne!(pilot, standard);
+    }
+
+    #[test]
+    fn none_and_unknown_are_unprotected() {
+        assert_eq!(BranchProtectionPreset::parse("none"), None);
+        assert_eq!(BranchProtectionPreset::parse("typo"), None);
+        assert_eq!(BranchProtectionPreset::parse(""), None);
+        assert_eq!(
+            BranchProtectionPreset::parse("standard"),
+            Some(BranchProtectionPreset::STANDARD)
+        );
+    }
 
     fn row(name: &str) -> OrgRepoRow {
         OrgRepoRow { name: name.into(), ..Default::default() }

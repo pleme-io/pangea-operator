@@ -133,6 +133,30 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // ── RESOLVE: the half lava deliberately cannot do ────────────────────
+    //
+    // `github-org-repos.tlisp` states the split in its own header: RESOLVE
+    // (read org.yaml, call the GitHub API, decide adopt-vs-create and learn
+    // live visibility) and RENDER (turn each resolved row into resources).
+    // lava is a pure evaluator with no I/O — deliberately, because an
+    // architecture that can reach the network produces output depending on
+    // WHEN it was rendered, which is the opposite of what a plan is for.
+    //
+    // So resolution belongs to "the caller, which already holds a credential
+    // and already does API work". This is that caller. The records printed
+    // here are exactly the record fields the architecture reads — verified
+    // 2026-09-06: all 12 fields it consumes are among the 18 emitted.
+    //
+    //   pangea-operator --resolve-org --owner pleme-io --catalogue org.yaml
+    //     > variables.json
+    //
+    // Output is the `repos` value for an InfrastructureTemplate's
+    // `spec.variables`, so the boundary between this and the architecture is a
+    // committed artifact rather than a live call at plan time.
+    if env::args().any(|arg| arg == "--resolve-org") {
+        return run_resolve_org().await;
+    }
+
     // Initialize tracing
     init_tracing()?;
 
@@ -926,5 +950,69 @@ async fn run_migrate() -> Result<()> {
         .await?;
 
     info!("--migrate: schema ensured successfully");
+    Ok(())
+}
+
+
+/// One-shot org resolution — see the `--resolve-org` flag in `main`.
+///
+/// Reads the catalogue YAML, resolves each row against the live GitHub API, and
+/// prints the record list as JSON on stdout.
+///
+/// ── CREDENTIAL ──
+/// `GITHUB_TOKEN` if present, anonymous otherwise. Anonymous is a legitimate
+/// mode, not a degraded one: repository existence and visibility are public
+/// facts for public repos, and `look_up` maps 404 to `Ok(None)` (absent) while
+/// 403 stays an error — so a rate-limited anonymous run FAILS rather than
+/// reporting every repo as absent. That distinction is the whole reason this
+/// can be trusted without a credential.
+async fn run_resolve_org() -> Result<()> {
+    let args: Vec<String> = env::args().collect();
+    let value_of = |flag: &str| -> Option<String> {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+    };
+
+    let owner = value_of("--owner").unwrap_or_else(|| "pleme-io".to_string());
+    let catalogue_path = value_of("--catalogue").ok_or_else(|| {
+        pangea_operator::Error::Config(
+            "--resolve-org needs --catalogue <path to org.yaml>".to_string(),
+        )
+    })?;
+
+    let raw = std::fs::read_to_string(&catalogue_path)
+        .map_err(|e| pangea_operator::Error::Config(format!("reading {catalogue_path}: {e}")))?;
+    let catalogue: pangea_operator::org_resolve::OrgCatalogue = serde_yaml::from_str(&raw)
+        .map_err(|e| pangea_operator::Error::Config(format!("parsing {catalogue_path}: {e}")))?;
+
+    // `only` narrows the run to named repos — a subset is a legitimate plan
+    // rather than a partial one, which is why resolve() takes it explicitly.
+    let only: Option<Vec<String>> = value_of("--only")
+        .map(|s| s.split(',').map(|p| p.trim().to_string()).collect());
+
+    let token = env::var("GITHUB_TOKEN").ok();
+    let records = pangea_operator::org_resolve::resolve(
+        &catalogue,
+        &owner,
+        token.as_deref(),
+        only.as_deref(),
+    )
+    .await
+    .map_err(pangea_operator::Error::Config)?;
+
+    info!(
+        owner = %owner,
+        catalogue = %catalogue_path,
+        resolved = records.len(),
+        authenticated = token.is_some(),
+        "org resolution complete"
+    );
+
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&records).map_err(pangea_operator::Error::Serialization)?
+    );
     Ok(())
 }
