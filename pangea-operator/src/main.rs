@@ -299,12 +299,33 @@ async fn main() -> Result<()> {
     // Isolation is the point, not throughput.
     let mut probe_pool: Option<Arc<tokio::sync::RwLock<sqlx::PgPool>>> = None;
 
-    let state = match env::var("PGPASSWORD").ok().filter(|p| !p.is_empty()) {
-        None => {
-            info!("no PGPASSWORD; magma state backend not wired, magma falls back to tofu");
-            state
-        }
-        Some(pg_password) => {
+    // ── ★ PGPASSWORD IS A CREDENTIAL, NOT A FEATURE GATE ────────────────
+    // This used to be `match env::var("PGPASSWORD") { None => …falls back to
+    // tofu… }`, which conflated "has a password" with "can connect". Those are
+    // not the same thing, and the difference is not academic: a postgres
+    // reached over a unix socket under PEER authentication needs no password at
+    // all — the kernel vouches for the uid — so the MOST secure configuration
+    // was the one that silently disabled magma.
+    //
+    // Measured on plo 2026-09-06, where the operator runs as a system daemon
+    // against a peer-authenticated socket exactly as its node config intends:
+    //
+    //   INFO no PGPASSWORD; magma state backend not wired, magma falls back to
+    //        tofu
+    //
+    // with PANGEA_EXECUTOR=magma and PANGEA_FORBID_TOFU=true both set. The
+    // forbid gate could not catch it either: `resolve_and_check` reads
+    // `cfg!(feature = "executor_magma")`, a BUILD feature that was of course
+    // present, so it passed and a tofu executor was constructed one call later.
+    // The node advertised MAGMA-NATIVE and served tofu.
+    //
+    // So: always attempt the connection, and attach a password only when one
+    // exists. A genuine connection failure still falls back to tofu, loudly and
+    // with the error — which is a real diagnosis rather than an inferred one.
+    let pg_password = env::var("PGPASSWORD").ok().filter(|p| !p.is_empty());
+
+    let state = {
+        {
             // Non-secret coordinates come from the typed config; PGPASSWORD
             // stays a direct env read (a secret, deliberately absent from the
             // serialized config surface).
@@ -313,18 +334,27 @@ async fn main() -> Result<()> {
             let pg_user = op_cfg.database.user.clone();
             let pg_database = op_cfg.database.database.clone();
 
-            let connect_options = sqlx::postgres::PgConnectOptions::new()
+            let mut connect_options = sqlx::postgres::PgConnectOptions::new()
                 .host(&pg_host)
                 .port(pg_port)
                 .username(&pg_user)
-                .password(&pg_password)
                 .database(&pg_database);
+            // Absent password = peer/trust auth over the socket. sqlx omits the
+            // password field entirely rather than sending an empty one, which is
+            // what lets a peer-authenticated connection succeed.
+            if let Some(pw) = pg_password.as_deref() {
+                connect_options = connect_options.password(pw);
+            }
 
             info!(
                 pg_host = %pg_host,
                 pg_port,
                 pg_user = %pg_user,
                 pg_database = %pg_database,
+                // Whether a password was supplied, never the password. An
+                // operator reading this needs to know WHICH auth path was
+                // taken when diagnosing a refusal.
+                password_supplied = pg_password.is_some(),
                 "Wiring Postgres pool for magma state backend"
             );
 
