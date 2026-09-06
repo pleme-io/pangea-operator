@@ -174,10 +174,10 @@ pub fn record_for(row: &OrgRepoRow, live: Option<&LiveRepo>) -> RepoRecord {
     let archived = row.archived.unwrap_or(false);
 
     let mut r = RepoRecord::new();
-    r.insert("repo_name".into(), row.name.clone());
-    r.insert("repo_description".into(), row.description.clone().unwrap_or_default());
-    r.insert("repo_visibility".into(), declared_visibility.clone());
-    r.insert("repo_archived".into(), b(archived));
+    r.insert("name".into(), row.name.clone());
+    r.insert("description".into(), row.description.clone().unwrap_or_default());
+    r.insert("visibility".into(), declared_visibility.clone());
+    r.insert("archived".into(), b(archived));
 
     // ── DEFAULTS COME FROM THE GEM, NOT FROM GUESSES ────────────────────
     // `Pangea::Architectures::Types::OpenSourceRepoConfig`
@@ -187,13 +187,13 @@ pub fn record_for(row: &OrgRepoRow, live: Option<&LiveRepo>) -> RepoRecord {
     //   standard_labels        Types::Bool.default(false)   :363  <- NOT true
     //   archived               Types::Bool.default(false)   :369
     //   default_branch         Types::String.default('main'):351
-    r.insert("repo_has_issues".into(), b(row.has_issues.unwrap_or(true)));
+    r.insert("has_issues".into(), b(row.has_issues.unwrap_or(true)));
     r.insert(
-        "repo_delete_branch_on_merge".into(),
+        "delete_branch_on_merge".into(),
         b(row.delete_branch_on_merge.unwrap_or(true)),
     );
-    r.insert("repo_standard_labels".into(), b(row.standard_labels.unwrap_or(false)));
-    r.insert("repo_default_branch".into(), "main".into());
+    r.insert("standard_labels".into(), b(row.standard_labels.unwrap_or(false)));
+    r.insert("default_branch".into(), "main".into());
 
     // ── actions_enabled IS TRI-STATE ────────────────────────────────────
     // `None` means "derive from visibility", not "default to on". Mirrors
@@ -204,7 +204,7 @@ pub fn record_for(row: &OrgRepoRow, live: Option<&LiveRepo>) -> RepoRecord {
     let actions_on = row
         .actions_enabled
         .unwrap_or(declared_visibility != "internal");
-    r.insert("repo_actions_enabled".into(), b(actions_on));
+    r.insert("actions_enabled".into(), b(actions_on));
 
     // ── AN ARCHIVED REPO IS NOT PROTECTED ───────────────────────────────
     // `protected = !cfg[:archived] && profile != :none` (lava-resolve-org:108).
@@ -215,7 +215,7 @@ pub fn record_for(row: &OrgRepoRow, live: Option<&LiveRepo>) -> RepoRecord {
     } else {
         BranchProtectionPreset::parse(&bp)
     };
-    r.insert("repo_has_branch_protection".into(), b(preset.is_some()));
+    r.insert("has_branch_protection".into(), b(preset.is_some()));
 
     // ── bp_strict IS A CONSTANT, AND THAT IS THE CORRECT VALUE ──────────
     // The Ruby never sets required_status_checks_strict, and `false` is its
@@ -223,9 +223,9 @@ pub fn record_for(row: &OrgRepoRow, live: Option<&LiveRepo>) -> RepoRecord {
     // preset, which invents a status-check policy the Ruby path never emits —
     // a divergence in the more dangerous direction, since it would have
     // shown up as a live plan diff against 5 real repos.
-    r.insert("repo_bp_strict".into(), b(false));
+    r.insert("bp_strict".into(), b(false));
     r.insert(
-        "repo_bp_enforce_admins".into(),
+        "bp_enforce_admins".into(),
         b(preset.is_some_and(|p| p.enforce_admins)),
     );
 
@@ -234,15 +234,15 @@ pub fn record_for(row: &OrgRepoRow, live: Option<&LiveRepo>) -> RepoRecord {
     // interpolates them unconditionally into the resource NAME
     // (`"{repo_name}__{repo_ci_shim_slug}"`), and an absent key would render
     // the placeholder text rather than fail.
-    r.insert("repo_has_ci_shim".into(), b(false));
-    r.insert("repo_ci_shim_slug".into(), String::new());
-    r.insert("repo_ci_shim_path".into(), String::new());
-    r.insert("repo_ci_shim_content".into(), String::new());
+    r.insert("has_ci_shim".into(), b(false));
+    r.insert("ci_shim_slug".into(), String::new());
+    r.insert("ci_shim_path".into(), String::new());
+    r.insert("ci_shim_content".into(), String::new());
 
     // ── the two resolved fields ──
-    r.insert("repo_exists_on_github".into(), b(live.is_some()));
+    r.insert("exists_on_github".into(), b(live.is_some()));
     r.insert(
-        "repo_live_visibility".into(),
+        "live_visibility".into(),
         live.map_or_else(|| declared_visibility, |l| l.visibility.clone()),
     );
     r
@@ -388,12 +388,12 @@ mod tests {
             ..Default::default()
         };
         let rec = record_for(&declared, None);
-        assert_eq!(rec["repo_has_issues"], "false", "98 rows declare this false");
+        assert_eq!(rec["has_issues"], "false", "98 rows declare this false");
         assert_eq!(
-            rec["repo_delete_branch_on_merge"], "false",
+            rec["delete_branch_on_merge"], "false",
             "847 rows declare this false — the largest divergence found"
         );
-        assert_eq!(rec["repo_standard_labels"], "true");
+        assert_eq!(rec["standard_labels"], "true");
     }
 
     /// Absent keys take the GEM's default, not a convenient one.
@@ -402,12 +402,12 @@ mod tests {
         let bare = OrgRepoRow { name: "r".into(), ..Default::default() };
         let rec = record_for(&bare, None);
         // types.rb:356 / :352 — both default true.
-        assert_eq!(rec["repo_has_issues"], "true");
-        assert_eq!(rec["repo_delete_branch_on_merge"], "true");
+        assert_eq!(rec["has_issues"], "true");
+        assert_eq!(rec["delete_branch_on_merge"], "true");
         // types.rb:363 — default FALSE. This was `unwrap_or(true)`.
-        assert_eq!(rec["repo_standard_labels"], "false");
+        assert_eq!(rec["standard_labels"], "false");
         // types.rb:351
-        assert_eq!(rec["repo_default_branch"], "main");
+        assert_eq!(rec["default_branch"], "main");
     }
 
     /// `actions_enabled` is tri-state: absent derives from visibility.
@@ -419,9 +419,9 @@ mod tests {
             ..Default::default()
         };
         // lava-resolve-org:113 — nil ? visibility != :internal : value
-        assert_eq!(record_for(&with_vis("public"), None)["repo_actions_enabled"], "true");
-        assert_eq!(record_for(&with_vis("private"), None)["repo_actions_enabled"], "true");
-        assert_eq!(record_for(&with_vis("internal"), None)["repo_actions_enabled"], "false");
+        assert_eq!(record_for(&with_vis("public"), None)["actions_enabled"], "true");
+        assert_eq!(record_for(&with_vis("private"), None)["actions_enabled"], "true");
+        assert_eq!(record_for(&with_vis("internal"), None)["actions_enabled"], "false");
 
         // An explicit value wins over the derivation, in both directions.
         let explicit = |on: bool| OrgRepoRow {
@@ -430,8 +430,8 @@ mod tests {
             actions_enabled: Some(on),
             ..Default::default()
         };
-        assert_eq!(record_for(&explicit(false), None)["repo_actions_enabled"], "false");
-        assert_eq!(record_for(&explicit(true), None)["repo_actions_enabled"], "true");
+        assert_eq!(record_for(&explicit(false), None)["actions_enabled"], "false");
+        assert_eq!(record_for(&explicit(true), None)["actions_enabled"], "true");
     }
 
     /// An archived repo is never protected, whatever preset it declares.
@@ -445,8 +445,8 @@ mod tests {
         };
         let rec = record_for(&archived_protected, None);
         // lava-resolve-org:108 — !cfg[:archived] && profile != :none
-        assert_eq!(rec["repo_has_branch_protection"], "false");
-        assert_eq!(rec["repo_bp_enforce_admins"], "false");
+        assert_eq!(rec["has_branch_protection"], "false");
+        assert_eq!(rec["bp_enforce_admins"], "false");
 
         // ANTI-VACUITY: the same preset on a LIVE repo must protect, or this
         // test would pass against a record_for that never protects anything.
@@ -458,8 +458,8 @@ mod tests {
             &OrgRepoRow { archived: Some(false), ..live_protected },
             None,
         );
-        assert_eq!(live["repo_has_branch_protection"], "true");
-        assert_eq!(live["repo_bp_enforce_admins"], "true");
+        assert_eq!(live["has_branch_protection"], "true");
+        assert_eq!(live["bp_enforce_admins"], "true");
     }
 
     /// `bp_strict` is a CONSTANT false — the Ruby's no-change value.
@@ -472,7 +472,7 @@ mod tests {
                 ..Default::default()
             };
             assert_eq!(
-                record_for(&row, None)["repo_bp_strict"], "false",
+                record_for(&row, None)["bp_strict"], "false",
                 "the Ruby never sets required_status_checks_strict; deriving it \
                  from the preset invents a status-check policy it never emits"
             );
@@ -498,10 +498,10 @@ mod tests {
     #[test]
     fn existence_drives_the_import_gate() {
         let absent = record_for(&row("openwrt-uci"), None);
-        assert_eq!(absent["repo_exists_on_github"], "false");
+        assert_eq!(absent["exists_on_github"], "false");
 
         let present = record_for(&row("openwrt-uci"), Some(&LiveRepo { visibility: "public".into() }));
-        assert_eq!(present["repo_exists_on_github"], "true");
+        assert_eq!(present["exists_on_github"], "true");
     }
 
     /// Live visibility must reflect the WORLD, not the catalogue — otherwise the
@@ -510,8 +510,8 @@ mod tests {
     fn live_visibility_comes_from_github_when_the_repo_exists() {
         let r = OrgRepoRow { visibility: Some("private".into()), ..row("drifted") };
         let rec = record_for(&r, Some(&LiveRepo { visibility: "public".into() }));
-        assert_eq!(rec["repo_visibility"], "private", "declared intent is preserved");
-        assert_eq!(rec["repo_live_visibility"], "public", "live state must not echo the catalogue");
+        assert_eq!(rec["visibility"], "private", "declared intent is preserved");
+        assert_eq!(rec["live_visibility"], "public", "live state must not echo the catalogue");
     }
 
     /// With no repo on GitHub there is no live state; falling back to the
@@ -519,24 +519,71 @@ mod tests {
     #[test]
     fn live_visibility_falls_back_to_declared_when_absent() {
         let r = OrgRepoRow { visibility: Some("public".into()), ..row("new") };
-        assert_eq!(record_for(&r, None)["repo_live_visibility"], "public");
+        assert_eq!(record_for(&r, None)["live_visibility"], "public");
     }
 
-    /// Every field the architecture interpolates must be present. A missing key
-    /// renders the placeholder text into a resource name rather than failing,
-    /// which is the worst outcome available.
+    /// Every field the architecture interpolates must be present — UNPREFIXED.
+    ///
+    /// ── THE CONTRACT, AND THE MISTAKE THIS TEST USED TO MAKE ──────────────
+    /// lava composes an interpolation name from the LOOP VARIABLE and the
+    /// record KEY. `github-org-repos.tlisp` iterates
+    /// `(for-each ((i repo) (enumerate repos)) ...)`, so the loop variable is
+    /// `repo` and the placeholder `{repo_name}` resolves against the record
+    /// key `name` — NOT `repo_name`.
+    ///
+    /// This test previously asserted the record contained `repo_name`,
+    /// `repo_description` and so on. It passed, and it was checking the wrong
+    /// thing: the resolver emitted keys already carrying the prefix, so lava
+    /// computed `repo_repo_name` and every interpolation failed with
+    ///
+    ///   lava evaluation failed: interpolation: unknown var `repo_name`
+    ///
+    /// measured on plo 2026-09-06, the first time the architecture was ever
+    /// evaluated with real records. The authority is
+    /// `lava-architectures/tests/empty_resolve_is_silent.rs`, whose
+    /// `set_records` call uses bare keys, and `bin/lava-resolve-org`'s FIELDS
+    /// list, which is bare too.
+    ///
+    /// Reading an interpolation name as if it were a key is an easy mistake to
+    /// make twice, so the list below is written as the PAIR — what lava writes,
+    /// and what the record must hold — rather than as one column.
     #[test]
-    fn every_field_the_architecture_interpolates_is_emitted() {
+    fn every_interpolated_placeholder_maps_to_an_unprefixed_key() {
         let rec = record_for(&row("x"), None);
-        for field in [
-            "repo_name", "repo_description", "repo_visibility", "repo_has_issues",
-            "repo_archived", "repo_delete_branch_on_merge", "repo_standard_labels",
-            "repo_actions_enabled", "repo_has_ci_shim", "repo_ci_shim_slug",
-            "repo_ci_shim_path", "repo_ci_shim_content", "repo_has_branch_protection",
-            "repo_default_branch", "repo_bp_strict", "repo_bp_enforce_admins",
-            "repo_exists_on_github", "repo_live_visibility",
+        // (placeholder the architecture writes, key the record must hold)
+        for (placeholder, key) in [
+            ("{repo_name}", "name"),
+            ("{repo_description}", "description"),
+            ("{repo_visibility}", "visibility"),
+            ("{repo_has_issues}", "has_issues"),
+            ("{repo_archived}", "archived"),
+            ("{repo_delete_branch_on_merge}", "delete_branch_on_merge"),
+            ("{repo_standard_labels}", "standard_labels"),
+            ("{repo_actions_enabled}", "actions_enabled"),
+            ("{repo_has_ci_shim}", "has_ci_shim"),
+            ("{repo_ci_shim_slug}", "ci_shim_slug"),
+            ("{repo_ci_shim_path}", "ci_shim_path"),
+            ("{repo_ci_shim_content}", "ci_shim_content"),
+            ("{repo_has_branch_protection}", "has_branch_protection"),
+            ("{repo_default_branch}", "default_branch"),
+            ("{repo_bp_strict}", "bp_strict"),
+            ("{repo_bp_enforce_admins}", "bp_enforce_admins"),
+            ("{repo_exists_on_github}", "exists_on_github"),
         ] {
-            assert!(rec.contains_key(field), "record is missing {field}");
+            assert!(
+                rec.contains_key(key),
+                "architecture writes {placeholder}, so the record needs key `{key}` \
+                 (loop var `repo` + `_` + key); record has: {:?}",
+                rec.keys().collect::<Vec<_>>()
+            );
+            // The inverse, which is what actually broke: a key must NOT already
+            // carry the prefix, or lava resolves `repo_<prefixed>` and fails.
+            let prefixed = format!("repo_{key}");
+            assert!(
+                !rec.contains_key(prefixed.as_str()),
+                "record key `{prefixed}` is pre-prefixed; lava would look for \
+                 `repo_{prefixed}` and never find it"
+            );
         }
     }
 
@@ -544,9 +591,9 @@ mod tests {
     #[test]
     fn booleans_render_as_when_gate_text() {
         let r = OrgRepoRow { branch_protection: Some("none".into()), ..row("p") };
-        assert_eq!(record_for(&r, None)["repo_has_branch_protection"], "false");
+        assert_eq!(record_for(&r, None)["has_branch_protection"], "false");
         let r2 = OrgRepoRow { branch_protection: Some("standard".into()), ..row("p") };
-        assert_eq!(record_for(&r2, None)["repo_has_branch_protection"], "true");
+        assert_eq!(record_for(&r2, None)["has_branch_protection"], "true");
     }
 
     /// A row with only a name must parse — the catalogue is hand-maintained and
@@ -556,8 +603,8 @@ mod tests {
         let cat: OrgCatalogue = serde_yaml::from_str("repos:\n  - name: solo\n").expect("parses");
         assert_eq!(cat.repos.len(), 1);
         let rec = record_for(&cat.repos[0], None);
-        assert_eq!(rec["repo_name"], "solo");
-        assert_eq!(rec["repo_visibility"], "private", "unstated visibility defaults closed");
+        assert_eq!(rec["name"], "solo");
+        assert_eq!(rec["visibility"], "private", "unstated visibility defaults closed");
     }
 }
 
@@ -596,8 +643,8 @@ mod live {
         for r in &records {
             eprintln!(
                 "  {:<16} exists={:<5} live_vis={:<7} declared_vis={}",
-                r["repo_name"], r["repo_exists_on_github"],
-                r["repo_live_visibility"], r["repo_visibility"]
+                r["name"], r["exists_on_github"],
+                r["live_visibility"], r["visibility"]
             );
         }
         assert_eq!(records.len(), only.len(), "every requested repo must resolve");
