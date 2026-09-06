@@ -5993,9 +5993,41 @@ fn validate_source(template: &InfrastructureTemplate) -> Result<()> {
     .count();
 
     if source_count == 0 {
-        return Err(Error::InvalidSource(
-            "No template source specified (inline, configMapRef, or gitRepository)".into(),
-        ));
+        // ── A NAMED CATALOGUE ARCHITECTURE IS A SOURCE ──────────────────
+        // The lava backend resolves `templateName` against
+        // LAVA_ARCHITECTURE_CATALOG (`lava_backend.rs`'s `load_arch_source`),
+        // and its CompileRequest handling explicitly accepts "no source, but a
+        // template_name". That path was UNREACHABLE from a CR: this check ran
+        // first and rejected the template before the backend ever saw it.
+        //
+        // Measured 2026-09-06 on plo, the first CR ever to name a catalogue
+        // architecture:
+        //   Invalid template source: No template source specified
+        //     (inline, configMapRef, or gitRepository)
+        // while `github-org-repos.tlisp` sat in the 39-entry catalogue the
+        // operator already had mounted and pointed at.
+        //
+        // Same shape as the rest of this class: the capability is present in
+        // code and unreachable by configuration. The three source KINDS carry
+        // a body; a catalogue name carries a reference the backend resolves —
+        // it is a fourth way to say where the template is, not the absence of
+        // one.
+        //
+        // Deliberately narrow: only when the dialect can actually resolve a
+        // name. `Json` and `Ruby` have no catalogue, so for them an empty
+        // source is still exactly the error it always was.
+        let names_a_catalogue_architecture = template.spec.template_name.is_some()
+            && matches!(
+                template.spec.dialect,
+                crate::crd::Dialect::Lava | crate::crd::Dialect::Auto
+            );
+
+        if !names_a_catalogue_architecture {
+            return Err(Error::InvalidSource(
+                "No template source specified (inline, configMapRef, or gitRepository),                  and no templateName naming a lava catalogue architecture"
+                    .into(),
+            ));
+        }
     }
 
     if source_count > 1 {
@@ -7058,7 +7090,48 @@ mod plan_approval_hash_tests {
 #[cfg(test)]
 mod is_plan_approved_tests {
     use super::{is_plan_approved, InfrastructureTemplateSpec, InfrastructureTemplateStatus};
+    use super::*;
     use crate::crd::{Dialect, TemplateSource};
+
+    /// A named lava catalogue architecture IS a source.
+    ///
+    /// The regression: `load_arch_source` in the lava backend resolves
+    /// `templateName` against LAVA_ARCHITECTURE_CATALOG, and its own error text
+    /// contemplates "no source, template_name or template_path" — but
+    /// `validate_source` rejected the template before the backend ran, so no CR
+    /// could ever reach the 39-entry catalogue the operator had mounted.
+    #[test]
+    fn a_named_catalogue_architecture_is_a_valid_source() {
+        // Reuse the file's own helper, then strip the source — the whole
+        // point is a spec with NO inline/configMap/git source.
+        let mut spec = spec_with(None);
+        spec.source = TemplateSource {
+            inline: None,
+            config_map_ref: None,
+            git_repository: None,
+        };
+        spec.dialect = Dialect::Lava;
+        spec.template_name = Some("github-org-repos".into());
+        let mut t = InfrastructureTemplate::new("t", spec);
+        validate_source(&t).expect("a lava catalogue name is a source");
+
+        // Auto too — it sniffs the body, and a catalogue name has no body yet.
+        t.spec.dialect = Dialect::Auto;
+        validate_source(&t).expect("auto may also name a catalogue architecture");
+
+        // ── THE NARROWING, asserted in both directions ──
+        // Json and Ruby have no catalogue, so for them an empty source is
+        // still the error it always was. Without this half the change would
+        // read as "empty source is fine now", which is not what it means.
+        t.spec.dialect = Dialect::Json;
+        validate_source(&t).expect_err("json has no catalogue to resolve a name against");
+
+        // And a lava template with NO name is still sourceless.
+        t.spec.dialect = Dialect::Lava;
+        t.spec.template_name = None;
+        validate_source(&t).expect_err("lava with neither source nor name is sourceless");
+    }
+
 
     /// Shared with `approval_does_not_invalidate_its_own_plan_tests` — the
     /// two modules exercise the same approval seam from opposite ends (does
