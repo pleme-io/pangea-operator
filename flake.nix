@@ -998,6 +998,19 @@
           rubyEnv = {
             LIBCLANG_PATH = "${libclang}/lib";
             RUBY = "${ruby}/bin/ruby";
+            # ── bindgen needs the libc INCLUDE PATH, not just the package ──
+            # Measured on rio 2026-09-06: with `stdenv.cc.libc.dev` merely in
+            # nativeBuildInputs, rb-sys still failed with
+            #   ruby/defines.h:16:10: fatal error: 'stdio.h' file not found
+            # because bindgen runs its own libclang and does not inherit the
+            # nix wrapper's include flags. This is the SAME fact the ruby-eval
+            # devShell already carries as `bindgenLibcArgs` — lifted here
+            # rather than written a third time. Linux-only: darwin's
+            # stdenv.cc.libc has no `.dev` split, and bindgen finds the Xcode
+            # SDK headers through clang's own sysroot detection there.
+            BINDGEN_EXTRA_CLANG_ARGS = lib.optionalString rubyPkgs.stdenv.isLinux (
+              "-I${rubyPkgs.stdenv.cc.libc.dev}/include"
+            );
           };
           lockfileBuilder = import "${substrate}/lib/build/rust/lockfile-builder.nix" {
             pkgs = rubyPkgs;
