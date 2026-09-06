@@ -1112,8 +1112,12 @@
         # system this flake does not build for that read fails with a missing
         # attribute that names the system — an honest error at the point of
         # use, which is strictly better than a guard that cannot be evaluated.
+        # `stdenv.hostPlatform.system`, not the deprecated `prev.system`, which
+        # emits `evaluation warning: 'system' has been renamed to/replaced by
+        # 'stdenv.hostPlatform.system'` in every consumer that touches this
+        # overlay.
         overlays.default = _final: prev: {
-          pangea-operator = extended.packages.${prev.system}.default;
+          pangea-operator = extended.packages.${prev.stdenv.hostPlatform.system}.default;
         };
         nixosModules.default = trio.nixosModule;
         nixosModules.pangea-operator = trio.nixosModule;
