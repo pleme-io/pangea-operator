@@ -1087,7 +1087,22 @@
       # consumer must set `services.pangea-operator.package` by hand, which is
       # the kind of required-override that turns a default into a trap.
       withTrio = lib.recursiveUpdate extended {
-        overlays.default = _final: _prev: { };
+        # ── ★ AND IT MUST ACTUALLY PROVIDE THE PACKAGE ─────────────────────
+        # This was shipped EMPTY (`_final: _prev: { }`) directly beneath the
+        # comment above explaining why it matters. The comment was right and the
+        # code did nothing, so the first consumer hit
+        # `error: attribute 'pangea-operator' missing` from the trio's own
+        # default — the exact trap the comment names, reintroduced by the line
+        # meant to close it.
+        #
+        # `optionalAttrs` rather than a bare reference: on a system this flake
+        # does not build for, the overlay contributes nothing instead of
+        # throwing while some unrelated attribute is being evaluated.
+        overlays.default =
+          final: _prev:
+          lib.optionalAttrs (extended.packages ? ${final.system}) {
+            pangea-operator = extended.packages.${final.system}.default;
+          };
         nixosModules.default = trio.nixosModule;
         nixosModules.pangea-operator = trio.nixosModule;
         darwinModules.default = trio.darwinModule;
