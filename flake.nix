@@ -623,14 +623,30 @@
       # Built via substrate's mkCrate2nixDockerImage — despite the name,
       # its default `useLockfileBuilder = true` dispatches to the SAME
       # gen/lockfile-builder pipeline `base` above uses (no crate2nix,
-      # no Cargo.nix needed). `rootFeatures` is NOT honored on that path
-      # (see pangea-operator/Cargo.toml's `[features] default = [...]`
-      # comment: this was diagnosed 2026-06-02 and fixed by making
-      # embedded_ruby + executor_magma the crate's DEFAULT features, so
-      # every lockfile-builder build — including this one — links
-      # libruby and compiles MagmaExecutor in without needing the
-      # override to work). `rootFeatures` is still passed below purely
-      # as documentation of intent.
+      # no Cargo.nix needed). `rootFeatures` is NOT honored on that path,
+      # and `rootFeatures` is still passed below purely as documentation
+      # of intent.
+      #
+      # ── ★ CORRECTED 2026-09-06: THIS IMAGE NO LONGER CARRIES RUBY ──────
+      # This comment used to end "…fixed by making embedded_ruby +
+      # executor_magma the crate's DEFAULT features, so every
+      # lockfile-builder build — including this one — links libruby". That
+      # was true on 2026-06-02 and is false now: `Cargo.toml` line 47 records
+      # that `embedded_ruby` and `magma_rubygems` are **both OPT-IN**, so the
+      # 2026-06-02 remedy was undone when Ruby became opt-in.
+      #
+      # Because `rootFeatures` is not honored, nothing else turns the feature
+      # back on. The consequence is exact and worth stating: this
+      # "embedded-ruby" image builds the SAME Ruby-free binary as
+      # `packages.default`, wrapped in ruby/git/busybox/opentofu/packer the
+      # binary can no longer call. The name promises a capability the artifact
+      # does not have.
+      #
+      # A genuinely Ruby-linking build needs its own build spec, generated with
+      # the feature ON — the same mechanism `Cargo.noruby.build-spec.json` uses
+      # in the other direction. Adding one is a variant spec plus a package
+      # output; `tests/variant_spec_freshness.rs` discovers variants from the
+      # filesystem, so a third one is tied to the lock automatically.
       #
       # Built against a plain (non-static) nixpkgs for the target Linux
       # system — NOT the musl-static cross target `base`'s CLI binaries
