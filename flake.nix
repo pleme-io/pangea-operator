@@ -1137,6 +1137,17 @@
               variant = "noruby";
               buildSystem = system;
             };
+            # ── THE PROVIDER MIRROR, EXPOSED ──────────────────────────────
+            # magma's `locate_provider` walks MAGMA_PROVIDER_DIR recursively and
+            # filename-matches, so this buildEnv root resolves every provider's
+            # nixpkgs tree with no flattening.
+            #
+            # It was reachable ONLY from inside mkEmbeddedOperatorImage, which
+            # meant the in-cluster posture had providers and the HOST posture
+            # (systemd on plo) had none — an operator with PANGEA_EXECUTOR=magma
+            # and no MAGMA_PROVIDER_DIR resolves every provider to
+            # ProviderUnavailable. Same closure, one definition, two consumers.
+            "magma-provider-mirror" = magmaProviderMirrorFor system;
           };
           # EVERY variant is checked against its own catalog row. Derived with
           # mapAttrs over the catalog, so a new variant brings its own check
