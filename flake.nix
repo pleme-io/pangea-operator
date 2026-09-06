@@ -1098,10 +1098,16 @@
         # `optionalAttrs` rather than a bare reference: on a system this flake
         # does not build for, the overlay contributes nothing instead of
         # throwing while some unrelated attribute is being evaluated.
+        # `prev.system`, never `final.system`: `optionalAttrs` decides which
+        # attribute NAMES this overlay contributes, so its condition is forced
+        # while the fixpoint is still being built. Reading `final` there makes
+        # the overlay depend on its own output — `error: infinite recursion
+        # encountered`, raised at the consumer with no mention of this file.
+        # `prev` is the already-resolved previous stage, so it is safe to read.
         overlays.default =
-          final: _prev:
-          lib.optionalAttrs (extended.packages ? ${final.system}) {
-            pangea-operator = extended.packages.${final.system}.default;
+          _final: prev:
+          lib.optionalAttrs (extended.packages ? ${prev.system}) {
+            pangea-operator = extended.packages.${prev.system}.default;
           };
         nixosModules.default = trio.nixosModule;
         nixosModules.pangea-operator = trio.nixosModule;
