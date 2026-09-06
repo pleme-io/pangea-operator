@@ -1005,14 +1005,40 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
     fn shared_pacer_for(
         configs: &std::collections::BTreeMap<String, serde_json::Value>,
     ) -> Option<std::sync::Arc<magma_apply::engine::Pacer>> {
-        // GitHub's documented primary budget for an authenticated user.
-        const GITHUB_BUDGET_RPH: f64 = 5000.0;
+        // ── THE BUDGET IS A PROPERTY OF THE CREDENTIAL, NOT A CONSTANT ─────
+        // 5000 is GitHub's budget for an authenticated USER (a PAT). A GitHub
+        // App INSTALLATION on an organization gets 50 req/hr per repository,
+        // floored at 5,000 and capped at 12,500 — so the true ceiling depends
+        // on which credential is configured and how large the org is, and
+        // cannot be a constant.
+        //
+        // Measured 2026-09-06 against the live pleme-org-posture installation
+        // (GET /rate_limit with an installation token): limit = 12500,
+        // remaining = 12500. That is 2.5x what this constant assumed, and the
+        // full remaining budget confirms the App is UNCONTENDED — which is the
+        // other half of the correction, because `pacer_quota_pct`'s 0.7 exists
+        // to leave headroom for the org's release pipeline sharing a PAT.
+        // A dedicated App shares with nobody.
+        //
+        // Under-reading the budget is not free: it paces the operator to
+        // 0.97 req/s when 3.47 is available, which is the difference between a
+        // full-org refresh finishing inside the 600s plan wall and blowing
+        // through it by 3.5x.
+        //
+        // Default stays 5000 — the safe floor for an unknown credential.
+        // Set PANGEA_GITHUB_BUDGET_RPH to the measured value; it is one call:
+        //   GET https://api.github.com/rate_limit -> .resources.core.limit
+        let github_budget_rph: f64 = std::env::var("PANGEA_GITHUB_BUDGET_RPH")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|v| *v > 0.0)
+            .unwrap_or(5000.0);
         if !configs.keys().any(|k| k.starts_with("github")) {
             return None;
         }
         let bytes = serde_json::to_vec(configs).ok()?;
         let key = blake3::hash(&bytes).to_hex().to_string();
-        magma_apply::engine::shared_pacer(&key, Self::pacer_quota_pct(), GITHUB_BUDGET_RPH)
+        magma_apply::engine::shared_pacer(&key, Self::pacer_quota_pct(), github_budget_rph)
     }
 
     fn build_provider_configs(
