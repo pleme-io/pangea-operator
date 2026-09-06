@@ -117,11 +117,97 @@ pub struct PostgresBackendConfig {
     pub ssl_mode: String,
 
     /// Reference to a Secret containing credentials.
-    pub secret_ref: PostgresSecretRef,
+    ///
+    /// ── ★ OPTIONAL, AND ONLY BECAUSE A SOCKET NEEDS NO PASSWORD ──────────
+    /// Required for a TCP `host`. Optional when `host` is an absolute path,
+    /// i.e. a unix-socket directory, because PostgreSQL then authenticates by
+    /// PEER — the kernel vouches for the connecting uid and no password is
+    /// ever read.
+    ///
+    /// This was mandatory, and the consequence was a credential invented to
+    /// satisfy a type. Measured on plo 2026-09-06: a node whose whole design
+    /// is peer auth ("a removed credential, not a withheld one") had to be
+    /// given a Secret carrying the literal string `peer-auth-unused`, because
+    /// the field could not be omitted. A required field that forces a
+    /// meaningless secret into existence is worse than optional — it teaches
+    /// readers that a password matters here, and invites someone to
+    /// "rotate" a value that authenticates nothing.
+    ///
+    /// Absence is not a hole: [`Self::credential_source`] resolves it to a
+    /// typed decision, and a TCP host with no `secretRef` is a config error
+    /// rather than a silent connection attempt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_ref: Option<PostgresSecretRef>,
+
+    /// Role to connect as when `secretRef` is absent (socket + peer auth).
+    ///
+    /// Only consulted on the peer path. libpq would otherwise default to the
+    /// process uid's name, which happens to be right today and would break
+    /// silently the moment the daemon's `User=` changed — so the role is
+    /// stated rather than inherited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
 
     /// Connection pool settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pool: Option<PoolConfig>,
+}
+
+/// How this backend proves who it is — the typed resolution of
+/// `secretRef` / `user` / `host`, so no caller re-derives the rule.
+///
+/// `Peer` carries the role explicitly rather than leaving it implicit in the
+/// process uid; `Secret` carries the reference. There is deliberately no
+/// third arm for "neither", because that is the error case and an enum arm
+/// would invite someone to handle it by connecting anyway.
+///
+/// Deliberately no `PartialEq`: comparing two credential sources is not a
+/// question any caller has, and deriving it would force `PostgresSecretRef` to
+/// gain equality it does not otherwise want.
+#[derive(Debug, Clone)]
+pub enum PgCredentialSource<'a> {
+    /// Unix socket + PEER auth. No password exists to supply.
+    Peer { user: &'a str },
+    /// TCP (or an explicit secret over a socket) — credentials from a Secret.
+    Secret(&'a PostgresSecretRef),
+}
+
+impl PostgresBackendConfig {
+    /// True when `host` names a unix-socket DIRECTORY rather than a TCP host.
+    ///
+    /// libpq's own rule: a leading `/` selects the socket transport. Matching
+    /// libpq here rather than inventing a flag means the CR cannot disagree
+    /// with what the client library will actually do.
+    #[must_use]
+    pub fn is_socket_host(&self) -> bool {
+        self.host.starts_with('/')
+    }
+
+    /// Resolve the credential source, or say why it cannot be resolved.
+    ///
+    /// # Errors
+    ///
+    /// A message naming the missing field when a TCP host has no `secretRef`,
+    /// or a socket host has neither `secretRef` nor `user`.
+    pub fn credential_source(&self) -> std::result::Result<PgCredentialSource<'_>, String> {
+        match (&self.secret_ref, self.is_socket_host()) {
+            // An explicit secret always wins, even over a socket: an operator
+            // who supplied one may genuinely be using scram over the socket.
+            (Some(r), _) => Ok(PgCredentialSource::Secret(r)),
+            (None, true) => self.user.as_deref().map(|user| PgCredentialSource::Peer { user }).ok_or_else(|| {
+                format!(
+                    "backend.pg.host {:?} is a unix socket, so secretRef may be omitted, \
+                     but then `user` must name the role to connect as",
+                    self.host
+                )
+            }),
+            (None, false) => Err(format!(
+                "backend.pg.secretRef is required for TCP host {:?}; it may only be \
+                 omitted when host is an absolute path (unix socket + peer auth)",
+                self.host
+            )),
+        }
+    }
 }
 
 fn default_pg_port() -> u16 {
@@ -343,5 +429,89 @@ impl PangeaNamespace {
     /// Check if this namespace uses PostgreSQL backend.
     pub fn uses_postgres(&self) -> bool {
         matches!(self.spec.backend.r#type, BackendType::Pg)
+    }
+}
+
+#[cfg(test)]
+mod credential_source_tests {
+    use super::*;
+
+    fn cfg(host: &str, secret: bool, user: Option<&str>) -> PostgresBackendConfig {
+        PostgresBackendConfig {
+            host: host.to_string(),
+            port: 5432,
+            database: "pangea".to_string(),
+            schema_prefix: "pangea_".to_string(),
+            ssl_mode: "disable".to_string(),
+            secret_ref: secret.then(|| PostgresSecretRef {
+                name: "s".to_string(),
+                namespace: None,
+                username_key: "username".to_string(),
+                password_key: "password".to_string(),
+                ca_cert_key: None,
+            }),
+            user: user.map(str::to_string),
+            pool: None,
+        }
+    }
+
+    /// The case this whole change exists for: a socket host with a declared
+    /// role needs no Secret. Before `secretRef` became optional, plo had to
+    /// store the literal string `peer-auth-unused` to satisfy the field.
+    #[test]
+    fn socket_host_with_a_user_needs_no_secret() {
+        let c = cfg("/run/postgresql", false, Some("pangea"));
+        assert!(c.is_socket_host());
+        match c.credential_source().expect("resolves") {
+            PgCredentialSource::Peer { user } => assert_eq!(user, "pangea"),
+            PgCredentialSource::Secret(_) => panic!("a socket host must resolve to Peer"),
+        }
+    }
+
+    /// A TCP host still REQUIRES a Secret. Making the field optional must not
+    /// become "credentials are optional" — that would be a real loosening, and
+    /// the failure would be a connection attempt with no password rather than a
+    /// config error.
+    #[test]
+    fn tcp_host_without_a_secret_is_a_config_error() {
+        let err = cfg("db.internal", false, Some("pangea"))
+            .credential_source()
+            .expect_err("TCP with no secretRef must not resolve");
+        assert!(err.contains("secretRef is required"), "unhelpful message: {err}");
+        assert!(err.contains("db.internal"), "message must name the host: {err}");
+    }
+
+    /// Omitting BOTH is an error rather than a silent libpq default. The uid's
+    /// name happens to be right today and would break silently the moment the
+    /// daemon's `User=` changed.
+    #[test]
+    fn socket_host_without_a_user_is_a_config_error() {
+        let err = cfg("/run/postgresql", false, None)
+            .credential_source()
+            .expect_err("socket with neither secretRef nor user must not resolve");
+        assert!(err.contains("`user` must name the role"), "unhelpful message: {err}");
+    }
+
+    /// An explicit Secret wins even over a socket — an operator may genuinely be
+    /// using scram there, and silently ignoring a supplied credential would be
+    /// the worst of the three behaviours.
+    #[test]
+    fn an_explicit_secret_wins_over_the_peer_path() {
+        let c = cfg("/run/postgresql", true, Some("pangea"));
+        match c.credential_source().expect("resolves") {
+            PgCredentialSource::Secret(r) => assert_eq!(r.name, "s"),
+            PgCredentialSource::Peer { .. } => {
+                panic!("a supplied secretRef must not be ignored")
+            }
+        }
+    }
+
+    /// A relative path is NOT a socket. libpq's rule is a LEADING slash, and
+    /// matching it exactly is what keeps the CR from disagreeing with what the
+    /// client library will do.
+    #[test]
+    fn only_an_absolute_path_counts_as_a_socket() {
+        assert!(!cfg("run/postgresql", true, None).is_socket_host());
+        assert!(cfg("/var/run/postgresql", true, None).is_socket_host());
     }
 }

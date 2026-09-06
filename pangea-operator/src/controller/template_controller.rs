@@ -2049,50 +2049,56 @@ async fn handle_initializing(
     // magma-backend Postgres state backend), so skip the credential
     // resolution + write entirely there.
     if let Some(pg) = pangea_ns.spec.backend.pg.as_ref().filter(|_| !magma_active) {
-        let secret_ns = pg
-            .secret_ref
-            .namespace
-            .clone()
-            .or_else(|| template.namespace())
-            .unwrap_or_else(|| "default".to_string());
-        let secret_api: Api<Secret> = Api::namespaced(state.client.clone(), &secret_ns);
-        let secret =
-            secret_api
-                .get(&pg.secret_ref.name)
-                .await
-                .map_err(|_| Error::SecretNotFound {
-                    namespace: secret_ns.clone(),
-                    name: pg.secret_ref.name.clone(),
+        // ── ★ TWO CREDENTIAL SHAPES, RESOLVED BY THE CRD, NOT HERE ────────
+        // `secretRef` became optional so a unix-socket host does not need a
+        // password invented to satisfy a required field. The rule lives on
+        // `PostgresBackendConfig::credential_source` so this path and
+        // `namespace_controller`'s cannot disagree about it — they previously
+        // held two copies of the Secret-fetch, which is exactly how they would
+        // have drifted once one of them learned about peer auth.
+        let credentials = match pg
+            .credential_source()
+            .map_err(|why| Error::Config(format!("namespace backend.pg: {why}")))?
+        {
+            // Peer: the kernel vouches for the uid, so there is no password to
+            // fetch. An empty one is not a weak credential here — it is never
+            // sent, because libpq omits the field entirely for a socket.
+            crate::crd::PgCredentialSource::Peer { user } => {
+                Credentials::new(user.to_string(), String::new())
+            }
+            crate::crd::PgCredentialSource::Secret(secret_ref) => {
+                let secret_ns = secret_ref
+                    .namespace
+                    .clone()
+                    .or_else(|| template.namespace())
+                    .unwrap_or_else(|| "default".to_string());
+                let secret_api: Api<Secret> =
+                    Api::namespaced(state.client.clone(), &secret_ns);
+                let secret = secret_api.get(&secret_ref.name).await.map_err(|_| {
+                    Error::SecretNotFound {
+                        namespace: secret_ns.clone(),
+                        name: secret_ref.name.clone(),
+                    }
                 })?;
 
-        let data = secret.data.as_ref().ok_or_else(|| {
-            Error::Config(format!(
-                "Secret {}/{} has no data",
-                secret_ns, pg.secret_ref.name
-            ))
-        })?;
+                let data = secret.data.as_ref().ok_or_else(|| {
+                    Error::Config(format!(
+                        "Secret {}/{} has no data",
+                        secret_ns, secret_ref.name
+                    ))
+                })?;
 
-        let username = data
-            .get(&pg.secret_ref.username_key)
-            .map(|v| String::from_utf8_lossy(&v.0).to_string())
-            .ok_or_else(|| {
-                Error::Config(format!(
-                    "Key '{}' not found in secret",
-                    pg.secret_ref.username_key
-                ))
-            })?;
+                let pick = |key: &str| -> Result<String> {
+                    data.get(key)
+                        .map(|v| String::from_utf8_lossy(&v.0).to_string())
+                        .ok_or_else(|| {
+                            Error::Config(format!("Key '{key}' not found in secret"))
+                        })
+                };
 
-        let password = data
-            .get(&pg.secret_ref.password_key)
-            .map(|v| String::from_utf8_lossy(&v.0).to_string())
-            .ok_or_else(|| {
-                Error::Config(format!(
-                    "Key '{}' not found in secret",
-                    pg.secret_ref.password_key
-                ))
-            })?;
-
-        let credentials = Credentials::new(username, password);
+                Credentials::new(pick(&secret_ref.username_key)?, pick(&secret_ref.password_key)?)
+            }
+        };
 
         // Write backend configuration
         let template_name = template.name_any();

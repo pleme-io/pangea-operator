@@ -117,13 +117,14 @@ mod tests {
             database: "pangea".to_string(),
             schema_prefix: "pangea_".to_string(),
             ssl_mode: "require".to_string(),
-            secret_ref: crate::crd::PostgresSecretRef {
+            secret_ref: Some(crate::crd::PostgresSecretRef {
                 name: "db-secret".to_string(),
                 namespace: None,
                 username_key: "username".to_string(),
                 password_key: "password".to_string(),
                 ca_cert_key: None,
-            },
+            }),
+            user: None,
             pool: None,
         }
     }

@@ -55,7 +55,8 @@ pub use infrastructure_flow::{
 // Re-export PangeaNamespace types (SecretRef renamed to avoid collision)
 pub use pangea_namespace::{
     BackendConfig, BackendType, DefaultProviders, PangeaNamespace, PangeaNamespaceSpec,
-    PangeaNamespaceStatus, PoolConfig, PostgresBackendConfig, PostgresSecretRef, ResourceStats,
+    PangeaNamespaceStatus, PgCredentialSource, PoolConfig, PostgresBackendConfig,
+    PostgresSecretRef, ResourceStats,
     S3BackendConfig, S3SecretRef, SecretRef as ProviderSecretRef,
 };
 

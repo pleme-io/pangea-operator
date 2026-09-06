@@ -86,7 +86,15 @@ spec:
                         description: 'Schema name prefix (default: "pangea_").'
                         type: string
                       secretRef:
-                        description: Reference to a Secret containing credentials.
+                        description: |-
+                          Reference to a Secret containing credentials.
+
+                          ── ★ OPTIONAL, AND ONLY BECAUSE A SOCKET NEEDS NO PASSWORD ────────── Required for a TCP `host`. Optional when `host` is an absolute path, i.e. a unix-socket directory, because PostgreSQL then authenticates by PEER — the kernel vouches for the connecting uid and no password is ever read.
+
+                          This was mandatory, and the consequence was a credential invented to satisfy a type. Measured on plo 2026-09-06: a node whose whole design is peer auth ("a removed credential, not a withheld one") had to be given a Secret carrying the literal string `peer-auth-unused`, because the field could not be omitted. A required field that forces a meaningless secret into existence is worse than optional — it teaches readers that a password matters here, and invites someone to "rotate" a value that authenticates nothing.
+
+                          Absence is not a hole: [`Self::credential_source`] resolves it to a typed decision, and a TCP host with no `secretRef` is a config error rather than a silent connection attempt.
+                        nullable: true
                         properties:
                           caCertKey:
                             description: Key containing the CA certificate (optional).
@@ -114,10 +122,16 @@ spec:
                         default: verify-full
                         description: SSL mode for connections.
                         type: string
+                      user:
+                        description: |-
+                          Role to connect as when `secretRef` is absent (socket + peer auth).
+
+                          Only consulted on the peer path. libpq would otherwise default to the process uid's name, which happens to be right today and would break silently the moment the daemon's `User=` changed — so the role is stated rather than inherited.
+                        nullable: true
+                        type: string
                     required:
                     - database
                     - host
-                    - secretRef
                     type: object
                   s3:
                     description: S3 backend configuration (legacy, for migration).

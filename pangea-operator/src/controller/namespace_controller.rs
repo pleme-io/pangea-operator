@@ -539,7 +539,18 @@ impl NamespaceBackendEnv for ControllerBackendEnv<'_> {
             .pg
             .as_ref()
             .ok_or_else(|| Error::Config("Missing PostgreSQL configuration".into()))?;
-        let credentials = resolve_pg_credentials(&pg.secret_ref, self.state).await?;
+        // Same typed resolution the template path uses — one rule, on the CRD.
+        let credentials = match pg
+            .credential_source()
+            .map_err(|why| Error::Config(format!("backend.pg: {why}")))?
+        {
+            crate::crd::PgCredentialSource::Peer { user } => {
+                Credentials::new(user.to_string(), String::new())
+            }
+            crate::crd::PgCredentialSource::Secret(secret_ref) => {
+                resolve_pg_credentials(secret_ref, self.state).await?
+            }
+        };
         // `PostgresBackend::connect` opens a pool AND executes a
         // `SELECT 1` liveness probe while establishing it.
         BackendManager::from_namespace(namespace, credentials).await
@@ -739,6 +750,10 @@ async fn update_status(
         return Ok(());
     }
 
+    // Captured before `error` moves into the struct below: whether THIS
+    // observation produced an error at all. Drives the explicit null above.
+    let backend_ready_had_error = error.is_some();
+
     let status = PangeaNamespaceStatus {
         backend_ready,
         error,
@@ -747,7 +762,34 @@ async fn update_status(
         ..namespace.status.clone().unwrap_or_default()
     };
 
-    let patch = serde_json::json!({ "status": status });
+    let mut patch = serde_json::json!({ "status": status });
+
+    // ── ★ CLEAR A STALE ERROR EXPLICITLY, BECAUSE MERGE WILL NOT ──────────
+    // `error` carries `skip_serializing_if = "Option::is_none"`, so the Ready
+    // branch's `None` is OMITTED from the document rather than serialized as
+    // null — and an omitted key in a MERGE patch leaves the previous value
+    // exactly where it was. The result is a status that asserts success and
+    // failure at once:
+    //
+    //   backendReady: true
+    //   error: "Secret not found: default/pangea-postgres"    <- from a
+    //                                                           previous tick
+    //
+    // Measured on a live namespace 2026-09-06, after the missing Secret was
+    // created: `backendReady` flipped true, `schemaName` was published, the
+    // schema existed in postgres — and the error string from the failing
+    // reconcile was still there. Anyone diagnosing by reading `.status.error`
+    // concludes the backend is broken while it is working.
+    //
+    // This is deliberately NOT symmetric with `schema_name`. Preserving a
+    // published schema name across a failure is correct (see the comment
+    // above: it "stops being re-asserted" rather than being erased, because a
+    // name that was true stays true). An error is the opposite kind of fact —
+    // it describes THIS observation, so surviving its own resolution makes it
+    // a lie rather than a memory.
+    if !backend_ready_had_error {
+        patch["status"]["error"] = serde_json::Value::Null;
+    }
 
     api.patch_status(
         &name,
@@ -1161,7 +1203,8 @@ mod backend_probe_tests {
                         database: database.to_string(),
                         schema_prefix: "pangea_".to_string(),
                         ssl_mode: "disable".to_string(),
-                        secret_ref: PostgresSecretRef {
+                        user: None,
+                        secret_ref: Some(PostgresSecretRef {
                             name: secret.to_string(),
                             // Deliberately absent — this is what made the
                             // old probe address `pangea-system`.
@@ -1169,7 +1212,7 @@ mod backend_probe_tests {
                             username_key: "username".to_string(),
                             password_key: "password".to_string(),
                             ca_cert_key: None,
-                        },
+                        }),
                         pool: None,
                     }),
                     s3: None,
