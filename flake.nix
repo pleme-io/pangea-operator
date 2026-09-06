@@ -1098,17 +1098,23 @@
         # `optionalAttrs` rather than a bare reference: on a system this flake
         # does not build for, the overlay contributes nothing instead of
         # throwing while some unrelated attribute is being evaluated.
-        # `prev.system`, never `final.system`: `optionalAttrs` decides which
-        # attribute NAMES this overlay contributes, so its condition is forced
-        # while the fixpoint is still being built. Reading `final` there makes
-        # the overlay depend on its own output — `error: infinite recursion
-        # encountered`, raised at the consumer with no mention of this file.
-        # `prev` is the already-resolved previous stage, so it is safe to read.
-        overlays.default =
-          _final: prev:
-          lib.optionalAttrs (extended.packages ? ${prev.system}) {
-            pangea-operator = extended.packages.${prev.system}.default;
-          };
+        # ── ★ STATIC NAMES, LAZY VALUE — no condition, deliberately ────────
+        # An overlay's attribute NAMES are forced early, while the package-set
+        # fixpoint is still being assembled. Guarding this with
+        # `lib.optionalAttrs (extended.packages ? ${prev.system})` — the
+        # obvious "be safe on unsupported systems" move — makes the NAME SET
+        # depend on an evaluation, and the consumer gets
+        # `error: infinite recursion encountered` from deep inside nixpkgs'
+        # `aliases.nix`, naming neither this file nor the overlay.
+        #
+        # So: one unconditional name, whose VALUE is lazy. Nothing is forced
+        # until something actually reads `pkgs.pangea-operator`, and on a
+        # system this flake does not build for that read fails with a missing
+        # attribute that names the system — an honest error at the point of
+        # use, which is strictly better than a guard that cannot be evaluated.
+        overlays.default = _final: prev: {
+          pangea-operator = extended.packages.${prev.system}.default;
+        };
         nixosModules.default = trio.nixosModule;
         nixosModules.pangea-operator = trio.nixosModule;
         darwinModules.default = trio.darwinModule;
