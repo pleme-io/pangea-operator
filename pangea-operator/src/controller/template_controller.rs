@@ -5324,44 +5324,30 @@ async fn handle_ready(
 
     update_drift_check_timestamp(template, state).await?;
 
-    // Two-path drift extraction — identical shape to handle_planning's
-    // dispatch. Tofu uses `Plan::from_json` on the show-JSON for
-    // per-attribute drift detail (the settling fingerprint reads this);
-    // magma derives from the typed `CycleArtifact.resource_changes`
-    // (which the bundle reader populates with severities + actions).
-    // Either way, the drift_details list feeds the settling evaluator
-    // the same way it always did.
-    let drift_details: Vec<crate::crd::DriftDetail> = if !plan_result.has_changes {
-        Vec::new()
-    } else if !plan_result.raw_show_json.is_empty() {
-        match Plan::from_json(&plan_result.raw_show_json) {
-            Ok(plan) => plan
-                // Uncapped: this feeds the settling FINGERPRINT, which must hash
-                // the whole drift set. See `DRIFT_STATUS_CAP`.
-                .drift_details(usize::MAX)
-                .into_iter()
-                .map(|d| crate::crd::DriftDetail {
-                    address: d.address,
-                    action: d.action,
-                    risk: d.risk,
-                    attributes: d.attributes,
-                    policy_decision: None,
-                    matched_policy: None,
-                })
-                .collect(),
-            Err(e) => {
-                warn!(error = %e, runner = runner.name(), "Failed to parse drift plan JSON");
-                Vec::new()
-            }
-        }
-    } else if let Some(art) = plan_result.artifact.as_ref() {
-        // Uncapped, same reason as the branch above.
-        art.drift_details(usize::MAX)
+    // ── THREE-path drift extraction, via the canonical helper ────────────
+    // This was a hand-rolled TWO-path copy (raw_show_json, then artifact,
+    // then a warn+empty fallthrough) and it had no DB-BACKED leg — which is
+    // the only leg magma+Postgres can take. `MagmaWorkspaceRunner::plan`
+    // sets `artifact: None` whenever an artifact store is wired
+    // (executor/workspace_runner.rs) and always leaves `raw_show_json`
+    // empty, so on the production posture BOTH legs miss and the
+    // fallthrough returned `Vec::new()` — zero drift — while logging
+    // "Drift check produced no analyzable output".
+    //
+    // Measured on plo 2026-09-06: SEVEN such warnings in one hour while the
+    // CR reported `phase: Ready`. The operator was not observing
+    // convergence; it was failing to look and reporting the failure as
+    // agreement. At two repos that is a nuisance. At 1005 this verdict IS
+    // the answer to "is the org reconciled", so a false green is the worst
+    // available outcome.
+    //
+    // `drift_details_from_plan_result` already has all three legs and is
+    // what `handle_planning` and `handle_applying` use — both of which had
+    // this same defect fixed in 2026-07. This is the third and last call
+    // site, so the class is now closed rather than fixed once more.
+    let drift_details: Vec<crate::crd::DriftDetail> = if plan_result.has_changes {
+        drift_details_from_plan_result(&plan_result, template, state).await
     } else {
-        warn!(
-            runner = runner.name(),
-            "Drift check produced no analyzable output"
-        );
         Vec::new()
     };
 

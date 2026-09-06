@@ -164,6 +164,42 @@ impl BranchProtectionPreset {
     }
 }
 
+/// A repository name sanitized into a Terraform resource identifier.
+///
+/// ── WHY AN ADDRESS IS NOT A NAME ───────────────────────────────────────────
+/// `github-org-repos.tlisp` interpolates the repo name straight into the
+/// resource ADDRESS, and lava-core inserts it verbatim (no string transforms
+/// exist at the lava layer). A `.` in an address is a traversal separator, so
+/// `fastboot.js` renders `${github_repository.fastboot.js.name}` — a reference
+/// to a resource `fastboot` that does not exist — and `.github` renders
+/// `${github_repository..github.name}`, whose empty name segment makes the
+/// reference unresolvable. Both render with NO ERROR.
+///
+/// Measured over the live catalogue 2026-09-06: 3 of 1005 names carry a dot
+/// (`fastboot.js`, `compass.nvim`, `.github`) and are the entire broken set.
+/// 690 names carry a HYPHEN, which is a legal Terraform identifier character —
+/// those are addressable as-is and are only interesting if adopting the Ruby
+/// path's existing state, which slugs them to `_`.
+///
+/// This mirrors `Pangea::Helpers::Github`'s `tf_slug`
+/// (`pangea-github/lib/pangea/helpers/github_presets.rb:59-60`) EXACTLY,
+/// including the `r_` prefix for a name that cannot start an identifier, so
+/// the two paths address the same resource and either could adopt the other's
+/// state.
+#[must_use]
+pub fn tf_slug(name: &str) -> String {
+    let mut s: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+        .collect();
+    // `\A[a-zA-Z_]` in the Ruby — a leading digit is as illegal as a leading
+    // separator, and `.github` slugs to `_github`, which already satisfies it.
+    if !s.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') {
+        s = format!("r_{s}");
+    }
+    s
+}
+
 /// Project one catalogue row plus its live observation into a record.
 ///
 /// `live` is `None` when the repo does not exist on GitHub.
@@ -175,6 +211,9 @@ pub fn record_for(row: &OrgRepoRow, live: Option<&LiveRepo>) -> RepoRecord {
 
     let mut r = RepoRecord::new();
     r.insert("name".into(), row.name.clone());
+    // The ADDRESS component. Separate from `name` on purpose: the repository
+    // is still created as `row.name`; only the Terraform identifier is slugged.
+    r.insert("slug".into(), tf_slug(&row.name));
     r.insert("description".into(), row.description.clone().unwrap_or_default());
     r.insert("visibility".into(), declared_visibility.clone());
     r.insert("archived".into(), b(archived));
@@ -477,6 +516,47 @@ mod tests {
                  from the preset invents a status-check policy it never emits"
             );
         }
+    }
+
+    /// The three names that render a BROKEN address without the slug.
+    ///
+    /// Measured over the live 1005-row catalogue: these are the entire broken
+    /// set. Pinned by name because the failure is silent — lava emits the bad
+    /// reference and the provider receives a literal `${...}` as a value.
+    #[test]
+    fn dotted_names_are_slugged_into_valid_identifiers() {
+        assert_eq!(tf_slug("fastboot.js"), "fastboot_js");
+        assert_eq!(tf_slug("compass.nvim"), "compass_nvim");
+        // Leading dot slugs to a leading underscore, which is already a legal
+        // identifier start — so NO `r_` prefix. Mirrors the Ruby's regex.
+        assert_eq!(tf_slug(".github"), "_github");
+    }
+
+    /// Hyphens are LEGAL terraform identifiers, but the Ruby slugs them, and
+    /// matching it is what lets either path adopt the other's state.
+    #[test]
+    fn hyphens_match_the_ruby_slug() {
+        assert_eq!(tf_slug("pangea-operator"), "pangea_operator");
+        assert_eq!(tf_slug("lava-architectures"), "lava_architectures");
+    }
+
+    /// A name that cannot START an identifier gets the Ruby's `r_` prefix.
+    #[test]
+    fn a_leading_digit_gets_the_r_prefix() {
+        assert_eq!(tf_slug("2fa-tools"), "r_2fa_tools");
+        // ANTI-VACUITY: an ordinary name must NOT be prefixed, or this test
+        // would pass against a tf_slug that prefixed everything.
+        assert_eq!(tf_slug("tend"), "tend");
+    }
+
+    /// `slug` is an ADDRESS, `name` is the repository. Conflating them would
+    /// create a repo literally called `fastboot_js`.
+    #[test]
+    fn the_slug_never_replaces_the_real_name() {
+        let r = OrgRepoRow { name: "fastboot.js".into(), ..Default::default() };
+        let rec = record_for(&r, None);
+        assert_eq!(rec["name"], "fastboot.js", "the repo keeps its real name");
+        assert_eq!(rec["slug"], "fastboot_js", "only the address is slugged");
     }
 
     #[test]
