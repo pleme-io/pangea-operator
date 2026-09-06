@@ -1114,8 +1114,13 @@
               echo "FAIL: pangea-operator-ruby reports embedded_ruby=false." >&2
               echo "The variant spec Cargo.ruby.build-spec.json did not deliver" >&2
               echo "the feature. Regenerate it with the feature ON:" >&2
-              echo "  gen build . --features graphql,grpc,executor_magma,embedded_ruby \" >&2
-              echo "    --out Cargo.ruby.build-spec.json" >&2
+              # One line, no continuation: a trailing backslash inside a
+              # double-quoted shell string is an ESCAPED QUOTE, not a line
+              # continuation, so the string never closes and bash dies with
+              # "unexpected EOF while looking for matching quote" — measured on
+              # rio 2026-09-06, after the binary had already built and printed
+              # its capabilities correctly.
+              echo "  gen build . --features graphql,grpc,executor_magma,embedded_ruby --out Cargo.ruby.build-spec.json" >&2
               exit 1
             fi
 
