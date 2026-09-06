@@ -409,7 +409,7 @@ arc-swap = "1.9.1"
 [build-dependencies]
 # Lockstep with tonic above — tonic-build emits code against tonic's own API.
 tonic-build = { version = "0.14", optional = true }
-prost-build = { version = "0.13", optional = true }
+prost-build = { version = "0.14", optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
