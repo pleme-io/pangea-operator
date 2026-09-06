@@ -491,7 +491,20 @@ impl CompilerBackend for LavaCompilerBackend {
             self.load_arch_source(&name)?
         };
 
-        let value = self.render_architecture_terraform(&src, &req.variables)?;
+        let mut value = self.render_architecture_terraform(&src, &req.variables)?;
+
+        // ── THE FINALIZE THE RUBY PATH HAS ALWAYS HAD ──────────────────────
+        // Derive `terraform.required_providers` from the emitted resources, so
+        // the rendered config satisfies magma's preflight laws A2/A3 by
+        // construction. `ruby/owner.rs` calls the Ruby original
+        // (Pangea::ProviderRegistry.inject_into_synthesis) at exactly this
+        // point — after the body has run, before the synthesis is returned.
+        //
+        // Without it EVERY lava-compiled workspace fails preflight, because 0
+        // of the 39 architectures in lava-architectures declare the block —
+        // they were never meant to. The finalize is its designed home, and
+        // only the Ruby half had one.
+        crate::ruby::provider_registry::inject_into_synthesis(&mut value);
         // Pretty for the on-disk form tofu and humans read; the typed value
         // travels beside it so magma consumers skip a parse round-trip.
         let terraform_json = serde_json::to_string_pretty(&value)

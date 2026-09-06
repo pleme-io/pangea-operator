@@ -21,6 +21,7 @@ pub mod gem_cache;
 
 #[cfg(feature = "embedded_ruby")]
 pub mod owner;
+pub mod provider_registry;
 
 #[cfg(feature = "embedded_ruby")]
 pub mod pool;
