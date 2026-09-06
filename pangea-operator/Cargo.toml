@@ -236,7 +236,7 @@ async-graphql-axum = { workspace = true, optional = true }
 # enables no tonic tls feature, so `cargo tree -i rustls-pemfile` matched
 # nothing and it was never compiled. Bumping removes it from Cargo.lock
 # outright, which is what cargo-audit actually reads.
-tonic = { version = "0.13", optional = true }
+tonic = { version = "0.14", optional = true }
 prost = { version = "0.13", optional = true }
 prost-types = "0.13"
 
