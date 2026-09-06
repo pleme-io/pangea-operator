@@ -2358,6 +2358,52 @@ where
             .await
             .map_err(|e| Error::MagmaExecution(format!("write state: {e}")))?;
 
+        // ── VERIFY THE POSTCONDITION, DO NOT INFER IT ──────────────────────
+        // The old code read `outcome.imported.first().map(|i| i.absorbed)` and
+        // fell through `unwrap_or(false)` to report "already present in state
+        // (no-op)" — a SUCCESS — whenever `imported` and `failed` were BOTH
+        // empty, i.e. whenever the prepass did nothing at all.
+        //
+        // Measured on plo 2026-09-06: the controller logged
+        //   Import prepass complete  imported=4 failed=0 total=4
+        // while the persisted state held ZERO of the four addresses. The
+        // operator therefore believed it had adopted two existing repositories
+        // and proceeded to apply, where the provider issued
+        //   POST https://api.github.com/user/repos
+        // for a repository that already exists. Only a missing credential
+        // stopped it.
+        //
+        // The contract this restores is the one that matters for adoption:
+        // **an import either leaves the address IN STATE or it failed.** That
+        // is checkable, and checking it is what makes "adopt if it exists,
+        // create if it does not" honest — a create must proceed because the
+        // import genuinely found nothing, never because nobody looked.
+        //
+        // Note this deliberately does NOT make a create-when-absent an error.
+        // A resource that truly does not exist upstream SHOULD fall through to
+        // create; the caller (`try_import` → the prepass partition) treats a
+        // failed import exactly that way. What changes is that the caller is
+        // now told the truth about which of the two happened.
+        let in_state = state
+            .resources
+            .iter()
+            .any(|r| format!("{}.{}", r.address.type_id.0, r.address.name) == address);
+
+        if !in_state {
+            return Ok(err_tofu_result(
+                format!(
+                    "magma import for {address} ({id}) reported no failure, but the \
+                     address is absent from the persisted state afterwards — nothing \
+                     was adopted. Treating as a failed import so the caller plans a \
+                     create knowingly rather than applying against state it does not \
+                     have. imported={} failed={}\n",
+                    outcome.imported.len(),
+                    outcome.failed.len(),
+                ),
+                started,
+            ));
+        }
+
         let absorbed = outcome
             .imported
             .first()
