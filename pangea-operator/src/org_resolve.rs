@@ -63,6 +63,21 @@ pub struct OrgRepoRow {
     pub branch_protection: Option<String>,
     #[serde(default)]
     pub standard_labels: Option<bool>,
+    // ── THESE WERE HARDCODED, AND 847 ROWS DISAGREED ────────────────────
+    // `has_issues` and `delete_branch_on_merge` used to be unconditional
+    // `true` in `record_for` and were not fields here at all, so a row's
+    // declared value could not reach the record. Measured on the live
+    // catalogue 2026-09-06: 98 rows declare `has_issues: false` and 847
+    // declare `delete_branch_on_merge: false`. Every one of them would have
+    // been rendered with the opposite setting.
+    #[serde(default)]
+    pub has_issues: Option<bool>,
+    #[serde(default)]
+    pub delete_branch_on_merge: Option<bool>,
+    /// Tri-state in the gem: `None` means "derive from visibility", NOT
+    /// "default to on". See `record_for`.
+    #[serde(default)]
+    pub actions_enabled: Option<bool>,
 }
 
 /// The `org.yaml` document, narrowed to `repos:`.
@@ -93,57 +108,51 @@ fn b(v: bool) -> String {
     if v { "true".to_string() } else { "false".to_string() }
 }
 
-/// A branch-protection posture, as declared by `org.yaml`'s `branch_protection`.
+/// The branch-protection posture that ACTUALLY reaches terraform.
 ///
-/// ── THE AUTHORITY IS RUBY, AND THAT IS STATED ON PURPOSE ─────────────────
-/// These values mirror `Pangea::Architectures::OpenSourceRepo::PROFILES`
-/// (`pangea-architectures/lib/pangea/architectures/open_source_repo.rb:39`).
-/// That gem is where the policy is decided; this is a projection of it, and
-/// `presets_match_the_ruby_source` is what keeps the projection honest.
+/// ── THE AUTHORITY, AND A CORRECTION ──────────────────────────────────────
+/// This mirrors `Pangea::Helpers::Github::BRANCH_PROTECTION_PROFILES`
+/// (`pangea-github/lib/pangea/helpers/github_presets.rb:75`).
 ///
-/// Modelled as a TABLE rather than a boolean because the presets differ in
-/// fields a boolean cannot carry — the previous `strict = (bp != "none")` gave
-/// `pilot` repos `standard`'s posture with nothing to notice it.
+/// It is NOT `OpenSourceRepo::PROFILES`, which an earlier version of this file
+/// pinned. `bin/lava-resolve-org` says why in its own words: that table's
+/// `required_reviews` / `dismiss_stale_reviews` keys "are read nowhere — that
+/// table is a validity whitelist". Pinning it produced a confident-looking
+/// distinction between `pilot` and `standard` that does not exist in the
+/// emitted output: in the real table the two are BYTE-IDENTICAL, and only
+/// `hardened` differs.
+///
+/// The lesson is worth keeping next to the code: two tables with the same key
+/// names, one of them dead, and the dead one is the one whose fields read like
+/// policy. Read what the emitter fetches, not what looks authoritative.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BranchProtectionPreset {
-    pub required_reviews: u8,
-    pub dismiss_stale_reviews: bool,
-    pub require_signed_commits: bool,
-    pub require_linear_history: bool,
     pub enforce_admins: bool,
+    pub require_signed_commits: bool,
+    pub required_linear_history: bool,
 }
 
 impl BranchProtectionPreset {
+    /// `pilot` and `standard` are deliberately identical — see the type doc.
     pub const PILOT: Self = Self {
-        required_reviews: 0,
-        dismiss_stale_reviews: false,
-        require_signed_commits: false,
-        require_linear_history: false,
         enforce_admins: false,
-    };
-    pub const STANDARD: Self = Self {
-        required_reviews: 1,
-        dismiss_stale_reviews: true,
         require_signed_commits: false,
-        require_linear_history: false,
-        enforce_admins: false,
+        required_linear_history: false,
     };
+    pub const STANDARD: Self = Self::PILOT;
     pub const HARDENED: Self = Self {
-        required_reviews: 2,
-        dismiss_stale_reviews: true,
-        require_signed_commits: true,
-        require_linear_history: true,
         enforce_admins: true,
+        require_signed_commits: true,
+        required_linear_history: true,
     };
 
-    /// `None` means no protection — which includes `"none"` AND an unknown
-    /// name.
+    /// `None` for `"none"` and for an unknown name.
     ///
-    /// An unknown preset resolving to "unprotected" is deliberate and is the
-    /// safe direction for a RESOLVER: it under-claims protection the plan will
-    /// then propose adding, rather than asserting a posture nobody defined.
-    /// The loud alternative belongs at catalogue-validation time, where the
-    /// typo can be reported against the row that contains it.
+    /// The Ruby RAISES on an unknown profile (`fetch` with a block). Returning
+    /// `None` here is the safe direction for a resolver — it under-claims
+    /// protection the plan then proposes adding, rather than asserting a
+    /// posture nobody defined — but it IS a deliberate divergence, so it is
+    /// named rather than left to be discovered.
     #[must_use]
     pub fn parse(name: &str) -> Option<Self> {
         match name {
@@ -162,55 +171,62 @@ impl BranchProtectionPreset {
 pub fn record_for(row: &OrgRepoRow, live: Option<&LiveRepo>) -> RepoRecord {
     let declared_visibility = row.visibility.clone().unwrap_or_else(|| "private".to_string());
     let bp = row.branch_protection.clone().unwrap_or_else(|| "none".to_string());
-    let protected = bp != "none";
+    let archived = row.archived.unwrap_or(false);
 
     let mut r = RepoRecord::new();
     r.insert("repo_name".into(), row.name.clone());
     r.insert("repo_description".into(), row.description.clone().unwrap_or_default());
     r.insert("repo_visibility".into(), declared_visibility.clone());
-    r.insert("repo_archived".into(), b(row.archived.unwrap_or(false)));
+    r.insert("repo_archived".into(), b(archived));
 
-    // Not in org.yaml. Stated here rather than left implicit so the default is
-    // reviewable: GitHub's own default for a new repository is issues ENABLED,
-    // and a catalogue that says nothing should not silently disable them.
-    r.insert("repo_has_issues".into(), b(true));
-    r.insert("repo_delete_branch_on_merge".into(), b(true));
-    r.insert("repo_actions_enabled".into(), b(true));
+    // ── DEFAULTS COME FROM THE GEM, NOT FROM GUESSES ────────────────────
+    // `Pangea::Architectures::Types::OpenSourceRepoConfig`
+    // (pangea-architectures/lib/pangea/architectures/types.rb):
+    //   has_issues             Types::Bool.default(true)    :356
+    //   delete_branch_on_merge Types::Bool.default(true)    :352
+    //   standard_labels        Types::Bool.default(false)   :363  <- NOT true
+    //   archived               Types::Bool.default(false)   :369
+    //   default_branch         Types::String.default('main'):351
+    r.insert("repo_has_issues".into(), b(row.has_issues.unwrap_or(true)));
+    r.insert(
+        "repo_delete_branch_on_merge".into(),
+        b(row.delete_branch_on_merge.unwrap_or(true)),
+    );
+    r.insert("repo_standard_labels".into(), b(row.standard_labels.unwrap_or(false)));
     r.insert("repo_default_branch".into(), "main".into());
 
-    r.insert("repo_standard_labels".into(), b(row.standard_labels.unwrap_or(true)));
+    // ── actions_enabled IS TRI-STATE ────────────────────────────────────
+    // `None` means "derive from visibility", not "default to on". Mirrors
+    // lava-resolve-org:113 — `cfg[:actions_enabled].nil? ? cfg[:visibility]
+    // != :internal : cfg[:actions_enabled]`. Its own comment states the
+    // stake: "a wrong answer flips Actions on or off for a whole shard", and
+    // 974 of 1005 rows rely on this derivation.
+    let actions_on = row
+        .actions_enabled
+        .unwrap_or(declared_visibility != "internal");
+    r.insert("repo_actions_enabled".into(), b(actions_on));
 
-    // ── BRANCH-PROTECTION PRESETS ARE A TABLE, NOT A BOOLEAN ─────────────
-    // This previously read `bp_strict = protected` and
-    // `bp_enforce_admins = false`, which collapses every preset into one bit.
-    // Measured against the live catalogue 2026-09-06: 5 of 1005 repos carry a
-    // preset — `standard` (cse-lint, tear, shigoto) and `pilot`
-    // (tatara-rust-ast, shiken) — and the two differ in exactly the fields the
-    // boolean erased. `pilot` means required_reviews 0 / dismiss_stale false;
-    // `standard` means 1 / true. Rendering both as "strict" silently gives two
-    // repos a protection posture nobody declared.
-    //
-    // This is the divergence `pangea-architectures/bin/lava-resolve-org`
-    // predicted in its header — "a Rust resolver would reimplement them and
-    // diverge silently" — and it was right. The fix is not to abandon the Rust
-    // resolver but to stop paraphrasing the policy: the table below mirrors
-    // `Pangea::Architectures::OpenSourceRepo::PROFILES`
-    // (lib/pangea/architectures/open_source_repo.rb:39), and
-    // `presets_match_the_ruby_source` pins the values so a drift is a red test
-    // rather than a quiet re-posture of somebody's repo.
-    let preset = BranchProtectionPreset::parse(&bp);
+    // ── AN ARCHIVED REPO IS NOT PROTECTED ───────────────────────────────
+    // `protected = !cfg[:archived] && profile != :none` (lava-resolve-org:108).
+    // The archived half was missing here, so an archived repo carrying a
+    // preset would have been rendered with live branch protection.
+    let preset = if archived {
+        None
+    } else {
+        BranchProtectionPreset::parse(&bp)
+    };
     r.insert("repo_has_branch_protection".into(), b(preset.is_some()));
-    r.insert(
-        "repo_bp_strict".into(),
-        b(preset.is_some_and(|p| p.dismiss_stale_reviews)),
-    );
+
+    // ── bp_strict IS A CONSTANT, AND THAT IS THE CORRECT VALUE ──────────
+    // The Ruby never sets required_status_checks_strict, and `false` is its
+    // NO-CHANGE value. An earlier version of this file derived it from the
+    // preset, which invents a status-check policy the Ruby path never emits —
+    // a divergence in the more dangerous direction, since it would have
+    // shown up as a live plan diff against 5 real repos.
+    r.insert("repo_bp_strict".into(), b(false));
     r.insert(
         "repo_bp_enforce_admins".into(),
         b(preset.is_some_and(|p| p.enforce_admins)),
-    );
-    r.insert(
-        "repo_bp_required_reviews".into(),
-        preset.map_or_else(|| "0".to_string(), |p| p.required_reviews.to_string()),
     );
 
     // The CI shim is not modelled in org.yaml, so it is OFF and its three
@@ -331,63 +347,136 @@ pub async fn resolve(
 mod tests {
     use super::*;
 
-    /// The preset table must match the Ruby gem, which owns the policy.
+    /// The preset table must match `BRANCH_PROTECTION_PROFILES` — the table the
+    /// emitter actually fetches.
     ///
-    /// ── WHY A LITERAL TEST AND NOT A PARSER ──
-    /// Reading `open_source_repo.rb` at test time would tie this suite to a
-    /// sibling repo's checkout path and turn a missing clone into a green run.
-    /// Pinning the values here makes a drift a RED test that names the field,
-    /// and the doc comment names the file to reconcile against.
+    /// ── WHY A LITERAL TEST, AND ITS HONEST LIMIT ──
+    /// `bin/lava-resolve-org` reads the live Ruby constant precisely so it
+    /// "cannot drift from what the Ruby path emits". This cannot do that
+    /// without tying the suite to a sibling checkout, where a missing clone
+    /// becomes a GREEN run. So it pins the values and names the file:line to
+    /// reconcile against — weaker than reading the constant, and stated as
+    /// such rather than implied.
     ///
-    /// If this fails, do not "fix" it by editing the numbers to match — read
-    /// the gem, decide which side is right, and change the one that is wrong.
+    /// If this fails: read the gem, decide which side is right, change the one
+    /// that is wrong. Do not edit these numbers to match.
     #[test]
-    fn presets_match_the_ruby_source() {
-        // PROFILES[:pilot] — open_source_repo.rb:40
-        assert_eq!(BranchProtectionPreset::PILOT.required_reviews, 0);
-        assert!(!BranchProtectionPreset::PILOT.dismiss_stale_reviews);
+    fn presets_match_the_emitting_ruby_table() {
+        // github_presets.rb:75 — pilot and standard are IDENTICAL there.
+        assert_eq!(BranchProtectionPreset::PILOT, BranchProtectionPreset::STANDARD);
         assert!(!BranchProtectionPreset::PILOT.enforce_admins);
+        assert!(!BranchProtectionPreset::PILOT.require_signed_commits);
+        assert!(!BranchProtectionPreset::PILOT.required_linear_history);
 
-        // PROFILES[:standard] — open_source_repo.rb:47
-        assert_eq!(BranchProtectionPreset::STANDARD.required_reviews, 1);
-        assert!(BranchProtectionPreset::STANDARD.dismiss_stale_reviews);
-        assert!(!BranchProtectionPreset::STANDARD.enforce_admins);
-
-        // PROFILES[:hardened]
-        assert_eq!(BranchProtectionPreset::HARDENED.required_reviews, 2);
+        // Only hardened differs.
+        assert!(BranchProtectionPreset::HARDENED.enforce_admins);
         assert!(BranchProtectionPreset::HARDENED.require_signed_commits);
-        assert!(BranchProtectionPreset::HARDENED.require_linear_history);
+        assert!(BranchProtectionPreset::HARDENED.required_linear_history);
     }
 
-    /// The regression this table exists to prevent.
+    /// The gem's defaults, each pinned against the row count that relies on it.
     ///
-    /// `bp_strict` used to be `(branch_protection != "none")`, which rendered
-    /// `pilot` and `standard` identically. Measured on the live catalogue:
-    /// tatara-rust-ast and shiken are `pilot`; cse-lint, tear and shigoto are
-    /// `standard`. Under the old code all five got the same posture.
+    /// These are the divergences that mattered: `delete_branch_on_merge` was
+    /// hardcoded `true` while 847 of 1005 rows declare `false`.
     #[test]
-    fn pilot_and_standard_are_not_the_same_posture() {
-        let row = |bp: &str| OrgRepoRow {
+    fn declared_values_reach_the_record() {
+        let declared = OrgRepoRow {
             name: "r".into(),
-            branch_protection: Some(bp.to_string()),
+            has_issues: Some(false),
+            delete_branch_on_merge: Some(false),
+            standard_labels: Some(true),
             ..Default::default()
         };
-        let pilot = record_for(&row("pilot"), None);
-        let standard = record_for(&row("standard"), None);
+        let rec = record_for(&declared, None);
+        assert_eq!(rec["repo_has_issues"], "false", "98 rows declare this false");
+        assert_eq!(
+            rec["repo_delete_branch_on_merge"], "false",
+            "847 rows declare this false — the largest divergence found"
+        );
+        assert_eq!(rec["repo_standard_labels"], "true");
+    }
 
-        assert_eq!(pilot["repo_has_branch_protection"], "true");
-        assert_eq!(standard["repo_has_branch_protection"], "true");
+    /// Absent keys take the GEM's default, not a convenient one.
+    #[test]
+    fn absent_keys_take_the_gem_defaults() {
+        let bare = OrgRepoRow { name: "r".into(), ..Default::default() };
+        let rec = record_for(&bare, None);
+        // types.rb:356 / :352 — both default true.
+        assert_eq!(rec["repo_has_issues"], "true");
+        assert_eq!(rec["repo_delete_branch_on_merge"], "true");
+        // types.rb:363 — default FALSE. This was `unwrap_or(true)`.
+        assert_eq!(rec["repo_standard_labels"], "false");
+        // types.rb:351
+        assert_eq!(rec["repo_default_branch"], "main");
+    }
 
-        // The field the boolean erased.
-        assert_eq!(pilot["repo_bp_strict"], "false");
-        assert_eq!(standard["repo_bp_strict"], "true");
-        assert_eq!(pilot["repo_bp_required_reviews"], "0");
-        assert_eq!(standard["repo_bp_required_reviews"], "1");
+    /// `actions_enabled` is tri-state: absent derives from visibility.
+    #[test]
+    fn actions_enabled_is_tri_state_not_defaulted() {
+        let with_vis = |v: &str| OrgRepoRow {
+            name: "r".into(),
+            visibility: Some(v.to_string()),
+            ..Default::default()
+        };
+        // lava-resolve-org:113 — nil ? visibility != :internal : value
+        assert_eq!(record_for(&with_vis("public"), None)["repo_actions_enabled"], "true");
+        assert_eq!(record_for(&with_vis("private"), None)["repo_actions_enabled"], "true");
+        assert_eq!(record_for(&with_vis("internal"), None)["repo_actions_enabled"], "false");
 
-        // ANTI-VACUITY: the two records must actually differ. An assertion
-        // sweep that passed while both sides were equal is how the original
-        // defect survived.
-        assert_ne!(pilot, standard);
+        // An explicit value wins over the derivation, in both directions.
+        let explicit = |on: bool| OrgRepoRow {
+            name: "r".into(),
+            visibility: Some("public".into()),
+            actions_enabled: Some(on),
+            ..Default::default()
+        };
+        assert_eq!(record_for(&explicit(false), None)["repo_actions_enabled"], "false");
+        assert_eq!(record_for(&explicit(true), None)["repo_actions_enabled"], "true");
+    }
+
+    /// An archived repo is never protected, whatever preset it declares.
+    #[test]
+    fn archived_repos_are_not_protected() {
+        let archived_protected = OrgRepoRow {
+            name: "r".into(),
+            archived: Some(true),
+            branch_protection: Some("hardened".into()),
+            ..Default::default()
+        };
+        let rec = record_for(&archived_protected, None);
+        // lava-resolve-org:108 — !cfg[:archived] && profile != :none
+        assert_eq!(rec["repo_has_branch_protection"], "false");
+        assert_eq!(rec["repo_bp_enforce_admins"], "false");
+
+        // ANTI-VACUITY: the same preset on a LIVE repo must protect, or this
+        // test would pass against a record_for that never protects anything.
+        let live_protected = OrgRepoRow {
+            branch_protection: Some("hardened".into()),
+            ..archived_protected.clone()
+        };
+        let live = record_for(
+            &OrgRepoRow { archived: Some(false), ..live_protected },
+            None,
+        );
+        assert_eq!(live["repo_has_branch_protection"], "true");
+        assert_eq!(live["repo_bp_enforce_admins"], "true");
+    }
+
+    /// `bp_strict` is a CONSTANT false — the Ruby's no-change value.
+    #[test]
+    fn bp_strict_is_always_the_no_change_value() {
+        for bp in ["none", "pilot", "standard", "hardened"] {
+            let row = OrgRepoRow {
+                name: "r".into(),
+                branch_protection: Some(bp.to_string()),
+                ..Default::default()
+            };
+            assert_eq!(
+                record_for(&row, None)["repo_bp_strict"], "false",
+                "the Ruby never sets required_status_checks_strict; deriving it \
+                 from the preset invents a status-check policy it never emits"
+            );
+        }
     }
 
     #[test]
