@@ -452,7 +452,22 @@ impl CompilerBackend for LavaCompilerBackend {
     /// break every caller that populates it unconditionally for the
     /// embedded backend's benefit.
     async fn compile(&self, req: CompileRequest) -> Result<CompileResult, BackendError> {
-        let src = if let Some(inline) = req.source.as_deref() {
+        // ── AN EMPTY SOURCE IS NOT A SOURCE ────────────────────────────────
+        // `Some("")` takes this branch, so a template whose body is empty --
+        // which is exactly what a CR naming a catalogue architecture carries --
+        // short-circuited the `load_arch_source` path below and handed lava an
+        // empty program. The failure surfaced as
+        //
+        //   lava evaluation failed: expected deflava-architecture form,
+        //   got no deflava-architecture form
+        //
+        // which reads like a malformed architecture file rather than like a
+        // file that was never opened. Measured on plo 2026-09-06.
+        //
+        // `.filter(|s| !s.trim().is_empty())` is the whole fix: absence and
+        // emptiness mean the same thing here, and only one of them was
+        // handled.
+        let src = if let Some(inline) = req.source.as_deref().filter(|s| !s.trim().is_empty()) {
             inline.to_string()
         } else {
             let name = req
