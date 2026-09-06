@@ -1245,8 +1245,34 @@ async fn handle_compiling(
             template_path.to_string_lossy(),
             repo_dir.join("lib").to_string_lossy(),
         )
+    } else if template.spec.template_name.is_some()
+        && matches!(
+            template.spec.dialect,
+            crate::crd::Dialect::Lava | crate::crd::Dialect::Auto
+        )
+    {
+        // ── THE SECOND GATE, and the reason the first fix was not enough ──
+        // `validate_source` is not the only place that demands a body. This
+        // one BUILDS the compile body, and it also rejected a template that
+        // names a catalogue architecture — with a shorter message that reads
+        // almost identically in a log, which is exactly why the first fix
+        // looked like it had failed rather than like it had been bypassed.
+        //
+        // An empty body is correct here: the lava backend's `compile` uses
+        // `req.source` only when it is non-empty and otherwise resolves
+        // `template_name` through `load_arch_source`. So the body it wants for
+        // a catalogue architecture is precisely nothing.
+        //
+        // Two gates for one rule, in one file, 4700 lines apart, with near-
+        // identical error text. Grep found both on the first pass; I fixed one
+        // and assumed the path was clear.
+        String::new()
     } else {
-        return Err(Error::InvalidSource("No template source specified".into()));
+        return Err(Error::InvalidSource(
+            "No template source specified, and no templateName naming a lava \
+             catalogue architecture"
+                .into(),
+        ));
     };
 
     // Non-git sources (inline / configMap) have no remote HEAD to anchor
