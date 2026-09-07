@@ -3739,7 +3739,11 @@ async fn handle_applying(
     // all), nothing is imported, the cached plan with its N creates is used
     // verbatim, and the apply duplicates every live object it was supposed to
     // adopt. That is precisely when the gate is most needed.
-    if prepass.attempted() {
+    if prepass.plan_may_be_stale() {
+        // A full re-plan: refreshes every instance in state. Gated on
+        // `plan_may_be_stale` rather than `attempted` so a converged org whose
+        // only outstanding work is a genuinely-absent create does not pay ~20
+        // minutes for a question already answered. See that method's doc.
         let recheck = runner.plan(&workspace).await?;
         if recheck.success {
             let fresh_drifts = drift_details_from_plan_result(&recheck, template, state).await;
@@ -4880,6 +4884,39 @@ impl ImportPrepass {
     /// exactly when duplication is most likely.
     pub(crate) fn attempted(&self) -> bool {
         !self.imported.is_empty() || !self.failed.is_empty()
+    }
+
+    /// True when the prepass could have invalidated the approved plan, and a
+    /// fresh plan must therefore be computed before applying.
+    ///
+    /// ── WHY THIS IS NARROWER THAN `attempted()` ────────────────────────────
+    /// The recheck exists to answer two questions: did the prepass CHANGE
+    /// state (making the approved plan stale), and is there a create whose
+    /// import failed AMBIGUOUSLY (where the object may be live and a create
+    /// would duplicate it). `attempted()` fires whenever anything was tried,
+    /// which at 1005 repositories is every single cycle — and the recheck is a
+    /// FULL re-plan that refreshes every instance in state.
+    ///
+    /// Measured on plo 2026-09-07: ~20 minutes per recheck against 1004
+    /// instances, not resumable, so any restart inside that window discarded
+    /// all of it. sentinela restarted the operator 3 times in 90 minutes on its
+    /// ordinary cadence, so the apply could never reach the end — the org was
+    /// unable to converge for a reason that had nothing to do with what it was
+    /// converging on. The last repository was created 25 seconds after the
+    /// gitops loop was paused.
+    ///
+    /// Neither question applies when nothing was imported AND every failure
+    /// was `Absent`: state is byte-identical to what the approved plan was
+    /// computed against, and a resource that does not exist upstream cannot be
+    /// duplicated. That is exactly the tail case of a converged org — a handful
+    /// of genuinely-missing resources and nothing to adopt — which is the case
+    /// that most needs to finish quickly.
+    ///
+    /// The unimported-create gate below still runs on `blocking`; this only
+    /// decides whether a fresh PLAN is needed to feed it.
+    pub(crate) fn plan_may_be_stale(&self) -> bool {
+        let ambiguous_failures = self.failed.iter().any(|a| !self.absent.contains(a));
+        !self.imported.is_empty() || ambiguous_failures
     }
 }
 
@@ -7180,6 +7217,64 @@ mod is_plan_approved_tests {
     use super::{is_plan_approved, InfrastructureTemplateSpec, InfrastructureTemplateStatus};
     use super::*;
     use crate::crd::{Dialect, TemplateSource};
+
+    /// The recheck must be SKIPPED only when it cannot answer anything new.
+    ///
+    /// It is a full re-plan (~20 min at 1004 instances, not resumable), and
+    /// gating it on `attempted()` meant paying that on every cycle. On plo it
+    /// made convergence impossible: sentinela restarts the operator ~3x/90min
+    /// on its ordinary cadence, which is faster than the recheck completes, so
+    /// no apply ever reached the end. Skipping it when it has nothing to check
+    /// is what lets a converged org finish.
+    ///
+    /// All four combinations are asserted. Skipping when a recheck IS needed
+    /// would reopen the duplication gap the recheck exists to close, so the
+    /// must-recheck directions matter more than the may-skip one.
+    #[test]
+    fn the_recheck_is_skipped_only_when_it_can_answer_nothing() {
+        let mk = |imported: &[&str], failed: &[&str], absent: &[&str]| ImportPrepass {
+            imported: imported.iter().map(|s| s.to_string()).collect(),
+            failed: failed.iter().map(|s| s.to_string()).collect(),
+            absent: absent.iter().map(|s| s.to_string()).collect(),
+        };
+
+        // Nothing imported, every failure Absent -> state unchanged and nothing
+        // upstream to duplicate. SKIP. This is the converged-org tail case.
+        assert!(
+            !mk(&[], &["r.a"], &["r.a"]).plan_may_be_stale(),
+            "an absent-only prepass changed no state and risks no duplicate"
+        );
+
+        // Something WAS imported -> state changed -> the approved plan is stale.
+        assert!(
+            mk(&["r.a"], &[], &[]).plan_may_be_stale(),
+            "an adoption mutates state; the approved plan must be recomputed"
+        );
+
+        // An AMBIGUOUS failure -> the object may be live -> must recheck.
+        assert!(
+            mk(&[], &["r.a"], &[]).plan_may_be_stale(),
+            "an ambiguous failure is exactly the duplication risk the recheck \
+             exists to catch — skipping it would reopen that gap"
+        );
+
+        // Mixed: one adopted, one absent -> still stale via the adoption.
+        assert!(
+            mk(&["r.a"], &["r.b"], &["r.b"]).plan_may_be_stale(),
+            "one adoption is enough to invalidate the plan"
+        );
+
+        // ANTI-VACUITY: an empty prepass skips, and `attempted` disagrees with
+        // `plan_may_be_stale` on the case that motivated the split — if they
+        // ever agree everywhere, this narrowing has silently been undone.
+        let absent_only = mk(&[], &["r.a"], &["r.a"]);
+        assert!(absent_only.attempted(), "the prepass did run");
+        assert!(
+            !absent_only.plan_may_be_stale(),
+            "attempted() and plan_may_be_stale() must differ here; that \
+             difference IS the fix"
+        );
+    }
 
     /// ── "CREATE IF MISSING" MUST BE EXPRESSIBLE ──────────────────────────
     /// The gate refuses a create whose import failed, because a TRANSIENT
