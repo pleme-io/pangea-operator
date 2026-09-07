@@ -848,10 +848,11 @@ pub async fn resolve(
     //
     // A no-op reported as success — the same class as everything else this
     // resolver guards against, this time in the wiring rather than the logic.
+    let rows: Vec<OrgRepoRow> = resolved_rows_of(catalogue)?;
 
     let client = reqwest::Client::new();
     let mut out = Vec::new();
-    for row in &catalogue.repos {
+    for row in &rows {
         if let Some(filter) = only {
             if !filter.iter().any(|n| n == &row.name) {
                 continue;
