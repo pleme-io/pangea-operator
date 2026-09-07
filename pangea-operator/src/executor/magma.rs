@@ -2410,19 +2410,47 @@ where
         // create; the caller (`try_import` → the prepass partition) treats a
         // failed import exactly that way. What changes is that the caller is
         // now told the truth about which of the two happened.
-        let in_state = state
-            .resources
-            .iter()
-            .any(|r| format!("{}.{}", r.address.type_id.0, r.address.name) == address);
+        // ── AN ADDRESS IS NOT AN ADOPTION; ATTRIBUTES ARE ─────────────────
+        // The first version of this check asked only whether the address was
+        // present in state after the import. That is necessary and NOT
+        // sufficient: magma's import writes a state entry for a resource that
+        // does not exist upstream, with an EMPTY attribute map, and reports
+        // success. Measured on plo 2026-09-07 against ten repositories that
+        // GitHub answers 404 for:
+        //
+        //   Import prepass complete  imported=10 failed=0 total=10
+        //   state entry: {"name":"annai","instances":[{"attributes":{}}]}
+        //
+        // The consequence is worse than a no-op: the plan had correctly
+        // computed `+10` creates, and a fabricated state entry tells the next
+        // cycle those repositories already exist — so the creates stop being
+        // planned and the org silently never converges. A false adoption is a
+        // create that will never happen.
+        //
+        // So the postcondition is: the address is present AND at least one
+        // instance carries a non-empty attribute map. An adoption that learned
+        // nothing about the resource did not adopt it.
+        let adopted = state.resources.iter().find(|r| {
+            format!("{}.{}", r.address.type_id.0, r.address.name) == address
+        });
+        let in_state = adopted.is_some_and(|r| {
+            r.instances.iter().any(|i| {
+                i.attributes
+                    .as_object()
+                    .is_some_and(|o| !o.is_empty())
+            })
+        });
 
         if !in_state {
             return Ok(err_tofu_result(
                 format!(
                     "magma import for {address} ({id}) reported no failure, but the \
-                     address is absent from the persisted state afterwards — nothing \
-                     was adopted. Treating as a failed import so the caller plans a \
-                     create knowingly rather than applying against state it does not \
-                     have. imported={} failed={}\n",
+                     persisted state afterwards has no instance carrying attributes \
+                     for it — either the address is absent, or it was written with an \
+                     EMPTY attribute map, which is what magma does for a resource \
+                     that does not exist upstream. Nothing was adopted. Treating as a \
+                     failed import so the caller plans a create knowingly rather than \
+                     believing a resource exists that does not. imported={} failed={}\n",
                     outcome.imported.len(),
                     outcome.failed.len(),
                 ),

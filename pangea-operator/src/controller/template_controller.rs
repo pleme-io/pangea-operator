@@ -3748,7 +3748,19 @@ async fn handle_applying(
             // check below cannot see it. For a provider with no uniqueness
             // constraint this is the difference between adopting an object and
             // silently standing up a second copy of it.
-            if let Some(dup) = find_unimported_create(&prepass.failed, &fresh_drifts) {
+            // ── ONLY AMBIGUOUS FAILURES BLOCK A CREATE ────────────────────
+            // A create whose import failed because the resource is ABSENT is
+            // the correct action, not a duplication risk — there is nothing
+            // upstream to duplicate. Passing the full failure set here made
+            // "create if missing" unreachable: the only route to a create is
+            // an import failure, and every failure was treated as dangerous.
+            let blocking: Vec<String> = prepass
+                .failed
+                .iter()
+                .filter(|a| !prepass.absent.contains(a))
+                .cloned()
+                .collect();
+            if let Some(dup) = find_unimported_create(&blocking, &fresh_drifts) {
                 let msg = format!(
                     "Applying refused: import failed for {} and the fresh plan still \
                      wants to CREATE it. Applying would duplicate the live resource \
@@ -4826,10 +4838,39 @@ async fn read_legacy_show_plan_json(
 /// motivating case) will happily CREATE a duplicate of a live object when an
 /// import hint fails, and the apply path had no way to know an import had even
 /// been attempted for that address.
+/// Why an import did not adopt, in the only distinction the safety gate needs.
+///
+/// ── WHY A REASON AND NOT A BOOL ────────────────────────────────────────────
+/// `find_unimported_create` refuses to apply a create whose import failed,
+/// because an import that failed *transiently* means the object may well be
+/// live and creating it again duplicates it. That is correct and load-bearing.
+///
+/// But it received only ADDRESSES, so it could not tell that case from the
+/// opposite one: an import that failed because the resource genuinely **is not
+/// there**, where a create is not merely safe but the entire point. With no
+/// reason to read, the gate had to assume the dangerous case for both — which
+/// made "create if missing" inexpressible. Measured on plo 2026-09-07: ten
+/// declared repositories that GitHub answers 404 for could not be created,
+/// because the only way to reach a create was through an import failure the
+/// gate then refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ImportFailure {
+    /// The resource does not exist upstream. A create is CORRECT — there is
+    /// nothing to duplicate.
+    Absent,
+    /// Anything else: a provider configure error, a transport failure, a
+    /// permission denial, an unparseable response. The resource may be live and
+    /// a create may duplicate it, so the gate must still refuse.
+    Ambiguous,
+}
+
 #[derive(Debug, Default, Clone)]
 pub(crate) struct ImportPrepass {
     pub imported: Vec<String>,
     pub failed: Vec<String>,
+    /// The subset of `failed` whose reason was [`ImportFailure::Absent`], i.e.
+    /// the addresses a create may legitimately proceed for.
+    pub absent: Vec<String>,
 }
 
 impl ImportPrepass {
@@ -5077,7 +5118,8 @@ async fn run_import_prepass(
         concurrency = IMPORT_CONCURRENCY,
         "Running import prepass concurrently"
     );
-    let results: Vec<(String, bool)> = futures::stream::iter(targets.into_iter())
+    let results: Vec<(String, std::result::Result<(), ImportFailure>)> =
+        futures::stream::iter(targets.into_iter())
         .map(|t| {
             let import_executor = Arc::clone(&import_executor);
             async move {
@@ -5098,10 +5140,19 @@ async fn run_import_prepass(
         .collect()
         .await;
 
-    let (ok, bad): (Vec<_>, Vec<_>) = results.into_iter().partition(|(_, ok)| *ok);
+    let (ok, bad): (Vec<_>, Vec<_>) = results.into_iter().partition(|(_, r)| r.is_ok());
+    // `absent` is the subset of failures a create may legitimately proceed for.
+    // Carried alongside `failed` rather than removed from it: the gate needs
+    // both the full failure set (for reporting) and the permitted subset.
+    let absent: Vec<String> = bad
+        .iter()
+        .filter(|(_, r)| matches!(r, Err(ImportFailure::Absent)))
+        .map(|(a, _)| a.clone())
+        .collect();
     let outcome = ImportPrepass {
         imported: ok.into_iter().map(|(a, _)| a).collect(),
         failed: bad.into_iter().map(|(a, _)| a).collect(),
+        absent,
     };
 
     info!(
@@ -5131,7 +5182,11 @@ pub(crate) fn find_unimported_create<'a>(
 
 /// Try a single import via the resolved executor (magma import RPC on
 /// the magma path; `tofu import` only on the legacy tofu executor).
-/// Returns true if the import succeeded.
+/// `Ok(())` if the import adopted; `Err(ImportFailure)` classifying why not.
+///
+/// The classification is what lets a create proceed for a resource that is
+/// genuinely absent while still refusing one whose import failed ambiguously —
+/// see [`ImportFailure`].
 /// Failures are non-fatal — we log + emit a Warning event and let the
 /// apply path handle the resource (where it'll fail visibly with a
 /// real error message instead of a silently-skipped import).
@@ -5150,7 +5205,7 @@ async fn try_import(
     addr: &str,
     import_id: &str,
     source_label: &str,
-) -> bool {
+) -> std::result::Result<(), ImportFailure> {
     info!(
         address = %addr,
         import_id = %import_id,
@@ -5169,12 +5224,31 @@ async fn try_import(
                 ),
             )
             .await;
-            true
+            Ok(())
         }
         Ok(r) => {
+            // ── CLASSIFY, DO NOT COLLAPSE ──────────────────────────────────
+            // magma's own message for a resource that is not there names it,
+            // and so does the provider's 404. Matching on that text is a
+            // stringly test and is stated as one: the executor does not yet
+            // return a typed not-found, so this is the honest floor rather
+            // than a pretence of a type. Anything unrecognised falls to
+            // Ambiguous — the safe direction, since Ambiguous still refuses
+            // the create.
+            let hay = r.stderr.to_ascii_lowercase();
+            let class = if hay.contains("404")
+                || hay.contains("not found")
+                || hay.contains("does not exist")
+                || hay.contains("no resource with id")
+            {
+                ImportFailure::Absent
+            } else {
+                ImportFailure::Ambiguous
+            };
             warn!(
                 address = %addr,
                 stderr = %r.stderr,
+                classification = ?class,
                 "import failed; falling through to apply"
             );
             record_event(
@@ -5185,11 +5259,13 @@ async fn try_import(
                 &format!("import {addr} failed: {}", truncate_for_status(&r.stderr)),
             )
             .await;
-            false
+            Err(class)
         }
         Err(e) => {
+            // A transport/executor error says nothing about whether the
+            // resource exists, so it is Ambiguous by construction.
             warn!(address = %addr, error = %e, "import errored; falling through to apply");
-            false
+            Err(ImportFailure::Ambiguous)
         }
     }
 }
@@ -7105,6 +7181,69 @@ mod is_plan_approved_tests {
     use super::*;
     use crate::crd::{Dialect, TemplateSource};
 
+    /// ── "CREATE IF MISSING" MUST BE EXPRESSIBLE ──────────────────────────
+    /// The gate refuses a create whose import failed, because a TRANSIENT
+    /// failure means the object may be live and creating it duplicates it.
+    /// Correct — but it received only addresses, so it applied that same
+    /// refusal to a resource that genuinely does not exist, where a create is
+    /// the entire point.
+    ///
+    /// Measured on plo 2026-09-07: ten declared repositories that GitHub
+    /// answers 404 for could not be created, because the only route to a
+    /// create is an import failure and every failure was treated as dangerous.
+    /// The org sat at 995/1005 with no way forward.
+    ///
+    /// Both directions are asserted. A test that only proved Absent-permits
+    /// would pass against a gate that permitted everything, which is the
+    /// dangerous half.
+    #[test]
+    fn only_ambiguous_import_failures_block_a_create() {
+        let drift = |addr: &str| crate::crd::DriftDetail {
+            address: addr.to_string(),
+            action: "create".to_string(),
+            risk: String::new(),
+            attributes: Vec::new(),
+            policy_decision: None,
+            matched_policy: None,
+        };
+        let drifts = vec![drift("github_repository.annai")];
+
+        // ABSENT -> not in the blocking set -> the create proceeds.
+        let prepass = ImportPrepass {
+            imported: vec![],
+            failed: vec!["github_repository.annai".to_string()],
+            absent: vec!["github_repository.annai".to_string()],
+        };
+        let blocking: Vec<String> = prepass
+            .failed
+            .iter()
+            .filter(|a| !prepass.absent.contains(a))
+            .cloned()
+            .collect();
+        assert!(
+            find_unimported_create(&blocking, &drifts).is_none(),
+            "a repository that does not exist upstream must be creatable"
+        );
+
+        // AMBIGUOUS -> stays in the blocking set -> the create is refused.
+        let prepass = ImportPrepass {
+            imported: vec![],
+            failed: vec!["github_repository.annai".to_string()],
+            absent: vec![],
+        };
+        let blocking: Vec<String> = prepass
+            .failed
+            .iter()
+            .filter(|a| !prepass.absent.contains(a))
+            .cloned()
+            .collect();
+        assert!(
+            find_unimported_create(&blocking, &drifts).is_some(),
+            "an ambiguous import failure must still refuse the create — the \
+             object may be live and a create would duplicate it"
+        );
+    }
+
     /// A named lava catalogue architecture IS a source.
     ///
     /// The regression: `load_arch_source` in the lava backend resolves
@@ -8037,6 +8176,7 @@ mod unapproved_destructive_escalation_tests {
         // If `attempted` were keyed on `imported`, this would skip the gate and
         // apply the cached plan verbatim -- the mass-duplication case.
         let outcome = ImportPrepass {
+            absent: vec![],
             imported: vec![],
             failed: vec![
                 "datadog_monitor.a".to_string(),
