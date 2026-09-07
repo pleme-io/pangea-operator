@@ -283,6 +283,19 @@ impl OrgRepoRow {
     }
 }
 
+/// The folded rows, discarding provenance — the shape `resolve` needs.
+///
+/// Exists so `resolve` and `--emit overlays` cannot drift apart on WHICH rows
+/// they fold: there is one fold, reached two ways. That drift is precisely the
+/// bug this function was extracted to close.
+fn resolved_rows_of(catalogue: &OrgCatalogue) -> Result<Vec<OrgRepoRow>, String> {
+    Ok(catalogue
+        .resolved_rows()?
+        .into_iter()
+        .map(|(row, _prov)| row)
+        .collect())
+}
+
 impl OrgCatalogue {
     /// The rows with tiers 2 and 3 folded in, plus the provenance of every
     /// key each row ended up with.
@@ -813,6 +826,28 @@ pub async fn resolve(
                 .join("\n  ")
         ));
     }
+
+    // ── ★ RESOLVE THE FOLDED ROWS, NOT THE RAW ONES ──────────────────────
+    // This line is the whole tier feature. Reading `catalogue.repos` directly
+    // — as this did until 2026-09-07 — means `repo_defaults` and
+    // `repo_profiles` are parsed, validated, and then IGNORED by the only
+    // path the operator actually runs.
+    //
+    // It failed exactly that way in production and the failure was SILENT in
+    // the worst possible shape: `--emit overlays` folds (it calls
+    // `resolved_rows`), so the migration oracle reported the tier working and
+    // the differential was clean, while `--emit cr-patch` — the path the
+    // node's seed unit uses — emitted unfolded records. The seed logged
+    // `infrastructuretemplate … patched` and changed nothing, because the
+    // patch it computed was byte-identical to what was already there.
+    //
+    // Every layer said yes: the catalogue parsed, the fold was tested
+    // (1444 tests), both renderers agreed 1005/1005, the seed ran, kubectl
+    // reported a successful patch. The only thing that said no was counting
+    // the values in the live CR afterwards.
+    //
+    // A no-op reported as success — the same class as everything else this
+    // resolver guards against, this time in the wiring rather than the logic.
 
     let client = reqwest::Client::new();
     let mut out = Vec::new();
@@ -1578,6 +1613,75 @@ mod live {
         assert!(validate_catalogue(&cat).is_empty());
     }
 
+
+    /// ★ THE GATE FOR THE BUG THAT SHIPPED: two row sources, one folded.
+    ///
+    /// `resolve` read `catalogue.repos` directly while `--emit overlays` read
+    /// the FOLDED rows, so `repo_defaults` was parsed, validated, tested, and
+    /// then ignored by the only path the operator runs. The seed unit logged
+    /// `infrastructuretemplate … patched` and changed nothing, because the
+    /// patch was byte-identical to what was already there.
+    ///
+    /// 1444 unit tests did not catch it, and could not have: every one of
+    /// them exercised the fold directly, and `resolve` needs a network. So
+    /// the gate is SOURCE-LEVEL, the same shape as the nix repo's
+    /// `noBespokeNixosSystemCalls` — count the call sites and fail on a new
+    /// one, rather than try to test a behaviour that needs the world.
+    ///
+    /// Exactly two places may read RAW rows:
+    ///   - `resolved_rows`, which is the fold
+    ///   - `validate_catalogue`, which SHOULD see raw rows: validation is
+    ///     about what the author actually wrote, so folding first would let a
+    ///     row inherit its way past a refusal
+    ///
+    /// A third is a consumer that silently skips the tiers.
+    #[test]
+    fn only_the_fold_and_the_validator_may_read_raw_rows() {
+        // ── ★ COUNT THE PRODUCTION HALF ONLY ─────────────────────────────
+        // The first version of this gate counted the WHOLE file and found 3
+        // instead of 1 — because this test's own doc comment and assertion
+        // messages quote the pattern. A source-level gate is part of the
+        // source it inspects.
+        //
+        // Truncating at `#[cfg(test)]` is also the semantically right scope: a
+        // test that iterates rows is not a production consumer of them, so it
+        // should not be able to trip this. Worth noting the gate DID fire on
+        // itself, which is at least proof it is not vacuous.
+        let whole = include_str!("org_resolve.rs");
+        let src = whole
+            .split_once("#[cfg(test)]")
+            .map_or(whole, |(production, _tests)| production);
+
+        let self_repos = src.matches("for row in &self.repos").count();
+        assert_eq!(
+            self_repos, 1,
+            "`for row in &self.repos` must appear exactly once (in `resolved_rows`, \
+             which IS the fold); found {self_repos}"
+        );
+
+        let catalogue_repos = src.matches("for row in &catalogue.repos").count();
+        assert_eq!(
+            catalogue_repos, 1,
+            "`for row in &catalogue.repos` must appear exactly once (in \
+             `validate_catalogue`, which validates what the author WROTE). Found \
+             {catalogue_repos} — a second one is a consumer that skips \
+             repo_defaults/repo_profiles entirely, which is exactly the bug this \
+             gate exists to catch. Route it through `resolved_rows_of` instead."
+        );
+
+        // ANTI-VACUITY: the strings must actually be present, or the two
+        // assertions above would pass on a file that had been renamed out
+        // from under them and this gate would guard nothing.
+        assert!(
+            src.contains("fn resolved_rows_of"),
+            "the single fold entry point must exist for the counts above to mean anything"
+        );
+        assert!(
+            src.contains("let rows: Vec<OrgRepoRow> = resolved_rows_of(catalogue)?;"),
+            "`resolve` must source its rows from the fold; if this line moved, the \
+             counts above no longer prove resolve folds"
+        );
+    }
     // ── THE TIER FOLD ─────────────────────────────────────────────────────
     // What the user asked for and what was missing: config for all
     // workspaces, for one workspace, and for each element within it, in a
