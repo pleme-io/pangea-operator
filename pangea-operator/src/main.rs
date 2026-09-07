@@ -986,6 +986,75 @@ async fn run_resolve_org() -> Result<()> {
     let catalogue: pangea_operator::org_resolve::OrgCatalogue = serde_yaml::from_str(&raw)
         .map_err(|e| pangea_operator::Error::Config(format!("parsing {catalogue_path}: {e}")))?;
 
+    // ── `--emit overlays`: THE TIER FOLD, OFFLINE ─────────────────────────
+    // `resolved_rows` is pure — it folds repo_defaults, the named profiles and
+    // the row, and touches no network. So this dumps exactly what each row
+    // RESOLVES TO, plus which tier supplied each setting, in milliseconds and
+    // with no credential.
+    //
+    // It exists to be a migration ORACLE. Moving a workspace onto the tiers
+    // means deleting thousands of restated lines from `org.yaml`, and the only
+    // honest way to do that is a differential: dump the overlays before, dump
+    // them after, and require the diff to be exactly the rows whose inherited
+    // value was WRONG. Without it, a reduction is a hope.
+    //
+    // Ordered before the credential handling below on purpose: an offline
+    // question must not require a token.
+    if value_of("--emit").as_deref() == Some("overlays") {
+        let rows = catalogue
+            .resolved_rows()
+            .map_err(pangea_operator::Error::Config)?;
+        let dump: Vec<serde_json::Value> = rows
+            .iter()
+            .map(|(row, prov)| {
+                serde_json::json!({
+                    "name": row.name,
+                    "inherits": row.inherits,
+                    "resolved": row.overlay,
+                    // ── THE RECORD IS WHAT THE ARCHITECTURE ACTUALLY READS ──
+                    // The overlay is the folded DECLARATION; `record_for`
+                    // then applies the gem defaults to whatever is still
+                    // unset. So two catalogues can differ in their overlays
+                    // and render IDENTICAL records — which is exactly the
+                    // common case when hoisting a value that already matched
+                    // the gem. A migration differential taken on overlays
+                    // alone would report changes that do not exist, and
+                    // (worse) could miss one that does. `live: None` because
+                    // this is offline; it affects only `live_visibility` and
+                    // `exists_on_github`, which no catalogue edit can move.
+                    "record": pangea_operator::org_resolve::record_for(row, None),
+                    "from": prov
+                        .iter()
+                        .map(|(k, t)| {
+                            (
+                                k.clone(),
+                                match t {
+                                    pangea_operator::org_resolve::Tier::WorkspaceDefaults => {
+                                        "workspace".to_string()
+                                    }
+                                    pangea_operator::org_resolve::Tier::Profile(n) => {
+                                        format!("profile:{n}")
+                                    }
+                                    pangea_operator::org_resolve::Tier::Row => "row".to_string(),
+                                },
+                            )
+                        })
+                        .collect::<std::collections::BTreeMap<_, _>>(),
+                })
+            })
+            .collect();
+        info!(
+            catalogue = %catalogue_path,
+            rows = dump.len(),
+            "tier fold complete (offline — no API calls, no credential)"
+        );
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&dump).map_err(pangea_operator::Error::Serialization)?
+        );
+        return Ok(());
+    }
+
     // `only` narrows the run to named repos — a subset is a legitimate plan
     // rather than a partial one, which is why resolve() takes it explicitly.
     let only: Option<Vec<String>> =
@@ -1098,7 +1167,8 @@ async fn run_resolve_org() -> Result<()> {
             // `_ => None` fall-through.
             return Err(pangea_operator::Error::Config(format!(
                 "--emit {other}: unknown emit shape. Known: `records` (default, the raw list), \
-                 `cr-patch` (a merge patch for spec.variables)."
+                 `cr-patch` (a merge patch for spec.variables), \
+                 `overlays` (the tier fold, offline — no network, no credential)."
             )));
         }
     }

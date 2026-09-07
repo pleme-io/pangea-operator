@@ -85,6 +85,44 @@ pub struct OrgRepoRow {
 /// DISAGREES with the corpus consensus, and nothing says so because a row
 /// that omits a key reads exactly like a row that agrees with the default.
 ///
+/// ── ★★ DO NOT MIGRATE A LIVE `org.yaml` ONTO THESE TIERS YET ─────────────
+/// `pleme-io-opensource/org.yaml` is read by TWO implementations: this
+/// resolver (via `dialect: lava`) and the Ruby `GithubOrgWorkspace` (via
+/// `pleme_io_opensource_org.rb`'s `org_yaml:`). Only this one knows about
+/// `repo_defaults` / `repo_profiles`.
+///
+/// Measured 2026-09-07: the Ruby loader is `YAML.safe_load_file` followed by
+/// `data.dig('organization', …)` / `data['repos']`, so an unknown top-level
+/// key is **silently ignored** — no error, no warning. And Ruby's
+/// `Types::OpenSourceRepoConfig` defaults `delete_branch_on_merge` to `true`
+/// (`types.rb:352`).
+///
+/// So hoisting `delete_branch_on_merge: false` into `repo_defaults` and
+/// deleting it from the 847 rows that restate it would render:
+///
+///   this resolver -> false  (from the workspace tier)
+///   the Ruby path -> true   (the key is gone; the gem default applies)
+///
+/// An **847-row silent divergence between two renderers of one file** — far
+/// worse than the 43-row bug it set out to fix. The differential caught it
+/// only because the fold was dumped and compared; nothing in either
+/// implementation would have said a word.
+///
+/// The tiers are therefore SAFE TO USE on a catalogue only this resolver
+/// reads, and the pleme-io-opensource migration is gated on the Ruby side
+/// implementing the same fold — ideally with a cross-implementation parity
+/// spec beside `spec/parity/koritsu_parity_spec.rb`, which is exactly the
+/// shape that gate wants.
+///
+/// `pending-org-tier-migration: Ruby GithubOrgWorkspace must fold
+///  repo_defaults/repo_profiles before any live catalogue is reduced.`
+///
+/// Use `--resolve-org --emit overlays` to dump the fold offline (no network,
+/// no credential) and diff before/after. Diff the `record` field, not
+/// `resolved`: two catalogues can differ in their overlays and render
+/// identical records, which is the common case when hoisting a value that
+/// already matched the gem.
+///
 /// ── ★ `deny_unknown_fields` HERE, TOLERANT ON A ROW — DELIBERATELY ────────
 /// A row is tolerant because `org.yaml` rows carry keys this Rust does not
 /// model and other consumers do (`exposure`, `license`, `topics`, `pages`,
