@@ -1084,16 +1084,10 @@ async fn run_resolve_org() -> Result<()> {
             );
         }
         Some("cr-patch") => {
-            let patch = serde_json::json!({
-                "spec": {
-                    "variables": {
-                        "owner": owner,
-                        "repo_count": records.len().to_string(),
-                        "repos": records,
-                        "labels": [],
-                    }
-                }
-            });
+            // The shape lives in `org_resolve::cr_patch`, beside the records
+            // it describes and where its contract with the lava architecture
+            // is unit-tested. Two copies of a shape are two shapes.
+            let patch = pangea_operator::org_resolve::cr_patch(&owner, &records);
             println!(
                 "{}",
                 serde_json::to_string(&patch).map_err(pangea_operator::Error::Serialization)?

@@ -382,6 +382,36 @@ pub async fn resolve(
     Ok(out)
 }
 
+/// The `spec.variables` merge patch for an `InfrastructureTemplate`, from a
+/// resolved record list.
+///
+/// ── ★ THE KEYS ARE A CONTRACT, NOT A CHOICE ────────────────────────────────
+/// `github-org-repos.tlisp` reads `{owner}` and `{repo_count}` and loops over
+/// `repos`; these names are that architecture's interpolation contract. Two
+/// details are load-bearing and neither is guessable from the names:
+///
+/// - `repo_count` is a **string**. lava interpolates strings, so an integer
+///   here renders differently from what the architecture expects while every
+///   type in Rust and every schema in Kubernetes stays happy.
+/// - `labels` is present **and empty**. The architecture indexes it, and an
+///   ABSENT key is not an empty list to the interpolator.
+///
+/// Lives here rather than in `main` so the shape is testable and sits beside
+/// the records it describes. `main`'s `--emit cr-patch` is a thin caller.
+#[must_use]
+pub fn cr_patch(owner: &str, records: &[RepoRecord]) -> serde_json::Value {
+    serde_json::json!({
+        "spec": {
+            "variables": {
+                "owner": owner,
+                "repo_count": records.len().to_string(),
+                "repos": records,
+                "labels": [],
+            }
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -728,5 +758,83 @@ mod live {
             );
         }
         assert_eq!(records.len(), only.len(), "every requested repo must resolve");
+    }
+
+    // ── the cr-patch shape, pinned against what is LIVE ────────────────────
+    // Measured 2026-09-07 against the InfrastructureTemplate on plo: 4
+    // variable keys, and `repo_count` a string. These assertions exist because
+    // both facts are invisible from the type system — an integer repo_count
+    // type-checks in Rust, validates in Kubernetes, and renders wrong in lava.
+
+    fn rec(name: &str) -> RepoRecord {
+        record_for(
+            &OrgRepoRow {
+                name: name.into(),
+                ..Default::default()
+            },
+            None,
+        )
+    }
+
+    #[test]
+    fn cr_patch_has_exactly_the_four_live_variable_keys() {
+        let patch = cr_patch("pleme-io", &[rec("tend")]);
+        let vars = patch["spec"]["variables"]
+            .as_object()
+            .expect("variables is an object");
+        let mut keys: Vec<&str> = vars.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            ["labels", "owner", "repo_count", "repos"],
+            "the live spec.variables carries exactly these four; a fifth key or \
+             a missing one is a divergence from the lava architecture's contract"
+        );
+    }
+
+    #[test]
+    fn repo_count_is_a_string_because_lava_interpolates_strings() {
+        let patch = cr_patch("pleme-io", &[rec("tend"), rec("codesearch")]);
+        assert_eq!(
+            patch["spec"]["variables"]["repo_count"],
+            serde_json::json!("2"),
+            "an integer type-checks in Rust, validates in Kubernetes, and \
+             renders differently in lava — which is exactly why this is asserted"
+        );
+    }
+
+    #[test]
+    fn labels_is_present_and_empty_not_absent() {
+        let patch = cr_patch("pleme-io", &[rec("tend")]);
+        let vars = &patch["spec"]["variables"];
+        assert!(
+            vars.get("labels").is_some(),
+            "the architecture indexes `labels`; an absent key is not an empty \
+             list to the interpolator"
+        );
+        assert_eq!(vars["labels"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn repo_count_tracks_the_record_list_length() {
+        // ANTI-VACUITY: without this, a `cr_patch` that hardcoded a count
+        // would pass the string-type test above. The count and the list must
+        // agree, because the architecture loops `repo_count` times.
+        for n in [1_usize, 3, 7] {
+            let records: Vec<RepoRecord> = (0..n).map(|i| rec(&format!("r{i}"))).collect();
+            let patch = cr_patch("pleme-io", &records);
+            assert_eq!(
+                patch["spec"]["variables"]["repo_count"],
+                serde_json::json!(n.to_string()),
+                "repo_count must equal repos.len()"
+            );
+            assert_eq!(
+                patch["spec"]["variables"]["repos"]
+                    .as_array()
+                    .expect("repos is an array")
+                    .len(),
+                n
+            );
+        }
     }
 }
