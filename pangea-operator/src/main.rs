@@ -992,7 +992,39 @@ async fn run_resolve_org() -> Result<()> {
     let only: Option<Vec<String>> = value_of("--only")
         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect());
 
-    let token = env::var("GITHUB_TOKEN").ok();
+    // ── CREDENTIAL SOURCE: a FILE is preferred over the environment ──────
+    // cofre's zero-plaintext discipline is explicit that a secret never enters
+    // argv, env or logs. A systemd unit reading a sops-materialized secret has
+    // to get it in somehow, and `export GITHUB_TOKEN=$(cat …)` puts it in this
+    // process's environment where `/proc/<pid>/environ` and any child inherit
+    // it. `--token-file` names the PATH — argv-safe — and the bytes are read
+    // here and never re-exported.
+    //
+    // `GITHUB_TOKEN` still works, so nothing that already used it breaks. The
+    // file wins when both are present: an explicit flag beats an ambient
+    // variable, and silently preferring the ambient one is how a caller ends
+    // up authenticating as somebody else.
+    let token = match value_of("--token-file") {
+        Some(path) => {
+            let raw = std::fs::read_to_string(&path).map_err(|e| {
+                pangea_operator::Error::Config(format!("reading --token-file {path}: {e}"))
+            })?;
+            // A trailing newline is what `sops -d > file` leaves, and a bearer
+            // token with one attached is a 401 that names nothing.
+            let trimmed = raw.trim().to_string();
+            if trimmed.is_empty() {
+                return Err(pangea_operator::Error::Config(format!(
+                    "--token-file {path} is empty. An empty token resolves ANONYMOUSLY, \
+                     under which a private repository answers 404 and is correctly read as \
+                     ABSENT — so every private repo in the catalogue would be reported as \
+                     needing creation. Refusing rather than degrading silently."
+                )));
+            }
+            Some(trimmed)
+        }
+        None => env::var("GITHUB_TOKEN").ok(),
+    };
+
     let records = pangea_operator::org_resolve::resolve(
         &catalogue,
         &owner,
