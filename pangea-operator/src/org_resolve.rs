@@ -360,12 +360,153 @@ pub async fn look_up(
 /// The first lookup failure, with the repo named. Fail-fast rather than
 /// resolving the rest: a partial record set renders a plan that silently omits
 /// repos, which looks like a successful smaller run.
+/// A single catalogue row that GitHub will refuse, and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogueViolation {
+    /// The repository the row names.
+    pub repo: String,
+    /// The offending field.
+    pub field: &'static str,
+    /// What is wrong, in the operator's terms.
+    pub detail: String,
+}
+
+impl std::fmt::Display for CatalogueViolation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {} — {}", self.repo, self.field, self.detail)
+    }
+}
+
+/// GitHub's own limit on a repository `description`, in characters.
+///
+/// Measured, not read from documentation: `jikou` carried a 365-character
+/// description and the API answered **422** on it, which surfaced as a failed
+/// apply cycle after 1005 lookups had already been spent. GitHub documents no
+/// number here.
+pub const DESCRIPTION_MAX_CHARS: usize = 350;
+
+/// Refuse a catalogue GitHub will refuse, BEFORE spending an API call on it.
+///
+/// ── ★ WHY THIS IS A PARSE-BOUNDARY CHECK AND NOT AN APPLY-TIME ERROR ──────
+/// `resolve` makes one API call per row — 1005 of them for pleme-io — and the
+/// fields checked here are not consulted until the *apply* that follows. So a
+/// single over-long description meant: 1005 lookups, a compile, a plan, an
+/// approval, and then a 422 from deep inside a provider, naming an address
+/// rather than a catalogue row. Measured 2026-09-07, and the diagnosis cost
+/// far more than the fix.
+///
+/// Every rule here is a fact about **GitHub**, not about us — which is the
+/// MIRAGEM test for a limit that should be typed rather than dissolved. We
+/// cannot make GitHub accept a 400-character description, so the honest move
+/// is to reject it at the boundary where the author can still see their own
+/// row.
+///
+/// Returns every violation rather than the first, because an author fixing a
+/// catalogue wants the whole list in one pass, not one per apply cycle.
+///
+/// TIER: parse-time-rejected, not truly-unrepresentable — `OrgRepoRow` can
+/// still *hold* a 400-character description. Making it unrepresentable wants a
+/// refinement-typed field (`Refined<String, MaxChars<350>>`), which is the
+/// destination; this is the honest middle tier and it is stated as such.
+#[must_use]
+pub fn validate_catalogue(catalogue: &OrgCatalogue) -> Vec<CatalogueViolation> {
+    let mut out = Vec::new();
+    for row in &catalogue.repos {
+        // ── description length ────────────────────────────────────────────
+        // CHARACTERS, not bytes: GitHub counts characters, and a description
+        // with an em-dash or an accented word is longer in bytes than in
+        // characters. `len()` would reject rows GitHub accepts — a false
+        // refusal is still a defect.
+        if let Some(desc) = &row.description {
+            let n = desc.chars().count();
+            if n > DESCRIPTION_MAX_CHARS {
+                out.push(CatalogueViolation {
+                    repo: row.name.clone(),
+                    field: "description",
+                    detail: format!(
+                        "{n} characters exceeds GitHub's limit of {DESCRIPTION_MAX_CHARS}; \
+                         the API answers 422 and the failure surfaces at apply time, \
+                         naming a provider address rather than this row"
+                    ),
+                });
+            }
+        }
+
+        // ── name charset ──────────────────────────────────────────────────
+        // GitHub accepts ASCII alphanumerics, `-`, `_` and `.`. Anything else
+        // is a 422 on create — and for an EXISTING repo the lookup 404s, which
+        // the resolver correctly reads as absent, so a typo'd name presents as
+        // a repo that needs creating rather than as a bad row.
+        if row.name.is_empty() {
+            out.push(CatalogueViolation {
+                repo: "<empty>".to_string(),
+                field: "name",
+                detail: "a row with an empty name resolves to a lookup of the org root \
+                         and cannot be created"
+                    .to_string(),
+            });
+        } else if let Some(bad) = row
+            .name
+            .chars()
+            .find(|c| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')))
+        {
+            out.push(CatalogueViolation {
+                repo: row.name.clone(),
+                field: "name",
+                detail: format!(
+                    "contains {bad:?}; GitHub accepts ASCII alphanumerics, '-', '_' and '.'. \
+                     An unacceptable name 404s on lookup, which reads as ABSENT — so this \
+                     presents as a repository needing creation rather than as a bad row"
+                ),
+            });
+        }
+
+        // ── visibility enum ───────────────────────────────────────────────
+        // `visibility` is a free-form Option<String> in the row, so a typo is
+        // not a parse error. `record_for` passes it through to the
+        // architecture, which emits it into the provider — where `publi` is a
+        // 422, and `Public` is too (GitHub is case-sensitive here).
+        if let Some(v) = &row.visibility {
+            if !matches!(v.as_str(), "public" | "private" | "internal") {
+                out.push(CatalogueViolation {
+                    repo: row.name.clone(),
+                    field: "visibility",
+                    detail: format!(
+                        "{v:?} is not one of \"public\", \"private\", \"internal\" \
+                         (case-sensitive). The row parses, the plan compiles, and the \
+                         provider answers 422"
+                    ),
+                });
+            }
+        }
+    }
+    out
+}
+
 pub async fn resolve(
     catalogue: &OrgCatalogue,
     owner: &str,
     token: Option<&str>,
     only: Option<&[String]>,
 ) -> Result<Vec<RepoRecord>, String> {
+    // ── ★ REFUSE BEFORE SPENDING 1005 API CALLS ──────────────────────────
+    // These fields are not consulted until the apply that follows resolution,
+    // so without this a single bad row costs a full resolve + compile + plan
+    // + approval before a 422 arrives naming a provider address instead of
+    // the row. The check is free and the whole list comes back at once.
+    let violations = validate_catalogue(catalogue);
+    if !violations.is_empty() {
+        return Err(format!(
+            "the catalogue declares {} row(s) GitHub will refuse:\n  {}",
+            violations.len(),
+            violations
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n  ")
+        ));
+    }
+
     let client = reqwest::Client::new();
     let mut out = Vec::new();
     for row in &catalogue.repos {
@@ -836,5 +977,180 @@ mod live {
                 n
             );
         }
+    }
+
+    // ── the catalogue validator ────────────────────────────────────────────
+    // Every rule here cost a real diagnosis. The point of the tests is not
+    // that the checks fire, but that they fire on the shapes that actually
+    // reached production and stayed invisible until apply time.
+
+    #[test]
+    fn an_over_long_description_is_refused_at_the_boundary() {
+        // jikou's real shape: 365 characters, a 422 from GitHub, surfaced only
+        // after 1005 lookups and a full plan.
+        let cat = OrgCatalogue {
+            repos: vec![OrgRepoRow {
+                name: "jikou".into(),
+                description: Some("x".repeat(365)),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let v = validate_catalogue(&cat);
+        assert_eq!(v.len(), 1, "one row, one violation");
+        assert_eq!(v[0].repo, "jikou");
+        assert_eq!(v[0].field, "description");
+        assert!(v[0].detail.contains("365"), "the count must name itself");
+    }
+
+    #[test]
+    fn a_description_exactly_at_the_limit_is_accepted() {
+        // ANTI-VACUITY, and the direction that matters: an off-by-one here
+        // rejects rows GitHub accepts, which is its own defect. 348 is the
+        // length jikou was corrected to and which applied cleanly.
+        for n in [1_usize, 348, DESCRIPTION_MAX_CHARS] {
+            let cat = OrgCatalogue {
+                repos: vec![OrgRepoRow {
+                    name: "r".into(),
+                    description: Some("x".repeat(n)),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            assert!(
+                validate_catalogue(&cat).is_empty(),
+                "{n} characters is within GitHub's limit and must be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn the_description_limit_counts_characters_not_bytes() {
+        // 350 em-dashes is 350 characters and 1050 bytes. `len()` would refuse
+        // it; GitHub does not. A false refusal is still a defect.
+        let cat = OrgCatalogue {
+            repos: vec![OrgRepoRow {
+                name: "r".into(),
+                description: Some("—".repeat(DESCRIPTION_MAX_CHARS)),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert!(
+            validate_catalogue(&cat).is_empty(),
+            "GitHub counts characters; a byte-length check would reject this"
+        );
+    }
+
+    #[test]
+    fn a_bad_name_is_refused_rather_than_read_as_absent() {
+        // The insidious one: an unacceptable name 404s on lookup, which
+        // `look_up` correctly maps to ABSENT — so without this check a typo'd
+        // name presents as a repository needing CREATION.
+        let cat = OrgCatalogue {
+            repos: vec![OrgRepoRow {
+                name: "bad name!".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let v = validate_catalogue(&cat);
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].field, "name");
+    }
+
+    #[test]
+    fn legal_name_characters_are_accepted() {
+        for n in ["tend", "repo-forge", "blackmatter_pleme", "a.b", "x0"] {
+            let cat = OrgCatalogue {
+                repos: vec![OrgRepoRow {
+                    name: n.into(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            assert!(
+                validate_catalogue(&cat).is_empty(),
+                "{n} is a legal GitHub repository name"
+            );
+        }
+    }
+
+    #[test]
+    fn a_visibility_typo_is_refused_and_case_matters() {
+        for bad in ["publi", "Public", "PRIVATE", "open"] {
+            let cat = OrgCatalogue {
+                repos: vec![OrgRepoRow {
+                    name: "r".into(),
+                    visibility: Some(bad.into()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            let v = validate_catalogue(&cat);
+            assert_eq!(v.len(), 1, "{bad:?} must be refused");
+            assert_eq!(v[0].field, "visibility");
+        }
+        for good in ["public", "private", "internal"] {
+            let cat = OrgCatalogue {
+                repos: vec![OrgRepoRow {
+                    name: "r".into(),
+                    visibility: Some(good.into()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            assert!(validate_catalogue(&cat).is_empty(), "{good:?} is valid");
+        }
+    }
+
+    #[test]
+    fn every_violation_is_reported_not_just_the_first() {
+        // An author fixing a catalogue wants one pass, not one apply cycle per
+        // defect.
+        let cat = OrgCatalogue {
+            repos: vec![
+                OrgRepoRow {
+                    name: "a".into(),
+                    description: Some("x".repeat(400)),
+                    ..Default::default()
+                },
+                OrgRepoRow {
+                    name: "b!".into(),
+                    ..Default::default()
+                },
+                OrgRepoRow {
+                    name: "c".into(),
+                    visibility: Some("publi".into()),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let v = validate_catalogue(&cat);
+        assert_eq!(v.len(), 3, "all three, in one pass");
+        let fields: Vec<&str> = v.iter().map(|x| x.field).collect();
+        assert_eq!(fields, ["description", "name", "visibility"]);
+    }
+
+    #[test]
+    fn the_real_catalogue_shape_passes() {
+        // ANTI-VACUITY for the whole validator: a check that refuses
+        // everything is as useless as one that refuses nothing. This is the
+        // shape of a real row from org.yaml.
+        let cat = OrgCatalogue {
+            repos: vec![OrgRepoRow {
+                name: "codesearch".into(),
+                description: Some(
+                    "Fast, local semantic code search as MCP server for OpenCode and \
+                     Claude Code. Rust-powered, fully offline."
+                        .into(),
+                ),
+                visibility: Some("private".into()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert!(validate_catalogue(&cat).is_empty());
     }
 }
