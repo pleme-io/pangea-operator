@@ -257,7 +257,8 @@ mod tests {
     #[test]
     fn an_unknown_backend_is_mains_policy_not_an_incompatibility() {
         let c = Capabilities::current();
-        c.check("wat").expect("unknown backends fall through to main's warn+default");
+        c.check("wat")
+            .expect("unknown backends fall through to main's warn+default");
     }
 
     /// `backends` is DERIVED from the feature flags, so it cannot claim a

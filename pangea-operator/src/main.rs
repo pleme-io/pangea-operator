@@ -953,7 +953,6 @@ async fn run_migrate() -> Result<()> {
     Ok(())
 }
 
-
 /// One-shot org resolution — see the `--resolve-org` flag in `main`.
 ///
 /// Reads the catalogue YAML, resolves each row against the live GitHub API, and
@@ -989,8 +988,8 @@ async fn run_resolve_org() -> Result<()> {
 
     // `only` narrows the run to named repos — a subset is a legitimate plan
     // rather than a partial one, which is why resolve() takes it explicitly.
-    let only: Option<Vec<String>> = value_of("--only")
-        .map(|s| s.split(',').map(|p| p.trim().to_string()).collect());
+    let only: Option<Vec<String>> =
+        value_of("--only").map(|s| s.split(',').map(|p| p.trim().to_string()).collect());
 
     // ── CREDENTIAL SOURCE: a FILE is preferred over the environment ──────
     // cofre's zero-plaintext discipline is explicit that a secret never enters

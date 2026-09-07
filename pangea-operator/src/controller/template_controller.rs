@@ -2098,14 +2098,15 @@ async fn handle_initializing(
                     .clone()
                     .or_else(|| template.namespace())
                     .unwrap_or_else(|| "default".to_string());
-                let secret_api: Api<Secret> =
-                    Api::namespaced(state.client.clone(), &secret_ns);
-                let secret = secret_api.get(&secret_ref.name).await.map_err(|_| {
-                    Error::SecretNotFound {
-                        namespace: secret_ns.clone(),
-                        name: secret_ref.name.clone(),
-                    }
-                })?;
+                let secret_api: Api<Secret> = Api::namespaced(state.client.clone(), &secret_ns);
+                let secret =
+                    secret_api
+                        .get(&secret_ref.name)
+                        .await
+                        .map_err(|_| Error::SecretNotFound {
+                            namespace: secret_ns.clone(),
+                            name: secret_ref.name.clone(),
+                        })?;
 
                 let data = secret.data.as_ref().ok_or_else(|| {
                     Error::Config(format!(
@@ -2117,12 +2118,13 @@ async fn handle_initializing(
                 let pick = |key: &str| -> Result<String> {
                     data.get(key)
                         .map(|v| String::from_utf8_lossy(&v.0).to_string())
-                        .ok_or_else(|| {
-                            Error::Config(format!("Key '{key}' not found in secret"))
-                        })
+                        .ok_or_else(|| Error::Config(format!("Key '{key}' not found in secret")))
                 };
 
-                Credentials::new(pick(&secret_ref.username_key)?, pick(&secret_ref.password_key)?)
+                Credentials::new(
+                    pick(&secret_ref.username_key)?,
+                    pick(&secret_ref.password_key)?,
+                )
             }
         };
 
@@ -5157,25 +5159,25 @@ async fn run_import_prepass(
     );
     let results: Vec<(String, std::result::Result<(), ImportFailure>)> =
         futures::stream::iter(targets.into_iter())
-        .map(|t| {
-            let import_executor = Arc::clone(&import_executor);
-            async move {
-                let ok = try_import(
-                    template,
-                    state,
-                    &import_executor,
-                    workspace_path,
-                    &t.address,
-                    &t.id,
-                    &t.source,
-                )
-                .await;
-                (t.address, ok)
-            }
-        })
-        .buffer_unordered(IMPORT_CONCURRENCY)
-        .collect()
-        .await;
+            .map(|t| {
+                let import_executor = Arc::clone(&import_executor);
+                async move {
+                    let ok = try_import(
+                        template,
+                        state,
+                        &import_executor,
+                        workspace_path,
+                        &t.address,
+                        &t.id,
+                        &t.source,
+                    )
+                    .await;
+                    (t.address, ok)
+                }
+            })
+            .buffer_unordered(IMPORT_CONCURRENCY)
+            .collect()
+            .await;
 
     let (ok, bad): (Vec<_>, Vec<_>) = results.into_iter().partition(|(_, r)| r.is_ok());
     // `absent` is the subset of failures a create may legitimately proceed for.
@@ -7214,8 +7216,8 @@ mod plan_approval_hash_tests {
 /// with the other absent/stale.
 #[cfg(test)]
 mod is_plan_approved_tests {
-    use super::{is_plan_approved, InfrastructureTemplateSpec, InfrastructureTemplateStatus};
     use super::*;
+    use super::{is_plan_approved, InfrastructureTemplateSpec, InfrastructureTemplateStatus};
     use crate::crd::{Dialect, TemplateSource};
 
     /// The recheck must be SKIPPED only when it cannot answer anything new.
@@ -7377,7 +7379,6 @@ mod is_plan_approved_tests {
         t.spec.template_name = None;
         validate_source(&t).expect_err("lava with neither source nor name is sourceless");
     }
-
 
     /// Shared with `approval_does_not_invalidate_its_own_plan_tests` — the
     /// two modules exercise the same approval seam from opposite ends (does

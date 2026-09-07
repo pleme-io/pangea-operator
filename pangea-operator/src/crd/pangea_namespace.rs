@@ -194,13 +194,17 @@ impl PostgresBackendConfig {
             // An explicit secret always wins, even over a socket: an operator
             // who supplied one may genuinely be using scram over the socket.
             (Some(r), _) => Ok(PgCredentialSource::Secret(r)),
-            (None, true) => self.user.as_deref().map(|user| PgCredentialSource::Peer { user }).ok_or_else(|| {
-                format!(
-                    "backend.pg.host {:?} is a unix socket, so secretRef may be omitted, \
+            (None, true) => self
+                .user
+                .as_deref()
+                .map(|user| PgCredentialSource::Peer { user })
+                .ok_or_else(|| {
+                    format!(
+                        "backend.pg.host {:?} is a unix socket, so secretRef may be omitted, \
                      but then `user` must name the role to connect as",
-                    self.host
-                )
-            }),
+                        self.host
+                    )
+                }),
             (None, false) => Err(format!(
                 "backend.pg.secretRef is required for TCP host {:?}; it may only be \
                  omitted when host is an absolute path (unix socket + peer auth)",
@@ -477,8 +481,14 @@ mod credential_source_tests {
         let err = cfg("db.internal", false, Some("pangea"))
             .credential_source()
             .expect_err("TCP with no secretRef must not resolve");
-        assert!(err.contains("secretRef is required"), "unhelpful message: {err}");
-        assert!(err.contains("db.internal"), "message must name the host: {err}");
+        assert!(
+            err.contains("secretRef is required"),
+            "unhelpful message: {err}"
+        );
+        assert!(
+            err.contains("db.internal"),
+            "message must name the host: {err}"
+        );
     }
 
     /// Omitting BOTH is an error rather than a silent libpq default. The uid's
@@ -489,7 +499,10 @@ mod credential_source_tests {
         let err = cfg("/run/postgresql", false, None)
             .credential_source()
             .expect_err("socket with neither secretRef nor user must not resolve");
-        assert!(err.contains("`user` must name the role"), "unhelpful message: {err}");
+        assert!(
+            err.contains("`user` must name the role"),
+            "unhelpful message: {err}"
+        );
     }
 
     /// An explicit Secret wins even over a socket — an operator may genuinely be

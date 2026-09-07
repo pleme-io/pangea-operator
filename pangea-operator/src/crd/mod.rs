@@ -56,8 +56,7 @@ pub use infrastructure_flow::{
 pub use pangea_namespace::{
     BackendConfig, BackendType, DefaultProviders, PangeaNamespace, PangeaNamespaceSpec,
     PangeaNamespaceStatus, PgCredentialSource, PoolConfig, PostgresBackendConfig,
-    PostgresSecretRef, ResourceStats,
-    S3BackendConfig, S3SecretRef, SecretRef as ProviderSecretRef,
+    PostgresSecretRef, ResourceStats, S3BackendConfig, S3SecretRef, SecretRef as ProviderSecretRef,
 };
 
 // The single derivation of a namespace's PostgreSQL schema identity.

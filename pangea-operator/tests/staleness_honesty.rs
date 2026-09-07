@@ -71,9 +71,13 @@ async fn sha_pinned_ref_short_circuits_observation() {
     // A 40-hex SHA ref IS its own HEAD — ls-remote can't list a bare
     // commit, and a pinned source is definitionally at its revision.
     let sha = "0123456789abcdef0123456789abcdef01234567";
-    let head = observe_head("https://example.invalid/never-contacted", sha, &GitCredential::Anonymous)
-        .await
-        .expect("SHA ref must not touch the remote");
+    let head = observe_head(
+        "https://example.invalid/never-contacted",
+        sha,
+        &GitCredential::Anonymous,
+    )
+    .await
+    .expect("SHA ref must not touch the remote");
     assert_eq!(head, sha);
     assert_eq!(
         evaluate_source_freshness(Some(sha), &head),
@@ -87,7 +91,12 @@ async fn unreachable_remote_errors_so_caller_maps_to_unknown() {
     // error (the gate maps it to Freshness::Unknown + the
     // source_freshness_check_failures_total counter), never a bogus
     // revision.
-    let err = observe_head("file:///nonexistent/definitely/not/a/repo", "main", &GitCredential::Anonymous).await;
+    let err = observe_head(
+        "file:///nonexistent/definitely/not/a/repo",
+        "main",
+        &GitCredential::Anonymous,
+    )
+    .await;
     assert!(
         err.is_err(),
         "unreachable remote must error, not fabricate a HEAD"

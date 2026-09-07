@@ -2345,7 +2345,7 @@ where
             // its own env credentials), matching `apply()`'s existing
             // `if let Ok(cfg) = ...` tolerance.
             let mut ctx = magma_apply::engine::ApplyContext::new(work_dir.to_path_buf())
-            .with_provider_factory(native_provider_router());
+                .with_provider_factory(native_provider_router());
             if let Ok(cfg) = self.load_config_routed(work_dir).await {
                 for (name, value) in self.build_provider_configs(&cfg) {
                     ctx = ctx.with_provider_config(name, value);
@@ -2400,15 +2400,14 @@ where
         // So the postcondition is: the address is present AND at least one
         // instance carries a non-empty attribute map. An adoption that learned
         // nothing about the resource did not adopt it.
-        let adopted = state.resources.iter().find(|r| {
-            format!("{}.{}", r.address.type_id.0, r.address.name) == address
-        });
+        let adopted = state
+            .resources
+            .iter()
+            .find(|r| format!("{}.{}", r.address.type_id.0, r.address.name) == address);
         let in_state = adopted.is_some_and(|r| {
-            r.instances.iter().any(|i| {
-                i.attributes
-                    .as_object()
-                    .is_some_and(|o| !o.is_empty())
-            })
+            r.instances
+                .iter()
+                .any(|i| i.attributes.as_object().is_some_and(|o| !o.is_empty()))
         });
 
         if !in_state {

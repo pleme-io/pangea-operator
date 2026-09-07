@@ -110,8 +110,9 @@ fn every_variant_spec_is_tied_to_the_same_lock_as_the_canonical_one() {
     for variant in &variants {
         let variant_hash = recorded_lock_hash(variant);
         assert_eq!(
-            canonical_hash, variant_hash,
-        "\n\
+            canonical_hash,
+            variant_hash,
+            "\n\
              A variant build spec is STALE.\n\n\
              variant: {}\n\
              Cargo.gen.lock records cargo_lock_sha256 = {canonical_hash}\n\

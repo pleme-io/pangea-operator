@@ -41,7 +41,7 @@
 //! are deliberately different credentials with different blast radii, and this
 //! module never sees the more powerful one.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// One row of the `repos:` list in `org.yaml`, narrowed to the fields the
@@ -50,18 +50,62 @@ use std::collections::BTreeMap;
 /// `#[serde(default)]` throughout: the catalogue is hand-maintained and rows
 /// legitimately omit most keys. A missing key is the documented default, never
 /// a parse failure that would take the whole org down for one incomplete row.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct OrgRepoRow {
     pub name: String,
+    /// Named entries from the catalogue's `repo_profiles`, applied in the
+    /// order given (later wins), between the workspace defaults and this
+    /// row's own fields.
     #[serde(default)]
+    pub inherits: Vec<String>,
+    /// The row's own settings. Flattened, so the YAML shape is unchanged — a
+    /// row still writes `has_issues: false` at the top level.
+    #[serde(flatten)]
+    pub overlay: RepoOverlay,
+}
+
+/// The mergeable half of a repository declaration: every field is `Option`,
+/// so "this tier does not speak to that setting" is a representable state
+/// distinct from "this tier sets it to the default value".
+///
+/// That distinction is the whole point. Before this type existed there was no
+/// tier between the Ruby gem's defaults and an individual row, so a setting a
+/// whole workspace agreed on had to be restated on every row — and any row
+/// that forgot inherited the GEM's answer, which is not necessarily the
+/// workspace's. Measured on `pleme-io-opensource` 2026-09-07:
+///
+///   - 80% of the file's 22,880 key-value pairs restate the most-common value
+///   - 7 keys have exactly ONE distinct value across ~1000 rows
+///     (`actions_secrets`, `actions_variables`, `environments`,
+///     `allow_squash_merge`, `allow_rebase_merge`, `has_downloads`, `pages`)
+///   - 43 rows omit `delete_branch_on_merge`, so they resolve to the gem's
+///     `true` while 847 of their siblings declare `false`
+///
+/// That last line is the defect, not the verbosity: the inherited value
+/// DISAGREES with the corpus consensus, and nothing says so because a row
+/// that omits a key reads exactly like a row that agrees with the default.
+///
+/// ── ★ `deny_unknown_fields` HERE, TOLERANT ON A ROW — DELIBERATELY ────────
+/// A row is tolerant because `org.yaml` rows carry keys this Rust does not
+/// model and other consumers do (`exposure`, `license`, `topics`, `pages`,
+/// `environments`, …); rejecting those would take the whole org down. The
+/// defaults and profile tiers are STRICT because they are new and nothing
+/// else reads them, so an unknown key there is certainly a typo — and a typo
+/// in a tier that 1005 rows inherit from is silent and total. `has_issue`
+/// would simply never be read, and every row would keep the gem's answer
+/// while the file read as though it had been configured.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepoOverlay {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visibility: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub archived: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch_protection: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub standard_labels: Option<bool>,
     // ── THESE WERE HARDCODED, AND 847 ROWS DISAGREED ────────────────────
     // `has_issues` and `delete_branch_on_merge` used to be unconditional
@@ -70,21 +114,214 @@ pub struct OrgRepoRow {
     // catalogue 2026-09-06: 98 rows declare `has_issues: false` and 847
     // declare `delete_branch_on_merge: false`. Every one of them would have
     // been rendered with the opposite setting.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub has_issues: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delete_branch_on_merge: Option<bool>,
     /// Tri-state in the gem: `None` means "derive from visibility", NOT
     /// "default to on". See `record_for`.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actions_enabled: Option<bool>,
 }
 
-/// The `org.yaml` document, narrowed to `repos:`.
+/// The `org.yaml` document, narrowed to what this resolver consumes.
+///
+/// ── ★ FOUR TIERS, NARROWEST WINS ──────────────────────────────────────────
+/// A repository's effective settings are a fold, not a lookup:
+///
+/// | # | tier | lives in | speaks for |
+/// |---|---|---|---|
+/// | 1 | gem defaults | `record_for`'s `unwrap_or` | every workspace, everywhere |
+/// | 2 | workspace defaults | `repo_defaults:` | one `org.yaml` |
+/// | 3 | profiles | `repo_profiles:` named by a row's `inherits:` | a reusable class of repo |
+/// | 4 | the row | the row's own keys | one repository |
+///
+/// Each tier overlays the one above it: a field a tier SETS wins, a field it
+/// leaves unset inherits. So a workspace states its house style once, a class
+/// of repository (say `rust-library`) states its shape once, and a row
+/// declares only what makes it different.
+///
+/// Tier 1 is the one that was missing a floor under it, and its absence is
+/// what made this necessary rather than merely tidy — see [`RepoOverlay`] for
+/// the measurement. Tier 1 remains the gem's, deliberately: forking it would
+/// break parity with the Ruby side. Tier 2 exists so a workspace can DISAGREE
+/// with the gem in one place instead of 1005.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct OrgCatalogue {
+    /// Tier 2 — applies to every row in this workspace.
+    #[serde(default)]
+    pub repo_defaults: RepoOverlay,
+
+    /// Tier 3 — reusable named sets, applied by a row's `inherits:`.
+    #[serde(default)]
+    pub repo_profiles: BTreeMap<String, RepoOverlay>,
+
+    /// Tier 4 — the rows themselves, as written.
     #[serde(default)]
     pub repos: Vec<OrgRepoRow>,
+}
+
+/// Which tier supplied a value. Returned alongside a resolved row so a reader
+/// can answer "where did this setting come from?" — the question that was
+/// unanswerable before, and the reason a wrong inherited default stayed
+/// invisible.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Tier {
+    /// Tier 2 — the workspace's `repo_defaults`.
+    WorkspaceDefaults,
+    /// Tier 3 — a named profile from `repo_profiles`.
+    Profile(String),
+    /// Tier 4 — the row itself.
+    Row,
+}
+
+/// Overlay `over` onto `base`, in place: a key `over` sets wins; a key it
+/// leaves NULL is inherited.
+///
+/// Same rule as `shikumi::discovered::deep_merge` — two objects at one key
+/// recurse so siblings survive, anything else is replaced wholesale. Written
+/// against `serde_json` rather than converted into shikumi's `Dict` and back,
+/// because the conversion would buy no behavioural difference on this data and
+/// the recursion is four lines. If a nested field is ever added here, the
+/// recursion is already correct for it.
+///
+/// ── ★ WHY THIS IS GENERIC AND NOT A LIST OF FIELDS ───────────────────────
+/// A per-field merge (`over.has_issues.or(base.has_issues)`, eight times) is
+/// the obvious implementation and it goes stale the first time a field is
+/// added: the new field silently stops inheriting, which presents as a
+/// workspace default that "doesn't work" for exactly one setting. Merging in
+/// value space means a new field on [`RepoOverlay`] participates with no edit
+/// here at all — there is no list to forget.
+fn overlay_onto(base: &mut serde_json::Map<String, serde_json::Value>, over: &serde_json::Value) {
+    let Some(over) = over.as_object() else { return };
+    for (k, v) in over {
+        if v.is_null() {
+            // Unset at this tier: inherit whatever is already there. This is
+            // the line that makes `Option` mean "does not speak to it" rather
+            // than "sets it to null".
+            continue;
+        }
+        match (base.get_mut(k), v) {
+            (Some(serde_json::Value::Object(b)), serde_json::Value::Object(_)) => {
+                overlay_onto(b, v);
+            }
+            _ => {
+                base.insert(k.clone(), v.clone());
+            }
+        }
+    }
+}
+
+impl OrgRepoRow {
+    /// This row with `over` overlaid onto its own settings — the same rule the
+    /// tier fold uses, so a caller composing settings exercises the production
+    /// merge rather than a second one.
+    ///
+    /// ── ★ WHY THIS EXISTS RATHER THAN STRUCT-UPDATE SYNTAX ────────────────
+    /// `OrgRepoRow { overlay: RepoOverlay { a: Some(x), ..Default::default() },
+    /// ..base }` REPLACES the whole overlay, silently discarding every setting
+    /// `base` had — because the overlay is one field, so `..base` has nothing
+    /// per-setting to carry through. That reads exactly like the flat version
+    /// it replaced and behaves differently. It cost a red test the moment the
+    /// nesting landed (`archived_repos_are_not_protected`, which lost its
+    /// `branch_protection: hardened` and so measured nothing).
+    ///
+    /// Use this instead of struct-update whenever the base has real settings.
+    #[must_use]
+    pub fn merging(&self, over: RepoOverlay) -> Self {
+        let mut acc = serde_json::to_value(&self.overlay)
+            .ok()
+            .and_then(|v| v.as_object().cloned())
+            .unwrap_or_default();
+        if let Ok(v) = serde_json::to_value(&over) {
+            overlay_onto(&mut acc, &v);
+        }
+        Self {
+            name: self.name.clone(),
+            inherits: self.inherits.clone(),
+            overlay: serde_json::from_value(serde_json::Value::Object(acc))
+                .unwrap_or_else(|_| self.overlay.clone()),
+        }
+    }
+}
+
+impl OrgCatalogue {
+    /// The rows with tiers 2 and 3 folded in, plus the provenance of every
+    /// key each row ended up with.
+    ///
+    /// Errors when a row names a profile the catalogue does not define. That
+    /// is a refusal rather than a skip on purpose: silently ignoring an
+    /// unknown `inherits:` entry would leave the row on the gem defaults while
+    /// the file read as though a profile had been applied — the same silent
+    /// class this whole tier structure exists to close.
+    pub fn resolved_rows(&self) -> Result<Vec<(OrgRepoRow, BTreeMap<String, Tier>)>, String> {
+        let mut out = Vec::with_capacity(self.repos.len());
+        for row in &self.repos {
+            // Start from tier 2.
+            let defaults = serde_json::to_value(&self.repo_defaults)
+                .map_err(|e| format!("serializing repo_defaults: {e}"))?;
+            let mut acc = defaults.as_object().cloned().unwrap_or_default();
+            let mut prov: BTreeMap<String, Tier> = acc
+                .keys()
+                .map(|k| (k.clone(), Tier::WorkspaceDefaults))
+                .collect();
+
+            // Tier 3, in the order the row names them — later wins, so a row
+            // listing `[base, override]` gets `override`'s answer.
+            for name in &row.inherits {
+                let profile = self.repo_profiles.get(name).ok_or_else(|| {
+                    format!(
+                        "repo {:?} inherits {:?}, which is not defined in repo_profiles. \
+                         Known profiles: {}. Refusing rather than ignoring it — a skipped \
+                         inherit leaves the row on the gem defaults while the file reads \
+                         as though the profile applied.",
+                        row.name,
+                        name,
+                        if self.repo_profiles.is_empty() {
+                            "(none declared)".to_string()
+                        } else {
+                            self.repo_profiles
+                                .keys()
+                                .map(String::as_str)
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        }
+                    )
+                })?;
+                let v = serde_json::to_value(profile)
+                    .map_err(|e| format!("serializing repo_profiles.{name}: {e}"))?;
+                if let Some(o) = v.as_object() {
+                    for k in o.keys().filter(|k| !o[*k].is_null()) {
+                        prov.insert(k.clone(), Tier::Profile(name.clone()));
+                    }
+                }
+                overlay_onto(&mut acc, &v);
+            }
+
+            // Tier 4 — the row's own keys, which always win.
+            let v = serde_json::to_value(&row.overlay)
+                .map_err(|e| format!("serializing row {:?}: {e}", row.name))?;
+            if let Some(o) = v.as_object() {
+                for k in o.keys().filter(|k| !o[*k].is_null()) {
+                    prov.insert(k.clone(), Tier::Row);
+                }
+            }
+            overlay_onto(&mut acc, &v);
+
+            let overlay: RepoOverlay = serde_json::from_value(serde_json::Value::Object(acc))
+                .map_err(|e| format!("folding tiers for row {:?}: {e}", row.name))?;
+
+            out.push((
+                OrgRepoRow {
+                    name: row.name.clone(),
+                    inherits: row.inherits.clone(),
+                    overlay,
+                },
+                prov,
+            ));
+        }
+        Ok(out)
+    }
 }
 
 /// What the GitHub API said about one repo. Absent means 404 — the repo does
@@ -105,7 +342,11 @@ pub type RepoRecord = BTreeMap<String, String>;
 fn b(v: bool) -> String {
     // One spelling of a boolean, in one place. The `:when` gates compare against
     // this text, so "True"/"1"/"yes" would each silently mean false.
-    if v { "true".to_string() } else { "false".to_string() }
+    if v {
+        "true".to_string()
+    } else {
+        "false".to_string()
+    }
 }
 
 /// The branch-protection posture that ACTUALLY reaches terraform.
@@ -190,11 +431,21 @@ impl BranchProtectionPreset {
 pub fn tf_slug(name: &str) -> String {
     let mut s: String = name
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     // `\A[a-zA-Z_]` in the Ruby — a leading digit is as illegal as a leading
     // separator, and `.github` slugs to `_github`, which already satisfies it.
-    if !s.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') {
+    if !s
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+    {
         s = format!("r_{s}");
     }
     s
@@ -205,16 +456,27 @@ pub fn tf_slug(name: &str) -> String {
 /// `live` is `None` when the repo does not exist on GitHub.
 #[must_use]
 pub fn record_for(row: &OrgRepoRow, live: Option<&LiveRepo>) -> RepoRecord {
-    let declared_visibility = row.visibility.clone().unwrap_or_else(|| "private".to_string());
-    let bp = row.branch_protection.clone().unwrap_or_else(|| "none".to_string());
-    let archived = row.archived.unwrap_or(false);
+    let declared_visibility = row
+        .overlay
+        .visibility
+        .clone()
+        .unwrap_or_else(|| "private".to_string());
+    let bp = row
+        .overlay
+        .branch_protection
+        .clone()
+        .unwrap_or_else(|| "none".to_string());
+    let archived = row.overlay.archived.unwrap_or(false);
 
     let mut r = RepoRecord::new();
     r.insert("name".into(), row.name.clone());
     // The ADDRESS component. Separate from `name` on purpose: the repository
     // is still created as `row.name`; only the Terraform identifier is slugged.
     r.insert("slug".into(), tf_slug(&row.name));
-    r.insert("description".into(), row.description.clone().unwrap_or_default());
+    r.insert(
+        "description".into(),
+        row.overlay.description.clone().unwrap_or_default(),
+    );
     r.insert("visibility".into(), declared_visibility.clone());
     r.insert("archived".into(), b(archived));
 
@@ -226,12 +488,18 @@ pub fn record_for(row: &OrgRepoRow, live: Option<&LiveRepo>) -> RepoRecord {
     //   standard_labels        Types::Bool.default(false)   :363  <- NOT true
     //   archived               Types::Bool.default(false)   :369
     //   default_branch         Types::String.default('main'):351
-    r.insert("has_issues".into(), b(row.has_issues.unwrap_or(true)));
+    r.insert(
+        "has_issues".into(),
+        b(row.overlay.has_issues.unwrap_or(true)),
+    );
     r.insert(
         "delete_branch_on_merge".into(),
-        b(row.delete_branch_on_merge.unwrap_or(true)),
+        b(row.overlay.delete_branch_on_merge.unwrap_or(true)),
     );
-    r.insert("standard_labels".into(), b(row.standard_labels.unwrap_or(false)));
+    r.insert(
+        "standard_labels".into(),
+        b(row.overlay.standard_labels.unwrap_or(false)),
+    );
     r.insert("default_branch".into(), "main".into());
 
     // ── actions_enabled IS TRI-STATE ────────────────────────────────────
@@ -241,6 +509,7 @@ pub fn record_for(row: &OrgRepoRow, live: Option<&LiveRepo>) -> RepoRecord {
     // stake: "a wrong answer flips Actions on or off for a whole shard", and
     // 974 of 1005 rows rely on this derivation.
     let actions_on = row
+        .overlay
         .actions_enabled
         .unwrap_or(declared_visibility != "internal");
     r.insert("actions_enabled".into(), b(actions_on));
@@ -417,7 +686,7 @@ pub fn validate_catalogue(catalogue: &OrgCatalogue) -> Vec<CatalogueViolation> {
         // with an em-dash or an accented word is longer in bytes than in
         // characters. `len()` would reject rows GitHub accepts — a false
         // refusal is still a defect.
-        if let Some(desc) = &row.description {
+        if let Some(desc) = &row.overlay.description {
             let n = desc.chars().count();
             if n > DESCRIPTION_MAX_CHARS {
                 out.push(CatalogueViolation {
@@ -466,7 +735,7 @@ pub fn validate_catalogue(catalogue: &OrgCatalogue) -> Vec<CatalogueViolation> {
         // not a parse error. `record_for` passes it through to the
         // architecture, which emits it into the provider — where `publi` is a
         // 422, and `Public` is too (GitHub is case-sensitive here).
-        if let Some(v) = &row.visibility {
+        if let Some(v) = &row.overlay.visibility {
             if !matches!(v.as_str(), "public" | "private" | "internal") {
                 out.push(CatalogueViolation {
                     repo: row.name.clone(),
@@ -573,7 +842,10 @@ mod tests {
     #[test]
     fn presets_match_the_emitting_ruby_table() {
         // github_presets.rb:75 — pilot and standard are IDENTICAL there.
-        assert_eq!(BranchProtectionPreset::PILOT, BranchProtectionPreset::STANDARD);
+        assert_eq!(
+            BranchProtectionPreset::PILOT,
+            BranchProtectionPreset::STANDARD
+        );
         assert!(!BranchProtectionPreset::PILOT.enforce_admins);
         assert!(!BranchProtectionPreset::PILOT.require_signed_commits);
         assert!(!BranchProtectionPreset::PILOT.required_linear_history);
@@ -592,9 +864,12 @@ mod tests {
     fn declared_values_reach_the_record() {
         let declared = OrgRepoRow {
             name: "r".into(),
-            has_issues: Some(false),
-            delete_branch_on_merge: Some(false),
-            standard_labels: Some(true),
+            overlay: RepoOverlay {
+                has_issues: Some(false),
+                delete_branch_on_merge: Some(false),
+                standard_labels: Some(true),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let rec = record_for(&declared, None);
@@ -609,7 +884,10 @@ mod tests {
     /// Absent keys take the GEM's default, not a convenient one.
     #[test]
     fn absent_keys_take_the_gem_defaults() {
-        let bare = OrgRepoRow { name: "r".into(), ..Default::default() };
+        let bare = OrgRepoRow {
+            name: "r".into(),
+            ..Default::default()
+        };
         let rec = record_for(&bare, None);
         // types.rb:356 / :352 — both default true.
         assert_eq!(rec["has_issues"], "true");
@@ -625,22 +903,40 @@ mod tests {
     fn actions_enabled_is_tri_state_not_defaulted() {
         let with_vis = |v: &str| OrgRepoRow {
             name: "r".into(),
-            visibility: Some(v.to_string()),
+            overlay: RepoOverlay {
+                visibility: Some(v.to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         // lava-resolve-org:113 — nil ? visibility != :internal : value
-        assert_eq!(record_for(&with_vis("public"), None)["actions_enabled"], "true");
-        assert_eq!(record_for(&with_vis("private"), None)["actions_enabled"], "true");
-        assert_eq!(record_for(&with_vis("internal"), None)["actions_enabled"], "false");
+        assert_eq!(
+            record_for(&with_vis("public"), None)["actions_enabled"],
+            "true"
+        );
+        assert_eq!(
+            record_for(&with_vis("private"), None)["actions_enabled"],
+            "true"
+        );
+        assert_eq!(
+            record_for(&with_vis("internal"), None)["actions_enabled"],
+            "false"
+        );
 
         // An explicit value wins over the derivation, in both directions.
         let explicit = |on: bool| OrgRepoRow {
             name: "r".into(),
-            visibility: Some("public".into()),
-            actions_enabled: Some(on),
+            overlay: RepoOverlay {
+                visibility: Some("public".into()),
+                actions_enabled: Some(on),
+                ..Default::default()
+            },
             ..Default::default()
         };
-        assert_eq!(record_for(&explicit(false), None)["actions_enabled"], "false");
+        assert_eq!(
+            record_for(&explicit(false), None)["actions_enabled"],
+            "false"
+        );
         assert_eq!(record_for(&explicit(true), None)["actions_enabled"], "true");
     }
 
@@ -649,8 +945,11 @@ mod tests {
     fn archived_repos_are_not_protected() {
         let archived_protected = OrgRepoRow {
             name: "r".into(),
-            archived: Some(true),
-            branch_protection: Some("hardened".into()),
+            overlay: RepoOverlay {
+                archived: Some(true),
+                branch_protection: Some("hardened".into()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let rec = record_for(&archived_protected, None);
@@ -660,12 +959,16 @@ mod tests {
 
         // ANTI-VACUITY: the same preset on a LIVE repo must protect, or this
         // test would pass against a record_for that never protects anything.
-        let live_protected = OrgRepoRow {
-            branch_protection: Some("hardened".into()),
-            ..archived_protected.clone()
-        };
+        // `merging`, not struct-update: `OrgRepoRow { overlay: .., ..base }`
+        // would REPLACE the overlay and drop `branch_protection: hardened`,
+        // leaving this anti-vacuity leg measuring nothing. That is exactly
+        // what happened when the nesting first landed.
         let live = record_for(
-            &OrgRepoRow { archived: Some(false), ..live_protected },
+            &archived_protected.merging(RepoOverlay {
+                branch_protection: Some("hardened".into()),
+                archived: Some(false),
+                ..Default::default()
+            }),
             None,
         );
         assert_eq!(live["has_branch_protection"], "true");
@@ -678,11 +981,15 @@ mod tests {
         for bp in ["none", "pilot", "standard", "hardened"] {
             let row = OrgRepoRow {
                 name: "r".into(),
-                branch_protection: Some(bp.to_string()),
+                overlay: RepoOverlay {
+                    branch_protection: Some(bp.to_string()),
+                    ..Default::default()
+                },
                 ..Default::default()
             };
             assert_eq!(
-                record_for(&row, None)["bp_strict"], "false",
+                record_for(&row, None)["bp_strict"],
+                "false",
                 "the Ruby never sets required_status_checks_strict; deriving it \
                  from the preset invents a status-check policy it never emits"
             );
@@ -724,7 +1031,10 @@ mod tests {
     /// create a repo literally called `fastboot_js`.
     #[test]
     fn the_slug_never_replaces_the_real_name() {
-        let r = OrgRepoRow { name: "fastboot.js".into(), ..Default::default() };
+        let r = OrgRepoRow {
+            name: "fastboot.js".into(),
+            ..Default::default()
+        };
         let rec = record_for(&r, None);
         assert_eq!(rec["name"], "fastboot.js", "the repo keeps its real name");
         assert_eq!(rec["slug"], "fastboot_js", "only the address is slugged");
@@ -742,7 +1052,10 @@ mod tests {
     }
 
     fn row(name: &str) -> OrgRepoRow {
-        OrgRepoRow { name: name.into(), ..Default::default() }
+        OrgRepoRow {
+            name: name.into(),
+            ..Default::default()
+        }
     }
 
     /// The adopt-vs-create switch, which is the reason this module exists.
@@ -751,7 +1064,12 @@ mod tests {
         let absent = record_for(&row("openwrt-uci"), None);
         assert_eq!(absent["exists_on_github"], "false");
 
-        let present = record_for(&row("openwrt-uci"), Some(&LiveRepo { visibility: "public".into() }));
+        let present = record_for(
+            &row("openwrt-uci"),
+            Some(&LiveRepo {
+                visibility: "public".into(),
+            }),
+        );
         assert_eq!(present["exists_on_github"], "true");
     }
 
@@ -759,17 +1077,37 @@ mod tests {
     /// plan is a no-op on exactly the repos that drifted.
     #[test]
     fn live_visibility_comes_from_github_when_the_repo_exists() {
-        let r = OrgRepoRow { visibility: Some("private".into()), ..row("drifted") };
-        let rec = record_for(&r, Some(&LiveRepo { visibility: "public".into() }));
+        let r = OrgRepoRow {
+            overlay: RepoOverlay {
+                visibility: Some("private".into()),
+                ..Default::default()
+            },
+            ..row("drifted")
+        };
+        let rec = record_for(
+            &r,
+            Some(&LiveRepo {
+                visibility: "public".into(),
+            }),
+        );
         assert_eq!(rec["visibility"], "private", "declared intent is preserved");
-        assert_eq!(rec["live_visibility"], "public", "live state must not echo the catalogue");
+        assert_eq!(
+            rec["live_visibility"], "public",
+            "live state must not echo the catalogue"
+        );
     }
 
     /// With no repo on GitHub there is no live state; falling back to the
     /// declared value keeps the field total rather than empty.
     #[test]
     fn live_visibility_falls_back_to_declared_when_absent() {
-        let r = OrgRepoRow { visibility: Some("public".into()), ..row("new") };
+        let r = OrgRepoRow {
+            overlay: RepoOverlay {
+                visibility: Some("public".into()),
+                ..Default::default()
+            },
+            ..row("new")
+        };
         assert_eq!(record_for(&r, None)["live_visibility"], "public");
     }
 
@@ -841,9 +1179,21 @@ mod tests {
     /// Booleans are the STRINGS the `:when` gates compare against.
     #[test]
     fn booleans_render_as_when_gate_text() {
-        let r = OrgRepoRow { branch_protection: Some("none".into()), ..row("p") };
+        let r = OrgRepoRow {
+            overlay: RepoOverlay {
+                branch_protection: Some("none".into()),
+                ..Default::default()
+            },
+            ..row("p")
+        };
         assert_eq!(record_for(&r, None)["has_branch_protection"], "false");
-        let r2 = OrgRepoRow { branch_protection: Some("standard".into()), ..row("p") };
+        let r2 = OrgRepoRow {
+            overlay: RepoOverlay {
+                branch_protection: Some("standard".into()),
+                ..Default::default()
+            },
+            ..row("p")
+        };
         assert_eq!(record_for(&r2, None)["has_branch_protection"], "true");
     }
 
@@ -855,7 +1205,10 @@ mod tests {
         assert_eq!(cat.repos.len(), 1);
         let rec = record_for(&cat.repos[0], None);
         assert_eq!(rec["name"], "solo");
-        assert_eq!(rec["visibility"], "private", "unstated visibility defaults closed");
+        assert_eq!(
+            rec["visibility"], "private",
+            "unstated visibility defaults closed"
+        );
     }
 }
 
@@ -878,8 +1231,14 @@ mod live {
         eprintln!("catalogue rows: {}", cat.repos.len());
 
         let only: Vec<String> = [
-            "openwrt-uci", "ancora", "annai", "jikoku",
-            "nanori", "roji", "camelot-incept", "lava-discord",
+            "openwrt-uci",
+            "ancora",
+            "annai",
+            "jikoku",
+            "nanori",
+            "roji",
+            "camelot-incept",
+            "lava-discord",
         ]
         .iter()
         .map(|s| (*s).to_string())
@@ -894,11 +1253,14 @@ mod live {
         for r in &records {
             eprintln!(
                 "  {:<16} exists={:<5} live_vis={:<7} declared_vis={}",
-                r["name"], r["exists_on_github"],
-                r["live_visibility"], r["visibility"]
+                r["name"], r["exists_on_github"], r["live_visibility"], r["visibility"]
             );
         }
-        assert_eq!(records.len(), only.len(), "every requested repo must resolve");
+        assert_eq!(
+            records.len(),
+            only.len(),
+            "every requested repo must resolve"
+        );
     }
 
     // ── the cr-patch shape, pinned against what is LIVE ────────────────────
@@ -991,7 +1353,10 @@ mod live {
         let cat = OrgCatalogue {
             repos: vec![OrgRepoRow {
                 name: "jikou".into(),
-                description: Some("x".repeat(365)),
+                overlay: RepoOverlay {
+                    description: Some("x".repeat(365)),
+                    ..Default::default()
+                },
                 ..Default::default()
             }],
             ..Default::default()
@@ -1012,7 +1377,10 @@ mod live {
             let cat = OrgCatalogue {
                 repos: vec![OrgRepoRow {
                     name: "r".into(),
-                    description: Some("x".repeat(n)),
+                    overlay: RepoOverlay {
+                        description: Some("x".repeat(n)),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 }],
                 ..Default::default()
@@ -1031,7 +1399,10 @@ mod live {
         let cat = OrgCatalogue {
             repos: vec![OrgRepoRow {
                 name: "r".into(),
-                description: Some("—".repeat(DESCRIPTION_MAX_CHARS)),
+                overlay: RepoOverlay {
+                    description: Some("—".repeat(DESCRIPTION_MAX_CHARS)),
+                    ..Default::default()
+                },
                 ..Default::default()
             }],
             ..Default::default()
@@ -1082,7 +1453,10 @@ mod live {
             let cat = OrgCatalogue {
                 repos: vec![OrgRepoRow {
                     name: "r".into(),
-                    visibility: Some(bad.into()),
+                    overlay: RepoOverlay {
+                        visibility: Some(bad.into()),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 }],
                 ..Default::default()
@@ -1095,7 +1469,10 @@ mod live {
             let cat = OrgCatalogue {
                 repos: vec![OrgRepoRow {
                     name: "r".into(),
-                    visibility: Some(good.into()),
+                    overlay: RepoOverlay {
+                        visibility: Some(good.into()),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 }],
                 ..Default::default()
@@ -1112,7 +1489,10 @@ mod live {
             repos: vec![
                 OrgRepoRow {
                     name: "a".into(),
-                    description: Some("x".repeat(400)),
+                    overlay: RepoOverlay {
+                        description: Some("x".repeat(400)),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
                 OrgRepoRow {
@@ -1121,7 +1501,10 @@ mod live {
                 },
                 OrgRepoRow {
                     name: "c".into(),
-                    visibility: Some("publi".into()),
+                    overlay: RepoOverlay {
+                        visibility: Some("publi".into()),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
             ],
@@ -1141,16 +1524,279 @@ mod live {
         let cat = OrgCatalogue {
             repos: vec![OrgRepoRow {
                 name: "codesearch".into(),
-                description: Some(
-                    "Fast, local semantic code search as MCP server for OpenCode and \
+                overlay: RepoOverlay {
+                    description: Some(
+                        "Fast, local semantic code search as MCP server for OpenCode and \
                      Claude Code. Rust-powered, fully offline."
-                        .into(),
-                ),
-                visibility: Some("private".into()),
+                            .into(),
+                    ),
+                    visibility: Some("private".into()),
+                    ..Default::default()
+                },
                 ..Default::default()
             }],
             ..Default::default()
         };
         assert!(validate_catalogue(&cat).is_empty());
+    }
+
+    // ── THE TIER FOLD ─────────────────────────────────────────────────────
+    // What the user asked for and what was missing: config for all
+    // workspaces, for one workspace, and for each element within it, in a
+    // reusable stackable mergeable way. These tests are the contract.
+
+    fn cat(yaml: &str) -> OrgCatalogue {
+        serde_yaml::from_str(yaml).expect("catalogue parses")
+    }
+
+    #[test]
+    fn a_workspace_default_reaches_every_row() {
+        // The whole point: state it once instead of on 1005 rows.
+        let c = cat("repo_defaults:\n  delete_branch_on_merge: false\n\
+             repos:\n  - name: a\n  - name: b\n");
+        let rows = c.resolved_rows().expect("folds");
+        assert_eq!(rows.len(), 2);
+        for (row, _) in &rows {
+            assert_eq!(
+                row.overlay.delete_branch_on_merge,
+                Some(false),
+                "row {:?} must inherit the workspace default",
+                row.name
+            );
+        }
+    }
+
+    #[test]
+    fn this_is_the_bug_that_motivated_it() {
+        // Measured on pleme-io-opensource 2026-09-07: 43 rows omit
+        // `delete_branch_on_merge`, so they resolve to the GEM's `true` while
+        // 847 of their siblings declare `false`. The inherited value
+        // DISAGREES with the corpus, and nothing says so, because a row that
+        // omits a key reads exactly like a row that agrees with the default.
+        //
+        // Without a workspace tier there is nowhere to fix that except by
+        // editing 43 rows and hoping the 44th never appears.
+        let without = cat("repos:\n  - name: forgot\n");
+        let (row, _) = &without.resolved_rows().expect("folds")[0];
+        assert_eq!(
+            row.overlay.delete_branch_on_merge, None,
+            "unset at every tier, so record_for falls to the gem's true"
+        );
+        assert_eq!(
+            record_for(row, None)["delete_branch_on_merge"],
+            "true",
+            "the gem default — which 847 rows contradict"
+        );
+
+        let with = cat("repo_defaults:\n  delete_branch_on_merge: false\n\
+             repos:\n  - name: forgot\n");
+        let (row, prov) = &with.resolved_rows().expect("folds")[0];
+        assert_eq!(
+            record_for(row, None)["delete_branch_on_merge"],
+            "false",
+            "one line in one place fixes the row that forgot, and every future one"
+        );
+        assert_eq!(
+            prov.get("delete_branch_on_merge"),
+            Some(&Tier::WorkspaceDefaults),
+            "and the provenance says WHERE it came from — the question that \
+             was unanswerable, which is why the wrong default stayed invisible"
+        );
+    }
+
+    #[test]
+    fn a_row_overrides_the_workspace_default() {
+        let c = cat("repo_defaults:\n  has_issues: false\n\
+             repos:\n  - name: keeps\n  - name: wants\n    has_issues: true\n");
+        let rows = c.resolved_rows().expect("folds");
+        let by = |n: &str| {
+            rows.iter()
+                .find(|(r, _)| r.name == n)
+                .expect("row present")
+                .clone()
+        };
+        assert_eq!(by("keeps").0.overlay.has_issues, Some(false));
+        assert_eq!(by("wants").0.overlay.has_issues, Some(true));
+        assert_eq!(by("wants").1.get("has_issues"), Some(&Tier::Row));
+        assert_eq!(
+            by("keeps").1.get("has_issues"),
+            Some(&Tier::WorkspaceDefaults)
+        );
+    }
+
+    #[test]
+    fn a_profile_sits_between_the_workspace_and_the_row() {
+        // The reusable middle tier: a CLASS of repository states its shape
+        // once. `rust-library` is the obvious real one — 139 rows carry a
+        // `ci_shim`, 77% of them the same value.
+        let c = cat("repo_defaults:\n  has_issues: false\n  visibility: private\n\
+             repo_profiles:\n\
+             \u{20} rust-library:\n    has_issues: true\n    standard_labels: true\n\
+             repos:\n\
+             \u{20} - name: plain\n\
+             \u{20} - name: lib\n    inherits: [rust-library]\n\
+             \u{20} - name: lib-quiet\n    inherits: [rust-library]\n    has_issues: false\n");
+        let rows = c.resolved_rows().expect("folds");
+        let by = |n: &str| {
+            rows.iter()
+                .find(|(r, _)| r.name == n)
+                .expect("row present")
+                .clone()
+        };
+
+        // no profile -> workspace answer
+        assert_eq!(by("plain").0.overlay.has_issues, Some(false));
+        assert_eq!(by("plain").0.overlay.standard_labels, None);
+
+        // profile beats workspace
+        assert_eq!(by("lib").0.overlay.has_issues, Some(true));
+        assert_eq!(by("lib").0.overlay.standard_labels, Some(true));
+        assert_eq!(
+            by("lib").1.get("has_issues"),
+            Some(&Tier::Profile("rust-library".into()))
+        );
+        // and a setting the profile does NOT speak to still inherits
+        assert_eq!(
+            by("lib").0.overlay.visibility.as_deref(),
+            Some("private"),
+            "the profile is an overlay, not a replacement — siblings survive"
+        );
+
+        // row beats profile
+        assert_eq!(by("lib-quiet").0.overlay.has_issues, Some(false));
+        assert_eq!(by("lib-quiet").1.get("has_issues"), Some(&Tier::Row));
+        assert_eq!(
+            by("lib-quiet").0.overlay.standard_labels,
+            Some(true),
+            "overriding one setting must not drop the rest of the profile"
+        );
+    }
+
+    #[test]
+    fn profiles_stack_in_the_order_named() {
+        let c = cat("repo_profiles:\n\
+             \u{20} base:\n    has_issues: true\n    standard_labels: true\n\
+             \u{20} quiet:\n    has_issues: false\n\
+             repos:\n\
+             \u{20} - name: a\n    inherits: [base, quiet]\n\
+             \u{20} - name: b\n    inherits: [quiet, base]\n");
+        let rows = c.resolved_rows().expect("folds");
+        let by = |n: &str| rows.iter().find(|(r, _)| r.name == n).expect("row").clone();
+        assert_eq!(by("a").0.overlay.has_issues, Some(false), "quiet last wins");
+        assert_eq!(by("b").0.overlay.has_issues, Some(true), "base last wins");
+        // ANTI-VACUITY: a setting only one profile speaks to survives either order
+        assert_eq!(by("a").0.overlay.standard_labels, Some(true));
+        assert_eq!(by("b").0.overlay.standard_labels, Some(true));
+    }
+
+    #[test]
+    fn an_unknown_inherit_is_refused_not_ignored() {
+        // Ignoring it would leave the row on the gem defaults while the file
+        // read as though a profile applied — the same silent class the whole
+        // tier structure exists to close.
+        let c = cat("repos:\n  - name: a\n    inherits: [nope]\n");
+        let err = c.resolved_rows().expect_err("must refuse");
+        assert!(err.contains("nope"), "the error names the profile: {err}");
+        assert!(err.contains('a'), "and the row: {err}");
+    }
+
+    #[test]
+    fn a_typo_in_a_shared_tier_is_refused_at_parse() {
+        // `deny_unknown_fields` on RepoOverlay. A typo in a tier 1005 rows
+        // inherit from is silent and total: `has_issue` would never be read,
+        // every row would keep the gem's answer, and the file would read as
+        // though it had been configured.
+        assert!(
+            serde_yaml::from_str::<OrgCatalogue>("repo_defaults:\n  has_issue: true\n").is_err(),
+            "an unknown key in repo_defaults must be refused"
+        );
+        assert!(
+            serde_yaml::from_str::<OrgCatalogue>(
+                "repo_profiles:\n  p:\n    delete_branch_on_merg: true\n"
+            )
+            .is_err(),
+            "an unknown key in a profile must be refused"
+        );
+        // ...while a ROW stays tolerant, deliberately: org.yaml rows carry
+        // keys other consumers read and this Rust does not model.
+        let c = cat("repos:\n  - name: a\n    license: MIT\n    topics: [x]\n");
+        assert_eq!(
+            c.repos.len(),
+            1,
+            "a row's extra keys must not break the org"
+        );
+    }
+
+    #[test]
+    fn the_fold_needs_no_field_list_and_so_cannot_go_stale() {
+        // ★ THE STALENESS GATE. A per-field merge goes stale the first time a
+        // field is added — the new field silently stops inheriting, which
+        // presents as a workspace default that works for every setting but
+        // one. `overlay_onto` merges in value space, so this asserts that
+        // EVERY serializable field of RepoOverlay participates, by counting
+        // rather than by listing.
+        //
+        // Add a field to RepoOverlay and this test covers it with no edit. If
+        // it ever fails, the fold has acquired a field list somewhere.
+        let full = RepoOverlay {
+            description: Some("d".into()),
+            visibility: Some("public".into()),
+            archived: Some(true),
+            branch_protection: Some("hardened".into()),
+            standard_labels: Some(true),
+            has_issues: Some(true),
+            delete_branch_on_merge: Some(true),
+            actions_enabled: Some(true),
+        };
+        let as_map = serde_json::to_value(&full)
+            .expect("serializes")
+            .as_object()
+            .expect("object")
+            .clone();
+        let n = as_map.len();
+        assert!(
+            n >= 8,
+            "expected every RepoOverlay field to serialize, got {n}"
+        );
+
+        // Every one of those keys must reach a bare row through the fold.
+        let mut yaml = String::from("repo_defaults:\n");
+        for (k, v) in &as_map {
+            yaml.push_str(&format!("  {k}: {v}\n"));
+        }
+        yaml.push_str("repos:\n  - name: bare\n");
+        let c = cat(&yaml);
+        let (row, prov) = &c.resolved_rows().expect("folds")[0];
+        let got = serde_json::to_value(&row.overlay)
+            .expect("serializes")
+            .as_object()
+            .expect("object")
+            .clone();
+        assert_eq!(
+            got.len(),
+            n,
+            "every field set in repo_defaults must reach the row; \
+             {} of {n} arrived — the fold has a field list that went stale",
+            got.len()
+        );
+        for k in as_map.keys() {
+            assert_eq!(
+                prov.get(k),
+                Some(&Tier::WorkspaceDefaults),
+                "field {k:?} did not inherit from the workspace tier"
+            );
+        }
+    }
+
+    #[test]
+    fn an_empty_catalogue_folds_to_nothing_rather_than_erroring() {
+        // The tiers are additive: a catalogue with no repo_defaults and no
+        // profiles must behave exactly as before they existed. This is the
+        // backwards-compatibility leg — 1005 live rows depend on it.
+        let c = cat("repos:\n  - name: a\n    has_issues: false\n");
+        let (row, prov) = &c.resolved_rows().expect("folds")[0];
+        assert_eq!(row.overlay.has_issues, Some(false));
+        assert_eq!(prov.get("has_issues"), Some(&Tier::Row));
+        assert_eq!(prov.len(), 1, "only the key the row actually set");
     }
 }

@@ -193,8 +193,7 @@ mod tests {
         });
         inject_into_synthesis(&mut synth);
         assert_eq!(
-            synth["terraform"]["required_providers"]["github"]["version"],
-            "6.13.0",
+            synth["terraform"]["required_providers"]["github"]["version"], "6.13.0",
             "an explicit pin must survive the finalize"
         );
     }
