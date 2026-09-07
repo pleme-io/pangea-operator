@@ -2380,36 +2380,6 @@ where
         // this is a plain write — the same call `apply()`'s disk-fallback
         // branch makes, always taken here regardless of `artifact_store`
         // since there's no atomic state+bundle transaction to fold into.
-        magma_backend::Backend::write_state(&backend, &state)
-            .await
-            .map_err(|e| Error::MagmaExecution(format!("write state: {e}")))?;
-
-        // ── VERIFY THE POSTCONDITION, DO NOT INFER IT ──────────────────────
-        // The old code read `outcome.imported.first().map(|i| i.absorbed)` and
-        // fell through `unwrap_or(false)` to report "already present in state
-        // (no-op)" — a SUCCESS — whenever `imported` and `failed` were BOTH
-        // empty, i.e. whenever the prepass did nothing at all.
-        //
-        // Measured on plo 2026-09-06: the controller logged
-        //   Import prepass complete  imported=4 failed=0 total=4
-        // while the persisted state held ZERO of the four addresses. The
-        // operator therefore believed it had adopted two existing repositories
-        // and proceeded to apply, where the provider issued
-        //   POST https://api.github.com/user/repos
-        // for a repository that already exists. Only a missing credential
-        // stopped it.
-        //
-        // The contract this restores is the one that matters for adoption:
-        // **an import either leaves the address IN STATE or it failed.** That
-        // is checkable, and checking it is what makes "adopt if it exists,
-        // create if it does not" honest — a create must proceed because the
-        // import genuinely found nothing, never because nobody looked.
-        //
-        // Note this deliberately does NOT make a create-when-absent an error.
-        // A resource that truly does not exist upstream SHOULD fall through to
-        // create; the caller (`try_import` → the prepass partition) treats a
-        // failed import exactly that way. What changes is that the caller is
-        // now told the truth about which of the two happened.
         // ── AN ADDRESS IS NOT AN ADOPTION; ATTRIBUTES ARE ─────────────────
         // The first version of this check asked only whether the address was
         // present in state after the import. That is necessary and NOT
@@ -2458,6 +2428,19 @@ where
             ));
         }
 
+        // ── DO NOT PERSIST A FABRICATION ──────────────────────────────────
+        // This write used to come BEFORE the postcondition above, so a bogus
+        // adoption was committed to the database and only THEN reported as a
+        // failure. The report was honest; the damage was already done. Measured
+        // on plo 2026-09-07: github_repository.jikou sat in state with
+        // `attributes: {}` for a repository GitHub answers 404 for, written by
+        // an import this same function had already judged failed.
+        //
+        // A detection that fires after the write documents the corruption
+        // instead of preventing it.
+        magma_backend::Backend::write_state(&backend, &state)
+            .await
+            .map_err(|e| Error::MagmaExecution(format!("write state: {e}")))?;
         let absorbed = outcome
             .imported
             .first()
