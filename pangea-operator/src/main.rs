@@ -1007,12 +1007,75 @@ async fn run_resolve_org() -> Result<()> {
         catalogue = %catalogue_path,
         resolved = records.len(),
         authenticated = token.is_some(),
+        emit = %value_of("--emit").unwrap_or_else(|| "records".to_string()),
         "org resolution complete"
     );
 
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&records).map_err(pangea_operator::Error::Serialization)?
-    );
+    // ── ★ A RESOLUTION THAT RESOLVED NOTHING IS NOT AN ANSWER ─────────────
+    // An empty record list serialized to stdout is a perfectly well-formed
+    // document that a downstream `kubectl patch` would apply, replacing a
+    // converged 1005-repo spec with nothing — and every layer would report
+    // success. This is the defect family that dominated the 2026-09-06/07
+    // convergence work (an absent result read as a successful answer), so the
+    // refusal is here rather than left to the consumer.
+    //
+    // A genuinely-empty catalogue is not a thing we have: `org.yaml` with zero
+    // repos would be a deleted file, which the read above already fails on.
+    if records.is_empty() {
+        return Err(pangea_operator::Error::Config(format!(
+            "resolved 0 repositories from {catalogue_path} — refusing to emit. \
+             An empty result would apply as a spec with no repositories and \
+             report success. Check that the catalogue path is the intended one \
+             and that `--only` (if given) names repositories that exist in it."
+        )));
+    }
+
+    // ── EMIT SHAPE ────────────────────────────────────────────────────────
+    // `records` (the default) is the raw list, for a human or a committed
+    // artifact. `cr-patch` is a merge-patch document for an
+    // InfrastructureTemplate's `spec.variables`, so the node-local
+    // materialization unit is `pangea-operator … | kubectl patch -p -` with no
+    // shell logic between them — the NO-SHELL law's requirement that the glue
+    // carry no conditionals, no loops and no assembly.
+    //
+    // The variable NAMES here are the lava architecture's interpolation
+    // contract (`github-org-repos.tlisp` reads `{owner}`, `{repo_count}` and
+    // loops `repos`), not a free choice. `labels` is present-and-empty
+    // deliberately: the architecture indexes it, and an ABSENT key and an
+    // EMPTY list are different things to the interpolator.
+    match value_of("--emit").as_deref() {
+        None | Some("records") => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&records)
+                    .map_err(pangea_operator::Error::Serialization)?
+            );
+        }
+        Some("cr-patch") => {
+            let patch = serde_json::json!({
+                "spec": {
+                    "variables": {
+                        "owner": owner,
+                        "repo_count": records.len().to_string(),
+                        "repos": records,
+                        "labels": [],
+                    }
+                }
+            });
+            println!(
+                "{}",
+                serde_json::to_string(&patch).map_err(pangea_operator::Error::Serialization)?
+            );
+        }
+        Some(other) => {
+            // A typo must not be indistinguishable from silence — the same
+            // reasoning `Dialect` records for not copying `spec.executor`'s
+            // `_ => None` fall-through.
+            return Err(pangea_operator::Error::Config(format!(
+                "--emit {other}: unknown emit shape. Known: `records` (default, the raw list), \
+                 `cr-patch` (a merge patch for spec.variables)."
+            )));
+        }
+    }
     Ok(())
 }
