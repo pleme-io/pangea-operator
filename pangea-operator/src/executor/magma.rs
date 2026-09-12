@@ -1562,8 +1562,7 @@ fn err_tofu_result_with_failures(
     }
 }
 
-#[async_trait]
-impl<S> IacExecutor for MagmaExecutor<S>
+impl<S> crate::executor::iac_executor::ExecutorInfo for MagmaExecutor<S>
 where
     S: StateBackend + ?Sized,
 {
@@ -1581,7 +1580,13 @@ where
     fn backend_descriptor(&self) -> Option<String> {
         Some(format!("pg/{}", self.cfg.schema_name))
     }
+}
 
+#[async_trait]
+impl<S> IacExecutor for MagmaExecutor<S>
+where
+    S: StateBackend + ?Sized,
+{
     async fn init(&self, _work_dir: &Path, _extra_args: &[&str]) -> Result<TofuResult> {
         let started = Instant::now();
         Ok(ok_tofu_result(

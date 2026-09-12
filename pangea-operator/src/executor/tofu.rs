@@ -463,8 +463,7 @@ impl TofuExecutor {
 /// testability) and the inherent impl (for direct callers) — or
 /// alternatively, add only to the trait once all callers migrate to
 /// `&dyn IacExecutor`.
-#[async_trait]
-impl IacExecutor for TofuExecutor {
+impl crate::executor::iac_executor::ExecutorInfo for TofuExecutor {
     fn name(&self) -> &'static str {
         "tofu"
     }
@@ -479,7 +478,10 @@ impl IacExecutor for TofuExecutor {
     fn backend_descriptor(&self) -> Option<String> {
         None
     }
+}
 
+#[async_trait]
+impl IacExecutor for TofuExecutor {
     async fn init(&self, work_dir: &Path, extra_args: &[&str]) -> Result<TofuResult> {
         TofuExecutor::init(self, work_dir, extra_args).await
     }

@@ -310,11 +310,41 @@ async fn gather_attrs(
     plan_path: &Path,
     main_tf_path: &Path,
 ) -> BTreeMap<String, serde_json::Value> {
-    let executor = state.executor_for(template);
-    let _ = executor.plan(work_dir, Some(plan_path), &[]).await;
-    let plan_json = match executor.show_plan(work_dir, plan_path).await {
-        Ok(r) if r.success && !r.stdout.is_empty() => r.stdout,
-        _ => String::new(),
+    // ── ★★ CREDENTIAL-AWARE, and it was not — measured 2026-09-11 ──────────
+    //
+    // This read `state.executor_for(template)` — the credential-BLIND accessor
+    // — and then planned with it, one function below `resolve_conflicts_post_apply`
+    // which correctly used the credential-aware one. Two authors, same file,
+    // opposite choices, because both accessors returned the same type.
+    //
+    // The blind plan was doubly invisible: `let _ =` discarded its error, so a
+    // credential failure produced an empty `plan_json` and this function fell
+    // silently through to the rendered-config path. Import IDs then derived
+    // from literals instead of resolved values, with nothing logged.
+    //
+    // `executor_for` now returns `ExecutorInfo`, which has no `plan`, so this
+    // mistake no longer compiles.
+    //
+    // Unresolvable credentials keep the ORIGINAL behaviour — fall back to the
+    // rendered config — because that fallback is legitimate and this function
+    // is infallible by signature. What changes is that we no longer reach the
+    // network anonymously to get there, and we say so.
+    let plan_json = match state.executor_for_checked_with_creds(template).await {
+        Ok(executor) => {
+            let _ = executor.plan(work_dir, Some(plan_path), &[]).await;
+            match executor.show_plan(work_dir, plan_path).await {
+                Ok(r) if r.success && !r.stdout.is_empty() => r.stdout,
+                _ => String::new(),
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "conflict: provider credentials unresolved — deriving import IDs from the \
+                 rendered config instead of a fresh plan"
+            );
+            String::new()
+        }
     };
     if !plan_json.is_empty() {
         let m = parse_planned_attrs(&plan_json);

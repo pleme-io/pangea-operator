@@ -4933,8 +4933,6 @@ async fn run_import_prepass(
         discovery_from_planned_changes, parse_planned_attrs, resolve_import_targets, ImportSkip,
     };
 
-    let executor = state.executor_for(template);
-
     let auto_import =
         crate::crd::ImportPolicy::auto_on_conflict_or_default(template.spec.import_policy.as_ref());
 
@@ -4942,6 +4940,37 @@ async fn run_import_prepass(
     if template.spec.import_hints.is_empty() && !auto_import {
         return ImportPrepass::default();
     }
+
+    // ── ★★ CREDENTIAL-AWARE, and moved BELOW the short-circuit ─────────────
+    //
+    // This read `state.executor_for(template)` — the credential-BLIND accessor
+    // — above the short-circuit, then called `planned_changes()` and read the
+    // plan JSON with it. Both are provider-touching, so on the auto-import path
+    // this issued anonymous requests; the import prepass is exactly where an
+    // anonymous read is most expensive, because it reads the whole managed set
+    // to decide what already exists.
+    //
+    // `executor_for` now returns `ExecutorInfo`, which has no `planned_changes`,
+    // so this no longer compiles.
+    //
+    // Acquiring it AFTER the short-circuit is the other half: the common case
+    // (no hints, no auto-import) now resolves no credentials at all rather than
+    // building an executor it immediately discards.
+    //
+    // An unresolvable credential yields "prepass did nothing", which is the same
+    // answer the short-circuit above gives and is safe: the caller proceeds to a
+    // normal plan, which will surface the credential failure loudly rather than
+    // here, quietly.
+    let executor = match state.executor_for_checked_with_creds(template).await {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "import prepass: provider credentials unresolved — skipping the prepass"
+            );
+            return ImportPrepass::default();
+        }
+    };
 
     let variables = template.spec.variables.clone().unwrap_or_default();
 
@@ -5381,7 +5410,40 @@ async fn handle_ready(
     // typed `CycleArtifact` (for the unified surface). Closes the
     // last phase handler that still spoke `IacExecutor` directly for
     // its plan call.
-    let runner = state.executor_runner_for(template);
+    //
+    // ── ★★ CREDENTIAL-AWARE, and it was not, for 54 days ────────────────
+    //
+    // This read `state.executor_runner_for(template)` — the CREDENTIAL-BLIND
+    // constructor — until 2026-09-11. That was correct when it was written:
+    // `plan()` was then a pure structural diff issuing no provider RPCs, so a
+    // Ready-phase drift plan genuinely needed no credential, and `3fcb555`
+    // deliberately scoped its credential forwarding to the mutating handlers.
+    //
+    // `66fbdc2` (2026-07-19) made `plan()` call `refresh_then_plan`, i.e. a
+    // live `ReadResource` RPC per state instance. That turned every plan call
+    // site into a real provider path. This one was never re-audited, so it
+    // built a `MagmaExecutor` with an EMPTY `provider_configs` map and
+    // terraform-provider-github configured itself from an all-null object,
+    // fell back to a daemon env that correctly carries no GitHub credential,
+    // and went out ANONYMOUS and OWNER-LESS:
+    //
+    //   403 API rate limit of 60      ← 60 is GitHub's unauthenticated ceiling
+    //   GET /repos//<name>/actions/permissions   ← empty owner path segment
+    //
+    // Worse than slow: `shared_pacer_for` (executor/magma.rs) keys off a
+    // `github` entry that an empty map does not contain, so the operator's
+    // configured budget was inert and the retries were UNPACED — starving the
+    // reconcile loop that every other template on the node shares. The CR
+    // reported `Ready` throughout, because the failure is inside the drift
+    // check rather than a phase transition, and it could not self-heal: the
+    // plan never completes, so nothing ever advances to a handler that would
+    // resolve credentials.
+    //
+    // ★ The blind constructor is GONE rather than merely unused. Leaving it
+    // would leave this mistake constructible, and the next person to add a
+    // plan call site would face the same two same-typed choices with nothing
+    // to distinguish them. See `ControllerState` in controller/mod.rs.
+    let runner = state.executor_runner_for_with_creds(template).await?;
     let interval =
         parse_duration(&template.spec.refresh_interval).unwrap_or(DEFAULT_REQUEUE_INTERVAL);
 

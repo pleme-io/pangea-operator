@@ -38,8 +38,43 @@ use std::path::Path;
 /// against duplicate invocations within a reconcile cycle. Operators
 /// retry on transient failures; double-apply, double-import, and
 /// double-init must not corrupt state.
-#[async_trait]
-pub trait IacExecutor: Send + Sync + 'static {
+/// What can be asked of an executor **without credentials**.
+///
+/// ── ★★ WHY THIS TRAIT EXISTS — it is a capability boundary, not tidiness ──
+///
+/// Every other method on [`IacExecutor`] reaches a provider over RPC, and a
+/// provider reached without `spec.providerCredentials` does not fail loudly:
+/// terraform providers configure themselves from an all-null config object and
+/// fall back to ambient env credentials, which in this daemon are deliberately
+/// absent. The observable result is an ANONYMOUS request — for GitHub that is
+/// `403 API rate limit of 60` against a URL whose owner segment is empty,
+/// retried unpaced because the shared pacer keys off a provider entry the empty
+/// config never created.
+///
+/// Before this split, `ControllerState::executor_for` handed back a full
+/// `Arc<dyn IacExecutor>` with no credentials resolved, and the credential-aware
+/// sibling returned **the same type**. Choosing wrong therefore compiled, and
+/// three independent call sites did choose wrong — two of them in files whose
+/// neighbouring functions chose correctly:
+///
+/// | site | what it did blind |
+/// |---|---|
+/// | `handle_ready`'s drift plan | planned; starved the shared reconcile loop |
+/// | `conflict::gather_attrs` | planned AND discarded the error (`let _ =`) |
+/// | `run_import_prepass` | `planned_changes()` + read the plan JSON |
+///
+/// None of them was a careless author: the Ready-phase plan was genuinely
+/// credential-free when it was written, and only became a provider path when
+/// `plan()` started refreshing. A comment cannot catch a change like that, and
+/// an enum parameter would not have either — the caller would simply have named
+/// the wrong variant. **A narrower return type catches all three at compile
+/// time**, which is why `executor_for` now yields `Arc<dyn ExecutorInfo>` and
+/// anything that talks to a provider must go through the credential-aware
+/// accessor and cannot be obtained otherwise.
+///
+/// Adding a method here is a deliberate act: it must be answerable from the
+/// executor's own construction, never from a remote call.
+pub trait ExecutorInfo: Send + Sync + 'static {
     /// Stable identifier for THIS executor — `"tofu"` for the
     /// subprocess executor, `"magma"` for the typed-native executor,
     /// `"recording"` for the test mock. Surfaced into CR status as
@@ -56,7 +91,10 @@ pub trait IacExecutor: Send + Sync + 'static {
     /// `None` for stateless executors (the test mock). Surfaced into
     /// `status.backend`.
     fn backend_descriptor(&self) -> Option<String>;
+}
 
+#[async_trait]
+pub trait IacExecutor: ExecutorInfo {
     /// `tofu init` — initialize backend + provider plugins.
     async fn init(&self, work_dir: &Path, extra_args: &[&str]) -> Result<TofuResult>;
 

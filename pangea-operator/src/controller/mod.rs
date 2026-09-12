@@ -541,18 +541,44 @@ impl ControllerState {
     ///
     /// Per `theory/MAGMA-OPERATOR-BACKEND.md` §VI and
     /// `docs/design/0005-autonomic-convergence-on-magma.md`.
+    /// ── ★★ RETURNS `ExecutorInfo`, NOT `IacExecutor`, AND THAT IS THE POINT ──
+    ///
+    /// This resolves WHICH executor backs a CR. It does **not** resolve
+    /// `spec.providerCredentials`, so nothing obtained here may talk to a
+    /// provider — and since 2026-09-11 the type says so: the returned
+    /// `ExecutorInfo` exposes only `name()` and `backend_descriptor()`.
+    ///
+    /// It used to return a full `Arc<dyn IacExecutor>`, identical in type to
+    /// what the credential-aware accessor returns, so picking the wrong one
+    /// compiled. Three call sites picked wrong — a Ready-phase drift plan, a
+    /// conflict-attribute gather that discarded its own error, and the import
+    /// prepass — and every one of them issued anonymous provider requests that
+    /// failed as rate-limit errors rather than as auth errors, which is why it
+    /// took 54 days to notice.
+    ///
+    /// If you need to plan, apply, import, refresh or read plan output, use
+    /// [`executor_for_checked_with_creds`](Self::executor_for_checked_with_creds).
+    /// You cannot get there from here, by construction.
     pub fn executor_for(
         &self,
         template: &crate::crd::InfrastructureTemplate,
-    ) -> Arc<dyn IacExecutor> {
+    ) -> Arc<dyn crate::executor::iac_executor::ExecutorInfo> {
         let chosen = ExecutorBackend::resolve(
             template.spec.executor.as_deref(),
             Some(self.default_backend.label()),
         );
 
+        // The upcasts are the narrowing doing its job: both arms build a full
+        // `IacExecutor` (that is what routing selects), and widening the RETURN
+        // to `ExecutorInfo` is what stops a caller reaching the provider methods
+        // on an executor whose credentials were never resolved.
         match chosen {
-            ExecutorBackend::Magma => self.magma_executor_for(template),
-            ExecutorBackend::Tofu => Arc::clone(&self.executor),
+            ExecutorBackend::Magma => {
+                self.magma_executor_for(template) as Arc<dyn crate::executor::iac_executor::ExecutorInfo>
+            }
+            ExecutorBackend::Tofu => {
+                Arc::clone(&self.executor) as Arc<dyn crate::executor::iac_executor::ExecutorInfo>
+            }
         }
     }
 
@@ -838,39 +864,28 @@ impl ControllerState {
         })
     }
 
-    /// Build the typed `WorkspaceRunner` for this CR's reconcile path.
-    ///
-    /// Mirrors `executor_for` but wraps the chosen `IacExecutor` in
-    /// the matching typed runner (`MagmaWorkspaceRunner` /
-    /// `TofuWorkspaceRunner`). The controller's phase handlers
-    /// consume this typed surface (slice 2c) instead of reaching for
-    /// the raw `IacExecutor` + reparsing JSON.
-    ///
-    /// Dispatch is on the inner executor's `.name()` so the test mock
-    /// (`RecordingExecutor`, name=`"recording"`) cleanly falls through
-    /// to the tofu runner (which speaks tofu-shaped JSON, matching
-    /// the mock's canned output).
-    pub fn executor_runner_for(
-        &self,
-        template: &crate::crd::InfrastructureTemplate,
-    ) -> Arc<dyn crate::executor::workspace_runner::WorkspaceRunner> {
-        use crate::executor::workspace_runner::{
-            MagmaWorkspaceRunner, TofuWorkspaceRunner, WorkspaceRunner,
-        };
-        let exec = self.executor_for(template);
-        match exec.name() {
-            // Thread the artifact store so the magma runner knows it's on
-            // the DB-backed zero-disk path and skips the `magma-bundle.json`
-            // disk read (the bundle lives in Postgres). Mirrors how
-            // `magma_executor_for` wires `MagmaExecutorConfig.artifact_store`.
-            "magma" => Arc::new(MagmaWorkspaceRunner::new(
-                exec,
-                self.artifact_store.clone(),
-                self.executor_timeout,
-            )) as Arc<dyn WorkspaceRunner>,
-            _ => Arc::new(TofuWorkspaceRunner::new(exec)) as Arc<dyn WorkspaceRunner>,
-        }
-    }
+    // ── ★★ `executor_runner_for` WAS HERE, AND IT IS GONE ON PURPOSE ─────
+    //
+    // It built a full `WorkspaceRunner` — plan, apply, destroy, validate —
+    // over a credential-BLIND executor, and returned the identical type to
+    // its credential-aware sibling. That made "plan without credentials" a
+    // legal, compiling, invisible choice, and `handle_ready` made it for 54
+    // days: anonymous provider RPCs surfacing as `403 rate limit of 60`
+    // rather than as an auth failure, retried unpaced because the shared
+    // pacer keys off a provider entry an empty config never creates.
+    //
+    // It is DELETED rather than deprecated because, once its one caller was
+    // corrected, it had no remaining consumer — the legitimate blind uses
+    // (`.name()` checks, cycle-receipt labelling) go through `executor_for`,
+    // which now yields the narrow `ExecutorInfo`. ★★ MODULARIZE-DON'T-DELETE
+    // governs retiring a FEATURE behind a typed flag; this is its stated
+    // exception — genuinely orphan code whose only caller was a defect.
+    // Leaving it would leave the mistake constructible, which is the whole
+    // thing this change exists to prevent.
+    //
+    // If a metadata-only *runner* is ever genuinely needed, the shape is a
+    // `RunnerInfo` supertrait of `WorkspaceRunner`, mirroring what
+    // `ExecutorInfo` now does for `IacExecutor` — not this function back.
 
     /// Set the database pool.
     ///
