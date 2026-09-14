@@ -19,6 +19,20 @@
     # NOT `inputs.nixpkgs.follows` — the whole point is a different rev.
     nixpkgs-security.url = "github:NixOS/nixpkgs/nixos-unstable";
 
+    # The OpenWrt router provider, built by the repo that owns its source.
+    #
+    # ── WHY AN INPUT AND NOT A LOCAL DERIVATION ──────────────────────────
+    # It used to be packaged in `pleme-io/nix` — a PRIVATE repo — so this
+    # PUBLIC flake could not reach it, and the mirror below and the plo host
+    # carried different provider sets, joined at the node with a symlinkJoin.
+    # That is fine while the operator is a host service and fatal the moment it
+    # is a Pod: the image had no router provider at all, so every roteador
+    # InfrastructureTemplate would plan straight into ProviderUnavailable.
+    # ★★ TOOL DISTRIBUTION — the repo builds its own artifact, consumers are
+    # config-only.
+    openwrt-uci.url = "github:pleme-io/openwrt-uci";
+    openwrt-uci.inputs.nixpkgs.follows = "nixpkgs";
+
     # The lava dashboard catalogue — the `.tlisp` architectures the Ruby-free
     # image resolves `spec.source.architecture.name` against.
     #
@@ -137,6 +151,7 @@
       nixpkgs-security,
       substrate,
       ruby-nix,
+      openwrt-uci,
       ...
     }:
     let
@@ -336,7 +351,30 @@
                 # locate_provider reads MAGMA_PROVIDER_DIR), so an absent
                 # provider here is a hard ProviderUnavailable, not a slow path.
                 datadog_datadog
-              ]);
+              ])
+              ++ [
+                # ── The OpenWrt router provider — OURS, and the reason this
+                # list is not purely nixpkgs. ──────────────────────────────
+                # Built from pleme-io/openwrt-uci by its own flake. It drives
+                # the two live GL-MT6000s through the `ubus-http` facade:
+                #   InfrastructureTemplate -> magma -> THIS -> ubus-http -> ubusd
+                #
+                # It is in the IMAGE rather than joined onto one node's
+                # MAGMA_PROVIDER_DIR because the operator is moving into the
+                # cluster as a Pod, and a Pod gets exactly this closure —
+                # nothing a host happens to have beside it. Before this, the
+                # mirror and plo's host disagreed by exactly this one provider.
+                #
+                # ★ INTERIM, and the direction of this list is to SHRINK.
+                # `hashicorp_random` was removed once magma served it natively
+                # in-process, deleting 36 of 190 CVE findings — the largest
+                # single contributor — for a provider that makes no network
+                # calls. The UCI surface is small and already HTTP-shaped, so
+                # the destination here is a native magma provider that deletes
+                # this Go binary rather than one that keeps it.
+                # `pending-magma-native-openwrt`.
+                openwrt-uci.packages.${imageSystem}.terraform-provider-openwrt
+              ];
           };
         in
         mirror;
