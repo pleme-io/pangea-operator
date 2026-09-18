@@ -313,6 +313,48 @@ cycle receipt instead of `Outcome::Created`.
 `{{ .var }}` (or `{{ var }}`) substitutes from `spec.variables`;
 unresolved tokens emit a Warning event and skip that hint.
 
+### ★ `status.planSummary` is the PRE-IMPORT plan and is never refreshed
+
+**Read it as "what the apply would have done without the import", never as
+"what is pending".** It is captured from status *before* the apply runs
+(`template_controller.rs:3687`, commented there as "the per-resource change
+set the apply just consumed") and carried verbatim into every status write
+afterwards (`:4098`, `:4210`, `:4243`). Nothing recomputes it once the import
+pre-pass has adopted the addresses.
+
+So a template that adopted everything and then applied **nothing** displays
+the create-count it no longer intends to perform.
+
+**Receipt, 2026-09-18 (`repetidor-buzios`, the house router).** Status read:
+`planSummary: "+76 ~0 -0"`, `autoApprove: false`, `lastPlannedAt 17:40:32`,
+`lastAppliedAt 17:42:26`. The obvious reading — "76 creates are pending
+against a live router" — is the exact opposite of what happened. Ground truth
+on the device: **no file under `/etc/config` modified today** (newest is
+`Sep 17 11:36`), `uci changes` empty, uptime 1 day 8:50, hostname and
+`network.lan.ipaddr` unchanged. The router was never written to.
+
+What actually ran: plan at 17:40 against empty state → `+76`; the pre-apply
+`run_import_prepass` (`:3699`) adopted all 76 via `importHints`; because
+`imported_addresses` was non-empty the stale plan file was **discarded**
+(`:3705` sets `plan_file = None`) and re-planned against the now-populated
+state; the re-plan was empty, so the apply wrote nothing. `driftTotal: 0`
+on every drift check since. **Import-first worked exactly as designed — only
+the reporting lied.**
+
+### ★ What actually gates an apply — and it is not `spec.autoApprove`
+
+`spec.autoApprove` is read in exactly one place on the template path
+(`template_controller.rs:5758`). It does **not** decide whether a reconcile
+applies. Do not reason about blast radius from that field; the same warning
+is in the nix repo's docs for the 1005-repo GitHub template, where the
+policy engine's `AutoApply` fall-through is what governs.
+
+**The safe check before arming anything is the DEVICE, not the CR.** For a
+router: `uci changes` (staged), `ls -lt /etc/config/` (mtimes), `uptime`.
+A CR field tells you what the operator believes; the mtimes tell you what it
+did.
+
+
 ## Compiler backend (M8.2+)
 
 The operator dispatches Pangea DSL compilation through the
