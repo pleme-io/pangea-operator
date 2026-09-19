@@ -1175,6 +1175,7 @@ fn ok_tofu_result(stdout: String, started: Instant) -> TofuResult {
         success: true,
         duration: started.elapsed(),
         failed_changes: Vec::new(),
+        import_evidence: Default::default(),
     }
 }
 
@@ -1528,6 +1529,7 @@ fn changes_tofu_result(stdout: String, started: Instant) -> TofuResult {
         success: true,
         duration: started.elapsed(),
         failed_changes: Vec::new(),
+        import_evidence: Default::default(),
     }
 }
 
@@ -1539,7 +1541,37 @@ fn err_tofu_result(stderr: String, started: Instant) -> TofuResult {
         success: false,
         duration: started.elapsed(),
         failed_changes: Vec::new(),
+        import_evidence: Default::default(),
     }
+}
+
+/// An import that ran without error but adopted nothing: state afterwards has
+/// no instance with attributes for the address, which is how magma records a
+/// provider read that reported the resource absent.
+///
+/// The one place this result is built, so the typed evidence cannot be
+/// forgotten at a second site. The message is for people; the controller
+/// decides from [`ImportEvidence`], never from these words.
+pub(crate) fn provider_reported_absent(
+    address: &str,
+    id: &str,
+    imported: usize,
+    failed: usize,
+    started: Instant,
+) -> TofuResult {
+    let mut result = err_tofu_result(
+        format!(
+            "magma import for {address} ({id}) reported no failure, but the \
+             persisted state afterwards has no instance carrying attributes \
+             for it: the provider's read reported it absent, and magma wrote \
+             an EMPTY attribute map. Nothing was adopted, so the caller plans \
+             a create knowingly rather than believing the resource exists. \
+             imported={imported} failed={failed}\n"
+        ),
+        started,
+    );
+    result.import_evidence = crate::executor::ImportEvidence::ProviderReportedAbsent;
+    result
 }
 
 /// Like [`err_tofu_result`] but carries the structured per-resource
@@ -1559,6 +1591,7 @@ fn err_tofu_result_with_failures(
         success: false,
         duration: started.elapsed(),
         failed_changes,
+        import_evidence: Default::default(),
     }
 }
 
@@ -2416,18 +2449,11 @@ where
         });
 
         if !in_state {
-            return Ok(err_tofu_result(
-                format!(
-                    "magma import for {address} ({id}) reported no failure, but the \
-                     persisted state afterwards has no instance carrying attributes \
-                     for it — either the address is absent, or it was written with an \
-                     EMPTY attribute map, which is what magma does for a resource \
-                     that does not exist upstream. Nothing was adopted. Treating as a \
-                     failed import so the caller plans a create knowingly rather than \
-                     believing a resource exists that does not. imported={} failed={}\n",
-                    outcome.imported.len(),
-                    outcome.failed.len(),
-                ),
+            return Ok(provider_reported_absent(
+                address,
+                id,
+                outcome.imported.len(),
+                outcome.failed.len(),
                 started,
             ));
         }

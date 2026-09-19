@@ -77,6 +77,28 @@ pub struct FailedChangeRecord {
     pub reason: String,
 }
 
+/// What a failed import established about the resource, as a value.
+///
+/// The controller decides whether a create may follow a failed import. It used
+/// to decide by searching the failure TEXT, and one of the texts it searched
+/// was the operator's own explanation of an empty adoption, which happened to
+/// contain "does not exist". That wording, not any evidence, is what let the
+/// repetidor-buzios prepass (2026-09-19) mark all 76 unreachable sections as
+/// absent. The evidence now travels as this enum, set where it was observed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ImportEvidence {
+    /// The executor has no typed finding. The caller falls back to reading
+    /// provider-authored error text, and must treat anything it does not
+    /// recognise as ambiguous.
+    #[default]
+    Unclassified,
+    /// The import ran without error and the provider's read reported the
+    /// resource absent: state afterwards holds no attributes for it. This is
+    /// only as true as the provider's read. openwrt-uci 6384fda fixed one that
+    /// reported "absent" for a router it could not reach.
+    ProviderReportedAbsent,
+}
+
 /// Result of a tofu command execution.
 #[derive(Debug, Clone)]
 pub struct TofuResult {
@@ -101,6 +123,10 @@ pub struct TofuResult {
     /// commands. The controller's reacting FSM classifies these into the
     /// typed [`crate::controller::anomaly::ApplyAnomaly`] taxonomy.
     pub failed_changes: Vec<FailedChangeRecord>,
+
+    /// For an import that adopted nothing: what the executor observed about
+    /// why. [`ImportEvidence::Unclassified`] for every other command.
+    pub import_evidence: ImportEvidence,
 }
 
 impl TofuResult {
@@ -449,6 +475,7 @@ impl TofuExecutor {
             // per-resource records — the controller substring-classifies
             // the combined output. Left empty.
             failed_changes: Vec::new(),
+            import_evidence: Default::default(),
         })
     }
 }

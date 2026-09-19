@@ -51,7 +51,7 @@ pub use policy::{
     evaluate as evaluate_policy, is_configured as policy_is_configured, PolicyOutcome,
 };
 pub use recording::{RecordedCall, RecordingExecutor};
-pub use tofu::{FailedChangeRecord, TofuCommand, TofuExecutor, TofuResult};
+pub use tofu::{FailedChangeRecord, ImportEvidence, TofuCommand, TofuExecutor, TofuResult};
 pub use workspace::{Workspace, WorkspaceManager};
 
 #[cfg(feature = "executor_magma")]

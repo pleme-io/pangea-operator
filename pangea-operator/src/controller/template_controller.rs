@@ -5248,6 +5248,39 @@ pub(crate) fn find_unimported_create<'a>(
         .find(|d| d.action.as_str() == "create" && failed_imports.iter().any(|f| f == &d.address))
 }
 
+/// Decide whether a failed import permits a create.
+///
+/// ── CLASSIFY, DO NOT COLLAPSE ──────────────────────────────────────────────
+/// The typed evidence decides first: an executor that watched the provider's
+/// read report the resource absent says so as a value
+/// ([`ImportEvidence::ProviderReportedAbsent`]).
+///
+/// Without that value, the floor is the PROVIDER's own words: its 404 and its
+/// "not found" name the resource. That is a stringly test and is stated as
+/// one. It must only ever see provider-authored text. It used to also see the
+/// operator's explanation of an empty adoption, which contained "does not
+/// exist", so the explanation rather than any evidence classified every
+/// unreachable section of repetidor-buzios as absent (2026-09-19). Anything
+/// unrecognised is Ambiguous, the safe direction: Ambiguous refuses the create.
+pub(crate) fn classify_import_failure(r: &crate::executor::TofuResult) -> ImportFailure {
+    use crate::executor::ImportEvidence;
+    match r.import_evidence {
+        ImportEvidence::ProviderReportedAbsent => ImportFailure::Absent,
+        ImportEvidence::Unclassified => {
+            let hay = r.stderr.to_ascii_lowercase();
+            if hay.contains("404")
+                || hay.contains("not found")
+                || hay.contains("does not exist")
+                || hay.contains("no resource with id")
+            {
+                ImportFailure::Absent
+            } else {
+                ImportFailure::Ambiguous
+            }
+        }
+    }
+}
+
 /// Try a single import via the resolved executor (magma import RPC on
 /// the magma path; `tofu import` only on the legacy tofu executor).
 /// `Ok(())` if the import adopted; `Err(ImportFailure)` classifying why not.
@@ -5295,24 +5328,7 @@ async fn try_import(
             Ok(())
         }
         Ok(r) => {
-            // ── CLASSIFY, DO NOT COLLAPSE ──────────────────────────────────
-            // magma's own message for a resource that is not there names it,
-            // and so does the provider's 404. Matching on that text is a
-            // stringly test and is stated as one: the executor does not yet
-            // return a typed not-found, so this is the honest floor rather
-            // than a pretence of a type. Anything unrecognised falls to
-            // Ambiguous — the safe direction, since Ambiguous still refuses
-            // the create.
-            let hay = r.stderr.to_ascii_lowercase();
-            let class = if hay.contains("404")
-                || hay.contains("not found")
-                || hay.contains("does not exist")
-                || hay.contains("no resource with id")
-            {
-                ImportFailure::Absent
-            } else {
-                ImportFailure::Ambiguous
-            };
+            let class = classify_import_failure(&r);
             warn!(
                 address = %addr,
                 stderr = %r.stderr,
@@ -9942,5 +9958,67 @@ mod plan_delta_tests {
     #[test]
     fn an_absent_state_never_collides_with_an_empty_one() {
         assert_ne!(state_fingerprint(None), state_fingerprint(Some(b"")));
+    }
+}
+
+#[cfg(test)]
+mod import_failure_classification_tests {
+    use std::time::Instant;
+
+    use super::{classify_import_failure, ImportFailure};
+    use crate::executor::magma::provider_reported_absent;
+    use crate::executor::{ImportEvidence, TofuResult};
+
+    fn stderr_only(stderr: &str) -> TofuResult {
+        TofuResult {
+            exit_code: 1,
+            stdout: String::new(),
+            stderr: stderr.to_owned(),
+            success: false,
+            duration: std::time::Duration::ZERO,
+            failed_changes: Vec::new(),
+            import_evidence: ImportEvidence::Unclassified,
+        }
+    }
+
+    /// magma's empty adoption carries its evidence as a value, and the value
+    /// is what makes it Absent.
+    #[test]
+    fn an_empty_adoption_is_absent_by_its_evidence() {
+        let r = provider_reported_absent("openwrt_uci_section.dhcp_lan", "dhcp.lan", 1, 0, Instant::now());
+        assert_eq!(r.import_evidence, ImportEvidence::ProviderReportedAbsent);
+        assert_eq!(classify_import_failure(&r), ImportFailure::Absent);
+    }
+
+    /// The regression: the operator's own explanation decided the class. With
+    /// its evidence stripped, the same words must NOT read as absence.
+    #[test]
+    fn the_operators_own_words_do_not_decide() {
+        let r = provider_reported_absent("openwrt_uci_section.dhcp_lan", "dhcp.lan", 1, 0, Instant::now());
+        let words_only = stderr_only(&r.stderr);
+        assert_eq!(
+            classify_import_failure(&words_only),
+            ImportFailure::Ambiguous,
+            "the explanation text alone classified as Absent: {}",
+            r.stderr
+        );
+    }
+
+    /// An unreachable device is not an absent resource.
+    #[test]
+    fn an_unreachable_provider_is_ambiguous() {
+        let r = stderr_only(
+            "magma import failed for openwrt_uci_section.dhcp_lan (dhcp.lan): reading the section \
+             failed; state kept: /uci/get: no answer from the adapter: dial tcp 127.0.0.1:9799: \
+             connect: connection refused",
+        );
+        assert_eq!(classify_import_failure(&r), ImportFailure::Ambiguous);
+    }
+
+    /// The provider-text floor still recognises a provider's own not-found.
+    #[test]
+    fn a_provider_404_is_absent() {
+        let r = stderr_only("magma import failed for github_repository.x (x): GET https://api.github.com/repos/o/x: 404 Not Found");
+        assert_eq!(classify_import_failure(&r), ImportFailure::Absent);
     }
 }

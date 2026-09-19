@@ -120,6 +120,7 @@ impl RecordingExecutor {
             success: true,
             duration: Duration::from_millis(0),
             failed_changes: Vec::new(),
+            import_evidence: Default::default(),
         }
     }
 
@@ -275,6 +276,7 @@ mod tests {
             success: true,
             duration: Duration::from_millis(100),
             failed_changes: Vec::new(),
+            import_evidence: Default::default(),
         });
         exec.push_response(TofuResult {
             exit_code: 0,
@@ -283,6 +285,7 @@ mod tests {
             success: true,
             duration: Duration::from_millis(500),
             failed_changes: Vec::new(),
+            import_evidence: Default::default(),
         });
 
         let plan = exec.plan(Path::new("/w"), None, &[]).await.unwrap();

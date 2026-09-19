@@ -732,6 +732,7 @@ mod tests {
             success: false,
             duration: std::time::Duration::from_secs(1),
             failed_changes: Vec::new(),
+            import_evidence: Default::default(),
         };
         let addrs = extract_failed_addresses_from_tofu(&r);
         assert_eq!(
@@ -755,6 +756,7 @@ mod tests {
             success: false,
             duration: std::time::Duration::from_secs(1),
             failed_changes: Vec::new(),
+            import_evidence: Default::default(),
         };
         let addrs = extract_failed_addresses_from_tofu(&r);
         assert_eq!(addrs, vec!["github_repository.foo".to_string()]);
@@ -769,6 +771,7 @@ mod tests {
             success: true,
             duration: std::time::Duration::from_secs(1),
             failed_changes: Vec::new(),
+            import_evidence: Default::default(),
         };
         assert!(extract_failed_addresses_from_tofu(&r).is_empty());
     }
@@ -785,6 +788,7 @@ mod tests {
             success: false,
             duration: std::time::Duration::from_secs(1),
             failed_changes: Vec::new(),
+            import_evidence: Default::default(),
         };
         let addrs = extract_failed_addresses_from_tofu(&r);
         assert_eq!(addrs, vec!["r.a".to_string(), "r.b".to_string()]);

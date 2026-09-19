@@ -4460,11 +4460,11 @@
         "substrate": "substrate"
       },
       "locked": {
-        "lastModified": 1789381808,
-        "narHash": "sha256-odG1RnZH6Q/nOHSxM3y4vhP4Hqh1MhBg+93IjdH/a6A=",
+        "lastModified": 1789812568,
+        "narHash": "sha256-dSTNgk+Q2E5tUngxK2Co1tbx0ikbIjFuSMHBlwNZBGc=",
         "owner": "pleme-io",
         "repo": "openwrt-uci",
-        "rev": "dd5f672f03b64054204046df6d204ca4916cf93f",
+        "rev": "6384fdaab22cc9de8ab7580366b101811c6215d1",
         "type": "github"
       },
       "original": {
