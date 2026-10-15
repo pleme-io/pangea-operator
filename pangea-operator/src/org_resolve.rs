@@ -58,6 +58,12 @@ pub struct OrgRepoRow {
     /// row's own fields.
     #[serde(default)]
     pub inherits: Vec<String>,
+    /// Names this repository had before. Every address the architecture
+    /// derives from the name is emitted as a terraform `moved` block from the
+    /// old slug, so a rename is an update in place rather than a destroy and
+    /// a create. Row-only: a rename is a fact about one repo, never a tier.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub renamed_from: Vec<String>,
     /// The row's own settings. Flattened, so the YAML shape is unchanged — a
     /// row still writes `has_issues: false` at the top level.
     #[serde(flatten)]
@@ -277,6 +283,7 @@ impl OrgRepoRow {
         Self {
             name: self.name.clone(),
             inherits: self.inherits.clone(),
+            renamed_from: self.renamed_from.clone(),
             overlay: serde_json::from_value(serde_json::Value::Object(acc))
                 .unwrap_or_else(|_| self.overlay.clone()),
         }
@@ -366,6 +373,7 @@ impl OrgCatalogue {
                 OrgRepoRow {
                     name: row.name.clone(),
                     inherits: row.inherits.clone(),
+                    renamed_from: row.renamed_from.clone(),
                     overlay,
                 },
                 prov,
@@ -524,6 +532,8 @@ pub fn record_for(row: &OrgRepoRow, live: Option<&LiveRepo>) -> RepoRecord {
     // The ADDRESS component. Separate from `name` on purpose: the repository
     // is still created as `row.name`; only the Terraform identifier is slugged.
     r.insert("slug".into(), tf_slug(&row.name));
+    // Comma-joined: a repo name cannot carry a comma (validate_catalogue).
+    r.insert("renamed_from".into(), row.renamed_from.join(","));
     r.insert(
         "description".into(),
         row.overlay.description.clone().unwrap_or_default(),
@@ -781,6 +791,42 @@ pub fn validate_catalogue(catalogue: &OrgCatalogue) -> Vec<CatalogueViolation> {
             });
         }
 
+        // ── renamed_from ──────────────────────────────────────────────────
+        // A prior name that is also a declared name (or slugs onto one)
+        // would move a live repo's state onto another, so it is refused here.
+        for old in &row.renamed_from {
+            let bad_charset = old.is_empty()
+                || old
+                    .chars()
+                    .any(|c| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')));
+            let detail = if bad_charset {
+                Some(format!("prior name {old:?} is not a GitHub repository name"))
+            } else if let Some(other) = catalogue
+                .repos
+                .iter()
+                .find(|o| o.name == *old || tf_slug(&o.name) == tf_slug(old))
+            {
+                Some(format!(
+                    "prior name {old:?} collides with declared repo {:?}; its state would be moved onto this one",
+                    other.name
+                ))
+            } else {
+                catalogue
+                    .repos
+                    .iter()
+                    .filter(|o| o.name != row.name)
+                    .find(|o| o.renamed_from.iter().any(|x| tf_slug(x) == tf_slug(old)))
+                    .map(|o| format!("prior name {old:?} is also claimed by {:?}", o.name))
+            };
+            if let Some(detail) = detail {
+                out.push(CatalogueViolation {
+                    repo: row.name.clone(),
+                    field: "renamed_from",
+                    detail,
+                });
+            }
+        }
+
         // ── visibility enum ───────────────────────────────────────────────
         // `visibility` is a free-form Option<String> in the row, so a typo is
         // not a parse error. `record_for` passes it through to the
@@ -891,9 +937,50 @@ pub fn cr_patch(owner: &str, records: &[RepoRecord]) -> serde_json::Value {
                 "repo_count": records.len().to_string(),
                 "repos": records,
                 "labels": [],
+                "moves": moves_for(records),
             }
         }
     })
+}
+
+/// One `{move_from, move_to}` record per address a renamed repo's record
+/// makes the architecture emit, from each prior name's slug to the current
+/// one. Gated exactly as `github-org-repos.tlisp` gates each resource, because
+/// a moved block whose target is not declared is refused at load.
+#[must_use]
+pub fn moves_for(records: &[RepoRecord]) -> Vec<RepoRecord> {
+    let mut out = Vec::new();
+    for r in records {
+        let Some(slug) = r.get("slug") else { continue };
+        let olds = r.get("renamed_from").map(String::as_str).unwrap_or("");
+        for old in olds.split(',').filter(|s| !s.is_empty()) {
+            let old = tf_slug(old);
+            let mut suffixes = vec![String::new(), "_actions".to_string()];
+            if r.get("has_branch_protection").map(String::as_str) == Some("true") {
+                suffixes.push("_protection".to_string());
+            }
+            if r.get("has_ci_shim").map(String::as_str) == Some("true") {
+                if let Some(ci) = r.get("ci_shim_slug") {
+                    suffixes.push(format!("__{ci}"));
+                }
+            }
+            for (ty, sfx) in suffixes.iter().map(|s| {
+                let ty = match s.as_str() {
+                    "" => "github_repository",
+                    "_actions" => "github_actions_repository_permissions",
+                    "_protection" => "github_branch_protection",
+                    _ => "github_repository_file",
+                };
+                (ty, s)
+            }) {
+                let mut m = RepoRecord::new();
+                m.insert("from".into(), format!("{ty}.{old}{sfx}"));
+                m.insert("to".into(), format!("{ty}.{slug}{sfx}"));
+                out.push(m);
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1354,7 +1441,7 @@ mod live {
     }
 
     #[test]
-    fn cr_patch_has_exactly_the_four_live_variable_keys() {
+    fn cr_patch_has_exactly_the_five_live_variable_keys() {
         let patch = cr_patch("pleme-io", &[rec("tend")]);
         let vars = patch["spec"]["variables"]
             .as_object()
@@ -1363,10 +1450,73 @@ mod live {
         keys.sort_unstable();
         assert_eq!(
             keys,
-            ["labels", "owner", "repo_count", "repos"],
-            "the live spec.variables carries exactly these four; a fifth key or \
+            ["labels", "moves", "owner", "repo_count", "repos"],
+            "the live spec.variables carries exactly these five; a sixth key or \
              a missing one is a divergence from the lava architecture's contract"
         );
+    }
+
+    fn renamed(name: &str, old: &[&str], protected: bool) -> OrgRepoRow {
+        OrgRepoRow {
+            name: name.into(),
+            renamed_from: old.iter().map(|s| (*s).to_string()).collect(),
+            overlay: RepoOverlay {
+                branch_protection: protected.then(|| "standard".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_rename_moves_every_address_the_row_emits() {
+        let recs = [record_for(&renamed("ensaio-akeyless", &["ensaio"], true), None), rec("tend")];
+        let moves = moves_for(&recs);
+        let pairs: Vec<(&str, &str)> = moves
+            .iter()
+            .map(|m| (m["from"].as_str(), m["to"].as_str()))
+            .collect();
+        assert_eq!(
+            pairs,
+            [
+                ("github_repository.ensaio", "github_repository.ensaio_akeyless"),
+                (
+                    "github_actions_repository_permissions.ensaio_actions",
+                    "github_actions_repository_permissions.ensaio_akeyless_actions"
+                ),
+                (
+                    "github_branch_protection.ensaio_protection",
+                    "github_branch_protection.ensaio_akeyless_protection"
+                ),
+            ]
+        );
+        let unprotected = moves_for(&[record_for(&renamed("b", &["a"], false), None)]);
+        assert_eq!(unprotected.len(), 2, "no protection resource, so no move onto one");
+        assert!(moves_for(&[rec("tend")]).is_empty());
+        assert_eq!(cr_patch("o", &[rec("tend")])["spec"]["variables"]["moves"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn a_prior_name_that_collides_with_a_declared_repo_is_refused_at_load() {
+        let cat = |rows: Vec<OrgRepoRow>| OrgCatalogue {
+            repos: rows,
+            ..Default::default()
+        };
+        let v = validate_catalogue(&cat(vec![renamed("new", &["tend"], false), rec_row("tend")]));
+        assert!(v.iter().any(|x| x.field == "renamed_from" && x.detail.contains("collides")), "{v:?}");
+        let v = validate_catalogue(&cat(vec![renamed("new", &["tend.x"], false), rec_row("tend_x")]));
+        assert!(v.iter().any(|x| x.field == "renamed_from"), "a slug collision is a collision: {v:?}");
+        let v = validate_catalogue(&cat(vec![renamed("a", &["old"], false), renamed("b", &["old"], false)]));
+        assert!(v.iter().any(|x| x.detail.contains("also claimed")), "{v:?}");
+        let v = validate_catalogue(&cat(vec![renamed("ensaio-akeyless", &["ensaio"], false)]));
+        assert!(v.is_empty(), "a clean rename is accepted: {v:?}");
+    }
+
+    fn rec_row(name: &str) -> OrgRepoRow {
+        OrgRepoRow {
+            name: name.into(),
+            ..Default::default()
+        }
     }
 
     #[test]

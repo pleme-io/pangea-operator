@@ -1266,6 +1266,21 @@ async fn compute_gem_tree_attestation(work_dir: &Path) -> Option<String> {
 /// derived severity). Lets the operator route any
 /// magma-plan-produced plan through magma-drift's classifier
 /// without touching the Reconciler trait machinery.
+/// Apply the rendered config's `moved` blocks to `state`; returns how many
+/// moved a row.
+pub(crate) fn apply_config_moves(cfg: &magma_config::Config, state: &mut magma_types::State) -> Result<usize> {
+    let moves = cfg
+        .moves()
+        .map_err(|e| Error::MagmaExecution(format!("moved blocks: {e}")))?;
+    let done = state
+        .apply_moved(&moves)
+        .map_err(|e| Error::MagmaExecution(format!("moved blocks: {e}")))?;
+    for m in &done {
+        tracing::info!(from = %m.from, to = %m.to, "state moved");
+    }
+    Ok(done.len())
+}
+
 fn to_universal_plan(plan: &magma_types::Plan) -> magma_converge::Plan {
     let changes: Vec<magma_converge::Change> = plan
         .resource_changes
@@ -1413,7 +1428,7 @@ fn advance_lifecycle_through_apply(
 /// parent component is an unresolved `${github_repository.<n>.attr}`
 /// reference in `after`, and only state says what `<n>` is really NAMED.
 /// See [`state_resolution_map`].
-fn planned_changes_from_magma_plan(
+pub(crate) fn planned_changes_from_magma_plan(
     plan: &magma_types::Plan,
     state: &magma_types::State,
 ) -> Vec<PlannedChange> {
@@ -1698,6 +1713,7 @@ where
         // `executor_runner_for_with_creds` for exactly this reason (a
         // data-source read at plan time is already a real provider
         // RPC).
+        let moved = apply_config_moves(&cfg, &mut state)?;
         let refresh_ctx = self.refresh_ctx_for(work_dir, &cfg);
         let (plan, refresh_report) =
             magma_apply::engine::refresh_then_plan(&cfg, &mut state, refresh_ctx.as_ref())
@@ -1715,7 +1731,9 @@ where
         // CHANGED resources), so its stub would never self-heal.
         // `refresh_report` is only `Some` when refresh actually ran
         // (`structural_apply` false), matching the write's gate above.
-        if refresh_report.is_some() {
+        // A moved block is persisted at plan time too: apply re-reads state,
+        // and the plan's update of the new address needs the moved row there.
+        if refresh_report.is_some() || moved > 0 {
             magma_backend::Backend::write_state(&backend, &state)
                 .await
                 .map_err(|e| Error::MagmaExecution(format!("write refreshed state: {e}")))?;
@@ -1934,6 +1952,11 @@ where
         let mut state = magma_backend::Backend::read_state(&backend)
             .await
             .map_err(|e| Error::MagmaExecution(format!("read state: {e}")))?;
+        // Idempotent: plan() already persisted these moves; a state written
+        // before that (or a plan regenerated elsewhere) still gets them.
+        if let Ok(cfg) = self.load_config_routed(work_dir).await {
+            apply_config_moves(&cfg, &mut state)?;
+        }
 
         // REAL apply: drive the providers over gRPC (spawn -> configure ->
         // plan -> apply), folding each resource's provider-returned new_state
@@ -4802,3 +4825,4 @@ mod stall_diagnosis_tests {
         );
     }
 }
+

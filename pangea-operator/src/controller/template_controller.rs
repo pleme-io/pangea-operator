@@ -10022,3 +10022,73 @@ mod import_failure_classification_tests {
         assert_eq!(classify_import_failure(&r), ImportFailure::Absent);
     }
 }
+
+#[cfg(all(test, feature = "executor_magma"))]
+mod moved_rename_tests {
+    use super::{drift_details_from_planned_changes, evaluate_destroy_protection_gate, DestroyProtectionGate};
+    use crate::executor::magma::{apply_config_moves, planned_changes_from_magma_plan};
+
+    fn config(with_moved: bool) -> magma_config::Config {
+        let mut v = serde_json::json!({
+            "resource": { "github_repository": { "ensaio_akeyless": { "name": "ensaio-akeyless" } } }
+        });
+        if with_moved {
+            v["moved"] = serde_json::json!([
+                { "from": "github_repository.ensaio", "to": "github_repository.ensaio_akeyless" }
+            ]);
+        }
+        magma_config::Config::from_json(v).unwrap()
+    }
+
+    fn state() -> magma_types::State {
+        let mut s: magma_types::State = serde_json::from_value(serde_json::json!({
+            "version": 4, "terraform_version": "1.6.0", "serial": 1,
+            "lineage": "00000000-0000-0000-0000-000000000000", "outputs": {}, "resources": []
+        }))
+        .unwrap();
+        s.resources.push(magma_types::StateResource {
+            address: magma_types::ResourceAddress {
+                module: magma_types::ModulePath::root(),
+                kind: magma_types::ResourceKind::Managed,
+                type_id: magma_types::ResourceTypeId("github_repository".into()),
+                name: "ensaio".into(),
+                key: None,
+            },
+            provider: magma_types::ProviderReference {
+                source: "integrations/github".into(),
+                name: "github".into(),
+                alias: None,
+            },
+            instances: vec![magma_types::StateInstance {
+                index_key: None,
+                schema_version: 0,
+                attributes: serde_json::json!({ "id": "ensaio", "name": "ensaio" }),
+                sensitive_attribute_paths: Vec::new(),
+                private: Vec::new(),
+                dependencies: Vec::new(),
+                status: magma_types::InstanceStatus::Ready,
+            }],
+        });
+        s
+    }
+
+    fn gate(with_moved: bool) -> DestroyProtectionGate {
+        let cfg = config(with_moved);
+        let mut st = state();
+        let moved = apply_config_moves(&cfg, &mut st).unwrap();
+        assert_eq!(moved, usize::from(with_moved));
+        let plan = magma_plan::plan(&cfg, &st).unwrap();
+        let changes = planned_changes_from_magma_plan(&plan, &st);
+        evaluate_destroy_protection_gate(true, &drift_details_from_planned_changes(&changes))
+    }
+
+    #[test]
+    fn a_declared_rename_passes_destroy_protection_as_an_update() {
+        assert_eq!(gate(true), DestroyProtectionGate::Proceed);
+    }
+
+    #[test]
+    fn destroy_protection_still_refuses_the_undeclared_rename() {
+        assert!(matches!(gate(false), DestroyProtectionGate::BlockedByProtectedDestruction { .. }));
+    }
+}
