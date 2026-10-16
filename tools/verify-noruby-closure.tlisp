@@ -15,7 +15,7 @@
 ;; speak (nix unavailable, or the pattern matched nothing in the embedded
 ;; closure).
 
-(define PATTERN "libruby|ruby-3|rb-sys|magnus|pangea-ruby-eval")
+(define PATTERN "libruby|-ruby-3|rb-sys|magnus|pangea-ruby-eval")
 (define NORUBY-ATTR ".#dockerImage-operator-noruby-amd64")
 (define EMBED-ATTR ".#dockerImage-operator-embedded-amd64")
 
