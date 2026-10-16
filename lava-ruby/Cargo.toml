@@ -1,0 +1,25 @@
+[package]
+name = "lava-ruby"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Ruby front-end for lava: parses Pangea Ruby templates with lib-ruby-parser and evaluates them in a contained interpreter to Terraform JSON, with no CRuby in the process"
+repository = "https://github.com/pleme-io/lava-ruby"
+
+[lib]
+name = "lava_ruby"
+path = "src/lib.rs"
+
+[[bin]]
+name = "lava-ruby"
+path = "src/main.rs"
+
+[dependencies]
+lib-ruby-parser = "4.0.6"
+indexmap = "2"
+serde_json = { version = "1", features = ["preserve_order"] }
+yaml-rust2 = "0.9"
+sha2 = "0.10"
+md-5 = "0.10"
+fancy-regex = "0.14"
+thiserror = "2"

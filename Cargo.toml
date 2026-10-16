@@ -8,6 +8,7 @@ members = [
     "pangea-ruby-eval",
     "pangea-operator-mcp",
     "roles-anywhere",
+    "lava-ruby",
 ]
 
 [workspace.package]

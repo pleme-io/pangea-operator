@@ -1,11 +1,12 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "e9f777ac0761ec78faff3993a52938f07e2adddbb557084c69e79702ec931b4e",
+  "cargo_lock_sha256": "285f9c2cad98b6ca8dbb650c96c9c07b117299bd344208be7f9f52bcbe432313",
   "manifest_sha256": {
-    "Cargo.toml": "c0c224bc143146d435b44987473914c522d394e1a58d86dd1cf5edbb9865ac81",
+    "Cargo.toml": "fa3d83bb4eddee0b393f7375cbce4652573cbd213363ad75550f6e6790c5fbd2",
+    "lava-ruby/Cargo.toml": "a2d172e3cffd2088bd2c849c579de254aec964cbe53b992a5b381a42c1f80933",
     "pangea-cli/Cargo.toml": "a15be7008ea6fc2ab76b2773e257aec0aa73f3191584a590f73d160530e157f7",
     "pangea-operator-mcp/Cargo.toml": "72a01f5815a03b1c418697a985ede13816d4f5aec385332ec436e2155713dea8",
-    "pangea-operator/Cargo.toml": "eee422f9cfea571a6edd4be3a59de7bfb32b491f02237e1d2a50dbe2982d1c4f",
+    "pangea-operator/Cargo.toml": "f824faa1fcbd569e32358e819f8c7f761d22d28370dd4d2290478da906b9b933",
     "pangea-ruby-eval/Cargo.toml": "a65712c95619fda84a8cebaa9f887919acf4e71f4125f085797dfaf478eb380a",
     "pangea-types/Cargo.toml": "bba5d0bee1d04b3ddaefa9f7234a1e5a11e3388dd89e62a3deb4a91b66cd4abc",
     "roles-anywhere/Cargo.toml": "82d3c7379682699c55a98bced056af9bf0a853f9c0248e674b729d72007bea5a"
@@ -109,6 +110,11 @@
           "alloc",
           "default"
         ]
+      },
+      "alloc-from-pool-1.0.5": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
       },
       "allocator-api2-0.2.21": {
         "runtime_dependencies": [],
@@ -242,6 +248,14 @@
         ],
         "build_dependencies": [],
         "features": []
+      },
+      "arraydeque-0.5.1": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": [
+          "default",
+          "std"
+        ]
       },
       "arrayvec-0.7.6": {
         "runtime_dependencies": [],
@@ -2056,6 +2070,31 @@
         "build_dependencies": [],
         "features": [
           "runtime"
+        ]
+      },
+      "bit-set-0.8.0": {
+        "runtime_dependencies": [
+          {
+            "name": "bit_vec",
+            "package_key": "bit-vec-0.8.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "std"
+        ]
+      },
+      "bit-vec-0.8.0": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": [
+          "std"
         ]
       },
       "bitflags-1.3.2": {
@@ -4257,6 +4296,54 @@
         "features": [
           "default",
           "std"
+        ]
+      },
+      "fancy-regex-0.14.0": {
+        "runtime_dependencies": [
+          {
+            "name": "bit_set",
+            "package_key": "bit-set-0.8.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "regex_automata",
+            "package_key": "regex-automata-0.4.18",
+            "kind": "normal",
+            "features": [
+              "alloc",
+              "dfa",
+              "hybrid",
+              "meta",
+              "nfa",
+              "syntax"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "regex_syntax",
+            "package_key": "regex-syntax-0.8.11",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default",
+          "perf",
+          "std",
+          "unicode"
         ]
       },
       "fast_chemail-0.9.6": {
@@ -10727,9 +10814,22 @@
         "features": []
       },
       "hashbrown-0.14.5": {
-        "runtime_dependencies": [],
+        "runtime_dependencies": [
+          {
+            "name": "ahash",
+            "package_key": "ahash-0.8.12",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          }
+        ],
         "build_dependencies": [],
         "features": [
+          "ahash",
+          "inline-more",
           "raw"
         ]
       },
@@ -10850,6 +10950,25 @@
             "kind": "normal",
             "features": [
               "default-hasher",
+              "inline-more"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "hashlink-0.9.1": {
+        "runtime_dependencies": [
+          {
+            "name": "hashbrown",
+            "package_key": "hashbrown-0.14.5",
+            "kind": "normal",
+            "features": [
+              "ahash",
               "inline-more"
             ],
             "uses_default_features": false,
@@ -13901,6 +14020,94 @@
         "build_dependencies": [],
         "features": []
       },
+      "lava-ruby-0.1.0": {
+        "runtime_dependencies": [
+          {
+            "name": "fancy_regex",
+            "package_key": "fancy-regex-0.14.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "indexmap",
+            "package_key": "indexmap-2.14.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "lib_ruby_parser",
+            "package_key": "lib-ruby-parser-4.0.6+ruby-3.1.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "md5",
+            "package_key": "md-5-0.10.6",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde_json",
+            "package_key": "serde_json-1.0.151",
+            "kind": "normal",
+            "features": [
+              "preserve_order"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "sha2",
+            "package_key": "sha2-0.10.9",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.20",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "yaml_rust2",
+            "package_key": "yaml-rust2-0.9.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
       "lava-schema-0.1.7": {
         "runtime_dependencies": [
           {
@@ -13998,6 +14205,41 @@
         "features": [
           "spin",
           "spin_no_std"
+        ]
+      },
+      "lib-ruby-parser-4.0.6+ruby-3.1.2": {
+        "runtime_dependencies": [
+          {
+            "name": "alloc_from_pool",
+            "package_key": "alloc-from-pool-1.0.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "lib_ruby_parser_ast",
+            "package_key": "lib-ruby-parser-ast-0.55.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default"
+        ]
+      },
+      "lib-ruby-parser-ast-0.55.0": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": [
+          "default"
         ]
       },
       "libc-0.2.189": {
@@ -16998,7 +17240,10 @@
           }
         ],
         "build_dependencies": [],
-        "features": []
+        "features": [
+          "default",
+          "std"
+        ]
       },
       "memchr-2.8.1": {
         "runtime_dependencies": [],
@@ -18450,6 +18695,16 @@
           {
             "name": "lava_eval",
             "package_key": "lava-eval-0.2.4-c3bee928a0936aabe92533a0e3e4a924cfd30aaa",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "lava_ruby",
+            "package_key": "lava-ruby-0.1.0",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -21778,14 +22033,17 @@
         "build_dependencies": [],
         "features": [
           "alloc",
+          "dfa",
           "dfa-build",
           "dfa-onepass",
           "dfa-search",
           "hybrid",
           "meta",
+          "nfa",
           "nfa-backtrack",
           "nfa-pikevm",
           "nfa-thompson",
+          "perf",
           "perf-inline",
           "perf-literal",
           "perf-literal-multisubstring",
@@ -30294,6 +30552,45 @@
         "build_dependencies": [],
         "features": []
       },
+      "yaml-rust2-0.9.0": {
+        "runtime_dependencies": [
+          {
+            "name": "arraydeque",
+            "package_key": "arraydeque-0.5.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "encoding_rs",
+            "package_key": "encoding_rs-0.8.35",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "hashlink",
+            "package_key": "hashlink-0.9.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default",
+          "encoding"
+        ]
+      },
       "yansi-1.0.1": {
         "runtime_dependencies": [],
         "build_dependencies": [],
@@ -35752,6 +36049,9 @@
     "aliasable-0.1.3": {
       "edition": "2018"
     },
+    "alloc-from-pool-1.0.5": {
+      "edition": "2021"
+    },
     "allocator-api2-0.2.21": {
       "edition": "2018"
     },
@@ -35773,6 +36073,9 @@
     },
     "arc-swap-1.9.2": {
       "edition": "2018"
+    },
+    "arraydeque-0.5.1": {
+      "edition": "2021"
     },
     "arrayvec-0.7.6": {
       "edition": "2018"
@@ -35881,6 +36184,12 @@
         "name": "bindgen",
         "path": "lib.rs"
       }
+    },
+    "bit-set-0.8.0": {
+      "edition": "2015"
+    },
+    "bit-vec-0.8.0": {
+      "edition": "2015"
     },
     "bitflags-1.3.2": {
       "edition": "2018"
@@ -36169,6 +36478,9 @@
     },
     "event-listener-strategy-0.5.4": {
       "edition": "2021"
+    },
+    "fancy-regex-0.14.0": {
+      "edition": "2018"
     },
     "fast_chemail-0.9.6": {
       "edition": "2015"
@@ -36480,6 +36792,9 @@
     "hashlink-0.10.0": {
       "edition": "2018"
     },
+    "hashlink-0.9.1": {
+      "edition": "2018"
+    },
     "headers-0.4.1": {
       "edition": "2018"
     },
@@ -36675,6 +36990,19 @@
     "lava-eval-0.2.4-c3bee928a0936aabe92533a0e3e4a924cfd30aaa": {
       "edition": "2024"
     },
+    "lava-ruby-0.1.0": {
+      "edition": "2021",
+      "lib_target": {
+        "name": "lava_ruby",
+        "path": "src/lib.rs"
+      },
+      "binaries": [
+        {
+          "name": "lava-ruby",
+          "path": "src/main.rs"
+        }
+      ]
+    },
     "lava-schema-0.1.7": {
       "edition": "2024"
     },
@@ -36683,6 +37011,23 @@
     },
     "lazy_static-1.5.0": {
       "edition": "2015"
+    },
+    "lib-ruby-parser-4.0.6+ruby-3.1.2": {
+      "edition": "2021",
+      "build_script": "build.rs",
+      "binaries": [
+        {
+          "name": "dump_token_ids",
+          "path": "src/bin/dump_token_ids.rs"
+        },
+        {
+          "name": "parse",
+          "path": "src/bin/parse.rs"
+        }
+      ]
+    },
+    "lib-ruby-parser-ast-0.55.0": {
+      "edition": "2021"
     },
     "libc-0.2.189": {
       "edition": "2021",
@@ -37839,6 +38184,23 @@
     },
     "writeable-0.6.3": {
       "edition": "2021"
+    },
+    "yaml-rust2-0.9.0": {
+      "edition": "2021",
+      "binaries": [
+        {
+          "name": "dump_events",
+          "path": "tools/dump_events.rs"
+        },
+        {
+          "name": "run_bench",
+          "path": "tools/run_bench.rs"
+        },
+        {
+          "name": "time_parse",
+          "path": "tools/time_parse.rs"
+        }
+      ]
     },
     "yansi-1.0.1": {
       "edition": "2021"

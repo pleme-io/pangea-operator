@@ -452,6 +452,9 @@ impl CompilerBackend for LavaCompilerBackend {
     /// break every caller that populates it unconditionally for the
     /// embedded backend's benefit.
     async fn compile(&self, req: CompileRequest) -> Result<CompileResult, BackendError> {
+        if is_ruby_request(&req) {
+            return compile_ruby_with_lava(req, lava_ruby_enabled()).await;
+        }
         // ── AN EMPTY SOURCE IS NOT A SOURCE ────────────────────────────────
         // `Some("")` takes this branch, so a template whose body is empty --
         // which is exactly what a CR naming a catalogue architecture carries --
@@ -752,6 +755,170 @@ impl CompilerBackend for DispatchingCompilerBackend {
                     .await
             }
         }
+    }
+}
+
+pub const LAVA_RUBY_ENV: &str = "PANGEA_LAVA_RUBY";
+
+pub fn lava_ruby_enabled() -> bool {
+    matches!(
+        std::env::var(LAVA_RUBY_ENV).as_deref(),
+        Ok("on" | "true" | "1")
+    )
+}
+
+fn is_ruby_request(req: &CompileRequest) -> bool {
+    if let Some(p) = req.template_path.as_deref() {
+        if p.ends_with(".rb") {
+            return true;
+        }
+    }
+    match req.source.as_deref().map(str::trim_start) {
+        Some(s) if !s.is_empty() => !(s.starts_with('(') || s.starts_with(';')),
+        _ => false,
+    }
+}
+
+fn lava_ruby_load_path(req: &CompileRequest) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = req.rubylib_paths.iter().map(PathBuf::from).collect();
+    if let Ok(extra) = std::env::var("PANGEA_LAVA_RUBY_LOAD_PATH") {
+        out.extend(
+            extra
+                .split(':')
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from),
+        );
+    }
+    let mut gems: Vec<PathBuf> = std::fs::read_dir(
+        std::env::var_os("PANGEA_GEM_CACHE_DIR")
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .unwrap_or_else(|| PathBuf::from("/var/pangea/gems")),
+    )
+    .into_iter()
+    .flatten()
+    .flatten()
+    .map(|e| e.path().join("lib"))
+    .filter(|p| p.is_dir())
+    .collect();
+    gems.sort();
+    out.extend(gems);
+    out
+}
+
+fn lava_ruby_env(req: &CompileRequest) -> Vec<(String, String)> {
+    let mut env = vec![];
+    if let Ok(names) = std::env::var("PANGEA_LAVA_RUBY_ENV_PASSTHROUGH") {
+        for n in names.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+            if let Ok(v) = std::env::var(n) {
+                env.push((n.to_string(), v));
+            }
+        }
+    }
+    for (k, v) in &req.variables {
+        let s = match v {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        env.push((k.clone(), s));
+    }
+    env
+}
+
+async fn compile_ruby_with_lava(
+    req: CompileRequest,
+    enabled: bool,
+) -> Result<CompileResult, BackendError> {
+    if !enabled {
+        return Err(BackendError::Evaluator(format!(
+            "a Ruby template reached the lava backend and lava-ruby is configured off; set {LAVA_RUBY_ENV}=on to evaluate it in lava, or select the embedded backend"
+        )));
+    }
+    let cfg = lava_ruby::RenderConfig {
+        load_path: lava_ruby_load_path(&req),
+        env: lava_ruby_env(&req),
+        cwd: None,
+    };
+    let op = lava_ruby::OperatorCompile {
+        source: req.source.clone().filter(|s| !s.trim().is_empty()),
+        template_path: req.template_path.as_deref().map(PathBuf::from),
+        variables: req
+            .variables
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+    };
+    let value = tokio::task::spawn_blocking(move || {
+        std::thread::Builder::new()
+            .name("lava-ruby".into())
+            .stack_size(512 * 1024 * 1024)
+            .spawn(move || lava_ruby::compile_operator(&op, &cfg).map_err(|e| e.to_string()))
+            .map_err(|e| format!("spawn lava-ruby thread: {e}"))?
+            .join()
+            .map_err(|_| "lava-ruby thread panicked".to_string())?
+    })
+    .await
+    .map_err(|e| BackendError::Evaluator(format!("lava-ruby task: {e}")))?
+    .map_err(|e| BackendError::Evaluator(format!("lava-ruby: {e}")))?;
+    let terraform_json = serde_json::to_string_pretty(&value)
+        .map_err(|e| BackendError::Evaluator(format!("serialize terraform json: {e}")))?;
+    Ok(CompileResult {
+        terraform_json,
+        synthesis_value: Some(value),
+    })
+}
+
+#[cfg(test)]
+mod lava_ruby_tests {
+    use super::*;
+
+    #[test]
+    fn ruby_requests_are_recognised_and_lisp_is_not() {
+        let mut r = CompileRequest {
+            source: Some("template :x do\nend".into()),
+            template_path: None,
+            rubylib_paths: vec![],
+            variables: Default::default(),
+            template_name: None,
+        };
+        assert!(is_ruby_request(&r));
+        r.source = Some("(deflava-architecture x)".into());
+        assert!(!is_ruby_request(&r));
+        r.source = None;
+        r.template_path = Some("/w/t.rb".into());
+        assert!(is_ruby_request(&r));
+    }
+
+    #[tokio::test]
+    async fn ruby_is_refused_while_configured_off() {
+        let req = CompileRequest {
+            source: Some("template :x do\nend".into()),
+            template_path: None,
+            rubylib_paths: vec![],
+            variables: Default::default(),
+            template_name: None,
+        };
+        let e = compile_ruby_with_lava(req, false).await.unwrap_err();
+        assert!(e.to_string().contains("configured off"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn ruby_compiles_in_process_when_configured_on() {
+        let src = "class TerraformSynthesizer\n  def initialize; @s = {}; end\n  def synthesis; @s; end\n  def resource(t, n); @s['resource'] = { t.to_s => { n.to_s => { 'v' => ENV['V'], 'n' => $pangea_variables['V'] } } }; end\nend\ntemplate :t do\n  resource :null_resource, :a\nend\n";
+        let mut variables = std::collections::HashMap::new();
+        variables.insert("V".to_string(), serde_json::json!("x"));
+        let req = CompileRequest {
+            source: Some(src.into()),
+            template_path: None,
+            rubylib_paths: vec![],
+            variables,
+            template_name: None,
+        };
+        let out = compile_ruby_with_lava(req, true).await.unwrap();
+        assert_eq!(
+            out.synthesis_value.unwrap(),
+            serde_json::json!({"resource": {"null_resource": {"a": {"v": "x", "n": "x"}}}})
+        );
     }
 }
 
