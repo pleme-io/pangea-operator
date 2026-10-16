@@ -46,6 +46,10 @@ pub fn corpus_config(workspace_root: &Path) -> RenderConfig {
 #[test]
 fn pinned_goldens_are_byte_identical() {
     let Some(root) = std::env::var_os("LAVA_RUBY_CORPUS_ROOT").map(PathBuf::from) else {
+        assert!(
+            std::env::var_os("LAVA_RUBY_PARITY_REQUIRED").is_none(),
+            "LAVA_RUBY_PARITY_REQUIRED is set but LAVA_RUBY_CORPUS_ROOT is not: the gate cannot see its corpus"
+        );
         eprintln!("BLIND: LAVA_RUBY_CORPUS_ROOT unset; the parity matrix needs the pleme-io checkout that holds pangea-architectures");
         return;
     };
