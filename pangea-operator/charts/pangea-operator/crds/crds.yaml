@@ -202,13 +202,16 @@ spec:
                 enum:
                 - auto
                 - ruby
+                - lava
                 - json
                 type: string
               executor:
                 description: |-
-                  IaC backend to use for plan/apply on this CR. Accepts `tofu` (default — OpenTofu subprocess) or `magma` (in-process Rust library via the `executor_magma` feature). When unset, falls back to the operator-wide default from the `PANGEA_EXECUTOR` env var, then to `tofu`.
+                  IaC backend for plan/apply on this CR.
 
-                  Both backends coexist indefinitely; this field is the per-CR opt-in for magma during the burn-in period. Per `theory/MAGMA-OPERATOR-BACKEND.md` §VI.
+                  `magma` (in-process Rust, provider gRPC driven directly, no subprocess) is **the default** and resolves when this field is unset and `PANGEA_EXECUTOR` is unset. `tofu` is reachable only by naming it explicitly here or in the env, and is refused outright when `PANGEA_FORBID_TOFU` is set — which it is in the fleet default.
+
+                  CORRECTED 2026-08-25: this description previously read "`tofu` (default — OpenTofu subprocess)" and called magma "the per-CR opt-in during the burn-in period". Both were false for months — `ExecutorBackend::resolve` has fallen back to `Magma` since 2026-06-02. The text mattered because it is rendered INTO THE CRD SCHEMA, so every author reading `kubectl explain` was told the subprocess backend was the default. Verify a live CR's actual backend from `status.executor`, never from this description.
                 nullable: true
                 type: string
               importHints:
@@ -233,8 +236,17 @@ spec:
                 nullable: true
                 properties:
                   autoOnConflict:
-                    default: false
-                    description: Master switch. When `false` (default), no auto-import fires regardless of `naturalIds` or bundled defaults — you stay on today's per-address `importHints`-only behaviour. When `true`, every `create`-action is a candidate for auto-import.
+                    default: true
+                    description: |-
+                      Master switch. When `true` (**the default since 2026-08-26**), every `create`-action is a candidate for auto-import. Set it `false` to stay on per-address `importHints`-only behaviour.
+
+                      ── ★ WHY THE DEFAULT FLIPPED ──────────────────────────────────── It used to default to `false`, which meant a template that said nothing about importing got **create-instead-of-import**: the plan proposes to CREATE a resource that already exists, and the apply fails with `422 already exists` per resource. That is the same "dangerous posture reached by SAYING NOTHING" that `destroy_protection` closed on the deletion path — silence chose the unsafe branch, and only a template that remembered to opt in got the intended import → plan → apply → never-destroy algorithm.
+
+                      Measured on camelot 2026-08-26: 5 of 21 live templates carried `autoOnConflict: false`, all by omission rather than by a stated decision.
+
+                      Defaulting to `true` is safe because it is a CANDIDACY switch, not an action: an address still needs an id from `importHints` → `naturalIds` → the operator-bundled defaults. A resource with no resolvable natural id imports nothing and stays a plain `create`. So the flip cannot invent an import; it can only stop one from being skipped.
+
+                      **The default lives in [`default_auto_on_conflict`] and is read through [`ImportPolicy::auto_on_conflict_or_default`]** — an ABSENT `importPolicy` block resolves the same way as a present one with the field omitted. Both are silence, and silence must mean one thing.
                     type: boolean
                   naturalIds:
                     additionalProperties:
@@ -378,8 +390,47 @@ spec:
                         description: Optional role ARN to assume.
                         nullable: true
                         type: string
+                      rolesAnywhere:
+                        description: IAM Roles Anywhere session source. Mutually exclusive with `secretRef`.
+                        nullable: true
+                        properties:
+                          certSecretRef:
+                            description: 'Secret of type kubernetes.io/tls: `tls.crt` holds the leaf certificate followed by any intermediates, `tls.key` an RSA key (PKCS#1 or PKCS#8) or an ECDSA P-256 key in PKCS#8.'
+                            properties:
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                              namespace:
+                                description: Namespace of the Secret (defaults to same namespace as the resource).
+                                nullable: true
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          profileArn:
+                            description: Roles Anywhere profile ARN.
+                            type: string
+                          roleArn:
+                            description: IAM role ARN the session assumes.
+                            type: string
+                          sessionDurationSeconds:
+                            description: Requested session lifetime in seconds (900 to 43200, capped by the profile). Defaults to 3600.
+                            format: uint32
+                            minimum: 0.0
+                            nullable: true
+                            type: integer
+                          trustAnchorArn:
+                            description: Trust anchor ARN, `arn:aws:rolesanywhere:<region>:<account>:trust-anchor/<id>`. Its region selects the Roles Anywhere endpoint.
+                            type: string
+                        required:
+                        - certSecretRef
+                        - profileArn
+                        - roleArn
+                        - trustAnchorArn
+                        type: object
                       secretRef:
-                        description: Secret containing AWS credentials.
+                        description: Secret containing static AWS credentials. Mutually exclusive with `rolesAnywhere`.
+                        nullable: true
                         properties:
                           name:
                             description: Name of the Secret.
@@ -391,9 +442,10 @@ spec:
                         required:
                         - name
                         type: object
-                    required:
-                    - secretRef
                     type: object
+                    x-kubernetes-validations:
+                    - message: exactly one of secretRef or rolesAnywhere must be set
+                      rule: has(self.secretRef) != has(self.rolesAnywhere)
                   cloudflare:
                     description: Cloudflare credentials configuration.
                     nullable: true
@@ -1526,7 +1578,15 @@ spec:
                         description: 'Schema name prefix (default: "pangea_").'
                         type: string
                       secretRef:
-                        description: Reference to a Secret containing credentials.
+                        description: |-
+                          Reference to a Secret containing credentials.
+
+                          ── ★ OPTIONAL, AND ONLY BECAUSE A SOCKET NEEDS NO PASSWORD ────────── Required for a TCP `host`. Optional when `host` is an absolute path, i.e. a unix-socket directory, because PostgreSQL then authenticates by PEER — the kernel vouches for the connecting uid and no password is ever read.
+
+                          This was mandatory, and the consequence was a credential invented to satisfy a type. Measured on plo 2026-09-06: a node whose whole design is peer auth ("a removed credential, not a withheld one") had to be given a Secret carrying the literal string `peer-auth-unused`, because the field could not be omitted. A required field that forces a meaningless secret into existence is worse than optional — it teaches readers that a password matters here, and invites someone to "rotate" a value that authenticates nothing.
+
+                          Absence is not a hole: [`Self::credential_source`] resolves it to a typed decision, and a TCP host with no `secretRef` is a config error rather than a silent connection attempt.
+                        nullable: true
                         properties:
                           caCertKey:
                             description: Key containing the CA certificate (optional).
@@ -1554,10 +1614,16 @@ spec:
                         default: verify-full
                         description: SSL mode for connections.
                         type: string
+                      user:
+                        description: |-
+                          Role to connect as when `secretRef` is absent (socket + peer auth).
+
+                          Only consulted on the peer path. libpq would otherwise default to the process uid's name, which happens to be right today and would break silently the moment the daemon's `User=` changed — so the role is stated rather than inherited.
+                        nullable: true
+                        type: string
                     required:
                     - database
                     - host
-                    - secretRef
                     type: object
                   s3:
                     description: S3 backend configuration (legacy, for migration).
@@ -2129,8 +2195,47 @@ spec:
                         description: Optional role ARN to assume.
                         nullable: true
                         type: string
+                      rolesAnywhere:
+                        description: IAM Roles Anywhere session source. Mutually exclusive with `secretRef`.
+                        nullable: true
+                        properties:
+                          certSecretRef:
+                            description: 'Secret of type kubernetes.io/tls: `tls.crt` holds the leaf certificate followed by any intermediates, `tls.key` an RSA key (PKCS#1 or PKCS#8) or an ECDSA P-256 key in PKCS#8.'
+                            properties:
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                              namespace:
+                                description: Namespace of the Secret (defaults to same namespace as the resource).
+                                nullable: true
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          profileArn:
+                            description: Roles Anywhere profile ARN.
+                            type: string
+                          roleArn:
+                            description: IAM role ARN the session assumes.
+                            type: string
+                          sessionDurationSeconds:
+                            description: Requested session lifetime in seconds (900 to 43200, capped by the profile). Defaults to 3600.
+                            format: uint32
+                            minimum: 0.0
+                            nullable: true
+                            type: integer
+                          trustAnchorArn:
+                            description: Trust anchor ARN, `arn:aws:rolesanywhere:<region>:<account>:trust-anchor/<id>`. Its region selects the Roles Anywhere endpoint.
+                            type: string
+                        required:
+                        - certSecretRef
+                        - profileArn
+                        - roleArn
+                        - trustAnchorArn
+                        type: object
                       secretRef:
-                        description: Secret containing AWS credentials.
+                        description: Secret containing static AWS credentials. Mutually exclusive with `rolesAnywhere`.
+                        nullable: true
                         properties:
                           name:
                             description: Name of the Secret.
@@ -2142,9 +2247,10 @@ spec:
                         required:
                         - name
                         type: object
-                    required:
-                    - secretRef
                     type: object
+                    x-kubernetes-validations:
+                    - message: exactly one of secretRef or rolesAnywhere must be set
+                      rule: has(self.secretRef) != has(self.rolesAnywhere)
                   cloudflare:
                     description: Cloudflare credentials configuration.
                     nullable: true
@@ -2560,8 +2666,47 @@ spec:
                         description: Optional role ARN to assume.
                         nullable: true
                         type: string
+                      rolesAnywhere:
+                        description: IAM Roles Anywhere session source. Mutually exclusive with `secretRef`.
+                        nullable: true
+                        properties:
+                          certSecretRef:
+                            description: 'Secret of type kubernetes.io/tls: `tls.crt` holds the leaf certificate followed by any intermediates, `tls.key` an RSA key (PKCS#1 or PKCS#8) or an ECDSA P-256 key in PKCS#8.'
+                            properties:
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                              namespace:
+                                description: Namespace of the Secret (defaults to same namespace as the resource).
+                                nullable: true
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          profileArn:
+                            description: Roles Anywhere profile ARN.
+                            type: string
+                          roleArn:
+                            description: IAM role ARN the session assumes.
+                            type: string
+                          sessionDurationSeconds:
+                            description: Requested session lifetime in seconds (900 to 43200, capped by the profile). Defaults to 3600.
+                            format: uint32
+                            minimum: 0.0
+                            nullable: true
+                            type: integer
+                          trustAnchorArn:
+                            description: Trust anchor ARN, `arn:aws:rolesanywhere:<region>:<account>:trust-anchor/<id>`. Its region selects the Roles Anywhere endpoint.
+                            type: string
+                        required:
+                        - certSecretRef
+                        - profileArn
+                        - roleArn
+                        - trustAnchorArn
+                        type: object
                       secretRef:
-                        description: Secret containing AWS credentials.
+                        description: Secret containing static AWS credentials. Mutually exclusive with `rolesAnywhere`.
+                        nullable: true
                         properties:
                           name:
                             description: Name of the Secret.
@@ -2573,9 +2718,10 @@ spec:
                         required:
                         - name
                         type: object
-                    required:
-                    - secretRef
                     type: object
+                    x-kubernetes-validations:
+                    - message: exactly one of secretRef or rolesAnywhere must be set
+                      rule: has(self.secretRef) != has(self.rolesAnywhere)
                   cloudflare:
                     description: Cloudflare credentials configuration.
                     nullable: true
@@ -2904,8 +3050,47 @@ spec:
                             description: Optional role ARN to assume.
                             nullable: true
                             type: string
+                          rolesAnywhere:
+                            description: IAM Roles Anywhere session source. Mutually exclusive with `secretRef`.
+                            nullable: true
+                            properties:
+                              certSecretRef:
+                                description: 'Secret of type kubernetes.io/tls: `tls.crt` holds the leaf certificate followed by any intermediates, `tls.key` an RSA key (PKCS#1 or PKCS#8) or an ECDSA P-256 key in PKCS#8.'
+                                properties:
+                                  name:
+                                    description: Name of the Secret.
+                                    type: string
+                                  namespace:
+                                    description: Namespace of the Secret (defaults to same namespace as the resource).
+                                    nullable: true
+                                    type: string
+                                required:
+                                - name
+                                type: object
+                              profileArn:
+                                description: Roles Anywhere profile ARN.
+                                type: string
+                              roleArn:
+                                description: IAM role ARN the session assumes.
+                                type: string
+                              sessionDurationSeconds:
+                                description: Requested session lifetime in seconds (900 to 43200, capped by the profile). Defaults to 3600.
+                                format: uint32
+                                minimum: 0.0
+                                nullable: true
+                                type: integer
+                              trustAnchorArn:
+                                description: Trust anchor ARN, `arn:aws:rolesanywhere:<region>:<account>:trust-anchor/<id>`. Its region selects the Roles Anywhere endpoint.
+                                type: string
+                            required:
+                            - certSecretRef
+                            - profileArn
+                            - roleArn
+                            - trustAnchorArn
+                            type: object
                           secretRef:
-                            description: Secret containing AWS credentials.
+                            description: Secret containing static AWS credentials. Mutually exclusive with `rolesAnywhere`.
+                            nullable: true
                             properties:
                               name:
                                 description: Name of the Secret.
@@ -2917,9 +3102,10 @@ spec:
                             required:
                             - name
                             type: object
-                        required:
-                        - secretRef
                         type: object
+                        x-kubernetes-validations:
+                        - message: exactly one of secretRef or rolesAnywhere must be set
+                          rule: has(self.secretRef) != has(self.rolesAnywhere)
                       cloudflare:
                         description: Cloudflare credentials configuration.
                         nullable: true
@@ -3310,8 +3496,47 @@ spec:
                             description: Optional role ARN to assume.
                             nullable: true
                             type: string
+                          rolesAnywhere:
+                            description: IAM Roles Anywhere session source. Mutually exclusive with `secretRef`.
+                            nullable: true
+                            properties:
+                              certSecretRef:
+                                description: 'Secret of type kubernetes.io/tls: `tls.crt` holds the leaf certificate followed by any intermediates, `tls.key` an RSA key (PKCS#1 or PKCS#8) or an ECDSA P-256 key in PKCS#8.'
+                                properties:
+                                  name:
+                                    description: Name of the Secret.
+                                    type: string
+                                  namespace:
+                                    description: Namespace of the Secret (defaults to same namespace as the resource).
+                                    nullable: true
+                                    type: string
+                                required:
+                                - name
+                                type: object
+                              profileArn:
+                                description: Roles Anywhere profile ARN.
+                                type: string
+                              roleArn:
+                                description: IAM role ARN the session assumes.
+                                type: string
+                              sessionDurationSeconds:
+                                description: Requested session lifetime in seconds (900 to 43200, capped by the profile). Defaults to 3600.
+                                format: uint32
+                                minimum: 0.0
+                                nullable: true
+                                type: integer
+                              trustAnchorArn:
+                                description: Trust anchor ARN, `arn:aws:rolesanywhere:<region>:<account>:trust-anchor/<id>`. Its region selects the Roles Anywhere endpoint.
+                                type: string
+                            required:
+                            - certSecretRef
+                            - profileArn
+                            - roleArn
+                            - trustAnchorArn
+                            type: object
                           secretRef:
-                            description: Secret containing AWS credentials.
+                            description: Secret containing static AWS credentials. Mutually exclusive with `rolesAnywhere`.
+                            nullable: true
                             properties:
                               name:
                                 description: Name of the Secret.
@@ -3323,9 +3548,10 @@ spec:
                             required:
                             - name
                             type: object
-                        required:
-                        - secretRef
                         type: object
+                        x-kubernetes-validations:
+                        - message: exactly one of secretRef or rolesAnywhere must be set
+                          rule: has(self.secretRef) != has(self.rolesAnywhere)
                       cloudflare:
                         description: Cloudflare credentials configuration.
                         nullable: true
@@ -3953,8 +4179,47 @@ spec:
                         description: Optional role ARN to assume.
                         nullable: true
                         type: string
+                      rolesAnywhere:
+                        description: IAM Roles Anywhere session source. Mutually exclusive with `secretRef`.
+                        nullable: true
+                        properties:
+                          certSecretRef:
+                            description: 'Secret of type kubernetes.io/tls: `tls.crt` holds the leaf certificate followed by any intermediates, `tls.key` an RSA key (PKCS#1 or PKCS#8) or an ECDSA P-256 key in PKCS#8.'
+                            properties:
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                              namespace:
+                                description: Namespace of the Secret (defaults to same namespace as the resource).
+                                nullable: true
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          profileArn:
+                            description: Roles Anywhere profile ARN.
+                            type: string
+                          roleArn:
+                            description: IAM role ARN the session assumes.
+                            type: string
+                          sessionDurationSeconds:
+                            description: Requested session lifetime in seconds (900 to 43200, capped by the profile). Defaults to 3600.
+                            format: uint32
+                            minimum: 0.0
+                            nullable: true
+                            type: integer
+                          trustAnchorArn:
+                            description: Trust anchor ARN, `arn:aws:rolesanywhere:<region>:<account>:trust-anchor/<id>`. Its region selects the Roles Anywhere endpoint.
+                            type: string
+                        required:
+                        - certSecretRef
+                        - profileArn
+                        - roleArn
+                        - trustAnchorArn
+                        type: object
                       secretRef:
-                        description: Secret containing AWS credentials.
+                        description: Secret containing static AWS credentials. Mutually exclusive with `rolesAnywhere`.
+                        nullable: true
                         properties:
                           name:
                             description: Name of the Secret.
@@ -3966,9 +4231,10 @@ spec:
                         required:
                         - name
                         type: object
-                    required:
-                    - secretRef
                     type: object
+                    x-kubernetes-validations:
+                    - message: exactly one of secretRef or rolesAnywhere must be set
+                      rule: has(self.secretRef) != has(self.rolesAnywhere)
                   cloudflare:
                     description: Cloudflare credentials configuration.
                     nullable: true

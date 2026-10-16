@@ -4550,6 +4550,7 @@ dependencies = [
  "rand 0.8.6",
  "regex",
  "reqwest 0.12.28",
+ "roles-anywhere",
  "rstest",
  "rustls",
  "schemars 0.8.22",
@@ -5607,6 +5608,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a4e1d4b9b938a26d2996af33229f0ca0956c652c1375067f0b45291c1df8417"
 dependencies = [
  "rmp",
+]
+
+[[package]]
+name = "roles-anywhere"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "reqwest 0.12.28",
+ "ring",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

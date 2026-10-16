@@ -681,7 +681,7 @@ fn default_git_ref() -> String {
 }
 
 /// Reference to a Kubernetes Secret.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SecretRef {
     /// Name of the Secret.
@@ -950,8 +950,8 @@ impl ProviderCredentials {
         } = self;
 
         let mut out = Vec::new();
-        if let Some(c) = aws {
-            out.push((ProviderKind::Aws, &c.secret_ref));
+        if let Some(sref) = aws.as_ref().and_then(AwsCredentials::static_secret_ref) {
+            out.push((ProviderKind::Aws, sref));
         }
         if let Some(c) = cloudflare {
             out.push((ProviderKind::Cloudflare, &c.secret_ref));
@@ -984,20 +984,184 @@ pub struct AkeylessCredentials {
     pub secret_ref: SecretRef,
 }
 
-/// AWS credentials configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "AwsCredentialsWire", into = "AwsCredentialsWire")]
+pub struct AwsCredentials {
+    pub source: AwsCredentialSource,
+    pub region: Option<String>,
+    pub role_arn: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AwsCredentialSource {
+    SecretRef(SecretRef),
+    RolesAnywhere(AwsRolesAnywhere),
+}
+
+/// IAM Roles Anywhere session source. The operator signs a CreateSession call with the certificate and key held in `certSecretRef` on every run and hands the provider the short-lived credentials it returns; no long-lived AWS key exists anywhere.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AwsRolesAnywhere {
+    /// Trust anchor ARN, `arn:aws:rolesanywhere:<region>:<account>:trust-anchor/<id>`. Its region selects the Roles Anywhere endpoint.
+    pub trust_anchor_arn: String,
+    /// Roles Anywhere profile ARN.
+    pub profile_arn: String,
+    /// IAM role ARN the session assumes.
+    pub role_arn: String,
+    /// Secret of type kubernetes.io/tls: `tls.crt` holds the leaf certificate followed by any intermediates, `tls.key` an RSA key (PKCS#1 or PKCS#8) or an ECDSA P-256 key in PKCS#8.
+    pub cert_secret_ref: SecretRef,
+    /// Requested session lifetime in seconds (900 to 43200, capped by the profile). Defaults to 3600.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_duration_seconds: Option<u32>,
+}
+
+impl AwsRolesAnywhere {
+    pub fn endpoint_region(&self) -> Option<String> {
+        roles_anywhere::SessionRequest {
+            trust_anchor_arn: self.trust_anchor_arn.clone(),
+            profile_arn: String::new(),
+            role_arn: String::new(),
+            duration_seconds: None,
+        }
+        .endpoint_region()
+        .map(str::to_string)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.endpoint_region().is_none() {
+            return Err(format!(
+                "rolesAnywhere.trustAnchorArn {:?} is not a rolesanywhere trust-anchor ARN",
+                self.trust_anchor_arn
+            ));
+        }
+        if !self.profile_arn.starts_with("arn:")
+            || !self.profile_arn.contains(":rolesanywhere:")
+            || !self.profile_arn.contains(":profile/")
+        {
+            return Err(format!(
+                "rolesAnywhere.profileArn {:?} is not a rolesanywhere profile ARN",
+                self.profile_arn
+            ));
+        }
+        if !self.role_arn.starts_with("arn:")
+            || !self.role_arn.contains(":iam::")
+            || !self.role_arn.contains(":role/")
+        {
+            return Err(format!(
+                "rolesAnywhere.roleArn {:?} is not an IAM role ARN",
+                self.role_arn
+            ));
+        }
+        if let Some(d) = self.session_duration_seconds {
+            if !(900..=43200).contains(&d) {
+                return Err(format!(
+                    "rolesAnywhere.sessionDurationSeconds {d} is outside 900..=43200"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// AWS credentials configuration. Exactly one of `secretRef` (static keys) or `rolesAnywhere` (certificate-signed short-lived session) is set.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AwsCredentials {
-    /// Secret containing AWS credentials.
-    pub secret_ref: SecretRef,
+struct AwsCredentialsWire {
+    /// Secret containing static AWS credentials. Mutually exclusive with `rolesAnywhere`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    secret_ref: Option<SecretRef>,
+
+    /// IAM Roles Anywhere session source. Mutually exclusive with `secretRef`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    roles_anywhere: Option<AwsRolesAnywhere>,
 
     /// Region to use for AWS operations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub region: Option<String>,
+    region: Option<String>,
 
     /// Optional role ARN to assume.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub role_arn: Option<String>,
+    role_arn: Option<String>,
+}
+
+impl TryFrom<AwsCredentialsWire> for AwsCredentials {
+    type Error = String;
+
+    fn try_from(w: AwsCredentialsWire) -> Result<Self, Self::Error> {
+        let source = match (w.secret_ref, w.roles_anywhere) {
+            (Some(s), None) => AwsCredentialSource::SecretRef(s),
+            (None, Some(ra)) => {
+                ra.validate()?;
+                AwsCredentialSource::RolesAnywhere(ra)
+            }
+            (Some(_), Some(_)) => {
+                return Err(
+                    "providerCredentials.aws sets both secretRef and rolesAnywhere; exactly one is allowed"
+                        .to_string(),
+                )
+            }
+            (None, None) => {
+                return Err(
+                    "providerCredentials.aws needs exactly one of secretRef or rolesAnywhere"
+                        .to_string(),
+                )
+            }
+        };
+        Ok(AwsCredentials {
+            source,
+            region: w.region,
+            role_arn: w.role_arn,
+        })
+    }
+}
+
+impl From<AwsCredentials> for AwsCredentialsWire {
+    fn from(c: AwsCredentials) -> Self {
+        let (secret_ref, roles_anywhere) = match c.source {
+            AwsCredentialSource::SecretRef(s) => (Some(s), None),
+            AwsCredentialSource::RolesAnywhere(ra) => (None, Some(ra)),
+        };
+        AwsCredentialsWire {
+            secret_ref,
+            roles_anywhere,
+            region: c.region,
+            role_arn: c.role_arn,
+        }
+    }
+}
+
+impl JsonSchema for AwsCredentials {
+    fn schema_name() -> String {
+        "AwsCredentials".to_string()
+    }
+
+    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        let mut obj = AwsCredentialsWire::json_schema(gen).into_object();
+        obj.extensions.insert(
+            "x-kubernetes-validations".to_string(),
+            serde_json::json!([{
+                "rule": "has(self.secretRef) != has(self.rolesAnywhere)",
+                "message": "exactly one of secretRef or rolesAnywhere must be set"
+            }]),
+        );
+        schemars::schema::Schema::Object(obj)
+    }
+}
+
+impl AwsCredentials {
+    pub fn static_secret_ref(&self) -> Option<&SecretRef> {
+        match &self.source {
+            AwsCredentialSource::SecretRef(s) => Some(s),
+            AwsCredentialSource::RolesAnywhere(_) => None,
+        }
+    }
+
+    pub fn roles_anywhere(&self) -> Option<&AwsRolesAnywhere> {
+        match &self.source {
+            AwsCredentialSource::RolesAnywhere(ra) => Some(ra),
+            AwsCredentialSource::SecretRef(_) => None,
+        }
+    }
 }
 
 /// Datadog credentials configuration. Ruby-side authority, same model as
@@ -2652,11 +2816,94 @@ providerCredentials:
         assert!(creds.iter_secret_refs().is_empty());
     }
 
+    fn parse_aws(yaml: &str) -> Result<AwsCredentials, serde_yaml::Error> {
+        serde_yaml::from_str(yaml)
+    }
+
+    const RA: &str = r#"
+region: us-east-2
+rolesAnywhere:
+  trustAnchorArn: arn:aws:rolesanywhere:us-east-2:376129857990:trust-anchor/ta-1
+  profileArn: arn:aws:rolesanywhere:us-east-2:376129857990:profile/p-1
+  roleArn: arn:aws:iam::376129857990:role/pangea-operator-ryn
+  certSecretRef:
+    name: pangea-operator-aws-rolesanywhere
+    namespace: pangea-system
+"#;
+
+    #[test]
+    fn aws_static_secret_ref_still_parses() {
+        let c = parse_aws("secretRef:\n  name: aws\nregion: us-east-1\n").unwrap();
+        assert_eq!(c.static_secret_ref().map(|s| s.name.as_str()), Some("aws"));
+        assert!(c.roles_anywhere().is_none());
+    }
+
+    #[test]
+    fn aws_roles_anywhere_parses_and_is_not_an_env_secret() {
+        let c = parse_aws(RA).unwrap();
+        let ra = c.roles_anywhere().expect("rolesAnywhere source");
+        assert_eq!(ra.endpoint_region().as_deref(), Some("us-east-2"));
+        assert_eq!(ra.cert_secret_ref.name, "pangea-operator-aws-rolesanywhere");
+        let creds = ProviderCredentials {
+            aws: Some(c),
+            cloudflare: None,
+            github: None,
+            porkbun: None,
+            akeyless: None,
+            datadog: None,
+        };
+        assert!(creds.iter_secret_refs().is_empty());
+    }
+
+    #[test]
+    fn aws_both_sources_is_unrepresentable() {
+        let both = format!("secretRef:\n  name: aws\n{RA}");
+        let err = parse_aws(&both).unwrap_err().to_string();
+        assert!(err.contains("exactly one"), "{err}");
+    }
+
+    #[test]
+    fn aws_neither_source_is_unrepresentable() {
+        let err = parse_aws("region: us-east-2\n").unwrap_err().to_string();
+        assert!(err.contains("exactly one"), "{err}");
+    }
+
+    #[test]
+    fn aws_roles_anywhere_rejects_a_wrong_arn_kind() {
+        let bad = RA.replace("trust-anchor/ta-1", "profile/p-1");
+        assert!(parse_aws(&bad).is_err());
+        let bad_role = RA.replace(":role/pangea-operator-ryn", ":user/x");
+        assert!(parse_aws(&bad_role).is_err());
+        let bad_dur = format!("{RA}  sessionDurationSeconds: 60\n");
+        assert!(parse_aws(&bad_dur).is_err());
+    }
+
+    #[test]
+    fn aws_round_trips_through_the_wire_shape() {
+        let c = parse_aws(RA).unwrap();
+        let v = serde_json::to_value(&c).unwrap();
+        assert!(v.get("secretRef").is_none());
+        assert_eq!(
+            v["rolesAnywhere"]["roleArn"],
+            "arn:aws:iam::376129857990:role/pangea-operator-ryn"
+        );
+        let back: AwsCredentials = serde_json::from_value(v).unwrap();
+        assert_eq!(back.roles_anywhere(), c.roles_anywhere());
+    }
+
+    #[test]
+    fn aws_schema_carries_the_exclusivity_rule() {
+        let crd = serde_yaml::to_string(&InfrastructureTemplate::crd()).unwrap();
+        assert!(crd.contains("has(self.secretRef) != has(self.rolesAnywhere)"));
+        assert!(crd.contains("trustAnchorArn"));
+        assert!(crd.contains("certSecretRef"));
+    }
+
     #[test]
     fn iter_secret_refs_yields_all_when_all_populated() {
         let creds = ProviderCredentials {
             aws: Some(AwsCredentials {
-                secret_ref: empty_secret_ref("aws"),
+                source: AwsCredentialSource::SecretRef(empty_secret_ref("aws")),
                 region: None,
                 role_arn: None,
             }),

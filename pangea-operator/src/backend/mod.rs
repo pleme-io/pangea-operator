@@ -8,6 +8,7 @@ mod config;
 mod lock;
 mod postgres;
 mod retry;
+pub mod roles_anywhere;
 mod schema;
 mod state;
 pub mod state_backend;

@@ -1,0 +1,18 @@
+[package]
+name = "roles-anywhere"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "IAM Roles Anywhere CreateSession client: X.509 SigV4 signing with RSA or ECDSA P-256, short-lived AWS session credentials"
+
+[dependencies]
+base64 = { workspace = true }
+chrono = { workspace = true, features = ["clock"] }
+reqwest = { workspace = true }
+ring = "0.17"
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+chrono = { workspace = true, features = ["clock"] }

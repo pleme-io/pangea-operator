@@ -7,6 +7,7 @@ members = [
     "pangea-cli",
     "pangea-ruby-eval",
     "pangea-operator-mcp",
+    "roles-anywhere",
 ]
 
 [workspace.package]
@@ -24,6 +25,7 @@ repository = "https://github.com/pleme-io/pangea-operator"
 [workspace.dependencies]
 # Shared types
 pangea-types = { path = "pangea-types" }
+roles-anywhere = { path = "roles-anywhere" }
 
 # Typed-dispatcher catalog integration
 # (theory/UNIFIED-COMPUTING-MODEL.md §VI).

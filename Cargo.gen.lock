@@ -1,13 +1,14 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "96036d73b0462125fa807dd39acf9ad18e937f83aeacb7154f3df2db6c3d7e36",
+  "cargo_lock_sha256": "40a110573aea3a356e04435cb03072f1b3337bd73e6d79141f271840158bcbdb",
   "manifest_sha256": {
-    "Cargo.toml": "589a77c2c00a2f5e67913531a257312d51d595ddb8b901ad457fc119da2c2b56",
+    "Cargo.toml": "c0c224bc143146d435b44987473914c522d394e1a58d86dd1cf5edbb9865ac81",
     "pangea-cli/Cargo.toml": "a15be7008ea6fc2ab76b2773e257aec0aa73f3191584a590f73d160530e157f7",
     "pangea-operator-mcp/Cargo.toml": "72a01f5815a03b1c418697a985ede13816d4f5aec385332ec436e2155713dea8",
-    "pangea-operator/Cargo.toml": "1a72eabffd2c712b90beab174e67dd0b8a2e3be440d26a5622a383849dd33514",
+    "pangea-operator/Cargo.toml": "cd489cf116e70469e85f3a3044a11f555dfd88981671d4b2e673ae4030717980",
     "pangea-ruby-eval/Cargo.toml": "a65712c95619fda84a8cebaa9f887919acf4e71f4125f085797dfaf478eb380a",
-    "pangea-types/Cargo.toml": "bba5d0bee1d04b3ddaefa9f7234a1e5a11e3388dd89e62a3deb4a91b66cd4abc"
+    "pangea-types/Cargo.toml": "bba5d0bee1d04b3ddaefa9f7234a1e5a11e3388dd89e62a3deb4a91b66cd4abc",
+    "roles-anywhere/Cargo.toml": "82d3c7379682699c55a98bced056af9bf0a853f9c0248e674b729d72007bea5a"
   },
   "target_resolves": {
     "base": {
@@ -18681,6 +18682,16 @@
             "tree": "target"
           },
           {
+            "name": "roles_anywhere",
+            "package_key": "roles-anywhere-0.1.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": "cfg(unix)",
+            "tree": "target"
+          },
+          {
             "name": "rustls",
             "package_key": "rustls-0.23.43",
             "kind": "normal",
@@ -22669,6 +22680,78 @@
           {
             "name": "rmp",
             "package_key": "rmp-0.8.15",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "roles-anywhere-0.1.0": {
+        "runtime_dependencies": [
+          {
+            "name": "base64",
+            "package_key": "base64-0.22.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "chrono",
+            "package_key": "chrono-0.4.45",
+            "kind": "normal",
+            "features": [
+              "clock",
+              "serde"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "reqwest",
+            "package_key": "reqwest-0.12.28",
+            "kind": "normal",
+            "features": [
+              "json",
+              "rustls-tls"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "ring",
+            "package_key": "ring-0.17.14",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde_json",
+            "package_key": "serde_json-1.0.151",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.20",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -37125,6 +37208,13 @@
     },
     "rmpv-1.3.1": {
       "edition": "2024"
+    },
+    "roles-anywhere-0.1.0": {
+      "edition": "2021",
+      "lib_target": {
+        "name": "roles_anywhere",
+        "path": "src/lib.rs"
+      }
     },
     "rsa-0.9.10": {
       "edition": "2021"

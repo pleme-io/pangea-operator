@@ -52,17 +52,26 @@ pub async fn resolve_provider_config(
         .namespace()
         .unwrap_or_else(|| "default".to_string());
 
-    let aws_creds = if let Some(aws) = &provider_creds.aws {
-        let ns = aws.secret_ref.namespace.as_deref().unwrap_or(&default_ns);
+    let aws_static = provider_creds
+        .aws
+        .as_ref()
+        .and_then(crate::crd::AwsCredentials::static_secret_ref);
+    let aws_creds = if let Some(ra) = provider_creds
+        .aws
+        .as_ref()
+        .and_then(crate::crd::AwsCredentials::roles_anywhere)
+    {
+        Some(issue_roles_anywhere_session(ra, &default_ns, state).await?)
+    } else if let Some(aws_ref) = aws_static {
+        let ns = aws_ref.namespace.as_deref().unwrap_or(&default_ns);
         let secret_api: Api<Secret> = Api::namespaced(state.client.clone(), ns);
-        let secret =
-            secret_api
-                .get(&aws.secret_ref.name)
-                .await
-                .map_err(|_| Error::SecretNotFound {
-                    namespace: ns.to_string(),
-                    name: aws.secret_ref.name.clone(),
-                })?;
+        let secret = secret_api
+            .get(&aws_ref.name)
+            .await
+            .map_err(|_| Error::SecretNotFound {
+                namespace: ns.to_string(),
+                name: aws_ref.name.clone(),
+            })?;
 
         let data = secret
             .data
@@ -531,7 +540,69 @@ pub async fn resolve_provider_configs(
         }
     }
 
+    if let Some(ra) = provider_creds
+        .aws
+        .as_ref()
+        .and_then(crate::crd::AwsCredentials::roles_anywhere)
+    {
+        let issued = issue_roles_anywhere_session(ra, &default_ns, state).await?;
+        if let Some(obj) =
+            provider_config_object(ProviderKind::Aws, &session_data(&issued), aws_region)
+        {
+            out.insert(ProviderKind::Aws.name().to_string(), obj);
+        }
+    }
+
     Ok(out)
+}
+
+fn session_data(c: &crate::backend::AwsCredentialsConfig) -> BTreeMap<String, ByteString> {
+    let mut d = BTreeMap::new();
+    d.insert(
+        "access_key".to_string(),
+        ByteString(c.access_key.clone().into_bytes()),
+    );
+    d.insert(
+        "secret_key".to_string(),
+        ByteString(c.secret_key.clone().into_bytes()),
+    );
+    if let Some(t) = &c.session_token {
+        d.insert(
+            "session_token".to_string(),
+            ByteString(t.clone().into_bytes()),
+        );
+    }
+    d
+}
+
+fn roles_anywhere_material(data: &BTreeMap<String, ByteString>) -> Result<(&[u8], &[u8])> {
+    let crt = data
+        .get("tls.crt")
+        .ok_or_else(|| Error::Config("rolesAnywhere cert secret has no tls.crt".into()))?;
+    let key = data
+        .get("tls.key")
+        .ok_or_else(|| Error::Config("rolesAnywhere cert secret has no tls.key".into()))?;
+    Ok((&crt.0, &key.0))
+}
+
+async fn issue_roles_anywhere_session(
+    ra: &crate::crd::AwsRolesAnywhere,
+    default_ns: &str,
+    state: &ControllerState,
+) -> Result<crate::backend::AwsCredentialsConfig> {
+    let sref = &ra.cert_secret_ref;
+    let ns = sref.namespace.as_deref().unwrap_or(default_ns);
+    let secret_api: Api<Secret> = Api::namespaced(state.client.clone(), ns);
+    let secret = secret_api
+        .get(&sref.name)
+        .await
+        .map_err(|_| Error::SecretNotFound {
+            namespace: ns.to_string(),
+            name: sref.name.clone(),
+        })?;
+    let data = secret.data.unwrap_or_default();
+    let (crt, key) = roles_anywhere_material(&data)?;
+    crate::backend::roles_anywhere::issue_session(ra, crt, key).await
 }
 
 /// Merge a base provider-config object (from `spec.providerCredentials`)
@@ -908,6 +979,50 @@ mod tests {
     fn akeyless_empty_yields_none() {
         let d = data(&[]);
         assert!(provider_config_object(ProviderKind::Akeyless, &d, None).is_none());
+    }
+
+    #[test]
+    fn roles_anywhere_session_renders_the_aws_config_object() {
+        let issued = crate::backend::AwsCredentialsConfig {
+            access_key: "ASIA1".into(),
+            secret_key: "sk".into(),
+            session_token: Some("tok".into()),
+        };
+        let obj =
+            provider_config_object(ProviderKind::Aws, &session_data(&issued), Some("us-east-2"))
+                .expect("issued session renders");
+        assert_eq!(
+            obj,
+            serde_json::json!({"region": "us-east-2", "access_key": "ASIA1", "secret_key": "sk", "token": "tok"})
+        );
+    }
+
+    #[test]
+    fn roles_anywhere_material_needs_both_tls_keys() {
+        assert!(roles_anywhere_material(&data(&[("tls.crt", "c")])).is_err());
+        assert!(roles_anywhere_material(&data(&[("tls.key", "k")])).is_err());
+        let d = data(&[("tls.crt", "c"), ("tls.key", "k")]);
+        let (c, k) = roles_anywhere_material(&d).unwrap();
+        assert_eq!((c, k), (&b"c"[..], &b"k"[..]));
+    }
+
+    #[test]
+    fn roles_anywhere_session_renders_the_tofu_provider_block() {
+        let issued = crate::backend::AwsCredentialsConfig {
+            access_key: "ASIA1".into(),
+            secret_key: "sk".into(),
+            session_token: Some("tok".into()),
+        };
+        let v = BackendConfigGenerator::generate_provider_config(
+            Some("us-east-2"),
+            Some(&issued),
+            None,
+            None,
+            None,
+        )
+        .expect("aws block");
+        assert_eq!(v["provider"]["aws"]["token"], "tok");
+        assert_eq!(v["provider"]["aws"]["access_key"], "ASIA1");
     }
 
     #[test]
