@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "40a110573aea3a356e04435cb03072f1b3337bd73e6d79141f271840158bcbdb",
+  "cargo_lock_sha256": "e9f777ac0761ec78faff3993a52938f07e2adddbb557084c69e79702ec931b4e",
   "manifest_sha256": {
     "Cargo.toml": "c0c224bc143146d435b44987473914c522d394e1a58d86dd1cf5edbb9865ac81",
     "pangea-cli/Cargo.toml": "a15be7008ea6fc2ab76b2773e257aec0aa73f3191584a590f73d160530e157f7",
     "pangea-operator-mcp/Cargo.toml": "72a01f5815a03b1c418697a985ede13816d4f5aec385332ec436e2155713dea8",
-    "pangea-operator/Cargo.toml": "cd489cf116e70469e85f3a3044a11f555dfd88981671d4b2e673ae4030717980",
+    "pangea-operator/Cargo.toml": "eee422f9cfea571a6edd4be3a59de7bfb32b491f02237e1d2a50dbe2982d1c4f",
     "pangea-ruby-eval/Cargo.toml": "a65712c95619fda84a8cebaa9f887919acf4e71f4125f085797dfaf478eb380a",
     "pangea-types/Cargo.toml": "bba5d0bee1d04b3ddaefa9f7234a1e5a11e3388dd89e62a3deb4a91b66cd4abc",
     "roles-anywhere/Cargo.toml": "82d3c7379682699c55a98bced056af9bf0a853f9c0248e674b729d72007bea5a"
@@ -7593,7 +7593,7 @@
           },
           {
             "name": "hashbrown",
-            "package_key": "hashbrown-0.16.1",
+            "package_key": "hashbrown-0.17.1",
             "kind": "normal",
             "features": [
               "default-hasher",
@@ -10824,9 +10824,21 @@
         ]
       },
       "hashbrown-0.17.1": {
-        "runtime_dependencies": [],
+        "runtime_dependencies": [
+          {
+            "name": "foldhash",
+            "package_key": "foldhash-0.2.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          }
+        ],
         "build_dependencies": [],
         "features": [
+          "default-hasher",
           "inline-more"
         ]
       },
@@ -10978,6 +10990,46 @@
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": []
+      },
+      "helm-forge-0.1.2": {
+        "runtime_dependencies": [
+          {
+            "name": "schemars",
+            "package_key": "schemars-0.8.22",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde",
+            "package_key": "serde-1.0.229",
+            "kind": "normal",
+            "features": [
+              "derive"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde_json",
+            "package_key": "serde_json-1.0.151",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "values-schema"
+        ]
       },
       "hex-0.4.3": {
         "runtime_dependencies": [],
@@ -18329,6 +18381,18 @@
               "sha1",
               "tree-editor",
               "worktree-mutation"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": "cfg(unix)",
+            "tree": "target"
+          },
+          {
+            "name": "helm_forge",
+            "package_key": "helm-forge-0.1.2",
+            "kind": "normal",
+            "features": [
+              "values-schema"
             ],
             "uses_default_features": false,
             "optional": false,
@@ -36431,6 +36495,9 @@
     },
     "heck-0.5.0": {
       "edition": "2021"
+    },
+    "helm-forge-0.1.2": {
+      "edition": "2024"
     },
     "hex-0.4.3": {
       "edition": "2018"

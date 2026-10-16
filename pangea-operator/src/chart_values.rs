@@ -208,9 +208,7 @@ pub enum WorkspaceState {
 /// type+structure and layers the `useEmbeddedRuby → gemAuth` conditional
 /// on top (schemars 0.8 doesn't express JSON Schema's allOf-if-then).
 pub fn generate_values_schema_json() -> String {
-    let schema = schemars::schema_for!(ChartValues);
-    let mut value: serde_json::Value =
-        serde_json::to_value(&schema).expect("schemars schema serializes");
+    let mut value = helm_forge::values_schema::schema_value::<ChartValues>();
 
     // Layer the conditional rule. Helm's underlying JSON Schema
     // validator supports allOf+if/then; schemars doesn't emit it
@@ -247,7 +245,7 @@ pub fn generate_values_schema_json() -> String {
         }
     }
 
-    serde_json::to_string_pretty(&value).expect("schema serializes to JSON")
+    helm_forge::values_schema::to_json_string(&value)
 }
 
 #[cfg(test)]

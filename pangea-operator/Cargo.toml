@@ -405,6 +405,7 @@ async-trait = "0.1"
 
 # JSON Schema for CRDs
 schemars.workspace = true
+helm-forge = { version = "0.1.2", default-features = false, features = ["values-schema"] }
 arc-swap = "1.9.1"
 
 [build-dependencies]
