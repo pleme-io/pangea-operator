@@ -9963,9 +9963,11 @@ mod plan_delta_tests {
 
 #[cfg(test)]
 mod import_failure_classification_tests {
+    #[cfg(feature = "executor_magma")]
     use std::time::Instant;
 
     use super::{classify_import_failure, ImportFailure};
+    #[cfg(feature = "executor_magma")]
     use crate::executor::magma::provider_reported_absent;
     use crate::executor::{ImportEvidence, TofuResult};
 
@@ -9983,6 +9985,7 @@ mod import_failure_classification_tests {
 
     /// magma's empty adoption carries its evidence as a value, and the value
     /// is what makes it Absent.
+    #[cfg(feature = "executor_magma")]
     #[test]
     fn an_empty_adoption_is_absent_by_its_evidence() {
         let r = provider_reported_absent("openwrt_uci_section.dhcp_lan", "dhcp.lan", 1, 0, Instant::now());
@@ -9992,6 +9995,7 @@ mod import_failure_classification_tests {
 
     /// The regression: the operator's own explanation decided the class. With
     /// its evidence stripped, the same words must NOT read as absence.
+    #[cfg(feature = "executor_magma")]
     #[test]
     fn the_operators_own_words_do_not_decide() {
         let r = provider_reported_absent("openwrt_uci_section.dhcp_lan", "dhcp.lan", 1, 0, Instant::now());

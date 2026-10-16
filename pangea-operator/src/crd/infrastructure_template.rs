@@ -153,8 +153,8 @@ pub struct InfrastructureTemplateSpec {
     /// approval, so existing direct-patch workflows (and this field's own
     /// `PlanPending` event text) keep working unchanged. Clusters whose
     /// tooling refuses imperative status-subresource mutations against a
-    /// FluxCD-managed namespace (this fleet's own `guardrail`
-    /// `kubectl-imperative-camelot` rule is the motivating case) now have a
+    /// FluxCD-managed namespace (a `guardrail` rule refusing imperative
+    /// kubectl mutation is the motivating case) now have a
     /// real committed-manifest path: bump this field, commit, let Flux
     /// apply it, observe `status.lastCycle` for the outcome. The operator
     /// NEVER writes this field (spec is git-owned; a controller write here
@@ -1247,7 +1247,7 @@ pub struct ImportPolicy {
     /// got the intended import → plan → apply → never-destroy
     /// algorithm.
     ///
-    /// Measured on camelot 2026-08-26: 5 of 21 live templates carried
+    /// Measured on one cluster 2026-08-26: 5 of 21 live templates carried
     /// `autoOnConflict: false`, all by omission rather than by a stated
     /// decision.
     ///
