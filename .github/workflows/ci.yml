@@ -49,12 +49,16 @@ jobs:
       # job carried zero git credentials at the Nix level. Same fix,
       # same line, as image-push.yml's own `access-tokens` addition
       # (2026-07-23) for the identical class of gap.
+      - id: token
+        uses: pleme-io/actions/github-token@main
+        with:
+          pat: ${{ secrets.BOT_PAT }}
       - uses: DeterminateSystems/nix-installer-action@main
         with:
           determinate: false
           extra-conf: |
             sandbox = relaxed
-            access-tokens = github.com=${{ secrets.BOT_PAT || secrets.GITHUB_TOKEN }}
+            access-tokens = github.com=${{ steps.token.outputs.token || secrets.GITHUB_TOKEN }}
             extra-substituters = ${{ vars.SUI_CACHE_URL }}
             require-sigs = ${{ vars.CAMELOT_SUI_REQUIRE_SIGS }}
       # `nix flake check` builds EVERY packages.x86_64-linux.* + apps.x86_64-linux.*
@@ -229,9 +233,13 @@ jobs:
       # cargo-test's sibling job — this leg's whole point (per the comment
       # above) is a cheap, no-libruby-anywhere build; a minimal `gcc` shell
       # keeps that intent intact instead of pulling in ruby/libclang unused.
+      - id: token
+        uses: pleme-io/actions/github-token@main
+        with:
+          pat: ${{ secrets.BOT_PAT }}
       - uses: DeterminateSystems/nix-installer-action@main
         with:
-          github-token: ${{ secrets.BOT_PAT }}
+          github-token: ${{ steps.token.outputs.token || secrets.GITHUB_TOKEN }}
       - name: Put a Nix-provided C toolchain on PATH
         run: echo "$(nix build --no-link --print-out-paths 'nixpkgs#gcc')/bin" >> "$GITHUB_PATH"
       # ── Private git-dependency credential (2026-07-25) ──────────────────
@@ -249,7 +257,7 @@ jobs:
         # is what its own description says it exists for.
         uses: pleme-io/actions/git-credentials@main
         with:
-          bot-pat: ${{ secrets.BOT_PAT }}
+          bot-pat: ${{ steps.token.outputs.token }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: cargo test -p pangea-operator --no-default-features (no libruby, no magma)
         env:
