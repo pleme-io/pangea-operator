@@ -2650,15 +2650,15 @@
         "preBuild": "export CARGO_CRATE_NAME=autocfg;"
       }
     },
-    "aws-lc-rs-1.17.0": {
+    "aws-lc-rs-1.18.2": {
       "name": "aws-lc-rs",
-      "version": "1.17.0",
+      "version": "1.18.2",
       "edition": "2021",
       "source": {
         "kind": "registry",
-        "url": "https://static.crates.io/crates/aws-lc-rs/aws-lc-rs-1.17.0.crate",
-        "sha256": "5ec2f1fc3ec205783a5da9a7e6c1509cc69dedf09a1949e412c1e18469326d00",
-        "name_with_ext": "aws-lc-rs-1.17.0.tar.gz"
+        "url": "https://static.crates.io/crates/aws-lc-rs/aws-lc-rs-1.18.2.crate",
+        "sha256": "faac5829c2b74c28f830747e7818ccfb684261b5f48a1118b1e2a13d36dfab13",
+        "name_with_ext": "aws-lc-rs-1.18.2.tar.gz"
       },
       "features": [
         "aws-lc-sys",
@@ -2666,13 +2666,13 @@
       ],
       "proc_macro": false,
       "build_script": "build.rs",
-      "links": "aws_lc_rs_1_17_0_sys",
+      "links": "aws_lc_rs_1_18_2_sys",
       "binaries": [],
       "lib_target": null,
       "runtime_dependencies": [
         {
           "name": "aws_lc_sys",
-          "package_key": "aws-lc-sys-0.41.0",
+          "package_key": "aws-lc-sys-0.46.0",
           "kind": "normal",
           "features": [],
           "uses_default_features": false,
@@ -2695,14 +2695,14 @@
       "crate_renames": {
         "aws-lc-sys": [
           {
-            "version": "0.41.0",
+            "version": "0.46.0",
             "rename": "aws_lc_sys"
           }
         ]
       },
       "build_rust_crate_args": {
         "crateName": "aws-lc-rs",
-        "version": "1.17.0",
+        "version": "1.18.2",
         "edition": "2021",
         "features": [
           "aws-lc-sys",
@@ -2711,33 +2711,33 @@
         "crateRenames": {
           "aws-lc-sys": [
             {
-              "version": "0.41.0",
+              "version": "0.46.0",
               "rename": "aws_lc_sys"
             }
           ]
         },
         "release": true,
         "build": "build.rs",
-        "links": "aws_lc_rs_1_17_0_sys",
+        "links": "aws_lc_rs_1_18_2_sys",
         "preBuild": "export CARGO_CRATE_NAME=aws_lc_rs;"
       }
     },
-    "aws-lc-sys-0.41.0": {
+    "aws-lc-sys-0.46.0": {
       "name": "aws-lc-sys",
-      "version": "0.41.0",
+      "version": "0.46.0",
       "edition": "2021",
       "source": {
         "kind": "registry",
-        "url": "https://static.crates.io/crates/aws-lc-sys/aws-lc-sys-0.41.0.crate",
-        "sha256": "1a2f9779ce85b93ab6170dd940ad0169b5766ff848247aff13bb788b832fe3f4",
-        "name_with_ext": "aws-lc-sys-0.41.0.tar.gz"
+        "url": "https://static.crates.io/crates/aws-lc-sys/aws-lc-sys-0.46.0.crate",
+        "sha256": "f1622d8446a2d4b2ce0c7eefc73dd43a99779028d5ee5c2dd8073a658ba8a2bc",
+        "name_with_ext": "aws-lc-sys-0.46.0.tar.gz"
       },
       "features": [
         "prebuilt-nasm"
       ],
       "proc_macro": false,
       "build_script": "builder/main.rs",
-      "links": "aws_lc_0_41_0",
+      "links": "aws_lc_0_46_0",
       "binaries": [],
       "lib_target": null,
       "runtime_dependencies": [],
@@ -2783,19 +2783,44 @@
           "optional": false,
           "target": null,
           "tree": "host"
+        },
+        {
+          "name": "pkg_config",
+          "package_key": "pkg-config-0.3.33",
+          "kind": "build",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": "cfg(unix)",
+          "tree": "host"
         }
       ],
-      "crate_renames": {},
+      "crate_renames": {
+        "pkg-config": [
+          {
+            "version": "0.3.33",
+            "rename": "pkg_config"
+          }
+        ]
+      },
       "build_rust_crate_args": {
         "crateName": "aws-lc-sys",
-        "version": "0.41.0",
+        "version": "0.46.0",
         "edition": "2021",
         "features": [
           "prebuilt-nasm"
         ],
+        "crateRenames": {
+          "pkg-config": [
+            {
+              "version": "0.3.33",
+              "rename": "pkg_config"
+            }
+          ]
+        },
         "release": true,
         "build": "builder/main.rs",
-        "links": "aws_lc_0_41_0",
+        "links": "aws_lc_0_46_0",
         "preBuild": "export CARGO_CRATE_NAME=aws_lc_sys;"
       }
     },
@@ -24413,7 +24438,7 @@
         },
         {
           "name": "rustls",
-          "package_key": "rustls-0.23.43",
+          "package_key": "rustls-0.23.45",
           "kind": "normal",
           "features": [],
           "uses_default_features": false,
@@ -27325,7 +27350,7 @@
         },
         {
           "name": "rustls",
-          "package_key": "rustls-0.23.43",
+          "package_key": "rustls-0.23.45",
           "kind": "normal",
           "features": [],
           "uses_default_features": false,
@@ -32539,7 +32564,7 @@
         },
         {
           "name": "rustls",
-          "package_key": "rustls-0.23.43",
+          "package_key": "rustls-0.23.45",
           "kind": "normal",
           "features": [
             "ring"
@@ -37630,7 +37655,7 @@
         },
         {
           "name": "rustls",
-          "package_key": "rustls-0.23.43",
+          "package_key": "rustls-0.23.45",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -42598,7 +42623,7 @@
         },
         {
           "name": "rustls",
-          "package_key": "rustls-0.23.43",
+          "package_key": "rustls-0.23.45",
           "kind": "normal",
           "features": [
             "std"
@@ -42758,7 +42783,7 @@
       "runtime_dependencies": [
         {
           "name": "aws_lc_rs",
-          "package_key": "aws-lc-rs-1.17.0",
+          "package_key": "aws-lc-rs-1.18.2",
           "kind": "normal",
           "features": [],
           "uses_default_features": false,
@@ -42830,7 +42855,7 @@
         },
         {
           "name": "rustls",
-          "package_key": "rustls-0.23.43",
+          "package_key": "rustls-0.23.45",
           "kind": "normal",
           "features": [
             "std"
@@ -42890,7 +42915,7 @@
       "crate_renames": {
         "aws-lc-rs": [
           {
-            "version": "1.17.0",
+            "version": "1.18.2",
             "rename": "aws_lc_rs"
           }
         ],
@@ -42920,7 +42945,7 @@
         "crateRenames": {
           "aws-lc-rs": [
             {
-              "version": "1.17.0",
+              "version": "1.18.2",
               "rename": "aws_lc_rs"
             }
           ],
@@ -44456,7 +44481,7 @@
         },
         {
           "name": "rustls",
-          "package_key": "rustls-0.23.43",
+          "package_key": "rustls-0.23.45",
           "kind": "normal",
           "features": [
             "std",
@@ -44989,7 +45014,7 @@
         },
         {
           "name": "rustls",
-          "package_key": "rustls-0.23.43",
+          "package_key": "rustls-0.23.45",
           "kind": "normal",
           "features": [
             "std",
@@ -46920,15 +46945,15 @@
         "preBuild": "export CARGO_CRATE_NAME=rustix;"
       }
     },
-    "rustls-0.23.43": {
+    "rustls-0.23.45": {
       "name": "rustls",
-      "version": "0.23.43",
+      "version": "0.23.45",
       "edition": "2021",
       "source": {
         "kind": "registry",
-        "url": "https://static.crates.io/crates/rustls/rustls-0.23.43.crate",
-        "sha256": "0283386ce02abc0151e1761d08802dfe86c173b0b494af5cbc086574e453da06",
-        "name_with_ext": "rustls-0.23.43.tar.gz"
+        "url": "https://static.crates.io/crates/rustls/rustls-0.23.45.crate",
+        "sha256": "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634",
+        "name_with_ext": "rustls-0.23.45.tar.gz"
       },
       "features": [
         "aws-lc-rs",
@@ -46949,7 +46974,7 @@
       "runtime_dependencies": [
         {
           "name": "aws_lc_rs",
-          "package_key": "aws-lc-rs-1.17.0",
+          "package_key": "aws-lc-rs-1.18.2",
           "kind": "normal",
           "features": [],
           "uses_default_features": false,
@@ -47004,7 +47029,7 @@
         },
         {
           "name": "webpki",
-          "package_key": "rustls-webpki-0.103.13",
+          "package_key": "rustls-webpki-0.103.15",
           "kind": "normal",
           "features": [
             "alloc"
@@ -47039,7 +47064,7 @@
       "crate_renames": {
         "aws-lc-rs": [
           {
-            "version": "1.17.0",
+            "version": "1.18.2",
             "rename": "aws_lc_rs"
           }
         ],
@@ -47051,14 +47076,14 @@
         ],
         "rustls-webpki": [
           {
-            "version": "0.103.13",
+            "version": "0.103.15",
             "rename": "webpki"
           }
         ]
       },
       "build_rust_crate_args": {
         "crateName": "rustls",
-        "version": "0.23.43",
+        "version": "0.23.45",
         "edition": "2021",
         "features": [
           "aws-lc-rs",
@@ -47074,7 +47099,7 @@
         "crateRenames": {
           "aws-lc-rs": [
             {
-              "version": "1.17.0",
+              "version": "1.18.2",
               "rename": "aws_lc_rs"
             }
           ],
@@ -47086,7 +47111,7 @@
           ],
           "rustls-webpki": [
             {
-              "version": "0.103.13",
+              "version": "0.103.15",
               "rename": "webpki"
             }
           ]
@@ -47454,7 +47479,7 @@
         },
         {
           "name": "rustls",
-          "package_key": "rustls-0.23.43",
+          "package_key": "rustls-0.23.45",
           "kind": "normal",
           "features": [
             "std"
@@ -47507,7 +47532,7 @@
         ],
         "rustls-webpki": [
           {
-            "version": "0.103.13",
+            "version": "0.103.15",
             "rename": "webpki"
           }
         ],
@@ -47549,7 +47574,7 @@
           ],
           "rustls-webpki": [
             {
-              "version": "0.103.13",
+              "version": "0.103.15",
               "rename": "webpki"
             }
           ],
@@ -47570,15 +47595,15 @@
         "preBuild": "export CARGO_CRATE_NAME=rustls_platform_verifier;"
       }
     },
-    "rustls-webpki-0.103.13": {
+    "rustls-webpki-0.103.15": {
       "name": "rustls-webpki",
-      "version": "0.103.13",
+      "version": "0.103.15",
       "edition": "2021",
       "source": {
         "kind": "registry",
-        "url": "https://static.crates.io/crates/rustls-webpki/rustls-webpki-0.103.13.crate",
-        "sha256": "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e",
-        "name_with_ext": "rustls-webpki-0.103.13.tar.gz"
+        "url": "https://static.crates.io/crates/rustls-webpki/rustls-webpki-0.103.15.crate",
+        "sha256": "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2",
+        "name_with_ext": "rustls-webpki-0.103.15.tar.gz"
       },
       "features": [
         "alloc",
@@ -47597,7 +47622,7 @@
       "runtime_dependencies": [
         {
           "name": "aws_lc_rs",
-          "package_key": "aws-lc-rs-1.17.0",
+          "package_key": "aws-lc-rs-1.18.2",
           "kind": "normal",
           "features": [],
           "uses_default_features": false,
@@ -47640,7 +47665,7 @@
       "crate_renames": {
         "aws-lc-rs": [
           {
-            "version": "1.17.0",
+            "version": "1.18.2",
             "rename": "aws_lc_rs"
           }
         ],
@@ -47653,7 +47678,7 @@
       },
       "build_rust_crate_args": {
         "crateName": "rustls-webpki",
-        "version": "0.103.13",
+        "version": "0.103.15",
         "edition": "2021",
         "features": [
           "alloc",
@@ -47664,7 +47689,7 @@
         "crateRenames": {
           "aws-lc-rs": [
             {
-              "version": "1.17.0",
+              "version": "1.18.2",
               "rename": "aws_lc_rs"
             }
           ],
@@ -51850,7 +51875,7 @@
         },
         {
           "name": "rustls",
-          "package_key": "rustls-0.23.43",
+          "package_key": "rustls-0.23.45",
           "kind": "normal",
           "features": [
             "std",
@@ -56072,7 +56097,7 @@
       "runtime_dependencies": [
         {
           "name": "rustls",
-          "package_key": "rustls-0.23.43",
+          "package_key": "rustls-0.23.45",
           "kind": "normal",
           "features": [
             "std"
@@ -63339,11 +63364,11 @@
         "build_dependencies": [],
         "features": []
       },
-      "aws-lc-rs-1.17.0": {
+      "aws-lc-rs-1.18.2": {
         "runtime_dependencies": [
           {
             "name": "aws_lc_sys",
-            "package_key": "aws-lc-sys-0.41.0",
+            "package_key": "aws-lc-sys-0.46.0",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -63368,7 +63393,7 @@
           "prebuilt-nasm"
         ]
       },
-      "aws-lc-sys-0.41.0": {
+      "aws-lc-sys-0.46.0": {
         "runtime_dependencies": [],
         "build_dependencies": [
           {
@@ -63411,6 +63436,16 @@
             "uses_default_features": true,
             "optional": false,
             "target": null,
+            "tree": "host"
+          },
+          {
+            "name": "pkg_config",
+            "package_key": "pkg-config-0.3.33",
+            "kind": "build",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": "cfg(unix)",
             "tree": "host"
           }
         ],
@@ -73709,7 +73744,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.43",
+            "package_key": "rustls-0.23.45",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -75234,7 +75269,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.43",
+            "package_key": "rustls-0.23.45",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -78176,7 +78211,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.43",
+            "package_key": "rustls-0.23.45",
             "kind": "normal",
             "features": [
               "ring"
@@ -81033,7 +81068,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.43",
+            "package_key": "rustls-0.23.45",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -83257,7 +83292,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.43",
+            "package_key": "rustls-0.23.45",
             "kind": "normal",
             "features": [
               "std"
@@ -83337,7 +83372,7 @@
         "runtime_dependencies": [
           {
             "name": "aws_lc_rs",
-            "package_key": "aws-lc-rs-1.17.0",
+            "package_key": "aws-lc-rs-1.18.2",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -83409,7 +83444,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.43",
+            "package_key": "rustls-0.23.45",
             "kind": "normal",
             "features": [
               "std"
@@ -84242,7 +84277,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.43",
+            "package_key": "rustls-0.23.45",
             "kind": "normal",
             "features": [
               "std",
@@ -84596,7 +84631,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.43",
+            "package_key": "rustls-0.23.45",
             "kind": "normal",
             "features": [
               "std",
@@ -85451,11 +85486,11 @@
         "build_dependencies": [],
         "features": []
       },
-      "rustls-0.23.43": {
+      "rustls-0.23.45": {
         "runtime_dependencies": [
           {
             "name": "aws_lc_rs",
-            "package_key": "aws-lc-rs-1.17.0",
+            "package_key": "aws-lc-rs-1.18.2",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -85510,7 +85545,7 @@
           },
           {
             "name": "webpki",
-            "package_key": "rustls-webpki-0.103.13",
+            "package_key": "rustls-webpki-0.103.15",
             "kind": "normal",
             "features": [
               "alloc"
@@ -85595,11 +85630,11 @@
           "web-time"
         ]
       },
-      "rustls-webpki-0.103.13": {
+      "rustls-webpki-0.103.15": {
         "runtime_dependencies": [
           {
             "name": "aws_lc_rs",
-            "package_key": "aws-lc-rs-1.17.0",
+            "package_key": "aws-lc-rs-1.18.2",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -87639,7 +87674,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.43",
+            "package_key": "rustls-0.23.45",
             "kind": "normal",
             "features": [
               "std",
@@ -90017,7 +90052,7 @@
         "runtime_dependencies": [
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.43",
+            "package_key": "rustls-0.23.45",
             "kind": "normal",
             "features": [
               "std"
@@ -93618,7 +93653,7 @@
               },
               {
                 "name": "rustls",
-                "package_key": "rustls-0.23.43",
+                "package_key": "rustls-0.23.45",
                 "kind": "normal",
                 "features": [
                   "std"
@@ -94633,7 +94668,7 @@
               },
               {
                 "name": "rustls",
-                "package_key": "rustls-0.23.43",
+                "package_key": "rustls-0.23.45",
                 "kind": "normal",
                 "features": [
                   "std"
@@ -94655,7 +94690,7 @@
               },
               {
                 "name": "webpki",
-                "package_key": "rustls-webpki-0.103.13",
+                "package_key": "rustls-webpki-0.103.15",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -94665,7 +94700,7 @@
               },
               {
                 "name": "webpki",
-                "package_key": "rustls-webpki-0.103.13",
+                "package_key": "rustls-webpki-0.103.15",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -94675,7 +94710,7 @@
               },
               {
                 "name": "webpki",
-                "package_key": "rustls-webpki-0.103.13",
+                "package_key": "rustls-webpki-0.103.15",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -95512,7 +95547,7 @@
               },
               {
                 "name": "rustls",
-                "package_key": "rustls-0.23.43",
+                "package_key": "rustls-0.23.45",
                 "kind": "normal",
                 "features": [
                   "std"
@@ -95534,7 +95569,7 @@
               },
               {
                 "name": "webpki",
-                "package_key": "rustls-webpki-0.103.13",
+                "package_key": "rustls-webpki-0.103.15",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -95544,7 +95579,7 @@
               },
               {
                 "name": "webpki",
-                "package_key": "rustls-webpki-0.103.13",
+                "package_key": "rustls-webpki-0.103.15",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -95554,7 +95589,7 @@
               },
               {
                 "name": "webpki",
-                "package_key": "rustls-webpki-0.103.13",
+                "package_key": "rustls-webpki-0.103.15",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -96193,7 +96228,7 @@
               },
               {
                 "name": "rustls",
-                "package_key": "rustls-0.23.43",
+                "package_key": "rustls-0.23.45",
                 "kind": "normal",
                 "features": [
                   "std"
@@ -97162,7 +97197,7 @@
               },
               {
                 "name": "rustls",
-                "package_key": "rustls-0.23.43",
+                "package_key": "rustls-0.23.45",
                 "kind": "normal",
                 "features": [
                   "std"
@@ -97184,7 +97219,7 @@
               },
               {
                 "name": "webpki",
-                "package_key": "rustls-webpki-0.103.13",
+                "package_key": "rustls-webpki-0.103.15",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -97194,7 +97229,7 @@
               },
               {
                 "name": "webpki",
-                "package_key": "rustls-webpki-0.103.13",
+                "package_key": "rustls-webpki-0.103.15",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -97204,7 +97239,7 @@
               },
               {
                 "name": "webpki",
-                "package_key": "rustls-webpki-0.103.13",
+                "package_key": "rustls-webpki-0.103.15",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -97995,7 +98030,7 @@
               },
               {
                 "name": "rustls",
-                "package_key": "rustls-0.23.43",
+                "package_key": "rustls-0.23.45",
                 "kind": "normal",
                 "features": [
                   "std"
@@ -98017,7 +98052,7 @@
               },
               {
                 "name": "webpki",
-                "package_key": "rustls-webpki-0.103.13",
+                "package_key": "rustls-webpki-0.103.15",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -98027,7 +98062,7 @@
               },
               {
                 "name": "webpki",
-                "package_key": "rustls-webpki-0.103.13",
+                "package_key": "rustls-webpki-0.103.15",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -98037,7 +98072,7 @@
               },
               {
                 "name": "webpki",
-                "package_key": "rustls-webpki-0.103.13",
+                "package_key": "rustls-webpki-0.103.15",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -98053,7 +98088,7 @@
       }
     }
   },
-  "cargo_lock_sha256": "285f9c2cad98b6ca8dbb650c96c9c07b117299bd344208be7f9f52bcbe432313",
+  "cargo_lock_sha256": "ba9198aea73ff1b331ed8c02f3af09c8fa687266730c02cabd12882241e6446e",
   "manifest_sha256": {
     "Cargo.toml": "fa3d83bb4eddee0b393f7375cbce4652573cbd213363ad75550f6e6790c5fbd2",
     "lava-ruby/Cargo.toml": "a2d172e3cffd2088bd2c849c579de254aec964cbe53b992a5b381a42c1f80933",

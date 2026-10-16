@@ -266,115 +266,35 @@
           };
           hardenedSecurityPkgs = (import "${substrate}/lib/security/mk-hardened-pkgs.nix" { inherit lib; }) {
             pkgs = securityPkgs;
-            mitigations = [ "terraform-provider-aws-grpc-bump" ];
+            mitigations = [
+              "terraform-provider-aws-grpc-bump"
+              "terraform-provider-kubernetes-kin-openapi-port"
+              "fleet-go-toolchain"
+              "terraform-providers-go-module-floor"
+            ];
+          };
+          inherit (import "${substrate}/lib/build/go/overlay.nix") assertGoFloor;
+          atGoFloor = drv: assertGoFloor {
+            inherit drv;
+            what = "magma-provider-mirror's ${drv.pname or drv.name}";
           };
 
-          # ── magma provider-mirror (★★ MAGMA-NATIVE / StageProvider) ──
-          # Bake provider plugin binaries into the IMAGE (durable, roll-
-          # surviving) instead of relying on the ephemeral
-          # `.terraform/providers` emptyDir, which is wiped on pod roll.
-          # MAGMA_PROVIDER_DIR below points magma's locate_provider at
-          # this closure. Provider set = union of `required_providers`
-          # across the rio Pangea architectures; extend when a new one
-          # appears (surfaces as a ProviderUnavailable anomaly otherwise).
           mirror = imagePkgs.buildEnv {
             name = "magma-provider-mirror";
             paths =
-              (with securityPkgs.terraform-providers; [
-                # cloudflare/github/kubernetes: no newer upstream release
-                # picks up grpc >= 1.82.1 (Round 3, .trivyignore) — stay on
-                # the nixpkgs-security escape hatch, unchanged since Round 1.
-                #
-                # kubernetes ALSO carries the GHSA-jpcw-4wr7-c3vq /
-                # GHSA-r277-6w6q-xmqw kin-openapi findings (.trivyignore
-                # Round 4 + Round 5) — a vendored go.mod patch bumping
-                # kin-openapi 0.111.0 -> 0.144.0 was attempted
-                # (substrate's terraform-provider-kubernetes-kin-openapi-bump
-                # cve-mitigation, left in the catalog unwired as a record) and
-                # CONFIRMED, via a real CI build, to break the provider's own
-                # source: kin-openapi 0.144.0 changed `Schema.Type` from a
-                # plain string to `*openapi3.Types` and diverged the
-                # openapi2/openapi3 SchemaRef split, and
-                # terraform-provider-kubernetes's manifest/openapi/*.go still
-                # uses the pre-change shape (confirmed compile failure, CI run
-                # 30178928379: "cannot use ... as *openapi3.Types value").
-                # This is the empirical version of Round 4's own risk
-                # assessment ("a bare go.mod replace is materially riskier
-                # than a version bump") — not a lower-risk case, a confirmed
-                # one.
-                cloudflare_cloudflare
-                integrations_github
-                hashicorp_kubernetes
-              ])
-              ++ [
-                # aws: Round 3's real fix — sourced via hardenedSecurityPkgs
-                # (the cve-mitigations catalog), not the bare escape hatch.
-                hardenedSecurityPkgs.terraform-providers.hashicorp_aws
-              ]
-              ++ (with imagePkgs.terraform-providers; [
-                # ── hashicorp_random REMOVED 2026-08-27: SERVED NATIVELY ──
-                # magma now implements the `random` provider in-process
-                # (magma-provider-random), registered in this operator at
-                # executor/magma.rs's `native_provider_router`. The Go
-                # binary is no longer reachable and is no longer shipped.
-                #
-                # It was the largest single CVE contributor in this image:
-                # 36 of 190 findings, ahead of aws (11), for a provider
-                # that makes NO network calls at all. 13 of the 49 waived
-                # ids were unique to it — every one a golang.org/x/crypto
-                # CVE with NO fixed release upstream, i.e. exactly the
-                # group that could never have been patched. They leave with
-                # the binary rather than being waived forever.
-                #
-                # ★ ORDERING IS LOAD-BEARING: the registration must exist
-                # BEFORE the binary is dropped, or every random_* resource
-                # fails with `locate provider` at reconcile — the outage
-                # this whole line of work started from. Enforced by
-                # `the_router_serves_random_natively` in executor/magma.rs.
-                #
-                # To revert: restore `hashicorp_random` here AND remove the
-                # `with_native("random", ...)` registration. Either alone is
-                # merely wasteful; dropping the registration while the
-                # binary is absent is the outage.
-                #
-                # No newer upstream release exists for these two on ANY
-                # channel (verified 2026-07-19, re-verified 2026-07-24) —
-                # stays on the primary pin. See .trivyignore for the
-                # residual CVE citations.
-                porkbun
-                cyrilgdn_rabbitmq
-                # datadog: needed for the absorbed Datadog estate
-                # (pangea-datadog-absorb). On the primary pin deliberately —
-                # it carries no CVE escape-hatch requirement, so it does not
-                # belong in the securityPkgs block above. There is no
-                # `tofu init` fallback (PANGEA_FORBID_TOFU + magma's
-                # locate_provider reads MAGMA_PROVIDER_DIR), so an absent
-                # provider here is a hard ProviderUnavailable, not a slow path.
-                datadog_datadog
-              ])
-              ++ [
-                # ── The OpenWrt router provider — OURS, and the reason this
-                # list is not purely nixpkgs. ──────────────────────────────
-                # Built from pleme-io/openwrt-uci by its own flake. It drives
-                # the two live GL-MT6000s through the `ubus-http` facade:
-                #   InfrastructureTemplate -> magma -> THIS -> ubus-http -> ubusd
-                #
-                # It is in the IMAGE rather than joined onto one node's
-                # MAGMA_PROVIDER_DIR because the operator is moving into the
-                # cluster as a Pod, and a Pod gets exactly this closure —
-                # nothing a host happens to have beside it. Before this, the
-                # mirror and plo's host disagreed by exactly this one provider.
-                #
-                # ★ INTERIM, and the direction of this list is to SHRINK.
-                # `hashicorp_random` was removed once magma served it natively
-                # in-process, deleting 36 of 190 CVE findings — the largest
-                # single contributor — for a provider that makes no network
-                # calls. The UCI surface is small and already HTTP-shaped, so
-                # the destination here is a native magma provider that deletes
-                # this Go binary rather than one that keeps it.
-                # `pending-magma-native-openwrt`.
-                openwrt-uci.packages.${imageSystem}.terraform-provider-openwrt
-              ];
+              map atGoFloor (
+                with hardenedSecurityPkgs.terraform-providers;
+                [
+                  cloudflare_cloudflare
+                  integrations_github
+                  hashicorp_kubernetes
+                  hashicorp_aws
+                  cullenmcdermott_porkbun
+                  cyrilgdn_rabbitmq
+                  datadog_datadog
+                ]
+                ++ [ openwrt-uci.packages.${imageSystem}.terraform-provider-openwrt ]
+              );
           };
         in
         mirror;
