@@ -153,6 +153,7 @@ jobs:
         uses: pleme-io/actions/tatara-script@main
         with:
           script-file: tools/verify-noruby-closure.tlisp
+          stdlib: "true"
 
   cargo-test:
     # Runs inside `.#ruby-eval` via the shared substrate reusable workflow
