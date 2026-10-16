@@ -800,7 +800,9 @@ pub fn validate_catalogue(catalogue: &OrgCatalogue) -> Vec<CatalogueViolation> {
                     .chars()
                     .any(|c| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')));
             let detail = if bad_charset {
-                Some(format!("prior name {old:?} is not a GitHub repository name"))
+                Some(format!(
+                    "prior name {old:?} is not a GitHub repository name"
+                ))
             } else if let Some(other) = catalogue
                 .repos
                 .iter()
@@ -1470,7 +1472,10 @@ mod live {
 
     #[test]
     fn a_rename_moves_every_address_the_row_emits() {
-        let recs = [record_for(&renamed("ensaio-akeyless", &["ensaio"], true), None), rec("tend")];
+        let recs = [
+            record_for(&renamed("ensaio-akeyless", &["ensaio"], true), None),
+            rec("tend"),
+        ];
         let moves = moves_for(&recs);
         let pairs: Vec<(&str, &str)> = moves
             .iter()
@@ -1479,7 +1484,10 @@ mod live {
         assert_eq!(
             pairs,
             [
-                ("github_repository.ensaio", "github_repository.ensaio_akeyless"),
+                (
+                    "github_repository.ensaio",
+                    "github_repository.ensaio_akeyless"
+                ),
                 (
                     "github_actions_repository_permissions.ensaio_actions",
                     "github_actions_repository_permissions.ensaio_akeyless_actions"
@@ -1491,9 +1499,16 @@ mod live {
             ]
         );
         let unprotected = moves_for(&[record_for(&renamed("b", &["a"], false), None)]);
-        assert_eq!(unprotected.len(), 2, "no protection resource, so no move onto one");
+        assert_eq!(
+            unprotected.len(),
+            2,
+            "no protection resource, so no move onto one"
+        );
         assert!(moves_for(&[rec("tend")]).is_empty());
-        assert_eq!(cr_patch("o", &[rec("tend")])["spec"]["variables"]["moves"], serde_json::json!([]));
+        assert_eq!(
+            cr_patch("o", &[rec("tend")])["spec"]["variables"]["moves"],
+            serde_json::json!([])
+        );
     }
 
     #[test]
@@ -1502,11 +1517,27 @@ mod live {
             repos: rows,
             ..Default::default()
         };
-        let v = validate_catalogue(&cat(vec![renamed("new", &["tend"], false), rec_row("tend")]));
-        assert!(v.iter().any(|x| x.field == "renamed_from" && x.detail.contains("collides")), "{v:?}");
-        let v = validate_catalogue(&cat(vec![renamed("new", &["tend.x"], false), rec_row("tend_x")]));
-        assert!(v.iter().any(|x| x.field == "renamed_from"), "a slug collision is a collision: {v:?}");
-        let v = validate_catalogue(&cat(vec![renamed("a", &["old"], false), renamed("b", &["old"], false)]));
+        let v = validate_catalogue(&cat(vec![
+            renamed("new", &["tend"], false),
+            rec_row("tend"),
+        ]));
+        assert!(
+            v.iter()
+                .any(|x| x.field == "renamed_from" && x.detail.contains("collides")),
+            "{v:?}"
+        );
+        let v = validate_catalogue(&cat(vec![
+            renamed("new", &["tend.x"], false),
+            rec_row("tend_x"),
+        ]));
+        assert!(
+            v.iter().any(|x| x.field == "renamed_from"),
+            "a slug collision is a collision: {v:?}"
+        );
+        let v = validate_catalogue(&cat(vec![
+            renamed("a", &["old"], false),
+            renamed("b", &["old"], false),
+        ]));
         assert!(v.iter().any(|x| x.detail.contains("also claimed")), "{v:?}");
         let v = validate_catalogue(&cat(vec![renamed("ensaio-akeyless", &["ensaio"], false)]));
         assert!(v.is_empty(), "a clean rename is accepted: {v:?}");
@@ -1764,7 +1795,6 @@ mod live {
         assert!(validate_catalogue(&cat).is_empty());
     }
 
-
     /// ★ THE GATE FOR THE BUG THAT SHIPPED: two row sources, one folded.
     ///
     /// `resolve` read `catalogue.repos` directly while `--emit overlays` read
@@ -1922,13 +1952,15 @@ mod live {
         // The reusable middle tier: a CLASS of repository states its shape
         // once. `rust-library` is the obvious real one — 139 rows carry a
         // `ci_shim`, 77% of them the same value.
-        let c = cat("repo_defaults:\n  has_issues: false\n  visibility: private\n\
+        let c = cat(
+            "repo_defaults:\n  has_issues: false\n  visibility: private\n\
              repo_profiles:\n\
              \u{20} rust-library:\n    has_issues: true\n    standard_labels: true\n\
              repos:\n\
              \u{20} - name: plain\n\
              \u{20} - name: lib\n    inherits: [rust-library]\n\
-             \u{20} - name: lib-quiet\n    inherits: [rust-library]\n    has_issues: false\n");
+             \u{20} - name: lib-quiet\n    inherits: [rust-library]\n    has_issues: false\n",
+        );
         let rows = c.resolved_rows().expect("folds");
         let by = |n: &str| {
             rows.iter()

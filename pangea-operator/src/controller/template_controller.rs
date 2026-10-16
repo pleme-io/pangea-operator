@@ -9988,7 +9988,13 @@ mod import_failure_classification_tests {
     #[cfg(feature = "executor_magma")]
     #[test]
     fn an_empty_adoption_is_absent_by_its_evidence() {
-        let r = provider_reported_absent("openwrt_uci_section.dhcp_lan", "dhcp.lan", 1, 0, Instant::now());
+        let r = provider_reported_absent(
+            "openwrt_uci_section.dhcp_lan",
+            "dhcp.lan",
+            1,
+            0,
+            Instant::now(),
+        );
         assert_eq!(r.import_evidence, ImportEvidence::ProviderReportedAbsent);
         assert_eq!(classify_import_failure(&r), ImportFailure::Absent);
     }
@@ -9998,7 +10004,13 @@ mod import_failure_classification_tests {
     #[cfg(feature = "executor_magma")]
     #[test]
     fn the_operators_own_words_do_not_decide() {
-        let r = provider_reported_absent("openwrt_uci_section.dhcp_lan", "dhcp.lan", 1, 0, Instant::now());
+        let r = provider_reported_absent(
+            "openwrt_uci_section.dhcp_lan",
+            "dhcp.lan",
+            1,
+            0,
+            Instant::now(),
+        );
         let words_only = stderr_only(&r.stderr);
         assert_eq!(
             classify_import_failure(&words_only),
@@ -10029,7 +10041,9 @@ mod import_failure_classification_tests {
 
 #[cfg(all(test, feature = "executor_magma"))]
 mod moved_rename_tests {
-    use super::{drift_details_from_planned_changes, evaluate_destroy_protection_gate, DestroyProtectionGate};
+    use super::{
+        drift_details_from_planned_changes, evaluate_destroy_protection_gate, DestroyProtectionGate,
+    };
     use crate::executor::magma::{apply_config_moves, planned_changes_from_magma_plan};
 
     fn config(with_moved: bool) -> magma_config::Config {
@@ -10093,6 +10107,9 @@ mod moved_rename_tests {
 
     #[test]
     fn destroy_protection_still_refuses_the_undeclared_rename() {
-        assert!(matches!(gate(false), DestroyProtectionGate::BlockedByProtectedDestruction { .. }));
+        assert!(matches!(
+            gate(false),
+            DestroyProtectionGate::BlockedByProtectedDestruction { .. }
+        ));
     }
 }

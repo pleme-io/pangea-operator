@@ -573,9 +573,8 @@ impl ControllerState {
         // to `ExecutorInfo` is what stops a caller reaching the provider methods
         // on an executor whose credentials were never resolved.
         match chosen {
-            ExecutorBackend::Magma => {
-                self.magma_executor_for(template) as Arc<dyn crate::executor::iac_executor::ExecutorInfo>
-            }
+            ExecutorBackend::Magma => self.magma_executor_for(template)
+                as Arc<dyn crate::executor::iac_executor::ExecutorInfo>,
             ExecutorBackend::Tofu => {
                 Arc::clone(&self.executor) as Arc<dyn crate::executor::iac_executor::ExecutorInfo>
             }

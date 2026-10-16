@@ -1268,7 +1268,10 @@ async fn compute_gem_tree_attestation(work_dir: &Path) -> Option<String> {
 /// without touching the Reconciler trait machinery.
 /// Apply the rendered config's `moved` blocks to `state`; returns how many
 /// moved a row.
-pub(crate) fn apply_config_moves(cfg: &magma_config::Config, state: &mut magma_types::State) -> Result<usize> {
+pub(crate) fn apply_config_moves(
+    cfg: &magma_config::Config,
+    state: &mut magma_types::State,
+) -> Result<usize> {
     let moves = cfg
         .moves()
         .map_err(|e| Error::MagmaExecution(format!("moved blocks: {e}")))?;
@@ -4825,4 +4828,3 @@ mod stall_diagnosis_tests {
         );
     }
 }
-
