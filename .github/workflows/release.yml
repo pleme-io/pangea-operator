@@ -247,7 +247,6 @@ jobs:
         # rename follows once a tag under the new prefix exists.
         variant:
           - { attr: dockerImage-operator-noruby-amd64, tag: embedded-amd64 }
-          - { attr: dockerImage-operator-embedded-amd64, tag: ruby-amd64 }
     uses: pleme-io/substrate/.github/workflows/image-push.yml@main
     with:
       imageAttr: ${{ matrix.variant.attr }}
@@ -320,7 +319,6 @@ jobs:
         # why, and why the tag prefix does not move in the same commit.
         variant:
           - { attr: dockerImage-operator-noruby-amd64, tag: embedded-amd64 }
-          - { attr: dockerImage-operator-embedded-amd64, tag: ruby-amd64 }
     uses: pleme-io/substrate/.github/workflows/image-push.yml@main
     with:
       imageAttr: ${{ matrix.variant.attr }}

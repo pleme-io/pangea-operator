@@ -17,7 +17,7 @@
 
 (define PATTERN "libruby|-ruby-3|rb-sys|magnus|pangea-ruby-eval")
 (define NORUBY-ATTR ".#dockerImage-operator-noruby-amd64")
-(define EMBED-ATTR ".#dockerImage-operator-embedded-amd64")
+(define EMBED-ATTR ".#packages.x86_64-linux.pangea-operator-ruby")
 
 (define (drv-of attr)
   (let ((r (proc:must (list "nix" "path-info" "--derivation" attr))))
