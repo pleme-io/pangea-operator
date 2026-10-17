@@ -250,6 +250,12 @@ pub struct InfrastructureTemplateSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub variable_refs: Option<BTreeMap<String, VariableRef>>,
 
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(
+        description = "Compile-time variables whose values come from a Secret key in this template's namespace: `- name: X, valueFrom: {secretKeyRef: {name, key}}`. Resolved by the operator when it compiles the template, injected like spec.variables (and winning over them), and never written to status, events or logs."
+    )]
+    pub secret_variables: Vec<SecretVariable>,
+
     /// Retry policy for failed operations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_policy: Option<RetryPolicy>,
@@ -441,6 +447,29 @@ pub struct InfrastructureTemplateSpec {
     /// secret files written; existing templates pay nothing for this.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub secret_files: Vec<SecretFileRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SecretVariable {
+    #[schemars(description = "Variable name the template reads (ENV and $pangea_variables).")]
+    pub name: String,
+    pub value_from: SecretVariableSource,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SecretVariableSource {
+    pub secret_key_ref: SecretKeySelector,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SecretKeySelector {
+    #[schemars(description = "Secret name, in the template's own namespace.")]
+    pub name: String,
+    #[schemars(description = "Key within the Secret's data.")]
+    pub key: String,
 }
 
 /// One named secret resolved into a workspace file. See
@@ -2814,6 +2843,51 @@ providerCredentials:
 
         // Parsed happily, and carries nothing at all.
         assert!(creds.iter_secret_refs().is_empty());
+    }
+
+    #[test]
+    fn secret_variables_parse_in_the_env_var_shape_and_default_empty() {
+        let spec: InfrastructureTemplateSpec = serde_yaml::from_str(
+            r#"
+source:
+  gitRepository:
+    url: "https://github.com/pleme-io/pangea-architectures.git"
+    path: "workspaces/example-gateway/example_gateway.rb"
+pangeaNamespace: "example-gateway"
+secretVariables:
+  - name: GATEWAY_ACCESS_KEY
+    valueFrom:
+      secretKeyRef:
+        name: example-gateway
+        key: access-key
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            spec.secret_variables,
+            vec![SecretVariable {
+                name: "GATEWAY_ACCESS_KEY".into(),
+                value_from: SecretVariableSource {
+                    secret_key_ref: SecretKeySelector {
+                        name: "example-gateway".into(),
+                        key: "access-key".into(),
+                    },
+                },
+            }]
+        );
+        let bare: InfrastructureTemplateSpec =
+            serde_yaml::from_str("source:\n  inline: \"{}\"\npangeaNamespace: x\n").unwrap();
+        assert!(bare.secret_variables.is_empty());
+        assert!(!serde_json::to_string(&bare)
+            .unwrap()
+            .contains("secretVariables"));
+    }
+
+    #[test]
+    fn the_generated_crd_types_secret_variables() {
+        let crds = crate::crd::generate_crds();
+        assert!(crds.contains("secretVariables"), "secretVariables missing");
+        assert!(crds.contains("secretKeyRef"), "secretKeyRef missing");
     }
 
     fn parse_aws(yaml: &str) -> Result<AwsCredentials, serde_yaml::Error> {

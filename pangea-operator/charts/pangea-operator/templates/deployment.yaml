@@ -69,6 +69,10 @@ spec:
               value: {{ include "pangea-operator.compilerBackend" . | quote }}
             - name: PANGEA_LAVA_RUBY
               value: {{ ternary "on" "off" (ne (toString ((.Values.lavaRuby).enabled)) "false") | quote }}
+            {{- with ((.Values.lavaRuby).loadPath) }}
+            - name: PANGEA_LAVA_RUBY_LOAD_PATH
+              value: {{ . | quote }}
+            {{- end }}
             - name: RUST_LOG
               value: {{ .Values.config.logLevel | quote }}
             - name: LOG_FORMAT

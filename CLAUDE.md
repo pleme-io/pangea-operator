@@ -380,6 +380,21 @@ variable instead: `Pangea::Secrets.resolve` reads ENV first, and
 `Pangea::RemoteState` reads `PANGEA_REMOTE_STATE_<TEMPLATE>_<OUTPUT>` before
 touching S3.
 
+lava-ruby finds gems on `PANGEA_LAVA_RUBY_LOAD_PATH` (chart `lavaRuby.loadPath`),
+and with it unset on every `<gem>/lib` under `/usr/share/lava/ruby`. The image
+bakes `packages.<system>.lava-ruby-gems` there: the 14 public pangea gem
+inputs plus terraform-synthesizer and abstract-synthesizer as published on
+rubygems.org (the versions `pangea-compiler/gemset.nix` pins), read-only and
+with no CRuby. A git-sourced template's own clone `lib/` comes first. Private
+gem repos are never baked into the public image; a template that needs one
+gets it from its own clone or from an explicit load path.
+
+A secret a template needs at compile time is `spec.secretVariables[]`
+(`name`, `valueFrom.secretKeyRef.{name,key}`, the template's own namespace),
+resolved at compile and injected like `spec.variables`, winning over them.
+`CompileRequest`'s Debug prints variable names only, so a value cannot reach a
+log through it.
+
 `PANGEA_GEM_CACHE_DIR` (default `/var/pangea/gems`) is the per-CR
 git-clone cache for the embedded path; `prepare_gem` clones each
 ArchitectureGem's `gitRepository` source into `{cacheDir}/{name}-{ref}/`

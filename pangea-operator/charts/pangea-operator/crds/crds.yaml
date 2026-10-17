@@ -61,7 +61,7 @@ spec:
           spec:
             properties:
               approvedPlanHash:
-                description: 'GitOps-native approval: commit the plan hash the operator reported in `status.pendingPlanHash`/its `PlanPending` event here (a declare-and-observe spec edit, per ★★ PLATFORM-MEDIATED INFRASTRUCTURE) instead of a direct `kubectl patch ... --subresource status`. Checked as an OR alternative to `status.approvedPlanHash` (see `handle_planning`''s `is_approved` gate) -- either satisfies the approval, so existing direct-patch workflows (and this field''s own `PlanPending` event text) keep working unchanged. Clusters whose tooling refuses imperative status-subresource mutations against a FluxCD-managed namespace (this fleet''s own `guardrail` `kubectl-imperative-camelot` rule is the motivating case) now have a real committed-manifest path: bump this field, commit, let Flux apply it, observe `status.lastCycle` for the outcome. The operator NEVER writes this field (spec is git-owned; a controller write here would fight Flux''s own reconciliation of the committed manifest) -- unlike `status.approvedPlanHash`, which the operator actively resets on drift (see `update_pending_plan_hash`), this one goes stale passively: a plan-hash change simply stops matching the old committed value, so a stale approval never silently re-approves a DIFFERENT plan without needing an explicit clear.'
+                description: 'GitOps-native approval: commit the plan hash the operator reported in `status.pendingPlanHash`/its `PlanPending` event here (a declare-and-observe spec edit, per ★★ PLATFORM-MEDIATED INFRASTRUCTURE) instead of a direct `kubectl patch ... --subresource status`. Checked as an OR alternative to `status.approvedPlanHash` (see `handle_planning`''s `is_approved` gate) -- either satisfies the approval, so existing direct-patch workflows (and this field''s own `PlanPending` event text) keep working unchanged. Clusters whose tooling refuses imperative status-subresource mutations against a FluxCD-managed namespace (a `guardrail` rule refusing imperative kubectl mutation is the motivating case) now have a real committed-manifest path: bump this field, commit, let Flux apply it, observe `status.lastCycle` for the outcome. The operator NEVER writes this field (spec is git-owned; a controller write here would fight Flux''s own reconciliation of the committed manifest) -- unlike `status.approvedPlanHash`, which the operator actively resets on drift (see `update_pending_plan_hash`), this one goes stale passively: a plan-hash change simply stops matching the old committed value, so a stale approval never silently re-approves a DIFFERENT plan without needing an explicit clear.'
                 nullable: true
                 type: string
               autoApprove:
@@ -242,7 +242,7 @@ spec:
 
                       ── ★ WHY THE DEFAULT FLIPPED ──────────────────────────────────── It used to default to `false`, which meant a template that said nothing about importing got **create-instead-of-import**: the plan proposes to CREATE a resource that already exists, and the apply fails with `422 already exists` per resource. That is the same "dangerous posture reached by SAYING NOTHING" that `destroy_protection` closed on the deletion path — silence chose the unsafe branch, and only a template that remembered to opt in got the intended import → plan → apply → never-destroy algorithm.
 
-                      Measured on camelot 2026-08-26: 5 of 21 live templates carried `autoOnConflict: false`, all by omission rather than by a stated decision.
+                      Measured on one cluster 2026-08-26: 5 of 21 live templates carried `autoOnConflict: false`, all by omission rather than by a stated decision.
 
                       Defaulting to `true` is safe because it is a CANDIDACY switch, not an action: an address still needs an id from `importHints` → `naturalIds` → the operator-bundled defaults. A resource with no resolvable natural id imports nothing and stays a plain `create`. So the flip cannot invent an import; it can only stop one from being skipped.
 
@@ -700,6 +700,35 @@ spec:
                   - key
                   - name
                   - secretRef
+                  type: object
+                type: array
+              secretVariables:
+                description: 'Compile-time variables whose values come from a Secret key in this template''s namespace: `- name: X, valueFrom: {secretKeyRef: {name, key}}`. Resolved by the operator when it compiles the template, injected like spec.variables (and winning over them), and never written to status, events or logs.'
+                items:
+                  properties:
+                    name:
+                      description: Variable name the template reads (ENV and $pangea_variables).
+                      type: string
+                    valueFrom:
+                      properties:
+                        secretKeyRef:
+                          properties:
+                            key:
+                              description: Key within the Secret's data.
+                              type: string
+                            name:
+                              description: Secret name, in the template's own namespace.
+                              type: string
+                          required:
+                          - key
+                          - name
+                          type: object
+                      required:
+                      - secretKeyRef
+                      type: object
+                  required:
+                  - name
+                  - valueFrom
                   type: object
                 type: array
               settlingPolicy:

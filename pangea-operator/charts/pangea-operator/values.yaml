@@ -129,6 +129,9 @@ compilerBackend: ""
 # (PANGEA_LAVA_RUBY). enabled: false refuses them with a typed error.
 lavaRuby:
   enabled: true
+  # Colon-separated gem lib dirs (PANGEA_LAVA_RUBY_LOAD_PATH). Empty uses every
+  # <gem>/lib under /usr/share/lava/ruby, the public gem closure the image bakes.
+  loadPath: ""
 
 # Legacy selector for the embedded magnus / CRuby evaluator, consulted only
 # when compilerBackend is empty.

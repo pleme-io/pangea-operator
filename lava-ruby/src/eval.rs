@@ -739,7 +739,13 @@ impl Interp {
                     a.blk = self.to_proc(&v, fr)?;
                 }
                 Node::ForwardedArgs(_) => {
-                    a.pos.extend(fr.args.clone());
+                    match sc.get(crate::call::FORWARDED_ARGS) {
+                        Some(V::Arr(tail)) => a.pos.extend(tail.borrow().iter().cloned()),
+                        _ => a.pos.extend(fr.args.clone()),
+                    }
+                    if let Some(V::Hash(k)) = sc.get(crate::call::FORWARDED_KWARGS) {
+                        a.kw = Some(k);
+                    }
                     a.blk = fr.block.clone();
                 }
                 other => a.pos.push(self.eval(other, fr, sc)?),

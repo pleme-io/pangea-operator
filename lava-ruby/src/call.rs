@@ -5,6 +5,9 @@ use lib_ruby_parser::Node;
 use crate::interp::*;
 use crate::value::*;
 
+pub const FORWARDED_ARGS: &str = "(...)";
+pub const FORWARDED_KWARGS: &str = "(**...)";
+
 const MAX_DEPTH: usize = 2000;
 
 impl Interp {
@@ -329,7 +332,8 @@ impl Interp {
             )
         });
         let mut kw = a.kw.clone();
-        if !has_kw {
+        let has_fwd = list.iter().any(|n| matches!(n, Node::ForwardArg(_)));
+        if !has_kw && !has_fwd {
             if let Some(k) = kw.take() {
                 if k.len() > 0 || mname == "block" {
                     pos.push(V::Hash(k));
@@ -357,7 +361,7 @@ impl Interp {
             .iter()
             .filter(|n| matches!(n, Node::Optarg(_)))
             .count();
-        let has_rest = positional.iter().any(|n| matches!(n, Node::Restarg(_)));
+        let has_rest = has_fwd || positional.iter().any(|n| matches!(n, Node::Restarg(_)));
         if !strict {
             let simple_multi =
                 positional.len() > 1 || has_rest && positional.len() > 1 || positional.len() > 1;
@@ -391,6 +395,13 @@ impl Interp {
             ));
         }
         let avail_opt = pos.len().saturating_sub(req_count).min(opt_count);
+        if has_fwd {
+            let tail = pos.get(req_count + avail_opt..).map(<[V]>::to_vec).unwrap_or_default();
+            sc.declare(FORWARDED_ARGS, V::arr(tail));
+            if let Some(k) = &kw {
+                sc.declare(FORWARDED_KWARGS, V::Hash(k.clone()));
+            }
+        }
         let rest_len = pos.len().saturating_sub(req_count + avail_opt);
         let rest_idx = positional
             .iter()

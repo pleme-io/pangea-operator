@@ -86,6 +86,7 @@ See [`docs/AUTHORING.md`](https://github.com/pleme-io/pangea-operator/blob/main/
 | `leaderElection.enabled` | `true` | Required when `replicaCount > 1`. |
 | `compilerBackend` | `""` | `lava`, `embedded`, `process` or `http`; empty selects `lava` unless `useEmbeddedRuby=true`. |
 | `lavaRuby.enabled` | `true` | Ruby templates compiled by lava's contained interpreter (`PANGEA_LAVA_RUBY`). |
+| `lavaRuby.loadPath` | `""` | Gem lib dirs for lava-ruby (`PANGEA_LAVA_RUBY_LOAD_PATH`); empty uses the image's `/usr/share/lava/ruby/*/lib`. |
 | `useEmbeddedRuby` | `false` | Legacy selector for `embedded`, read only when `compilerBackend` is empty. |
 | `compilerSidecar.enabled` | `false` | Legacy HTTP backend; only needed for `compilerBackend: http`. |
 | `compilerSidecar.image.repository` | `ghcr.io/pleme-io/pangea-compiler` | Sidecar image. |

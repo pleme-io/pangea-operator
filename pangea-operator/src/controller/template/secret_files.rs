@@ -30,8 +30,6 @@ use crate::controller::ControllerState;
 use crate::crd::InfrastructureTemplate;
 use crate::error::{Error, Result};
 use crate::executor::Workspace;
-use k8s_openapi::api::core::v1::Secret;
-use kube::api::Api;
 use kube::ResourceExt;
 
 /// Write every `spec.secretFiles` entry into the workspace. Called once
@@ -68,32 +66,14 @@ pub async fn write_secret_files(
         validate_file_name(&sf.name)?;
 
         let ns = sf.secret_ref.namespace.as_deref().unwrap_or(&default_ns);
-        let secret_api: Api<Secret> = Api::namespaced(state.client.clone(), ns);
-        let secret =
-            secret_api
-                .get(&sf.secret_ref.name)
-                .await
-                .map_err(|_| Error::SecretNotFound {
-                    namespace: ns.to_string(),
-                    name: sf.secret_ref.name.clone(),
-                })?;
-
-        let data = secret.data.as_ref().ok_or_else(|| {
-            Error::Config(format!(
-                "secretFiles[{}]: secret {}/{} has no data",
-                sf.name, ns, sf.secret_ref.name
-            ))
-        })?;
-
-        let value = data
-            .get(&sf.key)
-            .map(|v| String::from_utf8_lossy(&v.0).to_string())
-            .ok_or_else(|| {
-                Error::Config(format!(
-                    "secretFiles[{}]: key '{}' not found in secret {}/{}",
-                    sf.name, sf.key, ns, sf.secret_ref.name
-                ))
-            })?;
+        let value = crate::controller::template::secret_value::read_secret_key(
+            &state.client,
+            ns,
+            &sf.secret_ref.name,
+            &sf.key,
+            &format!("secretFiles[{}]", sf.name),
+        )
+        .await?;
 
         let path = workspace.write_file(&sf.name, &value).await?;
 

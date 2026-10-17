@@ -1418,6 +1418,14 @@ async fn handle_compiling(
                 }
             }
 
+            for (k, v) in crate::controller::template::secret_variables::resolve_secret_variables(
+                template, state,
+            )
+            .await?
+            {
+                variables.insert(k, v);
+            }
+
             let compile_request = if let Some(path) = content.strip_prefix(GIT_SOURCE_SENTINEL) {
                 // gitRepository — let the compiler load the file from disk
                 // so it sees its workspace siblings, and prepend the
@@ -7476,6 +7484,7 @@ mod is_plan_approved_tests {
             template_name: None,
             variables: None,
             variable_refs: None,
+            secret_variables: Vec::new(),
             auto_approve: false,
             spec_approved_plan_hash: approved.map(str::to_string),
             refresh_interval: "10m".to_string(),
@@ -8634,6 +8643,7 @@ mod state_continuity_breach_tests {
             template_name: None,
             variables: None,
             variable_refs: None,
+            secret_variables: Vec::new(),
             auto_approve: true,
             spec_approved_plan_hash: None,
             refresh_interval: "10m".to_string(),
@@ -9684,6 +9694,7 @@ mod compile_front_end_tests {
                 executor: None,
                 destroy_protection: false,
                 variable_refs: None,
+                secret_variables: Vec::new(),
                 retry_policy: None,
                 provider_credentials: None,
                 compliance_profiles: vec![],

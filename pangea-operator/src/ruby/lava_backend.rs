@@ -801,16 +801,40 @@ fn is_ruby_request(req: &CompileRequest) -> bool {
     }
 }
 
+pub const LAVA_RUBY_LOAD_PATH_ENV: &str = "PANGEA_LAVA_RUBY_LOAD_PATH";
+pub const DEFAULT_LAVA_RUBY_GEM_ROOT: &str = "/usr/share/lava/ruby";
+
+#[must_use]
+pub fn gem_root_load_path(root: &std::path::Path) -> Vec<PathBuf> {
+    let mut libs: Vec<PathBuf> = std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path().join("lib"))
+        .filter(|p| p.is_dir())
+        .collect();
+    libs.sort();
+    libs
+}
+
+#[must_use]
+pub fn configured_load_path(explicit: Option<&str>, gem_root: &std::path::Path) -> Vec<PathBuf> {
+    match explicit {
+        Some(list) if !list.trim().is_empty() => list
+            .split(':')
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .collect(),
+        _ => gem_root_load_path(gem_root),
+    }
+}
+
 fn lava_ruby_load_path(req: &CompileRequest) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = req.rubylib_paths.iter().map(PathBuf::from).collect();
-    if let Ok(extra) = std::env::var("PANGEA_LAVA_RUBY_LOAD_PATH") {
-        out.extend(
-            extra
-                .split(':')
-                .filter(|s| !s.is_empty())
-                .map(PathBuf::from),
-        );
-    }
+    out.extend(configured_load_path(
+        std::env::var(LAVA_RUBY_LOAD_PATH_ENV).ok().as_deref(),
+        std::path::Path::new(DEFAULT_LAVA_RUBY_GEM_ROOT),
+    ));
     let mut gems: Vec<PathBuf> = std::fs::read_dir(
         std::env::var_os("PANGEA_GEM_CACHE_DIR")
             .map(PathBuf::from)
@@ -909,6 +933,30 @@ mod lava_ruby_tests {
         r.source = None;
         r.template_path = Some("/w/t.rb".into());
         assert!(is_ruby_request(&r));
+    }
+
+    #[test]
+    fn the_load_path_defaults_to_every_gem_lib_under_the_gem_root() {
+        let root = std::env::temp_dir().join(format!("lava-gem-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for g in ["terraform-synthesizer", "pangea-core"] {
+            std::fs::create_dir_all(root.join(g).join("lib")).unwrap();
+        }
+        std::fs::create_dir_all(root.join("no-lib")).unwrap();
+        assert_eq!(
+            configured_load_path(None, &root),
+            vec![
+                root.join("pangea-core").join("lib"),
+                root.join("terraform-synthesizer").join("lib"),
+            ]
+        );
+        assert_eq!(configured_load_path(Some(""), &root).len(), 2);
+        assert_eq!(
+            configured_load_path(Some("/a/lib::/b/lib"), &root),
+            vec![PathBuf::from("/a/lib"), PathBuf::from("/b/lib")]
+        );
+        assert!(configured_load_path(None, &root.join("absent")).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

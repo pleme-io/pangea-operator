@@ -17,4 +17,6 @@ pub mod output_bindings;
 pub mod provider_creds;
 pub mod reactive_policy;
 pub mod secret_files;
+pub mod secret_value;
+pub mod secret_variables;
 pub mod status;

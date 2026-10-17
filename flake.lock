@@ -4601,6 +4601,22 @@
         "type": "github"
       }
     },
+    "pangea-grafana": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1786185743,
+        "narHash": "sha256-GABTXPGfqUo4DhIJDN95A0ToFVUfAutY3TYmgVEOnho=",
+        "owner": "pleme-io",
+        "repo": "pangea-grafana",
+        "rev": "8d5f8275c8aae16f5b6dd1b00c75bf07df48774b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "pleme-io",
+        "repo": "pangea-grafana",
+        "type": "github"
+      }
+    },
     "pangea-hcloud": {
       "flake": false,
       "locked": {
@@ -5032,6 +5048,7 @@
         "pangea-datadog": "pangea-datadog",
         "pangea-gcp": "pangea-gcp",
         "pangea-github": "pangea-github",
+        "pangea-grafana": "pangea-grafana",
         "pangea-hcloud": "pangea-hcloud",
         "pangea-kubernetes": "pangea-kubernetes",
         "pangea-porkbun": "pangea-porkbun",

@@ -151,3 +151,20 @@ fn env_is_explicit_not_inherited() {
         r#"["1", nil, "unset"]"#
     );
 }
+
+#[test]
+fn argument_forwarding_passes_only_what_follows_the_named_params() {
+    let src = r#"
+      class Inner
+        def call(*args, k: nil, &blk); [args, k, blk ? blk.call : nil].inspect; end
+      end
+      class Outer
+        def initialize; @i = Inner.new; end
+        def method_missing(name, ...); @i.call(...); end
+        def lead(a, ...); @i.call(a.to_s * 2, ...); end
+      end
+      o = Outer.new
+      [o.anything(1, 2, k: 3) { :b }, o.lead(:x, 9)].join(" | ")
+    "#;
+    assert_eq!(rb(src), "[[1, 2], 3, :b] | [[\"xx\", 9], nil, nil]");
+}

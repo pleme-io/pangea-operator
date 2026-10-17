@@ -271,6 +271,7 @@ async fn reconcile_flow(
                             template_name: None,
                             variables,
                             variable_refs: None,
+                            secret_variables: Vec::new(),
                             auto_approve: step.auto_approve.unwrap_or(true),
                             // Flow-spawned templates default auto_approve to
                             // true (see above) -- the GitOps-native manual

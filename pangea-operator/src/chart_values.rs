@@ -61,7 +61,7 @@ pub struct ChartValues {
     #[schemars(
         description = "Ruby templates compiled by the lava backend's contained interpreter (PANGEA_LAVA_RUBY). On by default; enabled: false refuses them with a typed error."
     )]
-    pub lava_ruby: ToggleSection,
+    pub lava_ruby: LavaRubyValues,
 
     /// OperatorPolicy/default singleton CR config.
     #[serde(default)]
@@ -82,6 +82,27 @@ pub struct ChartValues {
     /// shouldn't drift independently.
     #[serde(flatten, default)]
     pub other: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LavaRubyValues {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    #[schemars(
+        description = "PANGEA_LAVA_RUBY_LOAD_PATH: colon-separated gem lib dirs. Empty uses every <gem>/lib under /usr/share/lava/ruby, the closure the operator image bakes in."
+    )]
+    pub load_path: String,
+}
+
+impl Default for LavaRubyValues {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            load_path: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
@@ -315,6 +336,9 @@ mod tests {
         let v: ChartValues = serde_json::from_str("{}").unwrap();
         assert_eq!(v.compiler_backend, CompilerBackendChoice::Derived);
         assert!(v.lava_ruby.enabled);
+        assert!(v.lava_ruby.load_path.is_empty());
+        assert!(s.contains("\"loadPath\""));
+        assert!(serde_json::from_str::<ChartValues>(r#"{"lavaRuby":{"loadPath":7}}"#).is_err());
         assert!(serde_json::from_str::<ChartValues>(r#"{"compilerBackend":"cobol"}"#).is_err());
     }
 

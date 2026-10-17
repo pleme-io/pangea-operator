@@ -81,7 +81,7 @@ impl From<pangea_ruby_eval::EvalError> for BackendError {
 /// lines 391-498. Either `source` (legacy inline-eval mode) or
 /// `template_path` + `rubylib_paths` (gitRepository mode) must be
 /// provided.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct CompileRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
@@ -93,6 +93,20 @@ pub struct CompileRequest {
     pub variables: HashMap<String, serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub template_name: Option<String>,
+}
+
+impl std::fmt::Debug for CompileRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut keys: Vec<&String> = self.variables.keys().collect();
+        keys.sort();
+        f.debug_struct("CompileRequest")
+            .field("source", &self.source.as_ref().map(|s| s.len()))
+            .field("template_path", &self.template_path)
+            .field("rubylib_paths", &self.rubylib_paths)
+            .field("variables", &keys)
+            .field("template_name", &self.template_name)
+            .finish()
+    }
 }
 
 /// Mirrors the `/compile` response shape. Carries BOTH the
@@ -249,6 +263,29 @@ pub trait CompilerBackend: Send + Sync {
         Err(BackendError::Evaluator(
             "named dashboard architectures require the lava backend".into(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod compile_request_debug_tests {
+    use super::*;
+
+    #[test]
+    fn debug_names_variables_and_never_prints_their_values() {
+        let mut variables = HashMap::new();
+        variables.insert(
+            "GATEWAY_ACCESS_KEY".to_string(),
+            serde_json::json!("fixture-value-123"),
+        );
+        let req = CompileRequest {
+            source: Some("template :x do\nend".into()),
+            variables,
+            ..Default::default()
+        };
+        let shown = format!("{req:?}");
+        assert!(shown.contains("GATEWAY_ACCESS_KEY"), "{shown}");
+        assert!(!shown.contains("fixture-value-123"), "{shown}");
+        assert!(!shown.contains("template :x"), "{shown}");
     }
 }
 

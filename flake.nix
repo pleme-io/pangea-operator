@@ -112,6 +112,10 @@
       url = "github:pleme-io/pangea-spot";
       flake = false;
     };
+    pangea-grafana = {
+      url = "github:pleme-io/pangea-grafana";
+      flake = false;
+    };
 
     # ── tsunagu source-fetch workaround (narrow, repo-local, temporary) ──
     # Cargo.lock pins tsunagu to a git rev
@@ -677,6 +681,7 @@
             # "points at nothing" failure the lava-catalogue comment below
             # guards against, and it fails identically at reconcile-time.
             (magmaProviderMirrorFor imageSystem)
+            (lavaRubyGemsFor imageSystem)
             (imagePkgs.runCommand "lava-dashboard-catalog" { } ''
               mkdir -p $out/usr/share/lava/dashboards
               n=$(find ${inputs.lava-architectures}/dashboards -name '*.tlisp' | wc -l)
@@ -1121,6 +1126,43 @@
           );
         };
 
+      lavaRubyGemsFor =
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+          gemset = import ./pangea-compiler/gemset.nix;
+          sourceGems = pangeaInputs // {
+            "pangea-grafana" = inputs.pangea-grafana;
+          };
+          publishedGems = lib.genAttrs [ "terraform-synthesizer" "abstract-synthesizer" ] (
+            name:
+            pkgs.fetchurl {
+              url = "https://rubygems.org/gems/${name}-${gemset.${name}.version}.gem";
+              sha256 = gemset.${name}.source.sha256;
+            }
+          );
+          root = "usr/share/lava/ruby";
+          names = builtins.attrNames sourceGems ++ builtins.attrNames publishedGems;
+          drv = pkgs.runCommand "lava-ruby-gems" { } (
+            lib.concatStrings (
+              lib.mapAttrsToList (n: src: ''
+                mkdir -p $out/${root}/${n} && cp -r ${src}/lib $out/${root}/${n}/lib
+              '') sourceGems
+              ++ lib.mapAttrsToList (n: gem: ''
+                mkdir -p $out/${root}/${n} && tar -xOf ${gem} data.tar.gz | tar -xzf - -C $out/${root}/${n} lib
+              '') publishedGems
+              ++ map (n: ''
+                test -n "$(find $out/${root}/${n}/lib -name '*.rb' -print -quit)"
+              '') names
+            )
+          );
+        in
+        drv
+        // {
+          loadPath = lib.concatMapStringsSep ":" (n: "${drv}/${root}/${n}/lib") (lib.sort lib.lessThan names);
+          gemNames = names;
+        };
+
       withEmbedded = lib.foldl' (acc: sys: lib.recursiveUpdate acc (embeddedOperatorExtension sys)) base [
         "x86_64-linux"
         "aarch64-linux"
@@ -1176,7 +1218,7 @@
           };
         };
 
-      extended = lib.foldl' (acc: sys: lib.recursiveUpdate acc (rubyEvalShell sys)) withEmbedded [
+      extended = lib.foldl' (acc: sys: lib.recursiveUpdate acc (rubyEvalShell sys // { packages.${sys}."lava-ruby-gems" = lavaRubyGemsFor sys; })) withEmbedded [
         "x86_64-linux"
         "aarch64-linux"
         "x86_64-darwin"
