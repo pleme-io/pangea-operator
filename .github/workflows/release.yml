@@ -247,6 +247,7 @@ jobs:
         # rename follows once a tag under the new prefix exists.
         variant:
           - { attr: dockerImage-operator-noruby-amd64, tag: embedded-amd64 }
+          - { attr: dockerImage-operator-embedded-amd64, tag: ruby-amd64 }
     uses: pleme-io/substrate/.github/workflows/image-push.yml@main
     with:
       imageAttr: ${{ matrix.variant.attr }}
@@ -276,6 +277,7 @@ jobs:
       # it. Same threshold + exception file the old post-publish job used.
       scanBeforePush: true
       scanFailOnSeverity: "UNKNOWN"
+      scanGoReachability: true
     secrets:
       # ── ★ THE JOB'S OWN GITHUB_TOKEN, NOT A PAT ────────────────────────
       # This used to map BOT_PAT, because GITHUB_TOKEN "lacks package-write on
@@ -318,6 +320,7 @@ jobs:
         # why, and why the tag prefix does not move in the same commit.
         variant:
           - { attr: dockerImage-operator-noruby-amd64, tag: embedded-amd64 }
+          - { attr: dockerImage-operator-embedded-amd64, tag: ruby-amd64 }
     uses: pleme-io/substrate/.github/workflows/image-push.yml@main
     with:
       imageAttr: ${{ matrix.variant.attr }}
@@ -354,6 +357,7 @@ jobs:
       # default runner), so this is the load-bearing half of the fix.
       scanBeforePush: true
       scanFailOnSeverity: "UNKNOWN"
+      scanGoReachability: true
     secrets:
       GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # image-push reads BOT_PAT separately, for the Nix git-fetch netrc, and
