@@ -111,8 +111,7 @@ Authors stay in YAML; the operator enforces typed contracts and emits typed rece
 # All commands route through Nix.
 nix flake check                                    # 5-min CI gate
 nix develop -c cargo test --workspace              # unit + integration tests
-nix build .#dockerImage-operator-embedded-amd64    # build operator image
-nix run .#push-image-operator-embedded-amd64       # push to ghcr.io
+nix build .#dockerImage-operator-noruby-amd64      # build the operator image (lava; no CRuby)
 ```
 
 See [`CLAUDE.md`](CLAUDE.md) for the full operator reference (CRDs, cascade, reactive policies, build/test/rollout commands).

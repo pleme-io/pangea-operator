@@ -32,8 +32,9 @@ nix develop -c cargo test --workspace
 nix develop -c cargo clippy --workspace -- -D warnings
 nix develop -c cargo fmt --all -- --check
 
-# Build the operator image locally.
-nix build .#dockerImage-operator-embedded-amd64
+# Build the operator image locally (lava backend, no CRuby; Ruby templates
+# compile in lava-ruby against the baked gem closure).
+nix build .#dockerImage-operator-noruby-amd64
 ```
 
 For working on the embedded Ruby evaluator specifically:

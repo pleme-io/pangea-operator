@@ -425,11 +425,13 @@ mistaken for a wedged one — see the ReactivePolicy section above.
 ```sh
 # Default (lava backend, lava-ruby on; no libruby linkage)
 cargo build -p pangea-operator
-nix build .#dockerImage-amd64
+nix build .#dockerImage-operator-noruby-amd64
+nix build .#lava-ruby-gems
 
-# Embedded backend (links libruby; needs ruby_3_3 + libclang at build time)
+# The embedded backend still compiles behind --features embedded_ruby (links
+# libruby; needs ruby_3_3 + libclang), for tests only: no CRuby image is
+# published, and Ruby templates run in lava.
 nix develop .#ruby-eval -c cargo build -p pangea-operator --features embedded_ruby
-NIXPKGS_ALLOW_UNFREE=1 nix build --impure .#dockerImage-operator-embedded-amd64
 ```
 
 ## Test
@@ -472,8 +474,8 @@ Chart `helmworks/charts/pangea-operator` 0.7.8+ ships:
   ConfigMap is the committed target, not consumed. Behavior-preserving +
   parity-tested when landed, same discipline as the env-surface migration.
 
-The HR's image must be the `<sha>-embedded` variant (built with
-`embedded_ruby` feature on).
+The HR's image is the lava (no-CRuby) image; Ruby templates compile in
+lava-ruby against the gem closure it bakes at `/usr/share/lava/ruby`.
 
 ## Generating CRDs
 
@@ -729,9 +731,8 @@ For canonical examples to copy from when adding a new controller:
   caches by digest. Bump the chart version (0.7.4 → 0.7.5) rather
   than re-pushing the same tag if upgrades silently fail to pick up
   CRD changes.
-- **rio token is rotated every ~7 days.** Native `nix run
-  .#push-image-operator-embedded-amd64` from rio breaks with 401
-  when the token expires. Workaround: scp the tarball to cid +
+- **rio token is rotated every ~7 days.** A native image push from
+  rio breaks with 401 when the token expires. Workaround: scp the tarball to cid +
   `skopeo copy docker-archive:... docker://...` using cid's gh
   auth token.
 
