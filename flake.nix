@@ -527,7 +527,7 @@
             touch $out
           '';
 
-      mkNoRubyOperatorImage =
+      mkNoRubyOperatorImageSet =
         imageSystem:
         let
           # THE OVERLAY IS THE FIX, and substrate already wrote it.
@@ -608,124 +608,136 @@
           };
 
           hardened = import "${substrate}/lib/build/oci/hardened-base.nix" { pkgs = imagePkgs; };
-          arch = if imageSystem == "aarch64-linux" then "arm64" else "amd64";
         in
-        hardened.mkPackageImage {
-          service = "pangea-operator";
-          base = hardened.bases.distroless-static;
-          package = bin;
-          publishName = "pangea-operator-noruby";
-          publishTag = arch;
-          entrypoint = [ "${bin}/bin/pangea-operator" ];
-          # The Ruby-free build cannot serve the embedded backend — main.rs
-          # panics loudly on PANGEA_COMPILER_BACKEND=embedded rather than
-          # silently falling back — so the image selects the lava backend
-          # explicitly. Without this the default config (compiler.backend
-          # = "embedded") would crash it on startup.
-          env = [
-            "PANGEA_COMPILER_BACKEND=lava"
-            "LAVA_DASHBOARD_CATALOG=/usr/share/lava/dashboards"
-            "LAVA_ARCHITECTURE_CATALOG=/usr/share/lava/architectures"
-            # ── ★ THE PROVIDERS THIS IMAGE SHIPPED WITHOUT ────────────────
-            # Added 2026-08-27. This env var and the mirror in extraContents
-            # below were present ONLY in mkEmbeddedOperatorImage, so the
-            # Ruby-free image carried no terraform provider binaries at all.
-            # It went live the moment the `embedded-amd64` TAG was repointed
-            # at this variant (2837c43): magma's locate_provider found
-            # neither MAGMA_PROVIDER_DIR nor the workspace's
-            # `.terraform/providers` (an emptyDir, wiped by the very pod roll
-            # that deploys a new image), and every apply AND every import
-            # prepass failed with
-            #   locate provider "aws": no .terraform/providers dir … run `init` first
-            # 6 of 21 camelot templates were Failed on this, in two shapes
-            # that read as unrelated: three "Magma execution failed" and
-            # three "Applying refused: import failed … still wants to CREATE
-            # it". The second shape is the never-destroy guard working
-            # correctly ON TOP of this bug — the import could not run, so the
-            # plan fell back to create, so the guard refused to duplicate a
-            # live resource.
+        substrate.lib.${imageSystem}.mkHardenedImageSet {
+          pkgs = imagePkgs;
+          system = imageSystem;
+          sourceUrl = "https://github.com/pleme-io/pangea-operator";
+          sourceRevision = self.rev or self.dirtyRev or "unknown";
+          ociOverrides.operator = hardened;
+          images.operator = {
+            service = "pangea-operator";
+            base = "distroless-static";
+            package = bin;
+            upstreamImage = "none: first-party Rust source";
+            hardeningRationale = "musl-static operator binary on distroless-static: no shell, no libc, no package manager";
+            publishName = "ghcr.io/pleme-io/pangea-operator";
+            publishTag = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.version;
+            trivyAnalysableTargets = [
+              "gobinary"
+              "rustbinary"
+            ];
+            entrypoint = [ "${bin}/bin/pangea-operator" ];
+            # The Ruby-free build cannot serve the embedded backend — main.rs
+            # panics loudly on PANGEA_COMPILER_BACKEND=embedded rather than
+            # silently falling back — so the image selects the lava backend
+            # explicitly. Without this the default config (compiler.backend
+            # = "embedded") would crash it on startup.
+            env = [
+              "PANGEA_COMPILER_BACKEND=lava"
+              "LAVA_DASHBOARD_CATALOG=/usr/share/lava/dashboards"
+              "LAVA_ARCHITECTURE_CATALOG=/usr/share/lava/architectures"
+              # ── ★ THE PROVIDERS THIS IMAGE SHIPPED WITHOUT ────────────────
+              # Added 2026-08-27. This env var and the mirror in extraContents
+              # below were present ONLY in mkEmbeddedOperatorImage, so the
+              # Ruby-free image carried no terraform provider binaries at all.
+              # It went live the moment the `embedded-amd64` TAG was repointed
+              # at this variant (2837c43): magma's locate_provider found
+              # neither MAGMA_PROVIDER_DIR nor the workspace's
+              # `.terraform/providers` (an emptyDir, wiped by the very pod roll
+              # that deploys a new image), and every apply AND every import
+              # prepass failed with
+              #   locate provider "aws": no .terraform/providers dir … run `init` first
+              # 6 of 21 camelot templates were Failed on this, in two shapes
+              # that read as unrelated: three "Magma execution failed" and
+              # three "Applying refused: import failed … still wants to CREATE
+              # it". The second shape is the never-destroy guard working
+              # correctly ON TOP of this bug — the import could not run, so the
+              # plan fell back to create, so the guard refused to duplicate a
+              # live resource.
+              #
+              # There is deliberately NO `tofu init` fallback here
+              # (PANGEA_FORBID_TOFU + magma reads MAGMA_PROVIDER_DIR), so an
+              # absent mirror is a hard failure rather than a slow path.
+              "MAGMA_PROVIDER_DIR=${magmaProviderMirrorFor imageSystem}"
+            ];
+            # The catalogue those two env vars are useless without. Copied from
+            # the lava-architectures input rather than vendored, so adding a
+            # dashboard is a lock bump and not an edit here.
             #
-            # There is deliberately NO `tofu init` fallback here
-            # (PANGEA_FORBID_TOFU + magma reads MAGMA_PROVIDER_DIR), so an
-            # absent mirror is a hard failure rather than a slow path.
-            "MAGMA_PROVIDER_DIR=${magmaProviderMirrorFor imageSystem}"
-          ];
-          # The catalogue those two env vars are useless without. Copied from
-          # the lava-architectures input rather than vendored, so adding a
-          # dashboard is a lock bump and not an edit here.
-          #
-          # The `find … -exec install` shape (rather than `cp -r`) is
-          # deliberate: it fails loudly if `dashboards/` is missing or empty
-          # upstream, where a `cp -r` of an absent directory would produce an
-          # empty target and reproduce exactly the bug this closes — an env
-          # var pointing at nothing, discovered only when a CR is applied
-          # months later.
-          # ── ★ A LIST, NOT A FUNCTION ────────────────────────────────
-          # hardened.mkPackageImage declares `extraContents ? []` and uses it
-          # as `[ package ] ++ extraContents` (substrate
-          # lib/build/oci/hardened-base.nix:545,625). Passing a lambda made
-          # the whole image fail at EVAL with "expected a list but found a
-          # function", four seconds into a step named "Build image with Nix"
-          # — which reads like a build failure and is not one.
-          #
-          # The lambda bought nothing: `imagePkgs` is already in scope here,
-          # so the argument was discarded (`_:`) anyway. Substrate has a
-          # SECOND builder whose extraContents genuinely is a function
-          # (lib/build/go/tool-image-flake.nix), which is where the shape
-          # came from — same option name, two contracts, and no error until
-          # eval.
-          extraContents = [
-            # The provider closure MAGMA_PROVIDER_DIR above points at. Listed
-            # here so nix actually copies it into the image — an env var
-            # naming a store path that the image does not contain is the same
-            # "points at nothing" failure the lava-catalogue comment below
-            # guards against, and it fails identically at reconcile-time.
-            (magmaProviderMirrorFor imageSystem)
-            (lavaRubyGemsFor imageSystem)
-            (imagePkgs.runCommand "lava-dashboard-catalog" { } ''
-              mkdir -p $out/usr/share/lava/dashboards
-              n=$(find ${inputs.lava-architectures}/dashboards -name '*.tlisp' | wc -l)
-              if [ "$n" -eq 0 ]; then
-                echo "lava-architectures ships no dashboards/*.tlisp — the" \
-                     "catalogue would be empty and every architecture CR" \
-                     "would fail at reconcile" >&2
-                exit 1
-              fi
-              find ${inputs.lava-architectures}/dashboards -name '*.tlisp' \
-                -exec install -Dm444 {} $out/usr/share/lava/dashboards/ \;
-              echo "lava catalogue: $n dashboards"
-            '')
-            # ── ★ THE ARCHITECTURE CATALOGUE ────────────────────────────
-            # LavaCompilerBackend::compile resolves a named architecture from
-            # /usr/share/lava/architectures. Nothing put files there, so a
-            # compile by template_name would have failed at RECONCILE with
-            # "architecture not found in the image catalogue" — after the
-            # image shipped, on a cluster, for a template that looked
-            # correctly configured.
+            # The `find … -exec install` shape (rather than `cp -r`) is
+            # deliberate: it fails loudly if `dashboards/` is missing or empty
+            # upstream, where a `cp -r` of an absent directory would produce an
+            # empty target and reproduce exactly the bug this closes — an env
+            # var pointing at nothing, discovered only when a CR is applied
+            # months later.
+            # ── ★ A LIST, NOT A FUNCTION ────────────────────────────────
+            # hardened.mkPackageImage declares `extraContents ? []` and uses it
+            # as `[ package ] ++ extraContents` (substrate
+            # lib/build/oci/hardened-base.nix:545,625). Passing a lambda made
+            # the whole image fail at EVAL with "expected a list but found a
+            # function", four seconds into a step named "Build image with Nix"
+            # — which reads like a build failure and is not one.
             #
-            # The same `find … -exec install` shape as the dashboards above,
-            # and for the same reason: it fails loudly when the upstream
-            # directory is missing or empty, where `cp -r` of an absent
-            # directory produces an empty target and reproduces exactly the
-            # bug this closes.
-            (imagePkgs.runCommand "lava-architecture-catalog" { } ''
-              mkdir -p $out/usr/share/lava/architectures
-              n=$(find ${inputs.lava-architectures}/architectures -name '*.tlisp' | wc -l)
-              if [ "$n" -eq 0 ]; then
-                echo "lava-architectures ships no architectures/*.tlisp — the" \
-                     "catalogue would be empty and every compile by name would" \
-                     "fail at reconcile" >&2
-                exit 1
-              fi
-              find ${inputs.lava-architectures}/architectures -name '*.tlisp' \
-                -exec install -Dm444 {} $out/usr/share/lava/architectures/ \;
-              echo "lava catalogue: $n architectures"
-            '')
-          ];
-          exposedPorts = {
-            "8080/tcp" = { };
-            "8081/tcp" = { };
-            "9090/tcp" = { };
+            # The lambda bought nothing: `imagePkgs` is already in scope here,
+            # so the argument was discarded (`_:`) anyway. Substrate has a
+            # SECOND builder whose extraContents genuinely is a function
+            # (lib/build/go/tool-image-flake.nix), which is where the shape
+            # came from — same option name, two contracts, and no error until
+            # eval.
+            extraContents = [
+              # The provider closure MAGMA_PROVIDER_DIR above points at. Listed
+              # here so nix actually copies it into the image — an env var
+              # naming a store path that the image does not contain is the same
+              # "points at nothing" failure the lava-catalogue comment below
+              # guards against, and it fails identically at reconcile-time.
+              (magmaProviderMirrorFor imageSystem)
+              (lavaRubyGemsFor imageSystem)
+              (imagePkgs.runCommand "lava-dashboard-catalog" { } ''
+                mkdir -p $out/usr/share/lava/dashboards
+                n=$(find ${inputs.lava-architectures}/dashboards -name '*.tlisp' | wc -l)
+                if [ "$n" -eq 0 ]; then
+                  echo "lava-architectures ships no dashboards/*.tlisp — the" \
+                       "catalogue would be empty and every architecture CR" \
+                       "would fail at reconcile" >&2
+                  exit 1
+                fi
+                find ${inputs.lava-architectures}/dashboards -name '*.tlisp' \
+                  -exec install -Dm444 {} $out/usr/share/lava/dashboards/ \;
+                echo "lava catalogue: $n dashboards"
+              '')
+              # ── ★ THE ARCHITECTURE CATALOGUE ────────────────────────────
+              # LavaCompilerBackend::compile resolves a named architecture from
+              # /usr/share/lava/architectures. Nothing put files there, so a
+              # compile by template_name would have failed at RECONCILE with
+              # "architecture not found in the image catalogue" — after the
+              # image shipped, on a cluster, for a template that looked
+              # correctly configured.
+              #
+              # The same `find … -exec install` shape as the dashboards above,
+              # and for the same reason: it fails loudly when the upstream
+              # directory is missing or empty, where `cp -r` of an absent
+              # directory produces an empty target and reproduces exactly the
+              # bug this closes.
+              (imagePkgs.runCommand "lava-architecture-catalog" { } ''
+                mkdir -p $out/usr/share/lava/architectures
+                n=$(find ${inputs.lava-architectures}/architectures -name '*.tlisp' | wc -l)
+                if [ "$n" -eq 0 ]; then
+                  echo "lava-architectures ships no architectures/*.tlisp — the" \
+                       "catalogue would be empty and every compile by name would" \
+                       "fail at reconcile" >&2
+                  exit 1
+                fi
+                find ${inputs.lava-architectures}/architectures -name '*.tlisp' \
+                  -exec install -Dm444 {} $out/usr/share/lava/architectures/ \;
+                echo "lava catalogue: $n architectures"
+              '')
+            ];
+            exposedPorts = {
+              "8080/tcp" = { };
+              "8081/tcp" = { };
+              "9090/tcp" = { };
+            };
           };
         };
 
@@ -733,10 +745,13 @@
         system:
         let
           arch = if system == "aarch64-linux" then "arm64" else "amd64";
+          imageSet = mkNoRubyOperatorImageSet system;
         in
         {
+          apps.${system} = removeAttrs imageSet.apps [ "release" ];
+          hardenedImageCatalog.${system} = imageSet.catalog;
           packages.${system} = {
-            "dockerImage-operator-noruby-${arch}" = mkNoRubyOperatorImage system;
+            "dockerImage-operator-noruby-${arch}" = imageSet.packages.operatorImage;
           }
           // lib.optionalAttrs (system == "x86_64-linux") {
             # Both variants' binaries, derived from the catalog. x86_64-linux
