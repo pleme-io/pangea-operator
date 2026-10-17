@@ -157,6 +157,10 @@ async fn main() -> Result<()> {
         return run_resolve_org().await;
     }
 
+    if env::args().any(|arg| arg == "--reconcile-repo-settings") {
+        return run_reconcile_repo_settings().await;
+    }
+
     // Initialize tracing
     init_tracing()?;
 
@@ -965,6 +969,49 @@ async fn run_migrate() -> Result<()> {
     Ok(())
 }
 
+async fn run_reconcile_repo_settings() -> Result<()> {
+    let args: Vec<String> = env::args().collect();
+    let value_of = |flag: &str| -> Option<String> {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+    };
+    let config_err = |m: String| pangea_operator::Error::Config(m);
+    let owner = value_of("--owner").unwrap_or_else(|| "pleme-io".to_string());
+    let catalogue_path = value_of("--catalogue").ok_or_else(|| {
+        config_err("--reconcile-repo-settings needs --catalogue <path to org.yaml>".into())
+    })?;
+    let token_path = value_of("--token-file").ok_or_else(|| {
+        config_err(
+            "--reconcile-repo-settings needs --token-file <path>: it writes repository settings"
+                .into(),
+        )
+    })?;
+    let token = pangea_operator::org_resolve::read_token_file(&token_path).map_err(config_err)?;
+    let raw = std::fs::read_to_string(&catalogue_path)
+        .map_err(|e| config_err(format!("reading {catalogue_path}: {e}")))?;
+    let catalogue: pangea_operator::org_resolve::OrgCatalogue = serde_yaml::from_str(&raw)
+        .map_err(|e| config_err(format!("parsing {catalogue_path}: {e}")))?;
+    let only: Option<Vec<String>> =
+        value_of("--only").map(|s| s.split(',').map(|p| p.trim().to_string()).collect());
+    let dry_run = args.iter().any(|a| a == "--dry-run");
+    let outcomes = pangea_operator::org_settings::reconcile_fork_pr_approval(
+        &catalogue,
+        &owner,
+        &token,
+        only.as_deref(),
+        dry_run,
+    )
+    .await
+    .map_err(config_err)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&outcomes).map_err(pangea_operator::Error::Serialization)?
+    );
+    Ok(())
+}
+
 /// One-shot org resolution — see the `--resolve-org` flag in `main`.
 ///
 /// Reads the catalogue YAML, resolves each row against the live GitHub API, and
@@ -1085,23 +1132,10 @@ async fn run_resolve_org() -> Result<()> {
     // variable, and silently preferring the ambient one is how a caller ends
     // up authenticating as somebody else.
     let token = match value_of("--token-file") {
-        Some(path) => {
-            let raw = std::fs::read_to_string(&path).map_err(|e| {
-                pangea_operator::Error::Config(format!("reading --token-file {path}: {e}"))
-            })?;
-            // A trailing newline is what `sops -d > file` leaves, and a bearer
-            // token with one attached is a 401 that names nothing.
-            let trimmed = raw.trim().to_string();
-            if trimmed.is_empty() {
-                return Err(pangea_operator::Error::Config(format!(
-                    "--token-file {path} is empty. An empty token resolves ANONYMOUSLY, \
-                     under which a private repository answers 404 and is correctly read as \
-                     ABSENT — so every private repo in the catalogue would be reported as \
-                     needing creation. Refusing rather than degrading silently."
-                )));
-            }
-            Some(trimmed)
-        }
+        Some(path) => Some(
+            pangea_operator::org_resolve::read_token_file(&path)
+                .map_err(pangea_operator::Error::Config)?,
+        ),
         None => env::var("GITHUB_TOKEN").ok(),
     };
 

@@ -166,6 +166,23 @@ pub struct RepoOverlay {
     /// "default to on". See `record_for`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actions_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork_pr_approval: Option<crate::org_settings::ForkPrApproval>,
+}
+
+pub fn read_token_file(path: &str) -> Result<String, String> {
+    let raw =
+        std::fs::read_to_string(path).map_err(|e| format!("reading --token-file {path}: {e}"))?;
+    let trimmed = raw.trim().to_string();
+    if trimmed.is_empty() {
+        return Err(format!(
+            "--token-file {path} is empty. An empty token resolves ANONYMOUSLY, \
+             under which a private repository answers 404 and is correctly read as \
+             ABSENT — so every private repo in the catalogue would be reported as \
+             needing creation. Refusing rather than degrading silently."
+        ));
+    }
+    Ok(trimmed)
 }
 
 /// The `org.yaml` document, narrowed to what this resolver consumes.
@@ -2072,6 +2089,7 @@ mod live {
             has_issues: Some(true),
             delete_branch_on_merge: Some(true),
             actions_enabled: Some(true),
+            fork_pr_approval: Some(crate::org_settings::ForkPrApproval::AllExternalContributors),
         };
         let as_map = serde_json::to_value(&full)
             .expect("serializes")
