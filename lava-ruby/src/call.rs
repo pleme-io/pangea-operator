@@ -396,7 +396,10 @@ impl Interp {
         }
         let avail_opt = pos.len().saturating_sub(req_count).min(opt_count);
         if has_fwd {
-            let tail = pos.get(req_count + avail_opt..).map(<[V]>::to_vec).unwrap_or_default();
+            let tail = pos
+                .get(req_count + avail_opt..)
+                .map(<[V]>::to_vec)
+                .unwrap_or_default();
             sc.declare(FORWARDED_ARGS, V::arr(tail));
             if let Some(k) = &kw {
                 sc.declare(FORWARDED_KWARGS, V::Hash(k.clone()));
