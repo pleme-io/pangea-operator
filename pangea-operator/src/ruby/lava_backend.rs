@@ -72,6 +72,7 @@ const DEFAULT_ARCH_CATALOG: &str = "/usr/share/lava/architectures";
 pub struct LavaCompilerBackend {
     catalog: PathBuf,
     architectures: PathBuf,
+    ruby: bool,
 }
 
 impl Default for LavaCompilerBackend {
@@ -86,7 +87,19 @@ impl LavaCompilerBackend {
         Self {
             catalog: catalog.into(),
             architectures: PathBuf::from(DEFAULT_ARCH_CATALOG),
+            ruby: DEFAULT_LAVA_RUBY,
         }
+    }
+
+    #[must_use]
+    pub fn with_ruby(mut self, enabled: bool) -> Self {
+        self.ruby = enabled;
+        self
+    }
+
+    #[must_use]
+    pub fn ruby_enabled(&self) -> bool {
+        self.ruby
     }
 
     /// Point the architecture catalogue somewhere else. Used by tests and
@@ -106,6 +119,7 @@ impl LavaCompilerBackend {
             std::env::var("LAVA_ARCHITECTURE_CATALOG")
                 .unwrap_or_else(|_| DEFAULT_ARCH_CATALOG.to_string()),
         )
+        .with_ruby(lava_ruby_enabled())
     }
 
     /// Resolve an architecture name to its `.tlisp` source.
@@ -453,7 +467,7 @@ impl CompilerBackend for LavaCompilerBackend {
     /// embedded backend's benefit.
     async fn compile(&self, req: CompileRequest) -> Result<CompileResult, BackendError> {
         if is_ruby_request(&req) {
-            return compile_ruby_with_lava(req, lava_ruby_enabled()).await;
+            return compile_ruby_with_lava(req, self.ruby).await;
         }
         // ── AN EMPTY SOURCE IS NOT A SOURCE ────────────────────────────────
         // `Some("")` takes this branch, so a template whose body is empty --
@@ -760,11 +774,19 @@ impl CompilerBackend for DispatchingCompilerBackend {
 
 pub const LAVA_RUBY_ENV: &str = "PANGEA_LAVA_RUBY";
 
+pub const DEFAULT_LAVA_RUBY: bool = true;
+
+#[must_use]
+pub fn parse_lava_ruby(value: Option<&str>) -> bool {
+    match value.map(str::trim) {
+        None | Some("") => DEFAULT_LAVA_RUBY,
+        Some(v) => matches!(v, "on" | "true" | "1"),
+    }
+}
+
+#[must_use]
 pub fn lava_ruby_enabled() -> bool {
-    matches!(
-        std::env::var(LAVA_RUBY_ENV).as_deref(),
-        Ok("on" | "true" | "1")
-    )
+    parse_lava_ruby(std::env::var(LAVA_RUBY_ENV).ok().as_deref())
 }
 
 fn is_ruby_request(req: &CompileRequest) -> bool {
@@ -887,6 +909,40 @@ mod lava_ruby_tests {
         r.source = None;
         r.template_path = Some("/w/t.rb".into());
         assert!(is_ruby_request(&r));
+    }
+
+    #[test]
+    fn lava_ruby_is_on_unless_configured_off() {
+        assert!(parse_lava_ruby(None));
+        assert!(parse_lava_ruby(Some("")));
+        assert!(parse_lava_ruby(Some("on")));
+        assert!(parse_lava_ruby(Some("true")));
+        assert!(parse_lava_ruby(Some("1")));
+        assert!(!parse_lava_ruby(Some("off")));
+        assert!(!parse_lava_ruby(Some("false")));
+        assert!(!parse_lava_ruby(Some("0")));
+        assert!(!parse_lava_ruby(Some("of")));
+        assert!(LavaCompilerBackend::new("/nonexistent").ruby_enabled());
+        assert!(!LavaCompilerBackend::new("/nonexistent")
+            .with_ruby(false)
+            .ruby_enabled());
+    }
+
+    #[tokio::test]
+    async fn the_backend_refuses_ruby_when_configured_off() {
+        let req = CompileRequest {
+            source: Some("template :x do\nend".into()),
+            template_path: None,
+            rubylib_paths: vec![],
+            variables: Default::default(),
+            template_name: None,
+        };
+        let e = LavaCompilerBackend::new("/nonexistent")
+            .with_ruby(false)
+            .compile(req)
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("configured off"), "{e}");
     }
 
     #[tokio::test]

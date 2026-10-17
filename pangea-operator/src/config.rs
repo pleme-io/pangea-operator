@@ -207,6 +207,7 @@ pub struct CompilerConfig {
     pub endpoint: String,
     /// Embedded Ruby owner-thread pool size (`PANGEA_RUBY_WORKERS`).
     pub ruby_workers: usize,
+    pub lava_ruby: bool,
 }
 
 /// Postgres state-backend coordinates (non-secret).
@@ -467,6 +468,8 @@ struct CompilerOverlay {
     endpoint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ruby_workers: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lava_ruby: Option<bool>,
 }
 
 #[derive(Serialize, Default)]
@@ -561,6 +564,8 @@ impl EnvOverlay {
                 backend: env_present("PANGEA_COMPILER_BACKEND"),
                 endpoint: env_present("COMPILER_ENDPOINT"),
                 ruby_workers: env_parse::<usize>("PANGEA_RUBY_WORKERS"),
+                lava_ruby: env_present("PANGEA_LAVA_RUBY")
+                    .map(|v| crate::ruby::parse_lava_ruby(Some(v.as_str()))),
             },
             database: DatabaseOverlay {
                 host: env_present("PGHOST"),
@@ -632,6 +637,7 @@ impl TieredConfig for OperatorConfig {
                 backend: String::new(),
                 endpoint: String::new(),
                 ruby_workers: 0,
+                lava_ruby: false,
             },
             database: DatabaseConfig {
                 host: String::new(),
@@ -719,6 +725,7 @@ impl TieredConfig for OperatorConfig {
             backend: DEFAULT_COMPILER_BACKEND.to_string(),
             endpoint: "http://localhost:8082".to_string(),
             ruby_workers: 1,
+            lava_ruby: crate::ruby::DEFAULT_LAVA_RUBY,
         };
         c.database = DatabaseConfig {
             host: "pangea-database-rw.pangea-system.svc.cluster.local".to_string(),
@@ -819,6 +826,7 @@ mod tests {
         "COMPILER_ENDPOINT",
         "PANGEA_COMPILER_BACKEND",
         "PANGEA_RUBY_WORKERS",
+        "PANGEA_LAVA_RUBY",
         "PGHOST",
         "PGPORT",
         "PGUSER",
@@ -857,13 +865,8 @@ mod tests {
         // Ruby-free build, and the value it would be asserting is one that
         // build cannot honour.
         assert_eq!(p.compiler.backend, DEFAULT_COMPILER_BACKEND);
-        #[cfg(not(feature = "embedded_ruby"))]
-        assert_eq!(
-            p.compiler.backend, "lava",
-            "a Ruby-free build must prescribe lava"
-        );
-        #[cfg(feature = "embedded_ruby")]
-        assert_eq!(p.compiler.backend, "embedded");
+        assert_eq!(p.compiler.backend, "lava");
+        assert!(p.compiler.lava_ruby);
         assert_eq!(p.compiler.endpoint, "http://localhost:8082");
         assert_eq!(p.compiler.ruby_workers, 1);
         assert_eq!(
@@ -1047,6 +1050,12 @@ mod tests {
         assert_eq!(cfg.compiler.backend, "http");
         assert_eq!(cfg.compiler.ruby_workers, 8);
         assert_eq!(cfg.compiler.endpoint, "http://localhost:8082");
+        assert!(cfg.compiler.lava_ruby);
+
+        std::env::set_var("PANGEA_LAVA_RUBY", "off");
+        assert!(!OperatorConfig::resolve().into_value().compiler.lava_ruby);
+        std::env::set_var("PANGEA_LAVA_RUBY", "on");
+        assert!(OperatorConfig::resolve().into_value().compiler.lava_ruby);
 
         clear_migrated();
     }

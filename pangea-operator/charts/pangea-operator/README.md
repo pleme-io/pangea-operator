@@ -9,7 +9,7 @@ Pangea is a Rust Kubernetes operator that reconciles four CRDs end-to-end:
 - **`InfrastructureTemplate`** — one Pangea Ruby template to reconcile (source, variables, per-resource policies, reactive policy, import hints).
 - **`PangeaNamespace`** — state-storage isolation boundary (PostgreSQL schema or S3 prefix).
 
-The operator compiles each template through embedded magnus (CRuby in-process), synthesizes Terraform JSON, runs `tofu plan`/`tofu apply`, and emits typed cycle receipts. Declarative reactive policies escalate when things don't reach a good state.
+The operator compiles each template in-process through lava (tatara-lisp, and Ruby through a contained interpreter with no CRuby; the embedded magnus backend stays selectable by `compilerBackend: embedded`), synthesizes Terraform JSON, runs `tofu plan`/`tofu apply`, and emits typed cycle receipts. Declarative reactive policies escalate when things don't reach a good state.
 
 ## Install
 
@@ -84,8 +84,10 @@ See [`docs/AUTHORING.md`](https://github.com/pleme-io/pangea-operator/blob/main/
 | `resources.limits.{cpu,memory}` | `500m / 512Mi` | Container resource limits. |
 | `resources.requests.{cpu,memory}` | `100m / 128Mi` | Container resource requests. |
 | `leaderElection.enabled` | `true` | Required when `replicaCount > 1`. |
-| `useEmbeddedRuby` | `true` | Evaluate templates in-process (recommended). |
-| `compilerSidecar.enabled` | `false` | Legacy HTTP backend; only needed when `useEmbeddedRuby=false`. |
+| `compilerBackend` | `""` | `lava`, `embedded`, `process` or `http`; empty selects `lava` unless `useEmbeddedRuby=true`. |
+| `lavaRuby.enabled` | `true` | Ruby templates compiled by lava's contained interpreter (`PANGEA_LAVA_RUBY`). |
+| `useEmbeddedRuby` | `false` | Legacy selector for `embedded`, read only when `compilerBackend` is empty. |
+| `compilerSidecar.enabled` | `false` | Legacy HTTP backend; only needed for `compilerBackend: http`. |
 | `compilerSidecar.image.repository` | `ghcr.io/pleme-io/pangea-compiler` | Sidecar image. |
 | `compilerSidecar.image.tag` | `latest` | Sidecar tag. |
 | `nodeSelector` / `tolerations` / `affinity` | `{}` / `[]` / `{}` | Standard scheduling. |

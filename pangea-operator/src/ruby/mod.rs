@@ -31,7 +31,10 @@ pub use backend::{
     CompilerBackend, FixtureOutcome, GemSource, SmokeRequest, SourceKind,
 };
 pub use http_backend::HttpCompilerBackend;
-pub use lava_backend::{DispatchingCompilerBackend, LavaCompilerBackend};
+pub use lava_backend::{
+    lava_ruby_enabled, parse_lava_ruby, DispatchingCompilerBackend, LavaCompilerBackend,
+    DEFAULT_LAVA_RUBY, LAVA_RUBY_ENV,
+};
 
 #[cfg(feature = "embedded_ruby")]
 pub use embedded_backend::EmbeddedCompilerBackend;

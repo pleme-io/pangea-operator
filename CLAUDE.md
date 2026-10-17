@@ -361,16 +361,25 @@ did.
 ## Compiler backend (M8.2+)
 
 The operator dispatches Pangea DSL compilation through the
-`CompilerBackend` trait at `pangea-operator/src/ruby/`. Two impls:
+`CompilerBackend` trait at `pangea-operator/src/ruby/`. `PANGEA_COMPILER_BACKEND`
+(typed as `compiler.backend`, chart `compilerBackend`) picks one at startup:
 
-- `HttpCompilerBackend` — wraps reqwest to the `pangea-compiler`
-  sidecar. Built always.
-- `EmbeddedCompilerBackend` — sends typed RPCs to a `RubyOwner` thread
-  that owns the magnus interpreter. Built only with
-  `--features embedded_ruby`.
+- `lava` — THE DEFAULT, in every build. `LavaCompilerBackend` evaluates
+  tatara-lisp in-process, and Ruby templates through the `lava-ruby` crate
+  (lib-ruby-parser plus a contained interpreter: no CRuby, no subprocess;
+  backticks, `system` and `Open3` raise). Ruby in lava is ON unless
+  `PANGEA_LAVA_RUBY=off` (typed `compiler.lava_ruby`, chart
+  `lavaRuby.enabled`), which refuses Ruby templates with a typed error naming
+  the switch.
+- `embedded` / `process` — magnus CRuby in-thread or per-compile child, built
+  only with `--features embedded_ruby`; configured off by default.
+- `http` — the `pangea-compiler` sidecar; sunset, reached only by naming it.
 
-`PANGEA_COMPILER_BACKEND` env var picks the active backend at startup
-(`http` default, `embedded` when feature is on).
+A template that shelled out (sops, aws) takes its value as a typed request
+variable instead: `Pangea::Secrets.resolve` reads ENV first, and
+`Pangea::RemoteState` reads `PANGEA_REMOTE_STATE_<TEMPLATE>_<OUTPUT>` before
+touching S3.
+
 `PANGEA_GEM_CACHE_DIR` (default `/var/pangea/gems`) is the per-CR
 git-clone cache for the embedded path; `prepare_gem` clones each
 ArchitectureGem's `gitRepository` source into `{cacheDir}/{name}-{ref}/`
@@ -399,7 +408,7 @@ mistaken for a wedged one — see the ReactivePolicy section above.
 ## Build
 
 ```sh
-# Default (HTTP backend; no libruby linkage)
+# Default (lava backend, lava-ruby on; no libruby linkage)
 cargo build -p pangea-operator
 nix build .#dockerImage-amd64
 

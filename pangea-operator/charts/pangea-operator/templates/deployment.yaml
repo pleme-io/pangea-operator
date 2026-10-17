@@ -65,6 +65,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: PANGEA_COMPILER_BACKEND
+              value: {{ include "pangea-operator.compilerBackend" . | quote }}
+            - name: PANGEA_LAVA_RUBY
+              value: {{ ternary "on" "off" (ne (toString ((.Values.lavaRuby).enabled)) "false") | quote }}
             - name: RUST_LOG
               value: {{ .Values.config.logLevel | quote }}
             - name: LOG_FORMAT

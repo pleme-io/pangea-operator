@@ -51,6 +51,18 @@ pub struct ChartValues {
     #[serde(default)]
     pub gem_auth: GemAuth,
 
+    #[serde(default)]
+    #[schemars(
+        description = "Compiler backend: lava (default when unset and useEmbeddedRuby is false), embedded, process or http. Empty derives it from useEmbeddedRuby/rubyIsolation."
+    )]
+    pub compiler_backend: CompilerBackendChoice,
+
+    #[serde(default)]
+    #[schemars(
+        description = "Ruby templates compiled by the lava backend's contained interpreter (PANGEA_LAVA_RUBY). On by default; enabled: false refuses them with a typed error."
+    )]
+    pub lava_ruby: ToggleSection,
+
     /// OperatorPolicy/default singleton CR config.
     #[serde(default)]
     pub operator_policy: OperatorPolicyValues,
@@ -70,6 +82,21 @@ pub struct ChartValues {
     /// shouldn't drift independently.
     #[serde(flatten, default)]
     pub other: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+pub enum CompilerBackendChoice {
+    #[default]
+    #[serde(rename = "")]
+    Derived,
+    #[serde(rename = "lava")]
+    Lava,
+    #[serde(rename = "embedded")]
+    Embedded,
+    #[serde(rename = "process")]
+    Process,
+    #[serde(rename = "http")]
+    Http,
 }
 
 fn default_log_level() -> String {
@@ -275,6 +302,20 @@ mod tests {
         assert!(s.contains("\"allOf\""));
         assert!(s.contains("\"useEmbeddedRuby\""));
         assert!(s.contains("\"minLength\""));
+    }
+
+    #[test]
+    fn schema_types_the_compiler_backend_and_lava_ruby() {
+        let s = generate_values_schema_json();
+        assert!(s.contains("\"compilerBackend\""));
+        assert!(s.contains("\"lavaRuby\""));
+        for v in ["\"lava\"", "\"embedded\"", "\"process\"", "\"http\""] {
+            assert!(s.contains(v), "{v}");
+        }
+        let v: ChartValues = serde_json::from_str("{}").unwrap();
+        assert_eq!(v.compiler_backend, CompilerBackendChoice::Derived);
+        assert!(v.lava_ruby.enabled);
+        assert!(serde_json::from_str::<ChartValues>(r#"{"compilerBackend":"cobol"}"#).is_err());
     }
 
     #[test]

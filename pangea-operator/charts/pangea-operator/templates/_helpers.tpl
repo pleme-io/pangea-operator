@@ -58,3 +58,14 @@ Create the name of the service account to use
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
+
+{{- define "pangea-operator.compilerBackend" -}}
+{{- $backend := .Values.compilerBackend | default "" -}}
+{{- if eq $backend "" -}}
+{{- $backend = ternary "embedded" "lava" (.Values.useEmbeddedRuby | default false) -}}
+{{- end -}}
+{{- if not (has $backend (list "lava" "embedded" "process" "http")) -}}
+{{- fail (printf "pangea-operator: compilerBackend=%q is not one of lava|embedded|process|http" $backend) -}}
+{{- end -}}
+{{- $backend -}}
+{{- end }}

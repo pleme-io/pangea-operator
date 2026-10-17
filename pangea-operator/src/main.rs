@@ -300,8 +300,14 @@ async fn main() -> Result<()> {
             // no restricted binding — sharing this operator's address
             // space and credentials on the fleet control plane.
             "lava" | "" => {
-                info!("Compiler backend: lava (tatara-lisp, no Ruby, no subprocess)");
-                std::sync::Arc::new(pangea_operator::ruby::LavaCompilerBackend::from_env())
+                info!(
+                    lava_ruby = op_cfg.compiler.lava_ruby,
+                    "Compiler backend: lava (tatara-lisp, no CRuby, no subprocess)"
+                );
+                std::sync::Arc::new(
+                    pangea_operator::ruby::LavaCompilerBackend::from_env()
+                        .with_ruby(op_cfg.compiler.lava_ruby),
+                )
             }
             "http" => {
                 info!(endpoint = %compiler_endpoint, "Compiler backend: HTTP sidecar (LEGACY/sunset — explicitly requested)");
@@ -334,8 +340,14 @@ async fn main() -> Result<()> {
                         "unrecognized PANGEA_COMPILER_BACKEND; using lava (the default).                          Known values: lava, embedded, http"
                     );
                 }
-                info!("Compiler backend: lava (tatara-lisp, no Ruby, no subprocess)");
-                std::sync::Arc::new(pangea_operator::ruby::LavaCompilerBackend::from_env())
+                info!(
+                    lava_ruby = op_cfg.compiler.lava_ruby,
+                    "Compiler backend: lava (tatara-lisp, no CRuby, no subprocess)"
+                );
+                std::sync::Arc::new(
+                    pangea_operator::ruby::LavaCompilerBackend::from_env()
+                        .with_ruby(op_cfg.compiler.lava_ruby),
+                )
             }
         };
 
