@@ -1,6 +1,14 @@
 use serde::{Deserialize, Serialize};
 
-use crate::org_resolve::OrgCatalogue;
+use crate::org_resolve::{OrgCatalogue, RepoOverlay};
+
+pub trait RepoSetting: Copy + Eq {
+    const NAME: &'static str;
+    const PATH: &'static str;
+    const FIELD: &'static str;
+    fn as_api(self) -> &'static str;
+    fn declared(overlay: &RepoOverlay) -> Option<Self>;
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -10,14 +18,49 @@ pub enum ForkPrApproval {
     AllExternalContributors,
 }
 
-impl ForkPrApproval {
-    #[must_use]
-    pub fn as_api(self) -> &'static str {
+impl RepoSetting for ForkPrApproval {
+    const NAME: &'static str = "fork_pr_approval";
+    const PATH: &'static str = "fork-pr-contributor-approval";
+    const FIELD: &'static str = "approval_policy";
+
+    fn as_api(self) -> &'static str {
         match self {
             Self::FirstTimeContributorsNewToGithub => "first_time_contributors_new_to_github",
             Self::FirstTimeContributors => "first_time_contributors",
             Self::AllExternalContributors => "all_external_contributors",
         }
+    }
+
+    fn declared(overlay: &RepoOverlay) -> Option<Self> {
+        overlay.fork_pr_approval
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionsAccessLevel {
+    None,
+    User,
+    Organization,
+    Enterprise,
+}
+
+impl RepoSetting for ActionsAccessLevel {
+    const NAME: &'static str = "actions_access_level";
+    const PATH: &'static str = "access";
+    const FIELD: &'static str = "access_level";
+
+    fn as_api(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::User => "user",
+            Self::Organization => "organization",
+            Self::Enterprise => "enterprise",
+        }
+    }
+
+    fn declared(overlay: &RepoOverlay) -> Option<Self> {
+        overlay.actions_access_level
     }
 }
 
@@ -39,20 +82,20 @@ pub struct SettingOutcome {
     pub action: SettingAction,
 }
 
-pub fn declared_fork_pr_approvals(
+pub fn declared_settings<S: RepoSetting>(
     catalogue: &OrgCatalogue,
     only: Option<&[String]>,
-) -> Result<Vec<(String, ForkPrApproval)>, String> {
+) -> Result<Vec<(String, S)>, String> {
     Ok(catalogue
         .resolved_rows()?
         .into_iter()
         .filter(|(row, _)| only.is_none_or(|o| o.iter().any(|n| n == &row.name)))
-        .filter_map(|(row, _)| row.overlay.fork_pr_approval.map(|p| (row.name, p)))
+        .filter_map(|(row, _)| S::declared(&row.overlay).map(|p| (row.name, p)))
         .collect())
 }
 
 #[must_use]
-pub fn plan(declared: ForkPrApproval, observed: &str, dry_run: bool) -> SettingAction {
+pub fn plan<S: RepoSetting>(declared: S, observed: &str, dry_run: bool) -> SettingAction {
     if observed == declared.as_api() {
         SettingAction::Unchanged
     } else if dry_run {
@@ -62,8 +105,11 @@ pub fn plan(declared: ForkPrApproval, observed: &str, dry_run: bool) -> SettingA
     }
 }
 
-fn endpoint(owner: &str, repo: &str) -> String {
-    format!("https://api.github.com/repos/{owner}/{repo}/actions/permissions/fork-pr-contributor-approval")
+fn endpoint<S: RepoSetting>(owner: &str, repo: &str) -> String {
+    format!(
+        "https://api.github.com/repos/{owner}/{repo}/actions/permissions/{}",
+        S::PATH
+    )
 }
 
 fn request(
@@ -80,13 +126,13 @@ fn request(
         .bearer_auth(token)
 }
 
-pub async fn get_fork_pr_approval(
+pub async fn get_setting<S: RepoSetting>(
     client: &reqwest::Client,
     owner: &str,
     repo: &str,
     token: &str,
 ) -> Result<String, String> {
-    let url = endpoint(owner, repo);
+    let url = endpoint::<S>(owner, repo);
     let resp = request(client, reqwest::Method::GET, &url, token)
         .send()
         .await
@@ -99,22 +145,24 @@ pub async fn get_fork_pr_approval(
         .json()
         .await
         .map_err(|e| format!("GET {url}: decoding body: {e}"))?;
-    body.get("approval_policy")
+    body.get(S::FIELD)
         .and_then(serde_json::Value::as_str)
         .map(str::to_string)
-        .ok_or_else(|| format!("GET {url}: no approval_policy in the response"))
+        .ok_or_else(|| format!("GET {url}: no {} in the response", S::FIELD))
 }
 
-pub async fn put_fork_pr_approval(
+pub async fn put_setting<S: RepoSetting>(
     client: &reqwest::Client,
     owner: &str,
     repo: &str,
     token: &str,
-    policy: ForkPrApproval,
+    value: S,
 ) -> Result<(), String> {
-    let url = endpoint(owner, repo);
+    let url = endpoint::<S>(owner, repo);
+    let mut body = serde_json::Map::new();
+    body.insert(S::FIELD.to_string(), serde_json::json!(value.as_api()));
     let resp = request(client, reqwest::Method::PUT, &url, token)
-        .json(&serde_json::json!({ "approval_policy": policy.as_api() }))
+        .json(&serde_json::Value::Object(body))
         .send()
         .await
         .map_err(|e| format!("PUT {url}: {e}"))?;
@@ -126,24 +174,25 @@ pub async fn put_fork_pr_approval(
     }
 }
 
-pub async fn reconcile_fork_pr_approval(
+pub async fn reconcile_setting<S: RepoSetting>(
+    client: &reqwest::Client,
     catalogue: &OrgCatalogue,
     owner: &str,
     token: &str,
     only: Option<&[String]>,
     dry_run: bool,
 ) -> Result<Vec<SettingOutcome>, String> {
-    let client = reqwest::Client::new();
     let mut out = Vec::new();
-    for (repo, declared) in declared_fork_pr_approvals(catalogue, only)? {
-        let before = get_fork_pr_approval(&client, owner, &repo, token).await?;
+    for (repo, declared) in declared_settings::<S>(catalogue, only)? {
+        let before = get_setting::<S>(client, owner, &repo, token).await?;
         let action = plan(declared, &before, dry_run);
         let after = if action == SettingAction::Updated {
-            put_fork_pr_approval(&client, owner, &repo, token, declared).await?;
-            let observed = get_fork_pr_approval(&client, owner, &repo, token).await?;
+            put_setting(client, owner, &repo, token, declared).await?;
+            let observed = get_setting::<S>(client, owner, &repo, token).await?;
             if observed != declared.as_api() {
                 return Err(format!(
-                    "{owner}/{repo}: PUT approval_policy={} succeeded but GET reads {observed}",
+                    "{owner}/{repo}: PUT {}={} succeeded but GET reads {observed}",
+                    S::FIELD,
                     declared.as_api()
                 ));
             }
@@ -153,13 +202,31 @@ pub async fn reconcile_fork_pr_approval(
         };
         out.push(SettingOutcome {
             repo,
-            setting: "fork_pr_approval",
+            setting: S::NAME,
             declared: declared.as_api().to_string(),
             before,
             after,
             action,
         });
     }
+    Ok(out)
+}
+
+pub async fn reconcile_repo_settings(
+    catalogue: &OrgCatalogue,
+    owner: &str,
+    token: &str,
+    only: Option<&[String]>,
+    dry_run: bool,
+) -> Result<Vec<SettingOutcome>, String> {
+    let client = reqwest::Client::new();
+    let mut out =
+        reconcile_setting::<ForkPrApproval>(&client, catalogue, owner, token, only, dry_run)
+            .await?;
+    out.extend(
+        reconcile_setting::<ActionsAccessLevel>(&client, catalogue, owner, token, only, dry_run)
+            .await?,
+    );
     Ok(out)
 }
 
@@ -177,7 +244,7 @@ mod tests {
             "repos:\n  - name: helmworks\n    fork_pr_approval: all_external_contributors\n  - name: other\n",
         );
         assert_eq!(
-            declared_fork_pr_approvals(&c, None).unwrap(),
+            declared_settings::<ForkPrApproval>(&c, None).unwrap(),
             vec![(
                 "helmworks".to_string(),
                 ForkPrApproval::AllExternalContributors
@@ -195,7 +262,7 @@ mod tests {
             "repo_defaults:\n  fork_pr_approval: first_time_contributors\nrepos:\n  - name: a\n  - name: b\n    fork_pr_approval: all_external_contributors\n",
         );
         assert_eq!(
-            declared_fork_pr_approvals(&c, None).unwrap(),
+            declared_settings::<ForkPrApproval>(&c, None).unwrap(),
             vec![
                 ("a".to_string(), ForkPrApproval::FirstTimeContributors),
                 ("b".to_string(), ForkPrApproval::AllExternalContributors),
@@ -203,7 +270,9 @@ mod tests {
         );
         let only = vec!["b".to_string()];
         assert_eq!(
-            declared_fork_pr_approvals(&c, Some(&only)).unwrap().len(),
+            declared_settings::<ForkPrApproval>(&c, Some(&only))
+                .unwrap()
+                .len(),
             1
         );
     }
@@ -236,5 +305,44 @@ mod tests {
                 serde_json::from_value(serde_json::json!(p.as_api())).unwrap();
             assert_eq!(parsed, p);
         }
+    }
+
+    #[test]
+    fn the_access_level_parses_as_the_api_spells_it_and_refuses_anything_else() {
+        let c = catalogue(
+            "repos:\n  - name: pleme-actions\n    actions_access_level: organization\n  - name: other\n",
+        );
+        assert_eq!(
+            declared_settings::<ActionsAccessLevel>(&c, None).unwrap(),
+            vec![(
+                "pleme-actions".to_string(),
+                ActionsAccessLevel::Organization
+            )]
+        );
+        assert!(declared_settings::<ForkPrApproval>(&c, None)
+            .unwrap()
+            .is_empty());
+        assert!(serde_yaml::from_str::<OrgCatalogue>(
+            "repo_defaults:\n  actions_access_level: everyone\n"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn every_access_level_round_trips_through_its_api_spelling() {
+        for l in [
+            ActionsAccessLevel::None,
+            ActionsAccessLevel::User,
+            ActionsAccessLevel::Organization,
+            ActionsAccessLevel::Enterprise,
+        ] {
+            let parsed: ActionsAccessLevel =
+                serde_json::from_value(serde_json::json!(l.as_api())).unwrap();
+            assert_eq!(parsed, l);
+        }
+        assert_eq!(
+            endpoint::<ActionsAccessLevel>("pleme-io", "pleme-actions"),
+            "https://api.github.com/repos/pleme-io/pleme-actions/actions/permissions/access"
+        );
     }
 }

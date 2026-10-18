@@ -168,6 +168,8 @@ pub struct RepoOverlay {
     pub actions_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fork_pr_approval: Option<crate::org_settings::ForkPrApproval>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actions_access_level: Option<crate::org_settings::ActionsAccessLevel>,
 }
 
 pub fn read_token_file(path: &str) -> Result<String, String> {
@@ -2090,6 +2092,7 @@ mod live {
             delete_branch_on_merge: Some(true),
             actions_enabled: Some(true),
             fork_pr_approval: Some(crate::org_settings::ForkPrApproval::AllExternalContributors),
+            actions_access_level: Some(crate::org_settings::ActionsAccessLevel::Organization),
         };
         let as_map = serde_json::to_value(&full)
             .expect("serializes")

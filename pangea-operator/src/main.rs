@@ -996,7 +996,7 @@ async fn run_reconcile_repo_settings() -> Result<()> {
     let only: Option<Vec<String>> =
         value_of("--only").map(|s| s.split(',').map(|p| p.trim().to_string()).collect());
     let dry_run = args.iter().any(|a| a == "--dry-run");
-    let outcomes = pangea_operator::org_settings::reconcile_fork_pr_approval(
+    let outcomes = pangea_operator::org_settings::reconcile_repo_settings(
         &catalogue,
         &owner,
         &token,
