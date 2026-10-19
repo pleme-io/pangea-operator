@@ -3,6 +3,7 @@
 //! Provides Prometheus metrics, OpenTelemetry tracing, and health endpoints.
 
 pub mod bounded_writer;
+pub mod live_metrics;
 mod metrics;
 mod tracing_setup;
 

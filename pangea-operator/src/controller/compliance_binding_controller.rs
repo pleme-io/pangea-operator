@@ -16,7 +16,7 @@ use k8s_openapi::api::core::v1::ObjectReference;
 use kube::{
     api::{Api, Patch, PatchParams},
     runtime::controller::Action,
-    runtime::events::{Event, EventType, Recorder, Reporter},
+    runtime::events::{Event, EventType},
     Resource, ResourceExt,
 };
 use std::sync::Arc;
@@ -400,12 +400,6 @@ async fn emit_target_events(
     let (event_type, reason) = reaction_event_type_and_reason(reaction);
     let message = reaction_message(reaction).to_string();
 
-    let reporter = Reporter {
-        controller: "pangea-operator".into(),
-        instance: std::env::var("POD_NAME").ok(),
-    };
-    let recorder = Recorder::new(state.client.clone(), reporter);
-
     for target in &binding.spec.targets {
         let target_ns = target.namespace.as_deref().unwrap_or(&namespace);
         let obj_ref = target_object_ref(target, target_ns);
@@ -416,15 +410,11 @@ async fn emit_target_events(
             action: reason.clone(),
             secondary: None,
         };
-        if let Err(e) = recorder.publish(&event, &obj_ref).await {
-            warn!(
-                binding = %binding.name_any(),
-                target = %target.name,
-                kind = %target.kind,
-                error = %e,
-                "Failed to record compliance-binding reaction Event"
-            );
-        }
+        let delivery = state.events.record(&obj_ref, &event).await;
+        state
+            .metrics
+            .live
+            .record_event_delivery(delivery.outcome_label());
     }
 }
 

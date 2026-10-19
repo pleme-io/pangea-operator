@@ -303,6 +303,8 @@ pub struct Metrics {
     /// answers "how much has this template's apply churned failures
     /// over time" (rate() surfaces a flapping template).
     pub magma_failed_changes_total: IntCounterVec,
+
+    pub live: super::live_metrics::LiveMetrics,
 }
 
 impl Metrics {
@@ -745,6 +747,8 @@ impl Metrics {
         // collector with the same desc is already registered — which
         // cannot happen for a fresh per-`Metrics` registry — so the
         // `let _ =` swallow is safe and keeps `new()` infallible.
+        let live = super::live_metrics::LiveMetrics::register(&registry);
+
         #[cfg(target_os = "linux")]
         {
             let process_collector = prometheus::process_collector::ProcessCollector::for_self();
@@ -789,6 +793,7 @@ impl Metrics {
             magma_resources_applied,
             magma_resources_failed,
             magma_failed_changes_total,
+            live,
         }
     }
 

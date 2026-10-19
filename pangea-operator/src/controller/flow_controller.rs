@@ -16,7 +16,7 @@ use kube::{
     api::{Api, PostParams},
     runtime::{
         controller::Action,
-        events::{Event, EventType, Recorder, Reporter},
+        events::{Event, EventType},
     },
     Resource, ResourceExt,
 };
@@ -553,11 +553,6 @@ async fn record_flow_event(
     reason: &str,
     message: &str,
 ) {
-    let reporter = Reporter {
-        controller: "pangea-operator".into(),
-        instance: std::env::var("POD_NAME").ok(),
-    };
-    let recorder = Recorder::new(state.client.clone(), reporter);
     let obj_ref = flow.object_ref(&());
     let event = Event {
         type_: event_type,
@@ -566,9 +561,11 @@ async fn record_flow_event(
         action: reason.into(),
         secondary: None,
     };
-    if let Err(e) = recorder.publish(&event, &obj_ref).await {
-        warn!(error = %e, "Failed to record flow event");
-    }
+    let delivery = state.events.record(&obj_ref, &event).await;
+    state
+        .metrics
+        .live
+        .record_event_delivery(delivery.outcome_label());
 }
 
 fn error_policy(_obj: Arc<InfrastructureFlow>, error: &Error, ctx: Arc<ControllerState>) -> Action {

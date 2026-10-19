@@ -13,6 +13,7 @@ pub mod conflict;
 pub mod error_policy;
 pub mod escalation;
 pub mod escalation_handlers;
+pub mod event_sink;
 pub mod finalizer;
 pub mod fleet_status_controller;
 mod flow_controller;
@@ -448,6 +449,8 @@ pub struct ControllerState {
     pub executor_timeout: Duration,
 
     pub progress: Arc<progress::ProgressRegistry>,
+
+    pub events: Arc<event_sink::EventSink>,
 }
 
 impl ControllerState {
@@ -501,6 +504,9 @@ impl ControllerState {
         };
         let workspace_budgets = workspace_budget::WorkspaceBudgets::new(budget_cfg);
 
+        let events = Arc::new(event_sink::EventSink::for_client(client.clone()));
+        events.discover().await;
+
         Ok(Self {
             client,
             metrics,
@@ -525,6 +531,7 @@ impl ControllerState {
             workspace_budgets,
             executor_timeout: Duration::from_secs(executor_config.timeout_secs),
             progress: Arc::new(progress::ProgressRegistry::new()),
+            events,
         })
     }
 
