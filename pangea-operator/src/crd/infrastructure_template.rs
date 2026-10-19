@@ -1771,6 +1771,21 @@ pub struct InfrastructureTemplateStatus {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress: Option<super::live_status::LiveProgress>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_events: Vec<super::live_status::RecordedEvent>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_creates: Option<super::live_status::PendingCreates>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation_lag_since: Option<DateTime<Utc>>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preflight: Option<super::live_status::PreflightReport>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reactions: Option<super::live_status::ReactionLedger>,
 }
 
 /// Receipt for one reconcile cycle. Surfaces the answer to "what did

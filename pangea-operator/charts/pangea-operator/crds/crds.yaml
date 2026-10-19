@@ -1096,6 +1096,10 @@ spec:
                 format: uint32
                 minimum: 0.0
                 type: integer
+              generationLagSince:
+                format: date-time
+                nullable: true
+                type: string
               lastAppliedAt:
                 description: Timestamp of the last successful apply.
                 format: date-time
@@ -1389,6 +1393,31 @@ spec:
                 description: Outputs from the last successful apply.
                 nullable: true
                 type: object
+              pendingCreates:
+                nullable: true
+                properties:
+                  count:
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  names:
+                    items:
+                      type: string
+                    type: array
+                  since:
+                    format: date-time
+                    type: string
+                  sources:
+                    items:
+                      enum:
+                      - plan
+                      - catalog
+                      type: string
+                    type: array
+                required:
+                - count
+                - since
+                type: object
               pendingPlanHash:
                 description: Hash of the pending plan awaiting approval. Set by the operator after planning. Users approve by copying this value to `approvedPlanHash` via kubectl patch or GraphQL mutation.
                 nullable: true
@@ -1463,6 +1492,214 @@ spec:
                 required:
                 - aggregate
                 type: object
+              preflight:
+                nullable: true
+                properties:
+                  at:
+                    format: date-time
+                    type: string
+                  checks:
+                    items:
+                      properties:
+                        check:
+                          type: string
+                        message:
+                          nullable: true
+                          type: string
+                        outcome:
+                          enum:
+                          - passed
+                          - failed
+                          - skipped
+                          type: string
+                        reason:
+                          nullable: true
+                          type: string
+                      required:
+                      - check
+                      - outcome
+                      type: object
+                    type: array
+                  passed:
+                    type: boolean
+                required:
+                - at
+                - passed
+                type: object
+              progress:
+                nullable: true
+                properties:
+                  credentialExpiresAt:
+                    format: date-time
+                    nullable: true
+                    type: string
+                  finishedAt:
+                    format: date-time
+                    nullable: true
+                    type: string
+                  inFlight:
+                    nullable: true
+                    properties:
+                      address:
+                        type: string
+                      rpc:
+                        nullable: true
+                        type: string
+                      since:
+                        format: date-time
+                        type: string
+                    required:
+                    - address
+                    - since
+                    type: object
+                  lastProgressAt:
+                    format: date-time
+                    type: string
+                  phase:
+                    description: Lifecycle phase of an InfrastructureTemplate.
+                    enum:
+                    - Pending
+                    - Verifying
+                    - Verified
+                    - Compiling
+                    - Initializing
+                    - Planning
+                    - Applying
+                    - Ready
+                    - Drifted
+                    - Failed
+                    - CompileBlocked
+                    - Destroying
+                    type: string
+                  phaseStartedAt:
+                    format: date-time
+                    type: string
+                  pod:
+                    nullable: true
+                    type: string
+                  resourcesDone:
+                    default: 0
+                    format: uint64
+                    minimum: 0.0
+                    type: integer
+                  resourcesTotal:
+                    format: uint64
+                    minimum: 0.0
+                    nullable: true
+                    type: integer
+                  resumed:
+                    nullable: true
+                    properties:
+                      at:
+                        format: date-time
+                        type: string
+                      phase:
+                        description: Lifecycle phase of an InfrastructureTemplate.
+                        enum:
+                        - Pending
+                        - Verifying
+                        - Verified
+                        - Compiling
+                        - Initializing
+                        - Planning
+                        - Applying
+                        - Ready
+                        - Drifted
+                        - Failed
+                        - CompileBlocked
+                        - Destroying
+                        type: string
+                      previousPhaseStartedAt:
+                        format: date-time
+                        nullable: true
+                        type: string
+                      previousPod:
+                        nullable: true
+                        type: string
+                    required:
+                    - at
+                    - phase
+                    type: object
+                  step:
+                    enum:
+                    - preflight
+                    - compile
+                    - refresh
+                    - plan
+                    - apply
+                    - record
+                    nullable: true
+                    type: string
+                  stepStartedAt:
+                    format: date-time
+                    nullable: true
+                    type: string
+                required:
+                - lastProgressAt
+                - phase
+                - phaseStartedAt
+                type: object
+              reactions:
+                nullable: true
+                properties:
+                  activeSince:
+                    additionalProperties:
+                      format: date-time
+                      type: string
+                    type: object
+                  counts:
+                    additionalProperties:
+                      format: uint64
+                      minimum: 0.0
+                      type: integer
+                    type: object
+                  last:
+                    nullable: true
+                    properties:
+                      ageSeconds:
+                        default: 0
+                        format: int64
+                        type: integer
+                      at:
+                        format: date-time
+                        type: string
+                      notified:
+                        default: false
+                        type: boolean
+                      trigger:
+                        type: string
+                    required:
+                    - at
+                    - trigger
+                    type: object
+                type: object
+              recentEvents:
+                items:
+                  properties:
+                    at:
+                      format: date-time
+                      type: string
+                    count:
+                      default: 1
+                      format: uint32
+                      minimum: 0.0
+                      type: integer
+                    message:
+                      type: string
+                    reason:
+                      type: string
+                    type:
+                      enum:
+                      - Normal
+                      - Warning
+                      type: string
+                  required:
+                  - at
+                  - message
+                  - reason
+                  - type
+                  type: object
+                type: array
               resources:
                 description: Summary of managed resources.
                 nullable: true

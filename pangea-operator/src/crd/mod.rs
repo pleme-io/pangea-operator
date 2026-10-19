@@ -47,7 +47,11 @@ pub use infrastructure_template::{
     SettlingPolicy, SeverityRollup, TemplateObjectRef, TemplateSource, VariableRef,
 };
 
-pub use live_status::{InFlightCall, LiveProgress, ProgressStep, ResumeRecord};
+pub use live_status::{
+    InFlightCall, LiveProgress, PendingCreateSource, PendingCreates, PreflightCheck,
+    PreflightOutcome, PreflightReport, ProgressStep, ReactionLedger, ReactionRecord, RecordedEvent,
+    RecordedEventType, ResumeRecord,
+};
 
 // Re-export InfrastructureFlow types
 pub use infrastructure_flow::{
