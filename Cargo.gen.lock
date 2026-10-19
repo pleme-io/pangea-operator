@@ -1,12 +1,12 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "ba9198aea73ff1b331ed8c02f3af09c8fa687266730c02cabd12882241e6446e",
+  "cargo_lock_sha256": "f249767ae08fcc5e2da1c0a17ce4285dbc630987f95ac9501075afc71090bd4d",
   "manifest_sha256": {
     "Cargo.toml": "fa3d83bb4eddee0b393f7375cbce4652573cbd213363ad75550f6e6790c5fbd2",
     "lava-ruby/Cargo.toml": "a2d172e3cffd2088bd2c849c579de254aec964cbe53b992a5b381a42c1f80933",
     "pangea-cli/Cargo.toml": "a15be7008ea6fc2ab76b2773e257aec0aa73f3191584a590f73d160530e157f7",
     "pangea-operator-mcp/Cargo.toml": "72a01f5815a03b1c418697a985ede13816d4f5aec385332ec436e2155713dea8",
-    "pangea-operator/Cargo.toml": "f824faa1fcbd569e32358e819f8c7f761d22d28370dd4d2290478da906b9b933",
+    "pangea-operator/Cargo.toml": "61510be7a5c79b9cc80f7b6d88c58ff2be489dcd02d41abdce4d452407f714c8",
     "pangea-ruby-eval/Cargo.toml": "a65712c95619fda84a8cebaa9f887919acf4e71f4125f085797dfaf478eb380a",
     "pangea-types/Cargo.toml": "bba5d0bee1d04b3ddaefa9f7234a1e5a11e3388dd89e62a3deb4a91b66cd4abc",
     "roles-anywhere/Cargo.toml": "82d3c7379682699c55a98bced056af9bf0a853f9c0248e674b729d72007bea5a"
@@ -14,6 +14,11 @@
   "target_resolves": {
     "base": {
       "Inflector-0.11.4": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
+      },
+      "adler2-2.0.1": {
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": []
@@ -113,6 +118,27 @@
       },
       "alloc-from-pool-1.0.5": {
         "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
+      },
+      "alloc-no-stdlib-3.0.0": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
+      },
+      "alloc-stdlib-0.3.0": {
+        "runtime_dependencies": [
+          {
+            "name": "alloc_no_stdlib",
+            "package_key": "alloc-no-stdlib-3.0.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
         "build_dependencies": [],
         "features": []
       },
@@ -406,6 +432,56 @@
         ],
         "build_dependencies": [],
         "features": []
+      },
+      "async-compression-0.4.51": {
+        "runtime_dependencies": [
+          {
+            "name": "compression_codecs",
+            "package_key": "compression-codecs-0.4.46",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "compression_core",
+            "package_key": "compression-core-0.4.34",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "pin_project_lite",
+            "package_key": "pin-project-lite-0.2.17",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "tokio",
+            "package_key": "tokio-1.53.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "brotli",
+          "gzip",
+          "tokio"
+        ]
       },
       "async-graphql-7.2.1": {
         "runtime_dependencies": [
@@ -2150,6 +2226,75 @@
         "build_dependencies": [],
         "features": []
       },
+      "brotli-9.0.0": {
+        "runtime_dependencies": [
+          {
+            "name": "alloc_no_stdlib",
+            "package_key": "alloc-no-stdlib-3.0.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "alloc_stdlib",
+            "package_key": "alloc-stdlib-0.3.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "brotli_decompressor",
+            "package_key": "brotli-decompressor-6.0.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "alloc-stdlib",
+          "default",
+          "std"
+        ]
+      },
+      "brotli-decompressor-6.0.1": {
+        "runtime_dependencies": [
+          {
+            "name": "alloc_no_stdlib",
+            "package_key": "alloc-no-stdlib-3.0.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "alloc_stdlib",
+            "package_key": "alloc-stdlib-0.3.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "alloc-stdlib",
+          "std"
+        ]
+      },
       "bstr-1.12.1": {
         "runtime_dependencies": [
           {
@@ -2628,6 +2773,62 @@
         "build_dependencies": [],
         "features": []
       },
+      "compression-codecs-0.4.46": {
+        "runtime_dependencies": [
+          {
+            "name": "brotli",
+            "package_key": "brotli-9.0.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "compression_core",
+            "package_key": "compression-core-0.4.34",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "flate2",
+            "package_key": "flate2-1.1.10",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "memchr",
+            "package_key": "memchr-2.8.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "brotli",
+          "flate2",
+          "gzip",
+          "memchr"
+        ]
+      },
+      "compression-core-0.4.34": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
+      },
       "concurrent-queue-2.5.0": {
         "runtime_dependencies": [
           {
@@ -2688,6 +2889,164 @@
         "build_dependencies": [],
         "features": [
           "std"
+        ]
+      },
+      "cookie-0.18.2": {
+        "runtime_dependencies": [
+          {
+            "name": "percent_encoding",
+            "package_key": "percent-encoding-2.3.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "time",
+            "package_key": "time-0.3.47",
+            "kind": "normal",
+            "features": [
+              "formatting",
+              "macros",
+              "parsing",
+              "std"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [
+          {
+            "name": "version_check",
+            "package_key": "version_check-0.9.5",
+            "kind": "build",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "host"
+          }
+        ],
+        "features": [
+          "percent-encode",
+          "percent-encoding"
+        ]
+      },
+      "cookie_store-0.22.1": {
+        "runtime_dependencies": [
+          {
+            "name": "cookie",
+            "package_key": "cookie-0.18.2",
+            "kind": "normal",
+            "features": [
+              "percent-encode"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "document_features",
+            "package_key": "document-features-0.2.12",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "host"
+          },
+          {
+            "name": "idna",
+            "package_key": "idna-1.1.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "log",
+            "package_key": "log-0.4.34",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "publicsuffix",
+            "package_key": "publicsuffix-2.3.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde",
+            "package_key": "serde-1.0.229",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde_derive",
+            "package_key": "serde_derive-1.0.229",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "host"
+          },
+          {
+            "name": "serde_json",
+            "package_key": "serde_json-1.0.151",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "time",
+            "package_key": "time-0.3.47",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "url",
+            "package_key": "url-2.5.8",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default",
+          "public_suffix",
+          "serde",
+          "serde_json"
         ]
       },
       "crc-3.4.0": {
@@ -4040,6 +4399,24 @@
         "build_dependencies": [],
         "features": []
       },
+      "document-features-0.2.12": {
+        "runtime_dependencies": [
+          {
+            "name": "litrs",
+            "package_key": "litrs-1.0.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default"
+        ]
+      },
       "dotenvy-0.15.7": {
         "runtime_dependencies": [],
         "build_dependencies": [],
@@ -4514,6 +4891,40 @@
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": []
+      },
+      "flate2-1.1.10": {
+        "runtime_dependencies": [
+          {
+            "name": "crc32fast",
+            "package_key": "crc32fast-1.5.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "miniz_oxide",
+            "package_key": "miniz_oxide-0.9.1",
+            "kind": "normal",
+            "features": [
+              "simd"
+            ],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "any_impl",
+          "default",
+          "miniz_oxide",
+          "runtime_detection",
+          "rust_backend"
+        ]
       },
       "float-cmp-0.10.0": {
         "runtime_dependencies": [
@@ -10719,6 +11130,11 @@
         "build_dependencies": [],
         "features": []
       },
+      "handan-0.1.2": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
+      },
       "handlebars-6.4.1": {
         "runtime_dependencies": [
           {
@@ -11841,177 +12257,6 @@
         "build_dependencies": [],
         "features": []
       },
-      "hyper-util-0.1.20": {
-        "runtime_dependencies": [
-          {
-            "name": "base64",
-            "package_key": "base64-0.22.1",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "bytes",
-            "package_key": "bytes-1.11.1",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "futures_channel",
-            "package_key": "futures-channel-0.3.34",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "futures_util",
-            "package_key": "futures-util-0.3.34",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": false,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "http",
-            "package_key": "http-1.4.1",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "http_body",
-            "package_key": "http-body-1.0.1",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "hyper",
-            "package_key": "hyper-1.11.0",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "ipnet",
-            "package_key": "ipnet-2.12.0",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "libc",
-            "package_key": "libc-0.2.189",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "percent_encoding",
-            "package_key": "percent-encoding-2.3.2",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "pin_project_lite",
-            "package_key": "pin-project-lite-0.2.17",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "socket2",
-            "package_key": "socket2-0.6.4",
-            "kind": "normal",
-            "features": [
-              "all"
-            ],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "tokio",
-            "package_key": "tokio-1.53.1",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": false,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "tower_service",
-            "package_key": "tower-service-0.3.3",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "tracing",
-            "package_key": "tracing-0.1.44",
-            "kind": "normal",
-            "features": [
-              "std"
-            ],
-            "uses_default_features": false,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          }
-        ],
-        "build_dependencies": [],
-        "features": [
-          "client",
-          "client-legacy",
-          "client-proxy",
-          "default",
-          "http1",
-          "http2",
-          "server",
-          "server-auto",
-          "service",
-          "tokio"
-        ]
-      },
       "icu_collections-2.2.0": {
         "runtime_dependencies": [
           {
@@ -12417,6 +12662,7 @@
         "features": [
           "alloc",
           "compiled_data",
+          "default",
           "std"
         ]
       },
@@ -14331,6 +14577,11 @@
         ]
       },
       "litemap-0.8.2": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
+      },
+      "litrs-1.0.1": {
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": []
@@ -17292,6 +17543,37 @@
           "std"
         ]
       },
+      "miniz_oxide-0.9.1": {
+        "runtime_dependencies": [
+          {
+            "name": "adler2",
+            "package_key": "adler2-2.0.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "simd_adler32",
+            "package_key": "simd-adler32-0.3.10",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default",
+          "simd",
+          "simd-adler32",
+          "with-alloc"
+        ]
+      },
       "mio-1.2.1": {
         "runtime_dependencies": [
           {
@@ -18643,6 +18925,16 @@
             "tree": "target"
           },
           {
+            "name": "handan",
+            "package_key": "handan-0.1.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
             "name": "helm_forge",
             "package_key": "helm-forge-0.1.2",
             "kind": "normal",
@@ -19168,6 +19460,16 @@
           {
             "name": "thiserror",
             "package_key": "thiserror-2.0.20",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "todoku",
+            "package_key": "todoku-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -21189,6 +21491,41 @@
         "build_dependencies": [],
         "features": []
       },
+      "psl-types-2.0.11": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
+      },
+      "publicsuffix-2.3.0": {
+        "runtime_dependencies": [
+          {
+            "name": "idna",
+            "package_key": "idna-1.1.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "psl_types",
+            "package_key": "psl-types-2.0.11",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default",
+          "idna",
+          "punycode"
+        ]
+      },
       "quinn-0.11.9": {
         "runtime_dependencies": [
           {
@@ -22117,6 +22454,36 @@
             "tree": "target"
           },
           {
+            "name": "cookie_crate",
+            "package_key": "cookie-0.18.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": "cfg(not(target_arch = \"wasm32\"))",
+            "tree": "target"
+          },
+          {
+            "name": "cookie_store",
+            "package_key": "cookie_store-0.22.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": "cfg(not(target_arch = \"wasm32\"))",
+            "tree": "target"
+          },
+          {
+            "name": "encoding_rs",
+            "package_key": "encoding_rs-0.8.35",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": "cfg(not(target_arch = \"wasm32\"))",
+            "tree": "target"
+          },
+          {
             "name": "futures_core",
             "package_key": "futures-core-0.3.34",
             "kind": "normal",
@@ -22124,6 +22491,16 @@
             "uses_default_features": false,
             "optional": false,
             "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "h2",
+            "package_key": "h2-0.4.14",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": "cfg(not(target_arch = \"wasm32\"))",
             "tree": "target"
           },
           {
@@ -22205,6 +22582,16 @@
             "features": [],
             "uses_default_features": true,
             "optional": false,
+            "target": "cfg(not(target_arch = \"wasm32\"))",
+            "tree": "target"
+          },
+          {
+            "name": "mime",
+            "package_key": "mime-0.3.17",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
             "target": "cfg(not(target_arch = \"wasm32\"))",
             "tree": "target"
           },
@@ -22392,10 +22779,18 @@
           "__rustls",
           "__rustls-ring",
           "__tls",
+          "brotli",
+          "charset",
+          "cookies",
+          "gzip",
+          "h2",
+          "http2",
           "json",
+          "macos-system-configuration",
           "rustls-tls",
           "rustls-tls-webpki-roots",
-          "rustls-tls-webpki-roots-no-provider"
+          "rustls-tls-webpki-roots-no-provider",
+          "system-proxy"
         ]
       },
       "reqwest-0.13.4": {
@@ -25268,6 +25663,11 @@
           "std"
         ]
       },
+      "simd-adler32-0.3.10": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
+      },
       "slab-0.4.12": {
         "runtime_dependencies": [],
         "build_dependencies": [],
@@ -27725,6 +28125,16 @@
             "tree": "target"
           },
           {
+            "name": "itoa",
+            "package_key": "itoa-1.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
             "name": "num_conv",
             "package_key": "num-conv-0.2.2",
             "kind": "normal",
@@ -27753,11 +28163,25 @@
             "optional": false,
             "target": null,
             "tree": "target"
+          },
+          {
+            "name": "time_macros",
+            "package_key": "time-macros-0.2.27",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "host"
           }
         ],
         "build_dependencies": [],
         "features": [
           "alloc",
+          "default",
+          "formatting",
+          "macros",
+          "parsing",
           "std"
         ]
       },
@@ -27765,6 +28189,35 @@
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": []
+      },
+      "time-macros-0.2.27": {
+        "runtime_dependencies": [
+          {
+            "name": "num_conv",
+            "package_key": "num-conv-0.2.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "time_core",
+            "package_key": "time-core-0.1.8",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "formatting",
+          "parsing"
+        ]
       },
       "tinystr-0.8.3": {
         "runtime_dependencies": [
@@ -27818,6 +28271,119 @@
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": []
+      },
+      "todoku-0.1.9": {
+        "runtime_dependencies": [
+          {
+            "name": "async_trait",
+            "package_key": "async-trait-0.1.92",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "host"
+          },
+          {
+            "name": "handan",
+            "package_key": "handan-0.1.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "reqwest",
+            "package_key": "reqwest-0.12.28",
+            "kind": "normal",
+            "features": [
+              "brotli",
+              "charset",
+              "cookies",
+              "gzip",
+              "http2",
+              "json",
+              "macos-system-configuration",
+              "rustls-tls"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde",
+            "package_key": "serde-1.0.229",
+            "kind": "normal",
+            "features": [
+              "derive"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde_json",
+            "package_key": "serde_json-1.0.151",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.20",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "tokio",
+            "package_key": "tokio-1.53.1",
+            "kind": "normal",
+            "features": [
+              "net",
+              "rt",
+              "time"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "tracing",
+            "package_key": "tracing-0.1.44",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "url",
+            "package_key": "url-2.5.8",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default"
+        ]
       },
       "tokio-1.53.1": {
         "runtime_dependencies": [
@@ -29252,6 +29818,18 @@
       "tower-http-0.6.11": {
         "runtime_dependencies": [
           {
+            "name": "async_compression",
+            "package_key": "async-compression-0.4.51",
+            "kind": "normal",
+            "features": [
+              "tokio"
+            ],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
             "name": "base64",
             "package_key": "base64-0.22.1",
             "kind": "normal",
@@ -29278,6 +29856,16 @@
             "features": [],
             "uses_default_features": true,
             "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "futures_core",
+            "package_key": "futures-core-0.3.34",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": true,
             "target": null,
             "tree": "target"
           },
@@ -29312,6 +29900,16 @@
             "tree": "target"
           },
           {
+            "name": "http_body_util",
+            "package_key": "http-body-util-0.1.3",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
             "name": "mime",
             "package_key": "mime-0.3.17",
             "kind": "normal",
@@ -29328,6 +29926,28 @@
             "features": [],
             "uses_default_features": true,
             "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "tokio",
+            "package_key": "tokio-1.53.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "tokio_util",
+            "package_key": "tokio-util-0.7.18",
+            "kind": "normal",
+            "features": [
+              "io"
+            ],
+            "uses_default_features": false,
+            "optional": true,
             "target": null,
             "tree": "target"
           },
@@ -29387,11 +30007,15 @@
           "auth",
           "base64",
           "cors",
+          "decompression-br",
+          "decompression-gzip",
           "default",
           "follow-redirect",
+          "futures-core",
           "futures-util",
           "map-response-body",
           "mime",
+          "tokio-util",
           "tower",
           "trace",
           "tracing",
@@ -31115,6 +31739,188 @@
             "build_dependencies": [],
             "features": []
           },
+          "hyper-util-0.1.20": {
+            "runtime_dependencies": [
+              {
+                "name": "base64",
+                "package_key": "base64-0.22.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "bytes",
+                "package_key": "bytes-1.11.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "futures_channel",
+                "package_key": "futures-channel-0.3.34",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "futures_util",
+                "package_key": "futures-util-0.3.34",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "http",
+                "package_key": "http-1.4.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "http_body",
+                "package_key": "http-body-1.0.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "hyper",
+                "package_key": "hyper-1.11.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "ipnet",
+                "package_key": "ipnet-2.12.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.189",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "percent_encoding",
+                "package_key": "percent-encoding-2.3.2",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "pin_project_lite",
+                "package_key": "pin-project-lite-0.2.17",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "socket2",
+                "package_key": "socket2-0.6.4",
+                "kind": "normal",
+                "features": [
+                  "all"
+                ],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "system_configuration",
+                "package_key": "system-configuration-0.7.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": "cfg(target_os = \"macos\")",
+                "tree": "target"
+              },
+              {
+                "name": "tokio",
+                "package_key": "tokio-1.53.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tower_service",
+                "package_key": "tower-service-0.3.3",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tracing",
+                "package_key": "tracing-0.1.44",
+                "kind": "normal",
+                "features": [
+                  "std"
+                ],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": [
+              "client",
+              "client-legacy",
+              "client-proxy",
+              "client-proxy-system",
+              "default",
+              "http1",
+              "http2",
+              "server",
+              "server-auto",
+              "service",
+              "tokio"
+            ]
+          },
           "iana-time-zone-0.1.65": {
             "runtime_dependencies": [
               {
@@ -31795,6 +32601,68 @@
               "OSX_10_9",
               "default"
             ]
+          },
+          "system-configuration-0.7.0": {
+            "runtime_dependencies": [
+              {
+                "name": "bitflags",
+                "package_key": "bitflags-2.11.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "core_foundation",
+                "package_key": "core-foundation-0.9.4",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "system_configuration_sys",
+                "package_key": "system-configuration-sys-0.6.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": []
+          },
+          "system-configuration-sys-0.6.0": {
+            "runtime_dependencies": [
+              {
+                "name": "core_foundation_sys",
+                "package_key": "core-foundation-sys-0.8.7",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.189",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": []
           }
         }
       },
@@ -31895,6 +32763,178 @@
             ],
             "build_dependencies": [],
             "features": []
+          },
+          "hyper-util-0.1.20": {
+            "runtime_dependencies": [
+              {
+                "name": "base64",
+                "package_key": "base64-0.22.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "bytes",
+                "package_key": "bytes-1.11.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "futures_channel",
+                "package_key": "futures-channel-0.3.34",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "futures_util",
+                "package_key": "futures-util-0.3.34",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "http",
+                "package_key": "http-1.4.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "http_body",
+                "package_key": "http-body-1.0.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "hyper",
+                "package_key": "hyper-1.11.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "ipnet",
+                "package_key": "ipnet-2.12.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.189",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "percent_encoding",
+                "package_key": "percent-encoding-2.3.2",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "pin_project_lite",
+                "package_key": "pin-project-lite-0.2.17",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "socket2",
+                "package_key": "socket2-0.6.4",
+                "kind": "normal",
+                "features": [
+                  "all"
+                ],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tokio",
+                "package_key": "tokio-1.53.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tower_service",
+                "package_key": "tower-service-0.3.3",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tracing",
+                "package_key": "tracing-0.1.44",
+                "kind": "normal",
+                "features": [
+                  "std"
+                ],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": [
+              "client",
+              "client-legacy",
+              "client-proxy",
+              "client-proxy-system",
+              "default",
+              "http1",
+              "http2",
+              "server",
+              "server-auto",
+              "service",
+              "tokio"
+            ]
           },
           "iana-time-zone-0.1.65": {
             "runtime_dependencies": [],
@@ -32774,6 +33814,178 @@
             ],
             "build_dependencies": [],
             "features": []
+          },
+          "hyper-util-0.1.20": {
+            "runtime_dependencies": [
+              {
+                "name": "base64",
+                "package_key": "base64-0.22.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "bytes",
+                "package_key": "bytes-1.11.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "futures_channel",
+                "package_key": "futures-channel-0.3.34",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "futures_util",
+                "package_key": "futures-util-0.3.34",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "http",
+                "package_key": "http-1.4.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "http_body",
+                "package_key": "http-body-1.0.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "hyper",
+                "package_key": "hyper-1.11.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "ipnet",
+                "package_key": "ipnet-2.12.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.189",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "percent_encoding",
+                "package_key": "percent-encoding-2.3.2",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "pin_project_lite",
+                "package_key": "pin-project-lite-0.2.17",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "socket2",
+                "package_key": "socket2-0.6.4",
+                "kind": "normal",
+                "features": [
+                  "all"
+                ],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tokio",
+                "package_key": "tokio-1.53.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tower_service",
+                "package_key": "tower-service-0.3.3",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tracing",
+                "package_key": "tracing-0.1.44",
+                "kind": "normal",
+                "features": [
+                  "std"
+                ],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": [
+              "client",
+              "client-legacy",
+              "client-proxy",
+              "client-proxy-system",
+              "default",
+              "http1",
+              "http2",
+              "server",
+              "server-auto",
+              "service",
+              "tokio"
+            ]
           },
           "iana-time-zone-0.1.65": {
             "runtime_dependencies": [],
@@ -33710,6 +34922,188 @@
             "build_dependencies": [],
             "features": []
           },
+          "hyper-util-0.1.20": {
+            "runtime_dependencies": [
+              {
+                "name": "base64",
+                "package_key": "base64-0.22.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "bytes",
+                "package_key": "bytes-1.11.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "futures_channel",
+                "package_key": "futures-channel-0.3.34",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "futures_util",
+                "package_key": "futures-util-0.3.34",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "http",
+                "package_key": "http-1.4.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "http_body",
+                "package_key": "http-body-1.0.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "hyper",
+                "package_key": "hyper-1.11.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "ipnet",
+                "package_key": "ipnet-2.12.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.189",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "percent_encoding",
+                "package_key": "percent-encoding-2.3.2",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "pin_project_lite",
+                "package_key": "pin-project-lite-0.2.17",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "socket2",
+                "package_key": "socket2-0.6.4",
+                "kind": "normal",
+                "features": [
+                  "all"
+                ],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "system_configuration",
+                "package_key": "system-configuration-0.7.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": "cfg(target_os = \"macos\")",
+                "tree": "target"
+              },
+              {
+                "name": "tokio",
+                "package_key": "tokio-1.53.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tower_service",
+                "package_key": "tower-service-0.3.3",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tracing",
+                "package_key": "tracing-0.1.44",
+                "kind": "normal",
+                "features": [
+                  "std"
+                ],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": [
+              "client",
+              "client-legacy",
+              "client-proxy",
+              "client-proxy-system",
+              "default",
+              "http1",
+              "http2",
+              "server",
+              "server-auto",
+              "service",
+              "tokio"
+            ]
+          },
           "iana-time-zone-0.1.65": {
             "runtime_dependencies": [
               {
@@ -34370,6 +35764,68 @@
               "OSX_10_9",
               "default"
             ]
+          },
+          "system-configuration-0.7.0": {
+            "runtime_dependencies": [
+              {
+                "name": "bitflags",
+                "package_key": "bitflags-2.11.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "core_foundation",
+                "package_key": "core-foundation-0.9.4",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "system_configuration_sys",
+                "package_key": "system-configuration-sys-0.6.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": []
+          },
+          "system-configuration-sys-0.6.0": {
+            "runtime_dependencies": [
+              {
+                "name": "core_foundation_sys",
+                "package_key": "core-foundation-sys-0.8.7",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.189",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": []
           }
         }
       },
@@ -34444,6 +35900,178 @@
             "runtime_dependencies": [],
             "build_dependencies": [],
             "features": []
+          },
+          "hyper-util-0.1.20": {
+            "runtime_dependencies": [
+              {
+                "name": "base64",
+                "package_key": "base64-0.22.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "bytes",
+                "package_key": "bytes-1.11.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "futures_channel",
+                "package_key": "futures-channel-0.3.34",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "futures_util",
+                "package_key": "futures-util-0.3.34",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "http",
+                "package_key": "http-1.4.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "http_body",
+                "package_key": "http-body-1.0.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "hyper",
+                "package_key": "hyper-1.11.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "ipnet",
+                "package_key": "ipnet-2.12.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.189",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "percent_encoding",
+                "package_key": "percent-encoding-2.3.2",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "pin_project_lite",
+                "package_key": "pin-project-lite-0.2.17",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "socket2",
+                "package_key": "socket2-0.6.4",
+                "kind": "normal",
+                "features": [
+                  "all"
+                ],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tokio",
+                "package_key": "tokio-1.53.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tower_service",
+                "package_key": "tower-service-0.3.3",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tracing",
+                "package_key": "tracing-0.1.44",
+                "kind": "normal",
+                "features": [
+                  "std"
+                ],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": [
+              "client",
+              "client-legacy",
+              "client-proxy",
+              "client-proxy-system",
+              "default",
+              "http1",
+              "http2",
+              "server",
+              "server-auto",
+              "service",
+              "tokio"
+            ]
           },
           "iana-time-zone-0.1.65": {
             "runtime_dependencies": [],
@@ -35278,6 +36906,178 @@
             "build_dependencies": [],
             "features": []
           },
+          "hyper-util-0.1.20": {
+            "runtime_dependencies": [
+              {
+                "name": "base64",
+                "package_key": "base64-0.22.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "bytes",
+                "package_key": "bytes-1.11.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "futures_channel",
+                "package_key": "futures-channel-0.3.34",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "futures_util",
+                "package_key": "futures-util-0.3.34",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "http",
+                "package_key": "http-1.4.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "http_body",
+                "package_key": "http-body-1.0.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "hyper",
+                "package_key": "hyper-1.11.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "ipnet",
+                "package_key": "ipnet-2.12.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.189",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "percent_encoding",
+                "package_key": "percent-encoding-2.3.2",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "pin_project_lite",
+                "package_key": "pin-project-lite-0.2.17",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "socket2",
+                "package_key": "socket2-0.6.4",
+                "kind": "normal",
+                "features": [
+                  "all"
+                ],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tokio",
+                "package_key": "tokio-1.53.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tower_service",
+                "package_key": "tower-service-0.3.3",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tracing",
+                "package_key": "tracing-0.1.44",
+                "kind": "normal",
+                "features": [
+                  "std"
+                ],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": [
+              "client",
+              "client-legacy",
+              "client-proxy",
+              "client-proxy-system",
+              "default",
+              "http1",
+              "http2",
+              "server",
+              "server-auto",
+              "service",
+              "tokio"
+            ]
+          },
           "iana-time-zone-0.1.65": {
             "runtime_dependencies": [],
             "build_dependencies": [],
@@ -36049,6 +37849,9 @@
         "path": "src/lib.rs"
       }
     },
+    "adler2-2.0.1": {
+      "edition": "2021"
+    },
     "ahash-0.8.12": {
       "edition": "2018",
       "build_script": "build.rs"
@@ -36061,6 +37864,24 @@
     },
     "alloc-from-pool-1.0.5": {
       "edition": "2021"
+    },
+    "alloc-no-stdlib-3.0.0": {
+      "edition": "2015",
+      "binaries": [
+        {
+          "name": "example",
+          "path": "src/bin/example.rs"
+        }
+      ]
+    },
+    "alloc-stdlib-0.3.0": {
+      "edition": "2015",
+      "binaries": [
+        {
+          "name": "example",
+          "path": "src/bin/example.rs"
+        }
+      ]
     },
     "allocator-api2-0.2.21": {
       "edition": "2018"
@@ -36108,6 +37929,9 @@
     },
     "async-broadcast-0.7.2": {
       "edition": "2021"
+    },
+    "async-compression-0.4.51": {
+      "edition": "2018"
     },
     "async-graphql-7.2.1": {
       "edition": "2024"
@@ -36214,6 +38038,28 @@
     "block-buffer-0.10.4": {
       "edition": "2018"
     },
+    "brotli-9.0.0": {
+      "edition": "2015",
+      "binaries": [
+        {
+          "name": "brotli",
+          "path": "src/bin/brotli.rs"
+        },
+        {
+          "name": "catbrotli",
+          "path": "src/bin/catbrotli.rs"
+        }
+      ]
+    },
+    "brotli-decompressor-6.0.1": {
+      "edition": "2015",
+      "binaries": [
+        {
+          "name": "brotli-decompressor",
+          "path": "src/bin/brotli-decompressor.rs"
+        }
+      ]
+    },
     "bstr-1.12.1": {
       "edition": "2021"
     },
@@ -36289,6 +38135,12 @@
     "colored-2.2.0": {
       "edition": "2021"
     },
+    "compression-codecs-0.4.46": {
+      "edition": "2018"
+    },
+    "compression-core-0.4.34": {
+      "edition": "2018"
+    },
     "concurrent-queue-2.5.0": {
       "edition": "2021"
     },
@@ -36300,6 +38152,13 @@
     },
     "constant_time_eq-0.4.2": {
       "edition": "2024"
+    },
+    "cookie-0.18.2": {
+      "edition": "2018",
+      "build_script": "build.rs"
+    },
+    "cookie_store-0.22.1": {
+      "edition": "2021"
     },
     "core-foundation-0.10.1": {
       "edition": "2021"
@@ -36445,6 +38304,14 @@
       "edition": "2021",
       "proc_macro": true
     },
+    "document-features-0.2.12": {
+      "edition": "2018",
+      "proc_macro": true,
+      "lib_target": {
+        "name": "document_features",
+        "path": "lib.rs"
+      }
+    },
     "dotenvy-0.15.7": {
       "edition": "2018",
       "binaries": [
@@ -36516,6 +38383,9 @@
     },
     "fixedbitset-0.5.7": {
       "edition": "2021"
+    },
+    "flate2-1.1.10": {
+      "edition": "2018"
     },
     "float-cmp-0.10.0": {
       "edition": "2018"
@@ -36780,6 +38650,9 @@
     },
     "h2-0.4.14": {
       "edition": "2021"
+    },
+    "handan-0.1.2": {
+      "edition": "2024"
     },
     "handlebars-6.4.1": {
       "edition": "2024"
@@ -37064,6 +38937,9 @@
     "litemap-0.8.2": {
       "edition": "2021"
     },
+    "litrs-1.0.1": {
+      "edition": "2021"
+    },
     "lock_api-0.4.14": {
       "edition": "2021"
     },
@@ -37200,6 +39076,9 @@
     },
     "minimal-lexical-0.2.1": {
       "edition": "2018"
+    },
+    "miniz_oxide-0.9.1": {
+      "edition": "2021"
     },
     "mio-1.2.1": {
       "edition": "2021"
@@ -37538,6 +39417,12 @@
     "protoc-bin-vendored-win32-3.2.0": {
       "edition": "2021"
     },
+    "psl-types-2.0.11": {
+      "edition": "2018"
+    },
+    "publicsuffix-2.3.0": {
+      "edition": "2018"
+    },
     "quinn-0.11.9": {
       "edition": "2021",
       "build_script": "build.rs"
@@ -37835,6 +39720,9 @@
     "signature-2.2.0": {
       "edition": "2021"
     },
+    "simd-adler32-0.3.10": {
+      "edition": "2018"
+    },
     "slab-0.4.12": {
       "edition": "2018"
     },
@@ -37926,6 +39814,13 @@
     "synstructure-0.13.2": {
       "edition": "2018"
     },
+    "system-configuration-0.7.0": {
+      "edition": "2021"
+    },
+    "system-configuration-sys-0.6.0": {
+      "edition": "2021",
+      "build_script": "build.rs"
+    },
     "tabled-0.17.0": {
       "edition": "2018"
     },
@@ -37967,6 +39862,10 @@
     "time-core-0.1.8": {
       "edition": "2024"
     },
+    "time-macros-0.2.27": {
+      "edition": "2024",
+      "proc_macro": true
+    },
     "tinystr-0.8.3": {
       "edition": "2021"
     },
@@ -37975,6 +39874,15 @@
     },
     "tinyvec_macros-0.1.1": {
       "edition": "2018"
+    },
+    "todoku-0.1.9": {
+      "edition": "2024",
+      "binaries": [
+        {
+          "name": "gh-owner",
+          "path": "src/bin/gh-owner.rs"
+        }
+      ]
     },
     "tokio-1.53.1": {
       "edition": "2021"

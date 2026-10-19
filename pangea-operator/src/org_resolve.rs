@@ -41,6 +41,7 @@
 //! are deliberately different credentials with different blast radii, and this
 //! module never sees the more powerful one.
 
+use crate::github_read::GitHubReader;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -654,47 +655,11 @@ pub async fn look_up(
     repo: &str,
     token: Option<&str>,
 ) -> Result<Option<LiveRepo>, String> {
-    let url = format!("https://api.github.com/repos/{owner}/{repo}");
-    let mut req = client
-        .get(&url)
-        // GitHub rejects requests with no User-Agent. Naming the caller means a
-        // rate-limit investigation can find us.
-        .header("User-Agent", "pangea-operator-org-resolve")
-        .header("Accept", "application/vnd.github+json");
-    if let Some(t) = token {
-        req = req.bearer_auth(t);
-    }
-
-    let resp = req.send().await.map_err(|e| format!("GET {url}: {e}"))?;
-    match resp.status().as_u16() {
-        200 => {
-            let body: serde_json::Value = resp
-                .json()
-                .await
-                .map_err(|e| format!("GET {url}: decoding body: {e}"))?;
-            Ok(Some(LiveRepo {
-                // `visibility` is the modern field; `private` is the legacy
-                // boolean every token can see. Falling back keeps a repo whose
-                // visibility field is withheld from being reported as public.
-                visibility: body
-                    .get("visibility")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_string)
-                    .unwrap_or_else(|| {
-                        if body.get("private").and_then(serde_json::Value::as_bool) == Some(false) {
-                            "public".to_string()
-                        } else {
-                            "private".to_string()
-                        }
-                    }),
-            }))
-        }
-        404 => Ok(None),
-        other => Err(format!(
-            "GET {url}: HTTP {other} — refusing to treat this as 'absent', which \
-             would plan a CREATE against a repo that may exist"
-        )),
-    }
+    GitHubReader::from_client(client.clone(), token)
+        .repo_visibility(owner, repo)
+        .await
+        .map(|v| v.map(|visibility| LiveRepo { visibility }))
+        .map_err(|e| e.to_string())
 }
 
 /// Resolve a catalogue into records, optionally narrowed to `only`.
@@ -876,7 +841,16 @@ pub async fn resolve(
     token: Option<&str>,
     only: Option<&[String]>,
 ) -> Result<Vec<RepoRecord>, String> {
-    // ── ★ REFUSE BEFORE SPENDING 1005 API CALLS ──────────────────────────
+    resolve_with(&GitHubReader::new(token)?, catalogue, owner, only).await
+}
+
+pub async fn resolve_with(
+    reader: &GitHubReader,
+    catalogue: &OrgCatalogue,
+    owner: &str,
+    only: Option<&[String]>,
+) -> Result<Vec<RepoRecord>, String> {
+    // ── ★ REFUSE BEFORE SPENDING ANY API CALL ────────────────────────────
     // These fields are not consulted until the apply that follows resolution,
     // so without this a single bad row costs a full resolve + compile + plan
     // + approval before a 422 arrives naming a provider address instead of
@@ -917,19 +891,47 @@ pub async fn resolve(
     // resolver guards against, this time in the wiring rather than the logic.
     let rows: Vec<OrgRepoRow> = resolved_rows_of(catalogue)?;
 
-    let client = reqwest::Client::new();
-    let mut out = Vec::new();
-    for row in &rows {
-        if let Some(filter) = only {
-            if !filter.iter().any(|n| n == &row.name) {
-                continue;
-            }
-        }
-        let live = look_up(&client, owner, &row.name, token)
-            .await
-            .map_err(|e| format!("resolving {}/{}: {e}", owner, row.name))?;
+    resolve_rows(reader, &rows, owner, only).await
+}
+
+async fn resolve_rows(
+    reader: &GitHubReader,
+    rows: &[OrgRepoRow],
+    owner: &str,
+    only: Option<&[String]>,
+) -> Result<Vec<RepoRecord>, String> {
+    let selected: Vec<&OrgRepoRow> = rows
+        .iter()
+        .filter(|row| only.is_none_or(|filter| filter.iter().any(|n| n == &row.name)))
+        .collect();
+    if selected.is_empty() {
+        return Ok(Vec::new());
+    }
+    let listed = reader
+        .org_visibilities(owner)
+        .await
+        .map_err(|e| format!("listing {owner}'s repositories: {e}"))?;
+    let mut out = Vec::with_capacity(selected.len());
+    for row in selected {
+        let live = match listed.as_ref().and_then(|l| l.get(&row.name)) {
+            Some(visibility) => Some(LiveRepo {
+                visibility: visibility.clone(),
+            }),
+            None => reader
+                .repo_visibility(owner, &row.name)
+                .await
+                .map_err(|e| format!("resolving {}/{}: {e}", owner, row.name))?
+                .map(|visibility| LiveRepo { visibility }),
+        };
         out.push(record_for(row, live.as_ref()));
     }
+    tracing::info!(
+        owner,
+        rows = out.len(),
+        listed = listed.as_ref().map_or(0, BTreeMap::len),
+        github_requests = reader.requests_sent(),
+        "resolved the catalogue against GitHub"
+    );
     Ok(out)
 }
 
@@ -2144,5 +2146,205 @@ mod live {
         assert_eq!(row.overlay.has_issues, Some(false));
         assert_eq!(prov.get("has_issues"), Some(&Tier::Row));
         assert_eq!(prov.len(), 1, "only the key the row actually set");
+    }
+}
+
+#[cfg(test)]
+mod listing {
+    use super::*;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use wiremock::matchers::{method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn reader(server: &MockServer) -> GitHubReader {
+        GitHubReader::new(None)
+            .unwrap()
+            .base(&server.uri())
+            .retry(
+                todoku::RetryPolicy {
+                    max_retries: 3,
+                    initial_backoff: Duration::from_millis(1),
+                    max_backoff: Duration::from_millis(2),
+                    multiplier: 2.0,
+                    retry_statuses: vec![],
+                },
+                todoku::Jitter::Full,
+            )
+            .sleeper(Arc::new(|_| Box::pin(async {})))
+    }
+
+    fn catalogue() -> OrgCatalogue {
+        serde_yaml::from_str(
+            "repos:\n  - name: listed-public\n  - name: listed-internal\n    visibility: private\n\
+             \x20 - name: renamed-away\n  - name: not-yet-created\n    visibility: public\n",
+        )
+        .expect("catalogue parses")
+    }
+
+    async fn org(server: &MockServer) {
+        Mock::given(method("GET"))
+            .and(path("/orgs/o/repos"))
+            .and(query_param("type", "all"))
+            .and(query_param("per_page", "100"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                { "name": "listed-public", "visibility": "public", "private": false },
+                { "name": "listed-internal", "visibility": "internal", "private": true },
+                { "name": "now-named-this", "visibility": "public", "private": false },
+                { "name": "undeclared", "visibility": "private", "private": true },
+            ])))
+            .mount(server)
+            .await;
+        for (name, body) in [
+            (
+                "listed-public",
+                Some(serde_json::json!({ "name": "listed-public", "visibility": "public" })),
+            ),
+            (
+                "listed-internal",
+                Some(serde_json::json!({ "name": "listed-internal", "visibility": "internal" })),
+            ),
+            (
+                "renamed-away",
+                Some(serde_json::json!({ "name": "now-named-this", "private": false })),
+            ),
+            ("not-yet-created", None),
+        ] {
+            let template = match body {
+                Some(b) => ResponseTemplate::new(200).set_body_json(b),
+                None => ResponseTemplate::new(404),
+            };
+            Mock::given(method("GET"))
+                .and(path(format!("/repos/o/{name}")))
+                .respond_with(template)
+                .mount(server)
+                .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn listed_rows_cost_no_lookup_and_unlisted_rows_fall_back() {
+        let server = MockServer::start().await;
+        org(&server).await;
+        let r = reader(&server);
+        let records = resolve_with(&r, &catalogue(), "o", None).await.unwrap();
+        let by_name: BTreeMap<&str, (&str, &str)> = records
+            .iter()
+            .map(|r| {
+                (
+                    r["name"].as_str(),
+                    (
+                        r["exists_on_github"].as_str(),
+                        r["live_visibility"].as_str(),
+                    ),
+                )
+            })
+            .collect();
+        assert_eq!(by_name["listed-public"], ("true", "public"));
+        assert_eq!(by_name["listed-internal"], ("true", "internal"));
+        assert_eq!(by_name["renamed-away"], ("true", "public"));
+        assert_eq!(by_name["not-yet-created"], ("false", "public"));
+        assert_eq!(r.requests_sent(), 3);
+        let looked_up: Vec<String> = server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .map(|q| q.url.path().to_string())
+            .filter(|p| p.starts_with("/repos/"))
+            .collect();
+        assert_eq!(
+            looked_up,
+            vec!["/repos/o/renamed-away", "/repos/o/not-yet-created"]
+        );
+    }
+
+    #[tokio::test]
+    async fn the_cr_patch_is_byte_identical_to_one_lookup_per_row() {
+        let server = MockServer::start().await;
+        org(&server).await;
+        let r = reader(&server);
+        let cat = catalogue();
+        let via_listing = resolve_with(&r, &cat, "o", None).await.unwrap();
+        let mut per_row = Vec::new();
+        for row in resolved_rows_of(&cat).unwrap() {
+            let live = r
+                .repo_visibility("o", &row.name)
+                .await
+                .unwrap()
+                .map(|visibility| LiveRepo { visibility });
+            per_row.push(record_for(&row, live.as_ref()));
+        }
+        assert_eq!(
+            serde_json::to_string(&cr_patch("o", &via_listing)).unwrap(),
+            serde_json::to_string(&cr_patch("o", &per_row)).unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn an_owner_without_an_org_listing_resolves_row_by_row() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/orgs/o/repos"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        org(&server).await;
+        let r = reader(&server);
+        let records = resolve_with(&r, &catalogue(), "o", None).await.unwrap();
+        assert_eq!(records.len(), 4);
+        assert_eq!(r.requests_sent(), 5);
+    }
+
+    #[tokio::test]
+    async fn a_listing_that_cannot_be_read_fails_the_whole_resolve() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/orgs/o/repos"))
+            .respond_with(ResponseTemplate::new(502))
+            .expect(4)
+            .mount(&server)
+            .await;
+        let err = resolve_with(&reader(&server), &catalogue(), "o", None)
+            .await
+            .unwrap_err();
+        assert!(err.starts_with("listing o's repositories: GET "), "{err}");
+        assert!(err.contains("4 attempt(s), retries exhausted"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_transient_lookup_failure_no_longer_fails_the_catalogue() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/not-yet-created"))
+            .respond_with(ResponseTemplate::new(502))
+            .up_to_n_times(2)
+            .mount(&server)
+            .await;
+        org(&server).await;
+        let records = resolve_with(&reader(&server), &catalogue(), "o", None)
+            .await
+            .unwrap();
+        assert_eq!(records.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn only_narrows_the_lookups_and_an_empty_selection_sends_nothing() {
+        let server = MockServer::start().await;
+        org(&server).await;
+        let r = reader(&server);
+        let only = vec!["not-yet-created".to_string()];
+        let records = resolve_with(&r, &catalogue(), "o", Some(&only))
+            .await
+            .unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(r.requests_sent(), 2);
+        let none = vec!["nothing-matches".to_string()];
+        let r2 = reader(&server);
+        assert!(resolve_with(&r2, &catalogue(), "o", Some(&none))
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(r2.requests_sent(), 0);
     }
 }

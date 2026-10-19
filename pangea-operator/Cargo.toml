@@ -225,6 +225,9 @@ futures = "0.3"
 # Drain coordinator — SIGTERM/SIGINT handling shared across pleme-io daemons
 tsunagu = "0.1.5"
 
+todoku = "0.1.9"
+handan = "0.1.2"
+
 # Web framework
 axum = { workspace = true, features = ["tokio"] }
 tower.workspace = true

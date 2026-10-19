@@ -65,6 +65,33 @@
         "preBuild": "export CARGO_CRATE_NAME=inflector;"
       }
     },
+    "adler2-2.0.1": {
+      "name": "adler2",
+      "version": "2.0.1",
+      "edition": "2021",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/adler2/adler2-2.0.1.crate",
+        "sha256": "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa",
+        "name_with_ext": "adler2-2.0.1.tar.gz"
+      },
+      "features": [],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [],
+      "build_dependencies": [],
+      "crate_renames": {},
+      "build_rust_crate_args": {
+        "crateName": "adler2",
+        "version": "2.0.1",
+        "edition": "2021",
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=adler2;"
+      }
+    },
     "ahash-0.8.12": {
       "name": "ahash",
       "version": "0.8.12",
@@ -279,6 +306,96 @@
         "edition": "2021",
         "release": true,
         "preBuild": "export CARGO_CRATE_NAME=alloc_from_pool;"
+      }
+    },
+    "alloc-no-stdlib-3.0.0": {
+      "name": "alloc-no-stdlib",
+      "version": "3.0.0",
+      "edition": "2015",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/alloc-no-stdlib/alloc-no-stdlib-3.0.0.crate",
+        "sha256": "c2fb6cfd47bf496ff64095c20eaba0c201404ee38714d4142fcfa1dc334fcc7a",
+        "name_with_ext": "alloc-no-stdlib-3.0.0.tar.gz"
+      },
+      "features": [],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [
+        {
+          "name": "example",
+          "path": "src/bin/example.rs"
+        }
+      ],
+      "lib_target": null,
+      "runtime_dependencies": [],
+      "build_dependencies": [],
+      "crate_renames": {},
+      "build_rust_crate_args": {
+        "crateName": "alloc-no-stdlib",
+        "version": "3.0.0",
+        "edition": "2015",
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=alloc_no_stdlib;"
+      }
+    },
+    "alloc-stdlib-0.3.0": {
+      "name": "alloc-stdlib",
+      "version": "0.3.0",
+      "edition": "2015",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/alloc-stdlib/alloc-stdlib-0.3.0.crate",
+        "sha256": "0b5c1865780388bfa186411ab5f247819487fc4864c6e9c3106611fa347586e1",
+        "name_with_ext": "alloc-stdlib-0.3.0.tar.gz"
+      },
+      "features": [],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [
+        {
+          "name": "example",
+          "path": "src/bin/example.rs"
+        }
+      ],
+      "lib_target": null,
+      "runtime_dependencies": [
+        {
+          "name": "alloc_no_stdlib",
+          "package_key": "alloc-no-stdlib-3.0.0",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        }
+      ],
+      "build_dependencies": [],
+      "crate_renames": {
+        "alloc-no-stdlib": [
+          {
+            "version": "3.0.0",
+            "rename": "alloc_no_stdlib"
+          }
+        ]
+      },
+      "build_rust_crate_args": {
+        "crateName": "alloc-stdlib",
+        "version": "0.3.0",
+        "edition": "2015",
+        "crateRenames": {
+          "alloc-no-stdlib": [
+            {
+              "version": "3.0.0",
+              "rename": "alloc_no_stdlib"
+            }
+          ]
+        },
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=alloc_stdlib;"
       }
     },
     "allocator-api2-0.2.21": {
@@ -1004,6 +1121,122 @@
         },
         "release": true,
         "preBuild": "export CARGO_CRATE_NAME=async_broadcast;"
+      }
+    },
+    "async-compression-0.4.51": {
+      "name": "async-compression",
+      "version": "0.4.51",
+      "edition": "2018",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/async-compression/async-compression-0.4.51.crate",
+        "sha256": "9d5755640120b24961f8231e05892e4a4f7e0d04e8aeca161508c9c397946970",
+        "name_with_ext": "async-compression-0.4.51.tar.gz"
+      },
+      "features": [
+        "brotli",
+        "gzip",
+        "tokio"
+      ],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [
+        {
+          "name": "compression_codecs",
+          "package_key": "compression-codecs-0.4.46",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "compression_core",
+          "package_key": "compression-core-0.4.34",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "pin_project_lite",
+          "package_key": "pin-project-lite-0.2.17",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "tokio",
+          "package_key": "tokio-1.53.1",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": false,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        }
+      ],
+      "build_dependencies": [],
+      "crate_renames": {
+        "compression-codecs": [
+          {
+            "version": "0.4.46",
+            "rename": "compression_codecs"
+          }
+        ],
+        "compression-core": [
+          {
+            "version": "0.4.34",
+            "rename": "compression_core"
+          }
+        ],
+        "pin-project-lite": [
+          {
+            "version": "0.2.17",
+            "rename": "pin_project_lite"
+          }
+        ]
+      },
+      "build_rust_crate_args": {
+        "crateName": "async-compression",
+        "version": "0.4.51",
+        "edition": "2018",
+        "features": [
+          "brotli",
+          "gzip",
+          "tokio"
+        ],
+        "crateRenames": {
+          "compression-codecs": [
+            {
+              "version": "0.4.46",
+              "rename": "compression_codecs"
+            }
+          ],
+          "compression-core": [
+            {
+              "version": "0.4.34",
+              "rename": "compression_core"
+            }
+          ],
+          "pin-project-lite": [
+            {
+              "version": "0.2.17",
+              "rename": "pin_project_lite"
+            }
+          ]
+        },
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=async_compression;"
       }
     },
     "async-graphql-7.2.1": {
@@ -4321,6 +4554,208 @@
         "preBuild": "export CARGO_CRATE_NAME=block_buffer;"
       }
     },
+    "brotli-9.0.0": {
+      "name": "brotli",
+      "version": "9.0.0",
+      "edition": "2015",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/brotli/brotli-9.0.0.crate",
+        "sha256": "f8b851b75c23ca7873623d612fe49bd1989aeb03d08fb9432187eb253d3d4c6b",
+        "name_with_ext": "brotli-9.0.0.tar.gz"
+      },
+      "features": [
+        "alloc-stdlib",
+        "default",
+        "std"
+      ],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [
+        {
+          "name": "brotli",
+          "path": "src/bin/brotli.rs"
+        },
+        {
+          "name": "catbrotli",
+          "path": "src/bin/catbrotli.rs"
+        }
+      ],
+      "lib_target": null,
+      "runtime_dependencies": [
+        {
+          "name": "alloc_no_stdlib",
+          "package_key": "alloc-no-stdlib-3.0.0",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "alloc_stdlib",
+          "package_key": "alloc-stdlib-0.3.0",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "brotli_decompressor",
+          "package_key": "brotli-decompressor-6.0.1",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": false,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        }
+      ],
+      "build_dependencies": [],
+      "crate_renames": {
+        "alloc-no-stdlib": [
+          {
+            "version": "3.0.0",
+            "rename": "alloc_no_stdlib"
+          }
+        ],
+        "alloc-stdlib": [
+          {
+            "version": "0.3.0",
+            "rename": "alloc_stdlib"
+          }
+        ],
+        "brotli-decompressor": [
+          {
+            "version": "6.0.1",
+            "rename": "brotli_decompressor"
+          }
+        ]
+      },
+      "build_rust_crate_args": {
+        "crateName": "brotli",
+        "version": "9.0.0",
+        "edition": "2015",
+        "features": [
+          "alloc-stdlib",
+          "default",
+          "std"
+        ],
+        "crateRenames": {
+          "alloc-no-stdlib": [
+            {
+              "version": "3.0.0",
+              "rename": "alloc_no_stdlib"
+            }
+          ],
+          "alloc-stdlib": [
+            {
+              "version": "0.3.0",
+              "rename": "alloc_stdlib"
+            }
+          ],
+          "brotli-decompressor": [
+            {
+              "version": "6.0.1",
+              "rename": "brotli_decompressor"
+            }
+          ]
+        },
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=brotli;"
+      }
+    },
+    "brotli-decompressor-6.0.1": {
+      "name": "brotli-decompressor",
+      "version": "6.0.1",
+      "edition": "2015",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/brotli-decompressor/brotli-decompressor-6.0.1.crate",
+        "sha256": "941cd9bd4ddab83cb46fa5a2d428f1c857b24ac78cb876cf7beb710840934bd7",
+        "name_with_ext": "brotli-decompressor-6.0.1.tar.gz"
+      },
+      "features": [
+        "alloc-stdlib",
+        "std"
+      ],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [
+        {
+          "name": "brotli-decompressor",
+          "path": "src/bin/brotli-decompressor.rs"
+        }
+      ],
+      "lib_target": null,
+      "runtime_dependencies": [
+        {
+          "name": "alloc_no_stdlib",
+          "package_key": "alloc-no-stdlib-3.0.0",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "alloc_stdlib",
+          "package_key": "alloc-stdlib-0.3.0",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        }
+      ],
+      "build_dependencies": [],
+      "crate_renames": {
+        "alloc-no-stdlib": [
+          {
+            "version": "3.0.0",
+            "rename": "alloc_no_stdlib"
+          }
+        ],
+        "alloc-stdlib": [
+          {
+            "version": "0.3.0",
+            "rename": "alloc_stdlib"
+          }
+        ]
+      },
+      "build_rust_crate_args": {
+        "crateName": "brotli-decompressor",
+        "version": "6.0.1",
+        "edition": "2015",
+        "features": [
+          "alloc-stdlib",
+          "std"
+        ],
+        "crateRenames": {
+          "alloc-no-stdlib": [
+            {
+              "version": "3.0.0",
+              "rename": "alloc_no_stdlib"
+            }
+          ],
+          "alloc-stdlib": [
+            {
+              "version": "0.3.0",
+              "rename": "alloc_stdlib"
+            }
+          ]
+        },
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=brotli_decompressor;"
+      }
+    },
     "bstr-1.12.1": {
       "name": "bstr",
       "version": "1.12.1",
@@ -5399,6 +5834,127 @@
         "preBuild": "export CARGO_CRATE_NAME=colored;"
       }
     },
+    "compression-codecs-0.4.46": {
+      "name": "compression-codecs",
+      "version": "0.4.46",
+      "edition": "2018",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/compression-codecs/compression-codecs-0.4.46.crate",
+        "sha256": "cae36683101b2899f48bd31f8db9839437356188e3b1ff23096e73dab09ba8fe",
+        "name_with_ext": "compression-codecs-0.4.46.tar.gz"
+      },
+      "features": [
+        "brotli",
+        "flate2",
+        "gzip",
+        "memchr"
+      ],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [
+        {
+          "name": "brotli",
+          "package_key": "brotli-9.0.0",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "compression_core",
+          "package_key": "compression-core-0.4.34",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "flate2",
+          "package_key": "flate2-1.1.10",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "memchr",
+          "package_key": "memchr-2.8.1",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        }
+      ],
+      "build_dependencies": [],
+      "crate_renames": {
+        "compression-core": [
+          {
+            "version": "0.4.34",
+            "rename": "compression_core"
+          }
+        ]
+      },
+      "build_rust_crate_args": {
+        "crateName": "compression-codecs",
+        "version": "0.4.46",
+        "edition": "2018",
+        "features": [
+          "brotli",
+          "flate2",
+          "gzip",
+          "memchr"
+        ],
+        "crateRenames": {
+          "compression-core": [
+            {
+              "version": "0.4.34",
+              "rename": "compression_core"
+            }
+          ]
+        },
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=compression_codecs;"
+      }
+    },
+    "compression-core-0.4.34": {
+      "name": "compression-core",
+      "version": "0.4.34",
+      "edition": "2018",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/compression-core/compression-core-0.4.34.crate",
+        "sha256": "2ebdda89edc534bf8d5dd2857562633b6495557e5846552ade994b99ed13c36a",
+        "name_with_ext": "compression-core-0.4.34.tar.gz"
+      },
+      "features": [],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [],
+      "build_dependencies": [],
+      "crate_renames": {},
+      "build_rust_crate_args": {
+        "crateName": "compression-core",
+        "version": "0.4.34",
+        "edition": "2018",
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=compression_core;"
+      }
+    },
     "concurrent-queue-2.5.0": {
       "name": "concurrent-queue",
       "version": "2.5.0",
@@ -5590,6 +6146,249 @@
         ],
         "release": true,
         "preBuild": "export CARGO_CRATE_NAME=constant_time_eq;"
+      }
+    },
+    "cookie-0.18.2": {
+      "name": "cookie",
+      "version": "0.18.2",
+      "edition": "2018",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/cookie/cookie-0.18.2.crate",
+        "sha256": "1a373e3602691c3cdea496d2f0ee5935151e6168fe87739483c463db1b2f2f87",
+        "name_with_ext": "cookie-0.18.2.tar.gz"
+      },
+      "features": [
+        "percent-encode",
+        "percent-encoding"
+      ],
+      "proc_macro": false,
+      "build_script": "build.rs",
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [
+        {
+          "name": "percent_encoding",
+          "package_key": "percent-encoding-2.3.2",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "time",
+          "package_key": "time-0.3.47",
+          "kind": "normal",
+          "features": [
+            "formatting",
+            "macros",
+            "parsing",
+            "std"
+          ],
+          "uses_default_features": false,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        }
+      ],
+      "build_dependencies": [
+        {
+          "name": "version_check",
+          "package_key": "version_check-0.9.5",
+          "kind": "build",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "host"
+        }
+      ],
+      "crate_renames": {
+        "percent-encoding": [
+          {
+            "version": "2.3.2",
+            "rename": "percent_encoding"
+          }
+        ]
+      },
+      "build_rust_crate_args": {
+        "crateName": "cookie",
+        "version": "0.18.2",
+        "edition": "2018",
+        "features": [
+          "percent-encode",
+          "percent-encoding"
+        ],
+        "crateRenames": {
+          "percent-encoding": [
+            {
+              "version": "2.3.2",
+              "rename": "percent_encoding"
+            }
+          ]
+        },
+        "release": true,
+        "build": "build.rs",
+        "preBuild": "export CARGO_CRATE_NAME=cookie;"
+      }
+    },
+    "cookie_store-0.22.1": {
+      "name": "cookie_store",
+      "version": "0.22.1",
+      "edition": "2021",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/cookie_store/cookie_store-0.22.1.crate",
+        "sha256": "15b2c103cf610ec6cae3da84a766285b42fd16aad564758459e6ecf128c75206",
+        "name_with_ext": "cookie_store-0.22.1.tar.gz"
+      },
+      "features": [
+        "default",
+        "public_suffix",
+        "serde",
+        "serde_json"
+      ],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [
+        {
+          "name": "cookie",
+          "package_key": "cookie-0.18.2",
+          "kind": "normal",
+          "features": [
+            "percent-encode"
+          ],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "document_features",
+          "package_key": "document-features-0.2.12",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "host"
+        },
+        {
+          "name": "idna",
+          "package_key": "idna-1.1.0",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "log",
+          "package_key": "log-0.4.34",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "publicsuffix",
+          "package_key": "publicsuffix-2.3.0",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "serde",
+          "package_key": "serde-1.0.229",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "serde_derive",
+          "package_key": "serde_derive-1.0.229",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": true,
+          "target": null,
+          "tree": "host"
+        },
+        {
+          "name": "serde_json",
+          "package_key": "serde_json-1.0.151",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "time",
+          "package_key": "time-0.3.47",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "url",
+          "package_key": "url-2.5.8",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        }
+      ],
+      "build_dependencies": [],
+      "crate_renames": {
+        "document-features": [
+          {
+            "version": "0.2.12",
+            "rename": "document_features"
+          }
+        ]
+      },
+      "build_rust_crate_args": {
+        "crateName": "cookie_store",
+        "version": "0.22.1",
+        "edition": "2021",
+        "features": [
+          "default",
+          "public_suffix",
+          "serde",
+          "serde_json"
+        ],
+        "crateRenames": {
+          "document-features": [
+            {
+              "version": "0.2.12",
+              "rename": "document_features"
+            }
+          ]
+        },
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=cookie_store;"
       }
     },
     "core-foundation-0.10.1": {
@@ -8596,6 +9395,55 @@
         "preBuild": "export CARGO_CRATE_NAME=displaydoc;"
       }
     },
+    "document-features-0.2.12": {
+      "name": "document-features",
+      "version": "0.2.12",
+      "edition": "2018",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/document-features/document-features-0.2.12.crate",
+        "sha256": "d4b8a88685455ed29a21542a33abd9cb6510b6b129abadabdcef0f4c55bc8f61",
+        "name_with_ext": "document-features-0.2.12.tar.gz"
+      },
+      "features": [
+        "default"
+      ],
+      "proc_macro": true,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": {
+        "name": "document_features",
+        "path": "lib.rs"
+      },
+      "runtime_dependencies": [
+        {
+          "name": "litrs",
+          "package_key": "litrs-1.0.1",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        }
+      ],
+      "build_dependencies": [],
+      "crate_renames": {},
+      "build_rust_crate_args": {
+        "crateName": "document-features",
+        "version": "0.2.12",
+        "edition": "2018",
+        "features": [
+          "default"
+        ],
+        "release": true,
+        "procMacro": true,
+        "libName": "document_features",
+        "libPath": "lib.rs",
+        "preBuild": "export CARGO_CRATE_NAME=document_features;"
+      }
+    },
     "dotenvy-0.15.7": {
       "name": "dotenvy",
       "version": "0.15.7",
@@ -9762,6 +10610,69 @@
         "edition": "2021",
         "release": true,
         "preBuild": "export CARGO_CRATE_NAME=fixedbitset;"
+      }
+    },
+    "flate2-1.1.10": {
+      "name": "flate2",
+      "version": "1.1.10",
+      "edition": "2018",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/flate2/flate2-1.1.10.crate",
+        "sha256": "6e634e2e0ebac1ee034020da1ca582e17ffe4e0f5e985823721e168928136dcb",
+        "name_with_ext": "flate2-1.1.10.tar.gz"
+      },
+      "features": [
+        "any_impl",
+        "default",
+        "miniz_oxide",
+        "runtime_detection",
+        "rust_backend"
+      ],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [
+        {
+          "name": "crc32fast",
+          "package_key": "crc32fast-1.5.1",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": false,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "miniz_oxide",
+          "package_key": "miniz_oxide-0.9.1",
+          "kind": "normal",
+          "features": [
+            "simd"
+          ],
+          "uses_default_features": true,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        }
+      ],
+      "build_dependencies": [],
+      "crate_renames": {},
+      "build_rust_crate_args": {
+        "crateName": "flate2",
+        "version": "1.1.10",
+        "edition": "2018",
+        "features": [
+          "any_impl",
+          "default",
+          "miniz_oxide",
+          "runtime_detection",
+          "rust_backend"
+        ],
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=flate2;"
       }
     },
     "float-cmp-0.10.0": {
@@ -22515,6 +23426,33 @@
         "preBuild": "export CARGO_CRATE_NAME=h2;"
       }
     },
+    "handan-0.1.2": {
+      "name": "handan",
+      "version": "0.1.2",
+      "edition": "2024",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/handan/handan-0.1.2.crate",
+        "sha256": "168bce822fe8afd3eaffa21b98bcd7df6964382dd84527c89c2218c988be5a67",
+        "name_with_ext": "handan-0.1.2.tar.gz"
+      },
+      "features": [],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [],
+      "build_dependencies": [],
+      "crate_renames": {},
+      "build_rust_crate_args": {
+        "crateName": "handan",
+        "version": "0.1.2",
+        "edition": "2024",
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=handan;"
+      }
+    },
     "handlebars-6.4.1": {
       "name": "handlebars",
       "version": "6.4.1",
@@ -24717,6 +25655,7 @@
         "client",
         "client-legacy",
         "client-proxy",
+        "client-proxy-system",
         "default",
         "http1",
         "http2",
@@ -24854,6 +25793,16 @@
           "tree": "target"
         },
         {
+          "name": "system_configuration",
+          "package_key": "system-configuration-0.7.0",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": true,
+          "target": "cfg(target_os = \"macos\")",
+          "tree": "target"
+        },
+        {
           "name": "tokio",
           "package_key": "tokio-1.53.1",
           "kind": "normal",
@@ -24918,6 +25867,12 @@
             "rename": "pin_project_lite"
           }
         ],
+        "system-configuration": [
+          {
+            "version": "0.7.0",
+            "rename": "system_configuration"
+          }
+        ],
         "tower-service": [
           {
             "version": "0.3.3",
@@ -24933,6 +25888,7 @@
           "client",
           "client-legacy",
           "client-proxy",
+          "client-proxy-system",
           "default",
           "http1",
           "http2",
@@ -24970,6 +25926,12 @@
             {
               "version": "0.2.17",
               "rename": "pin_project_lite"
+            }
+          ],
+          "system-configuration": [
+            {
+              "version": "0.7.0",
+              "rename": "system_configuration"
             }
           ],
           "tower-service": [
@@ -25610,6 +26572,7 @@
       "features": [
         "alloc",
         "compiled_data",
+        "default",
         "std"
       ],
       "proc_macro": false,
@@ -25660,6 +26623,7 @@
         "features": [
           "alloc",
           "compiled_data",
+          "default",
           "std"
         ],
         "release": true,
@@ -29479,6 +30443,33 @@
         "edition": "2021",
         "release": true,
         "preBuild": "export CARGO_CRATE_NAME=litemap;"
+      }
+    },
+    "litrs-1.0.1": {
+      "name": "litrs",
+      "version": "1.0.1",
+      "edition": "2021",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/litrs/litrs-1.0.1.crate",
+        "sha256": "4744e383959f0db86ede514b809b1c53251889093803c05267acc7d4e7030d70",
+        "name_with_ext": "litrs-1.0.1.tar.gz"
+      },
+      "features": [],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [],
+      "build_dependencies": [],
+      "crate_renames": {},
+      "build_rust_crate_args": {
+        "crateName": "litrs",
+        "version": "1.0.1",
+        "edition": "2021",
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=litrs;"
       }
     },
     "lock_api-0.4.14": {
@@ -34666,6 +35657,80 @@
         "preBuild": "export CARGO_CRATE_NAME=minimal_lexical;"
       }
     },
+    "miniz_oxide-0.9.1": {
+      "name": "miniz_oxide",
+      "version": "0.9.1",
+      "edition": "2021",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/miniz_oxide/miniz_oxide-0.9.1.crate",
+        "sha256": "b63fbc4a50860e98e7b2aa7804ded1db5cbc3aff9193adaff57a6931bf7c4b4c",
+        "name_with_ext": "miniz_oxide-0.9.1.tar.gz"
+      },
+      "features": [
+        "default",
+        "simd",
+        "simd-adler32",
+        "with-alloc"
+      ],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [
+        {
+          "name": "adler2",
+          "package_key": "adler2-2.0.1",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": false,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "simd_adler32",
+          "package_key": "simd-adler32-0.3.10",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": false,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        }
+      ],
+      "build_dependencies": [],
+      "crate_renames": {
+        "simd-adler32": [
+          {
+            "version": "0.3.10",
+            "rename": "simd_adler32"
+          }
+        ]
+      },
+      "build_rust_crate_args": {
+        "crateName": "miniz_oxide",
+        "version": "0.9.1",
+        "edition": "2021",
+        "features": [
+          "default",
+          "simd",
+          "simd-adler32",
+          "with-alloc"
+        ],
+        "crateRenames": {
+          "simd-adler32": [
+            {
+              "version": "0.3.10",
+              "rename": "simd_adler32"
+            }
+          ]
+        },
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=miniz_oxide;"
+      }
+    },
     "mio-1.2.1": {
       "name": "mio",
       "version": "1.2.1",
@@ -37266,6 +38331,16 @@
           "tree": "target"
         },
         {
+          "name": "handan",
+          "package_key": "handan-0.1.2",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
           "name": "helm_forge",
           "package_key": "helm-forge-0.1.2",
           "kind": "normal",
@@ -37801,6 +38876,16 @@
         {
           "name": "thiserror",
           "package_key": "thiserror-2.0.20",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "todoku",
+          "package_key": "todoku-0.1.9",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -42545,6 +43630,105 @@
         "preBuild": "export CARGO_CRATE_NAME=protoc_bin_vendored_win32;"
       }
     },
+    "psl-types-2.0.11": {
+      "name": "psl-types",
+      "version": "2.0.11",
+      "edition": "2018",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/psl-types/psl-types-2.0.11.crate",
+        "sha256": "33cb294fe86a74cbcf50d4445b37da762029549ebeea341421c7c70370f86cac",
+        "name_with_ext": "psl-types-2.0.11.tar.gz"
+      },
+      "features": [],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [],
+      "build_dependencies": [],
+      "crate_renames": {},
+      "build_rust_crate_args": {
+        "crateName": "psl-types",
+        "version": "2.0.11",
+        "edition": "2018",
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=psl_types;"
+      }
+    },
+    "publicsuffix-2.3.0": {
+      "name": "publicsuffix",
+      "version": "2.3.0",
+      "edition": "2018",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/publicsuffix/publicsuffix-2.3.0.crate",
+        "sha256": "6f42ea446cab60335f76979ec15e12619a2165b5ae2c12166bef27d283a9fadf",
+        "name_with_ext": "publicsuffix-2.3.0.tar.gz"
+      },
+      "features": [
+        "default",
+        "idna",
+        "punycode"
+      ],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [
+        {
+          "name": "idna",
+          "package_key": "idna-1.1.0",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "psl_types",
+          "package_key": "psl-types-2.0.11",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        }
+      ],
+      "build_dependencies": [],
+      "crate_renames": {
+        "psl-types": [
+          {
+            "version": "2.0.11",
+            "rename": "psl_types"
+          }
+        ]
+      },
+      "build_rust_crate_args": {
+        "crateName": "publicsuffix",
+        "version": "2.3.0",
+        "edition": "2018",
+        "features": [
+          "default",
+          "idna",
+          "punycode"
+        ],
+        "crateRenames": {
+          "psl-types": [
+            {
+              "version": "2.0.11",
+              "rename": "psl_types"
+            }
+          ]
+        },
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=publicsuffix;"
+      }
+    },
     "quinn-0.11.9": {
       "name": "quinn",
       "version": "0.11.9",
@@ -44336,10 +45520,18 @@
         "__rustls",
         "__rustls-ring",
         "__tls",
+        "brotli",
+        "charset",
+        "cookies",
+        "gzip",
+        "h2",
+        "http2",
         "json",
+        "macos-system-configuration",
         "rustls-tls",
         "rustls-tls-webpki-roots",
-        "rustls-tls-webpki-roots-no-provider"
+        "rustls-tls-webpki-roots-no-provider",
+        "system-proxy"
       ],
       "proc_macro": false,
       "build_script": null,
@@ -44368,6 +45560,36 @@
           "tree": "target"
         },
         {
+          "name": "cookie_crate",
+          "package_key": "cookie-0.18.2",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": true,
+          "target": "cfg(not(target_arch = \"wasm32\"))",
+          "tree": "target"
+        },
+        {
+          "name": "cookie_store",
+          "package_key": "cookie_store-0.22.1",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": true,
+          "target": "cfg(not(target_arch = \"wasm32\"))",
+          "tree": "target"
+        },
+        {
+          "name": "encoding_rs",
+          "package_key": "encoding_rs-0.8.35",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": true,
+          "target": "cfg(not(target_arch = \"wasm32\"))",
+          "tree": "target"
+        },
+        {
           "name": "futures_core",
           "package_key": "futures-core-0.3.34",
           "kind": "normal",
@@ -44375,6 +45597,16 @@
           "uses_default_features": false,
           "optional": false,
           "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "h2",
+          "package_key": "h2-0.4.14",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": true,
+          "target": "cfg(not(target_arch = \"wasm32\"))",
           "tree": "target"
         },
         {
@@ -44456,6 +45688,16 @@
           "features": [],
           "uses_default_features": true,
           "optional": false,
+          "target": "cfg(not(target_arch = \"wasm32\"))",
+          "tree": "target"
+        },
+        {
+          "name": "mime",
+          "package_key": "mime-0.3.17",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": true,
           "target": "cfg(not(target_arch = \"wasm32\"))",
           "tree": "target"
         },
@@ -44640,6 +45882,12 @@
       ],
       "build_dependencies": [],
       "crate_renames": {
+        "cookie": [
+          {
+            "version": "0.18.2",
+            "rename": "cookie_crate"
+          }
+        ],
         "futures-core": [
           {
             "version": "0.3.34",
@@ -44721,12 +45969,26 @@
           "__rustls",
           "__rustls-ring",
           "__tls",
+          "brotli",
+          "charset",
+          "cookies",
+          "gzip",
+          "h2",
+          "http2",
           "json",
+          "macos-system-configuration",
           "rustls-tls",
           "rustls-tls-webpki-roots",
-          "rustls-tls-webpki-roots-no-provider"
+          "rustls-tls-webpki-roots-no-provider",
+          "system-proxy"
         ],
         "crateRenames": {
+          "cookie": [
+            {
+              "version": "0.18.2",
+              "rename": "cookie_crate"
+            }
+          ],
           "futures-core": [
             {
               "version": "0.3.34",
@@ -51226,6 +52488,33 @@
         "preBuild": "export CARGO_CRATE_NAME=signature;"
       }
     },
+    "simd-adler32-0.3.10": {
+      "name": "simd-adler32",
+      "version": "0.3.10",
+      "edition": "2018",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/simd-adler32/simd-adler32-0.3.10.crate",
+        "sha256": "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea",
+        "name_with_ext": "simd-adler32-0.3.10.tar.gz"
+      },
+      "features": [],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [],
+      "build_dependencies": [],
+      "crate_renames": {},
+      "build_rust_crate_args": {
+        "crateName": "simd-adler32",
+        "version": "0.3.10",
+        "edition": "2018",
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=simd_adler32;"
+      }
+    },
     "slab-0.4.12": {
       "name": "slab",
       "version": "0.4.12",
@@ -54876,6 +56165,155 @@
         "preBuild": "export CARGO_CRATE_NAME=synstructure;"
       }
     },
+    "system-configuration-0.7.0": {
+      "name": "system-configuration",
+      "version": "0.7.0",
+      "edition": "2021",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/system-configuration/system-configuration-0.7.0.crate",
+        "sha256": "a13f3d0daba03132c0aa9767f98351b3488edc2c100cda2d2ec2b04f3d8d3c8b",
+        "name_with_ext": "system-configuration-0.7.0.tar.gz"
+      },
+      "features": [],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [
+        {
+          "name": "bitflags",
+          "package_key": "bitflags-2.11.1",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "core_foundation",
+          "package_key": "core-foundation-0.9.4",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "system_configuration_sys",
+          "package_key": "system-configuration-sys-0.6.0",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        }
+      ],
+      "build_dependencies": [],
+      "crate_renames": {
+        "core-foundation": [
+          {
+            "version": "0.9.4",
+            "rename": "core_foundation"
+          }
+        ],
+        "system-configuration-sys": [
+          {
+            "version": "0.6.0",
+            "rename": "system_configuration_sys"
+          }
+        ]
+      },
+      "build_rust_crate_args": {
+        "crateName": "system-configuration",
+        "version": "0.7.0",
+        "edition": "2021",
+        "crateRenames": {
+          "core-foundation": [
+            {
+              "version": "0.9.4",
+              "rename": "core_foundation"
+            }
+          ],
+          "system-configuration-sys": [
+            {
+              "version": "0.6.0",
+              "rename": "system_configuration_sys"
+            }
+          ]
+        },
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=system_configuration;"
+      }
+    },
+    "system-configuration-sys-0.6.0": {
+      "name": "system-configuration-sys",
+      "version": "0.6.0",
+      "edition": "2021",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/system-configuration-sys/system-configuration-sys-0.6.0.crate",
+        "sha256": "8e1d1b10ced5ca923a1fcb8d03e96b8d3268065d724548c0211415ff6ac6bac4",
+        "name_with_ext": "system-configuration-sys-0.6.0.tar.gz"
+      },
+      "features": [],
+      "proc_macro": false,
+      "build_script": "build.rs",
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [
+        {
+          "name": "core_foundation_sys",
+          "package_key": "core-foundation-sys-0.8.7",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "libc",
+          "package_key": "libc-0.2.189",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        }
+      ],
+      "build_dependencies": [],
+      "crate_renames": {
+        "core-foundation-sys": [
+          {
+            "version": "0.8.7",
+            "rename": "core_foundation_sys"
+          }
+        ]
+      },
+      "build_rust_crate_args": {
+        "crateName": "system-configuration-sys",
+        "version": "0.6.0",
+        "edition": "2021",
+        "crateRenames": {
+          "core-foundation-sys": [
+            {
+              "version": "0.8.7",
+              "rename": "core_foundation_sys"
+            }
+          ]
+        },
+        "release": true,
+        "build": "build.rs",
+        "preBuild": "export CARGO_CRATE_NAME=system_configuration_sys;"
+      }
+    },
     "tabled-0.17.0": {
       "name": "tabled",
       "version": "0.17.0",
@@ -55520,6 +56958,10 @@
       },
       "features": [
         "alloc",
+        "default",
+        "formatting",
+        "macros",
+        "parsing",
         "std"
       ],
       "proc_macro": false,
@@ -55537,6 +56979,16 @@
           ],
           "uses_default_features": true,
           "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "itoa",
+          "package_key": "itoa-1.0.18",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": true,
           "target": null,
           "tree": "target"
         },
@@ -55569,6 +57021,16 @@
           "optional": false,
           "target": null,
           "tree": "target"
+        },
+        {
+          "name": "time_macros",
+          "package_key": "time-macros-0.2.27",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": true,
+          "target": null,
+          "tree": "host"
         }
       ],
       "build_dependencies": [],
@@ -55584,6 +57046,12 @@
             "version": "0.1.8",
             "rename": "time_core"
           }
+        ],
+        "time-macros": [
+          {
+            "version": "0.2.27",
+            "rename": "time_macros"
+          }
         ]
       },
       "build_rust_crate_args": {
@@ -55592,6 +57060,10 @@
         "edition": "2024",
         "features": [
           "alloc",
+          "default",
+          "formatting",
+          "macros",
+          "parsing",
           "std"
         ],
         "crateRenames": {
@@ -55605,6 +57077,12 @@
             {
               "version": "0.1.8",
               "rename": "time_core"
+            }
+          ],
+          "time-macros": [
+            {
+              "version": "0.2.27",
+              "rename": "time_macros"
             }
           ]
         },
@@ -55637,6 +57115,89 @@
         "edition": "2024",
         "release": true,
         "preBuild": "export CARGO_CRATE_NAME=time_core;"
+      }
+    },
+    "time-macros-0.2.27": {
+      "name": "time-macros",
+      "version": "0.2.27",
+      "edition": "2024",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/time-macros/time-macros-0.2.27.crate",
+        "sha256": "2e70e4c5a0e0a8a4823ad65dfe1a6930e4f4d756dcd9dd7939022b5e8c501215",
+        "name_with_ext": "time-macros-0.2.27.tar.gz"
+      },
+      "features": [
+        "formatting",
+        "parsing"
+      ],
+      "proc_macro": true,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": null,
+      "runtime_dependencies": [
+        {
+          "name": "num_conv",
+          "package_key": "num-conv-0.2.2",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "time_core",
+          "package_key": "time-core-0.1.8",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        }
+      ],
+      "build_dependencies": [],
+      "crate_renames": {
+        "num-conv": [
+          {
+            "version": "0.2.2",
+            "rename": "num_conv"
+          }
+        ],
+        "time-core": [
+          {
+            "version": "0.1.8",
+            "rename": "time_core"
+          }
+        ]
+      },
+      "build_rust_crate_args": {
+        "crateName": "time-macros",
+        "version": "0.2.27",
+        "edition": "2024",
+        "features": [
+          "formatting",
+          "parsing"
+        ],
+        "crateRenames": {
+          "num-conv": [
+            {
+              "version": "0.2.2",
+              "rename": "num_conv"
+            }
+          ],
+          "time-core": [
+            {
+              "version": "0.1.8",
+              "rename": "time_core"
+            }
+          ]
+        },
+        "release": true,
+        "procMacro": true,
+        "preBuild": "export CARGO_CRATE_NAME=time_macros;"
       }
     },
     "tinystr-0.8.3": {
@@ -55764,6 +57325,164 @@
         "edition": "2018",
         "release": true,
         "preBuild": "export CARGO_CRATE_NAME=tinyvec_macros;"
+      }
+    },
+    "todoku-0.1.9": {
+      "name": "todoku",
+      "version": "0.1.9",
+      "edition": "2024",
+      "source": {
+        "kind": "registry",
+        "url": "https://static.crates.io/crates/todoku/todoku-0.1.9.crate",
+        "sha256": "6ee883cd2d2ade666c00a77530adee6a1fe1ad7f506ab709068fad962e42b82b",
+        "name_with_ext": "todoku-0.1.9.tar.gz"
+      },
+      "features": [
+        "default"
+      ],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [
+        {
+          "name": "gh-owner",
+          "path": "src/bin/gh-owner.rs"
+        }
+      ],
+      "lib_target": null,
+      "runtime_dependencies": [
+        {
+          "name": "async_trait",
+          "package_key": "async-trait-0.1.92",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "host"
+        },
+        {
+          "name": "handan",
+          "package_key": "handan-0.1.2",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "reqwest",
+          "package_key": "reqwest-0.12.28",
+          "kind": "normal",
+          "features": [
+            "brotli",
+            "charset",
+            "cookies",
+            "gzip",
+            "http2",
+            "json",
+            "macos-system-configuration",
+            "rustls-tls"
+          ],
+          "uses_default_features": false,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "serde",
+          "package_key": "serde-1.0.229",
+          "kind": "normal",
+          "features": [
+            "derive"
+          ],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "serde_json",
+          "package_key": "serde_json-1.0.151",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "thiserror",
+          "package_key": "thiserror-2.0.20",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "tokio",
+          "package_key": "tokio-1.53.1",
+          "kind": "normal",
+          "features": [
+            "net",
+            "rt",
+            "time"
+          ],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "tracing",
+          "package_key": "tracing-0.1.44",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "url",
+          "package_key": "url-2.5.8",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        }
+      ],
+      "build_dependencies": [],
+      "crate_renames": {
+        "async-trait": [
+          {
+            "version": "0.1.92",
+            "rename": "async_trait"
+          }
+        ]
+      },
+      "build_rust_crate_args": {
+        "crateName": "todoku",
+        "version": "0.1.9",
+        "edition": "2024",
+        "features": [
+          "default"
+        ],
+        "crateRenames": {
+          "async-trait": [
+            {
+              "version": "0.1.92",
+              "rename": "async_trait"
+            }
+          ]
+        },
+        "release": true,
+        "preBuild": "export CARGO_CRATE_NAME=todoku;"
       }
     },
     "tokio-1.53.1": {
@@ -58368,11 +60087,15 @@
         "auth",
         "base64",
         "cors",
+        "decompression-br",
+        "decompression-gzip",
         "default",
         "follow-redirect",
+        "futures-core",
         "futures-util",
         "map-response-body",
         "mime",
+        "tokio-util",
         "tower",
         "trace",
         "tracing",
@@ -58384,6 +60107,18 @@
       "binaries": [],
       "lib_target": null,
       "runtime_dependencies": [
+        {
+          "name": "async_compression",
+          "package_key": "async-compression-0.4.51",
+          "kind": "normal",
+          "features": [
+            "tokio"
+          ],
+          "uses_default_features": true,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        },
         {
           "name": "base64",
           "package_key": "base64-0.22.1",
@@ -58411,6 +60146,16 @@
           "features": [],
           "uses_default_features": true,
           "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "futures_core",
+          "package_key": "futures-core-0.3.34",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": false,
+          "optional": true,
           "target": null,
           "tree": "target"
         },
@@ -58445,6 +60190,16 @@
           "tree": "target"
         },
         {
+          "name": "http_body_util",
+          "package_key": "http-body-util-0.1.3",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        },
+        {
           "name": "mime",
           "package_key": "mime-0.3.17",
           "kind": "normal",
@@ -58461,6 +60216,28 @@
           "features": [],
           "uses_default_features": true,
           "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "tokio",
+          "package_key": "tokio-1.53.1",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": false,
+          "optional": true,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "tokio_util",
+          "package_key": "tokio-util-0.7.18",
+          "kind": "normal",
+          "features": [
+            "io"
+          ],
+          "uses_default_features": false,
+          "optional": true,
           "target": null,
           "tree": "target"
         },
@@ -58517,6 +60294,18 @@
       ],
       "build_dependencies": [],
       "crate_renames": {
+        "async-compression": [
+          {
+            "version": "0.4.51",
+            "rename": "async_compression"
+          }
+        ],
+        "futures-core": [
+          {
+            "version": "0.3.34",
+            "rename": "futures_core"
+          }
+        ],
         "futures-util": [
           {
             "version": "0.3.34",
@@ -58529,10 +60318,22 @@
             "rename": "http_body"
           }
         ],
+        "http-body-util": [
+          {
+            "version": "0.1.3",
+            "rename": "http_body_util"
+          }
+        ],
         "pin-project-lite": [
           {
             "version": "0.2.17",
             "rename": "pin_project_lite"
+          }
+        ],
+        "tokio-util": [
+          {
+            "version": "0.7.18",
+            "rename": "tokio_util"
           }
         ],
         "tower-layer": [
@@ -58556,17 +60357,33 @@
           "auth",
           "base64",
           "cors",
+          "decompression-br",
+          "decompression-gzip",
           "default",
           "follow-redirect",
+          "futures-core",
           "futures-util",
           "map-response-body",
           "mime",
+          "tokio-util",
           "tower",
           "trace",
           "tracing",
           "validate-request"
         ],
         "crateRenames": {
+          "async-compression": [
+            {
+              "version": "0.4.51",
+              "rename": "async_compression"
+            }
+          ],
+          "futures-core": [
+            {
+              "version": "0.3.34",
+              "rename": "futures_core"
+            }
+          ],
           "futures-util": [
             {
               "version": "0.3.34",
@@ -58579,10 +60396,22 @@
               "rename": "http_body"
             }
           ],
+          "http-body-util": [
+            {
+              "version": "0.1.3",
+              "rename": "http_body_util"
+            }
+          ],
           "pin-project-lite": [
             {
               "version": "0.2.17",
               "rename": "pin_project_lite"
+            }
+          ],
+          "tokio-util": [
+            {
+              "version": "0.7.18",
+              "rename": "tokio_util"
             }
           ],
           "tower-layer": [
@@ -62054,6 +63883,11 @@
         "build_dependencies": [],
         "features": []
       },
+      "adler2-2.0.1": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
+      },
       "ahash-0.8.12": {
         "runtime_dependencies": [
           {
@@ -62149,6 +63983,27 @@
       },
       "alloc-from-pool-1.0.5": {
         "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
+      },
+      "alloc-no-stdlib-3.0.0": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
+      },
+      "alloc-stdlib-0.3.0": {
+        "runtime_dependencies": [
+          {
+            "name": "alloc_no_stdlib",
+            "package_key": "alloc-no-stdlib-3.0.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
         "build_dependencies": [],
         "features": []
       },
@@ -62442,6 +64297,56 @@
         ],
         "build_dependencies": [],
         "features": []
+      },
+      "async-compression-0.4.51": {
+        "runtime_dependencies": [
+          {
+            "name": "compression_codecs",
+            "package_key": "compression-codecs-0.4.46",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "compression_core",
+            "package_key": "compression-core-0.4.34",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "pin_project_lite",
+            "package_key": "pin-project-lite-0.2.17",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "tokio",
+            "package_key": "tokio-1.53.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "brotli",
+          "gzip",
+          "tokio"
+        ]
       },
       "async-graphql-7.2.1": {
         "runtime_dependencies": [
@@ -64186,6 +66091,75 @@
         "build_dependencies": [],
         "features": []
       },
+      "brotli-9.0.0": {
+        "runtime_dependencies": [
+          {
+            "name": "alloc_no_stdlib",
+            "package_key": "alloc-no-stdlib-3.0.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "alloc_stdlib",
+            "package_key": "alloc-stdlib-0.3.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "brotli_decompressor",
+            "package_key": "brotli-decompressor-6.0.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "alloc-stdlib",
+          "default",
+          "std"
+        ]
+      },
+      "brotli-decompressor-6.0.1": {
+        "runtime_dependencies": [
+          {
+            "name": "alloc_no_stdlib",
+            "package_key": "alloc-no-stdlib-3.0.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "alloc_stdlib",
+            "package_key": "alloc-stdlib-0.3.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "alloc-stdlib",
+          "std"
+        ]
+      },
       "bstr-1.12.1": {
         "runtime_dependencies": [
           {
@@ -64664,6 +66638,62 @@
         "build_dependencies": [],
         "features": []
       },
+      "compression-codecs-0.4.46": {
+        "runtime_dependencies": [
+          {
+            "name": "brotli",
+            "package_key": "brotli-9.0.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "compression_core",
+            "package_key": "compression-core-0.4.34",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "flate2",
+            "package_key": "flate2-1.1.10",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "memchr",
+            "package_key": "memchr-2.8.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "brotli",
+          "flate2",
+          "gzip",
+          "memchr"
+        ]
+      },
+      "compression-core-0.4.34": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
+      },
       "concurrent-queue-2.5.0": {
         "runtime_dependencies": [
           {
@@ -64724,6 +66754,164 @@
         "build_dependencies": [],
         "features": [
           "std"
+        ]
+      },
+      "cookie-0.18.2": {
+        "runtime_dependencies": [
+          {
+            "name": "percent_encoding",
+            "package_key": "percent-encoding-2.3.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "time",
+            "package_key": "time-0.3.47",
+            "kind": "normal",
+            "features": [
+              "formatting",
+              "macros",
+              "parsing",
+              "std"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [
+          {
+            "name": "version_check",
+            "package_key": "version_check-0.9.5",
+            "kind": "build",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "host"
+          }
+        ],
+        "features": [
+          "percent-encode",
+          "percent-encoding"
+        ]
+      },
+      "cookie_store-0.22.1": {
+        "runtime_dependencies": [
+          {
+            "name": "cookie",
+            "package_key": "cookie-0.18.2",
+            "kind": "normal",
+            "features": [
+              "percent-encode"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "document_features",
+            "package_key": "document-features-0.2.12",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "host"
+          },
+          {
+            "name": "idna",
+            "package_key": "idna-1.1.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "log",
+            "package_key": "log-0.4.34",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "publicsuffix",
+            "package_key": "publicsuffix-2.3.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde",
+            "package_key": "serde-1.0.229",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde_derive",
+            "package_key": "serde_derive-1.0.229",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "host"
+          },
+          {
+            "name": "serde_json",
+            "package_key": "serde_json-1.0.151",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "time",
+            "package_key": "time-0.3.47",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "url",
+            "package_key": "url-2.5.8",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default",
+          "public_suffix",
+          "serde",
+          "serde_json"
         ]
       },
       "crc-3.4.0": {
@@ -66076,6 +68264,24 @@
         "build_dependencies": [],
         "features": []
       },
+      "document-features-0.2.12": {
+        "runtime_dependencies": [
+          {
+            "name": "litrs",
+            "package_key": "litrs-1.0.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default"
+        ]
+      },
       "dotenvy-0.15.7": {
         "runtime_dependencies": [],
         "build_dependencies": [],
@@ -66550,6 +68756,40 @@
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": []
+      },
+      "flate2-1.1.10": {
+        "runtime_dependencies": [
+          {
+            "name": "crc32fast",
+            "package_key": "crc32fast-1.5.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "miniz_oxide",
+            "package_key": "miniz_oxide-0.9.1",
+            "kind": "normal",
+            "features": [
+              "simd"
+            ],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "any_impl",
+          "default",
+          "miniz_oxide",
+          "runtime_detection",
+          "rust_backend"
+        ]
       },
       "float-cmp-0.10.0": {
         "runtime_dependencies": [
@@ -72755,6 +74995,11 @@
         "build_dependencies": [],
         "features": []
       },
+      "handan-0.1.2": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
+      },
       "handlebars-6.4.1": {
         "runtime_dependencies": [
           {
@@ -73877,177 +76122,6 @@
         "build_dependencies": [],
         "features": []
       },
-      "hyper-util-0.1.20": {
-        "runtime_dependencies": [
-          {
-            "name": "base64",
-            "package_key": "base64-0.22.1",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "bytes",
-            "package_key": "bytes-1.11.1",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "futures_channel",
-            "package_key": "futures-channel-0.3.34",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "futures_util",
-            "package_key": "futures-util-0.3.34",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": false,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "http",
-            "package_key": "http-1.4.1",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "http_body",
-            "package_key": "http-body-1.0.1",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "hyper",
-            "package_key": "hyper-1.11.0",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "ipnet",
-            "package_key": "ipnet-2.12.0",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "libc",
-            "package_key": "libc-0.2.189",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "percent_encoding",
-            "package_key": "percent-encoding-2.3.2",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "pin_project_lite",
-            "package_key": "pin-project-lite-0.2.17",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "socket2",
-            "package_key": "socket2-0.6.4",
-            "kind": "normal",
-            "features": [
-              "all"
-            ],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "tokio",
-            "package_key": "tokio-1.53.1",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": false,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "tower_service",
-            "package_key": "tower-service-0.3.3",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "tracing",
-            "package_key": "tracing-0.1.44",
-            "kind": "normal",
-            "features": [
-              "std"
-            ],
-            "uses_default_features": false,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          }
-        ],
-        "build_dependencies": [],
-        "features": [
-          "client",
-          "client-legacy",
-          "client-proxy",
-          "default",
-          "http1",
-          "http2",
-          "server",
-          "server-auto",
-          "service",
-          "tokio"
-        ]
-      },
       "icu_collections-2.2.0": {
         "runtime_dependencies": [
           {
@@ -74453,6 +76527,7 @@
         "features": [
           "alloc",
           "compiled_data",
+          "default",
           "std"
         ]
       },
@@ -76367,6 +78442,11 @@
         ]
       },
       "litemap-0.8.2": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
+      },
+      "litrs-1.0.1": {
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": []
@@ -79328,6 +81408,37 @@
           "std"
         ]
       },
+      "miniz_oxide-0.9.1": {
+        "runtime_dependencies": [
+          {
+            "name": "adler2",
+            "package_key": "adler2-2.0.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "simd_adler32",
+            "package_key": "simd-adler32-0.3.10",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default",
+          "simd",
+          "simd-adler32",
+          "with-alloc"
+        ]
+      },
       "mio-1.2.1": {
         "runtime_dependencies": [
           {
@@ -80679,6 +82790,16 @@
             "tree": "target"
           },
           {
+            "name": "handan",
+            "package_key": "handan-0.1.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
             "name": "helm_forge",
             "package_key": "helm-forge-0.1.2",
             "kind": "normal",
@@ -81214,6 +83335,16 @@
           {
             "name": "thiserror",
             "package_key": "thiserror-2.0.20",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "todoku",
+            "package_key": "todoku-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -83236,6 +85367,41 @@
         "build_dependencies": [],
         "features": []
       },
+      "psl-types-2.0.11": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
+      },
+      "publicsuffix-2.3.0": {
+        "runtime_dependencies": [
+          {
+            "name": "idna",
+            "package_key": "idna-1.1.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "psl_types",
+            "package_key": "psl-types-2.0.11",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default",
+          "idna",
+          "punycode"
+        ]
+      },
       "quinn-0.11.9": {
         "runtime_dependencies": [
           {
@@ -84164,6 +86330,36 @@
             "tree": "target"
           },
           {
+            "name": "cookie_crate",
+            "package_key": "cookie-0.18.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": "cfg(not(target_arch = \"wasm32\"))",
+            "tree": "target"
+          },
+          {
+            "name": "cookie_store",
+            "package_key": "cookie_store-0.22.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": "cfg(not(target_arch = \"wasm32\"))",
+            "tree": "target"
+          },
+          {
+            "name": "encoding_rs",
+            "package_key": "encoding_rs-0.8.35",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": "cfg(not(target_arch = \"wasm32\"))",
+            "tree": "target"
+          },
+          {
             "name": "futures_core",
             "package_key": "futures-core-0.3.34",
             "kind": "normal",
@@ -84171,6 +86367,16 @@
             "uses_default_features": false,
             "optional": false,
             "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "h2",
+            "package_key": "h2-0.4.14",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": "cfg(not(target_arch = \"wasm32\"))",
             "tree": "target"
           },
           {
@@ -84252,6 +86458,16 @@
             "features": [],
             "uses_default_features": true,
             "optional": false,
+            "target": "cfg(not(target_arch = \"wasm32\"))",
+            "tree": "target"
+          },
+          {
+            "name": "mime",
+            "package_key": "mime-0.3.17",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
             "target": "cfg(not(target_arch = \"wasm32\"))",
             "tree": "target"
           },
@@ -84439,10 +86655,18 @@
           "__rustls",
           "__rustls-ring",
           "__tls",
+          "brotli",
+          "charset",
+          "cookies",
+          "gzip",
+          "h2",
+          "http2",
           "json",
+          "macos-system-configuration",
           "rustls-tls",
           "rustls-tls-webpki-roots",
-          "rustls-tls-webpki-roots-no-provider"
+          "rustls-tls-webpki-roots-no-provider",
+          "system-proxy"
         ]
       },
       "reqwest-0.13.4": {
@@ -87315,6 +89539,11 @@
           "std"
         ]
       },
+      "simd-adler32-0.3.10": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
+      },
       "slab-0.4.12": {
         "runtime_dependencies": [],
         "build_dependencies": [],
@@ -89772,6 +92001,16 @@
             "tree": "target"
           },
           {
+            "name": "itoa",
+            "package_key": "itoa-1.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
             "name": "num_conv",
             "package_key": "num-conv-0.2.2",
             "kind": "normal",
@@ -89800,11 +92039,25 @@
             "optional": false,
             "target": null,
             "tree": "target"
+          },
+          {
+            "name": "time_macros",
+            "package_key": "time-macros-0.2.27",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "host"
           }
         ],
         "build_dependencies": [],
         "features": [
           "alloc",
+          "default",
+          "formatting",
+          "macros",
+          "parsing",
           "std"
         ]
       },
@@ -89812,6 +92065,35 @@
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": []
+      },
+      "time-macros-0.2.27": {
+        "runtime_dependencies": [
+          {
+            "name": "num_conv",
+            "package_key": "num-conv-0.2.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "time_core",
+            "package_key": "time-core-0.1.8",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "formatting",
+          "parsing"
+        ]
       },
       "tinystr-0.8.3": {
         "runtime_dependencies": [
@@ -89865,6 +92147,119 @@
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": []
+      },
+      "todoku-0.1.9": {
+        "runtime_dependencies": [
+          {
+            "name": "async_trait",
+            "package_key": "async-trait-0.1.92",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "host"
+          },
+          {
+            "name": "handan",
+            "package_key": "handan-0.1.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "reqwest",
+            "package_key": "reqwest-0.12.28",
+            "kind": "normal",
+            "features": [
+              "brotli",
+              "charset",
+              "cookies",
+              "gzip",
+              "http2",
+              "json",
+              "macos-system-configuration",
+              "rustls-tls"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde",
+            "package_key": "serde-1.0.229",
+            "kind": "normal",
+            "features": [
+              "derive"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde_json",
+            "package_key": "serde_json-1.0.151",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.20",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "tokio",
+            "package_key": "tokio-1.53.1",
+            "kind": "normal",
+            "features": [
+              "net",
+              "rt",
+              "time"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "tracing",
+            "package_key": "tracing-0.1.44",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "url",
+            "package_key": "url-2.5.8",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default"
+        ]
       },
       "tokio-1.53.1": {
         "runtime_dependencies": [
@@ -91299,6 +93694,18 @@
       "tower-http-0.6.11": {
         "runtime_dependencies": [
           {
+            "name": "async_compression",
+            "package_key": "async-compression-0.4.51",
+            "kind": "normal",
+            "features": [
+              "tokio"
+            ],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
             "name": "base64",
             "package_key": "base64-0.22.1",
             "kind": "normal",
@@ -91325,6 +93732,16 @@
             "features": [],
             "uses_default_features": true,
             "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "futures_core",
+            "package_key": "futures-core-0.3.34",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": true,
             "target": null,
             "tree": "target"
           },
@@ -91359,6 +93776,16 @@
             "tree": "target"
           },
           {
+            "name": "http_body_util",
+            "package_key": "http-body-util-0.1.3",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
             "name": "mime",
             "package_key": "mime-0.3.17",
             "kind": "normal",
@@ -91375,6 +93802,28 @@
             "features": [],
             "uses_default_features": true,
             "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "tokio",
+            "package_key": "tokio-1.53.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "tokio_util",
+            "package_key": "tokio-util-0.7.18",
+            "kind": "normal",
+            "features": [
+              "io"
+            ],
+            "uses_default_features": false,
+            "optional": true,
             "target": null,
             "tree": "target"
           },
@@ -91434,11 +93883,15 @@
           "auth",
           "base64",
           "cors",
+          "decompression-br",
+          "decompression-gzip",
           "default",
           "follow-redirect",
+          "futures-core",
           "futures-util",
           "map-response-body",
           "mime",
+          "tokio-util",
           "tower",
           "trace",
           "tracing",
@@ -93162,6 +95615,188 @@
             "build_dependencies": [],
             "features": []
           },
+          "hyper-util-0.1.20": {
+            "runtime_dependencies": [
+              {
+                "name": "base64",
+                "package_key": "base64-0.22.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "bytes",
+                "package_key": "bytes-1.11.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "futures_channel",
+                "package_key": "futures-channel-0.3.34",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "futures_util",
+                "package_key": "futures-util-0.3.34",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "http",
+                "package_key": "http-1.4.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "http_body",
+                "package_key": "http-body-1.0.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "hyper",
+                "package_key": "hyper-1.11.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "ipnet",
+                "package_key": "ipnet-2.12.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.189",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "percent_encoding",
+                "package_key": "percent-encoding-2.3.2",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "pin_project_lite",
+                "package_key": "pin-project-lite-0.2.17",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "socket2",
+                "package_key": "socket2-0.6.4",
+                "kind": "normal",
+                "features": [
+                  "all"
+                ],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "system_configuration",
+                "package_key": "system-configuration-0.7.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": "cfg(target_os = \"macos\")",
+                "tree": "target"
+              },
+              {
+                "name": "tokio",
+                "package_key": "tokio-1.53.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tower_service",
+                "package_key": "tower-service-0.3.3",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tracing",
+                "package_key": "tracing-0.1.44",
+                "kind": "normal",
+                "features": [
+                  "std"
+                ],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": [
+              "client",
+              "client-legacy",
+              "client-proxy",
+              "client-proxy-system",
+              "default",
+              "http1",
+              "http2",
+              "server",
+              "server-auto",
+              "service",
+              "tokio"
+            ]
+          },
           "iana-time-zone-0.1.65": {
             "runtime_dependencies": [
               {
@@ -93842,6 +96477,68 @@
               "OSX_10_9",
               "default"
             ]
+          },
+          "system-configuration-0.7.0": {
+            "runtime_dependencies": [
+              {
+                "name": "bitflags",
+                "package_key": "bitflags-2.11.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "core_foundation",
+                "package_key": "core-foundation-0.9.4",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "system_configuration_sys",
+                "package_key": "system-configuration-sys-0.6.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": []
+          },
+          "system-configuration-sys-0.6.0": {
+            "runtime_dependencies": [
+              {
+                "name": "core_foundation_sys",
+                "package_key": "core-foundation-sys-0.8.7",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.189",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": []
           }
         }
       },
@@ -93942,6 +96639,178 @@
             ],
             "build_dependencies": [],
             "features": []
+          },
+          "hyper-util-0.1.20": {
+            "runtime_dependencies": [
+              {
+                "name": "base64",
+                "package_key": "base64-0.22.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "bytes",
+                "package_key": "bytes-1.11.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "futures_channel",
+                "package_key": "futures-channel-0.3.34",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "futures_util",
+                "package_key": "futures-util-0.3.34",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "http",
+                "package_key": "http-1.4.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "http_body",
+                "package_key": "http-body-1.0.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "hyper",
+                "package_key": "hyper-1.11.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "ipnet",
+                "package_key": "ipnet-2.12.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.189",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "percent_encoding",
+                "package_key": "percent-encoding-2.3.2",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "pin_project_lite",
+                "package_key": "pin-project-lite-0.2.17",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "socket2",
+                "package_key": "socket2-0.6.4",
+                "kind": "normal",
+                "features": [
+                  "all"
+                ],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tokio",
+                "package_key": "tokio-1.53.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tower_service",
+                "package_key": "tower-service-0.3.3",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tracing",
+                "package_key": "tracing-0.1.44",
+                "kind": "normal",
+                "features": [
+                  "std"
+                ],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": [
+              "client",
+              "client-legacy",
+              "client-proxy",
+              "client-proxy-system",
+              "default",
+              "http1",
+              "http2",
+              "server",
+              "server-auto",
+              "service",
+              "tokio"
+            ]
           },
           "iana-time-zone-0.1.65": {
             "runtime_dependencies": [],
@@ -94821,6 +97690,178 @@
             ],
             "build_dependencies": [],
             "features": []
+          },
+          "hyper-util-0.1.20": {
+            "runtime_dependencies": [
+              {
+                "name": "base64",
+                "package_key": "base64-0.22.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "bytes",
+                "package_key": "bytes-1.11.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "futures_channel",
+                "package_key": "futures-channel-0.3.34",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "futures_util",
+                "package_key": "futures-util-0.3.34",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "http",
+                "package_key": "http-1.4.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "http_body",
+                "package_key": "http-body-1.0.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "hyper",
+                "package_key": "hyper-1.11.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "ipnet",
+                "package_key": "ipnet-2.12.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.189",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "percent_encoding",
+                "package_key": "percent-encoding-2.3.2",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "pin_project_lite",
+                "package_key": "pin-project-lite-0.2.17",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "socket2",
+                "package_key": "socket2-0.6.4",
+                "kind": "normal",
+                "features": [
+                  "all"
+                ],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tokio",
+                "package_key": "tokio-1.53.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tower_service",
+                "package_key": "tower-service-0.3.3",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tracing",
+                "package_key": "tracing-0.1.44",
+                "kind": "normal",
+                "features": [
+                  "std"
+                ],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": [
+              "client",
+              "client-legacy",
+              "client-proxy",
+              "client-proxy-system",
+              "default",
+              "http1",
+              "http2",
+              "server",
+              "server-auto",
+              "service",
+              "tokio"
+            ]
           },
           "iana-time-zone-0.1.65": {
             "runtime_dependencies": [],
@@ -95757,6 +98798,188 @@
             "build_dependencies": [],
             "features": []
           },
+          "hyper-util-0.1.20": {
+            "runtime_dependencies": [
+              {
+                "name": "base64",
+                "package_key": "base64-0.22.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "bytes",
+                "package_key": "bytes-1.11.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "futures_channel",
+                "package_key": "futures-channel-0.3.34",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "futures_util",
+                "package_key": "futures-util-0.3.34",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "http",
+                "package_key": "http-1.4.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "http_body",
+                "package_key": "http-body-1.0.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "hyper",
+                "package_key": "hyper-1.11.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "ipnet",
+                "package_key": "ipnet-2.12.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.189",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "percent_encoding",
+                "package_key": "percent-encoding-2.3.2",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "pin_project_lite",
+                "package_key": "pin-project-lite-0.2.17",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "socket2",
+                "package_key": "socket2-0.6.4",
+                "kind": "normal",
+                "features": [
+                  "all"
+                ],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "system_configuration",
+                "package_key": "system-configuration-0.7.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": "cfg(target_os = \"macos\")",
+                "tree": "target"
+              },
+              {
+                "name": "tokio",
+                "package_key": "tokio-1.53.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tower_service",
+                "package_key": "tower-service-0.3.3",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tracing",
+                "package_key": "tracing-0.1.44",
+                "kind": "normal",
+                "features": [
+                  "std"
+                ],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": [
+              "client",
+              "client-legacy",
+              "client-proxy",
+              "client-proxy-system",
+              "default",
+              "http1",
+              "http2",
+              "server",
+              "server-auto",
+              "service",
+              "tokio"
+            ]
+          },
           "iana-time-zone-0.1.65": {
             "runtime_dependencies": [
               {
@@ -96417,6 +99640,68 @@
               "OSX_10_9",
               "default"
             ]
+          },
+          "system-configuration-0.7.0": {
+            "runtime_dependencies": [
+              {
+                "name": "bitflags",
+                "package_key": "bitflags-2.11.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "core_foundation",
+                "package_key": "core-foundation-0.9.4",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "system_configuration_sys",
+                "package_key": "system-configuration-sys-0.6.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": []
+          },
+          "system-configuration-sys-0.6.0": {
+            "runtime_dependencies": [
+              {
+                "name": "core_foundation_sys",
+                "package_key": "core-foundation-sys-0.8.7",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.189",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": []
           }
         }
       },
@@ -96491,6 +99776,178 @@
             "runtime_dependencies": [],
             "build_dependencies": [],
             "features": []
+          },
+          "hyper-util-0.1.20": {
+            "runtime_dependencies": [
+              {
+                "name": "base64",
+                "package_key": "base64-0.22.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "bytes",
+                "package_key": "bytes-1.11.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "futures_channel",
+                "package_key": "futures-channel-0.3.34",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "futures_util",
+                "package_key": "futures-util-0.3.34",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "http",
+                "package_key": "http-1.4.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "http_body",
+                "package_key": "http-body-1.0.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "hyper",
+                "package_key": "hyper-1.11.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "ipnet",
+                "package_key": "ipnet-2.12.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.189",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "percent_encoding",
+                "package_key": "percent-encoding-2.3.2",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "pin_project_lite",
+                "package_key": "pin-project-lite-0.2.17",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "socket2",
+                "package_key": "socket2-0.6.4",
+                "kind": "normal",
+                "features": [
+                  "all"
+                ],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tokio",
+                "package_key": "tokio-1.53.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tower_service",
+                "package_key": "tower-service-0.3.3",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tracing",
+                "package_key": "tracing-0.1.44",
+                "kind": "normal",
+                "features": [
+                  "std"
+                ],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": [
+              "client",
+              "client-legacy",
+              "client-proxy",
+              "client-proxy-system",
+              "default",
+              "http1",
+              "http2",
+              "server",
+              "server-auto",
+              "service",
+              "tokio"
+            ]
           },
           "iana-time-zone-0.1.65": {
             "runtime_dependencies": [],
@@ -97325,6 +100782,178 @@
             "build_dependencies": [],
             "features": []
           },
+          "hyper-util-0.1.20": {
+            "runtime_dependencies": [
+              {
+                "name": "base64",
+                "package_key": "base64-0.22.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "bytes",
+                "package_key": "bytes-1.11.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "futures_channel",
+                "package_key": "futures-channel-0.3.34",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "futures_util",
+                "package_key": "futures-util-0.3.34",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "http",
+                "package_key": "http-1.4.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "http_body",
+                "package_key": "http-body-1.0.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "hyper",
+                "package_key": "hyper-1.11.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "ipnet",
+                "package_key": "ipnet-2.12.0",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.189",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "percent_encoding",
+                "package_key": "percent-encoding-2.3.2",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "pin_project_lite",
+                "package_key": "pin-project-lite-0.2.17",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": false,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "socket2",
+                "package_key": "socket2-0.6.4",
+                "kind": "normal",
+                "features": [
+                  "all"
+                ],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tokio",
+                "package_key": "tokio-1.53.1",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tower_service",
+                "package_key": "tower-service-0.3.3",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": true,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              },
+              {
+                "name": "tracing",
+                "package_key": "tracing-0.1.44",
+                "kind": "normal",
+                "features": [
+                  "std"
+                ],
+                "uses_default_features": false,
+                "optional": true,
+                "target": null,
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": [
+              "client",
+              "client-legacy",
+              "client-proxy",
+              "client-proxy-system",
+              "default",
+              "http1",
+              "http2",
+              "server",
+              "server-auto",
+              "service",
+              "tokio"
+            ]
+          },
           "iana-time-zone-0.1.65": {
             "runtime_dependencies": [],
             "build_dependencies": [],
@@ -98088,13 +101717,13 @@
       }
     }
   },
-  "cargo_lock_sha256": "ba9198aea73ff1b331ed8c02f3af09c8fa687266730c02cabd12882241e6446e",
+  "cargo_lock_sha256": "f249767ae08fcc5e2da1c0a17ce4285dbc630987f95ac9501075afc71090bd4d",
   "manifest_sha256": {
     "Cargo.toml": "fa3d83bb4eddee0b393f7375cbce4652573cbd213363ad75550f6e6790c5fbd2",
     "lava-ruby/Cargo.toml": "a2d172e3cffd2088bd2c849c579de254aec964cbe53b992a5b381a42c1f80933",
     "pangea-cli/Cargo.toml": "a15be7008ea6fc2ab76b2773e257aec0aa73f3191584a590f73d160530e157f7",
     "pangea-operator-mcp/Cargo.toml": "72a01f5815a03b1c418697a985ede13816d4f5aec385332ec436e2155713dea8",
-    "pangea-operator/Cargo.toml": "f824faa1fcbd569e32358e819f8c7f761d22d28370dd4d2290478da906b9b933",
+    "pangea-operator/Cargo.toml": "61510be7a5c79b9cc80f7b6d88c58ff2be489dcd02d41abdce4d452407f714c8",
     "pangea-ruby-eval/Cargo.toml": "a65712c95619fda84a8cebaa9f887919acf4e71f4125f085797dfaf478eb380a",
     "pangea-types/Cargo.toml": "bba5d0bee1d04b3ddaefa9f7234a1e5a11e3388dd89e62a3deb4a91b66cd4abc",
     "roles-anywhere/Cargo.toml": "82d3c7379682699c55a98bced056af9bf0a853f9c0248e674b729d72007bea5a"
