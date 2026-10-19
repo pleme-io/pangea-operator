@@ -26,6 +26,7 @@ pub mod policy_cascade;
 pub mod policy_gate;
 pub mod policy_pipeline;
 pub mod post_reconcile_pipeline;
+pub mod progress;
 pub mod reactive;
 pub mod reconcile_scheduler;
 mod reconciler;
@@ -445,6 +446,8 @@ pub struct ControllerState {
     /// it, per ★★ UNREPRESENTABILITY: a hang is not a state a bounded
     /// executor call can be in.
     pub executor_timeout: Duration,
+
+    pub progress: Arc<progress::ProgressRegistry>,
 }
 
 impl ControllerState {
@@ -521,6 +524,7 @@ impl ControllerState {
             anomaly_emitter: anomaly_emitter_arc,
             workspace_budgets,
             executor_timeout: Duration::from_secs(executor_config.timeout_secs),
+            progress: Arc::new(progress::ProgressRegistry::new()),
         })
     }
 

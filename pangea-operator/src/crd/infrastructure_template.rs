@@ -1768,6 +1768,9 @@ pub struct InfrastructureTemplateStatus {
     /// it here closes that loop.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backend: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<super::live_status::LiveProgress>,
 }
 
 /// Receipt for one reconcile cycle. Surfaces the answer to "what did

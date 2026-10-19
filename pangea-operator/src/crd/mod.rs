@@ -15,6 +15,7 @@ pub mod compliance_schedule;
 pub mod image_pipeline;
 mod infrastructure_flow;
 pub mod infrastructure_template;
+pub mod live_status;
 pub mod operator_policy;
 mod packer_build;
 pub mod pangea_dashboard;
@@ -45,6 +46,8 @@ pub use infrastructure_template::{
     SecretKeySelector, SecretRef, SecretVariable, SecretVariableSource, SettlingExhaustionAction,
     SettlingPolicy, SeverityRollup, TemplateObjectRef, TemplateSource, VariableRef,
 };
+
+pub use live_status::{InFlightCall, LiveProgress, ProgressStep, ResumeRecord};
 
 // Re-export InfrastructureFlow types
 pub use infrastructure_flow::{
