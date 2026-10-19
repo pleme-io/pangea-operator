@@ -40,6 +40,7 @@
 pub mod backend;
 pub mod capabilities;
 pub mod chart_values;
+pub mod github_app;
 pub mod github_read;
 pub mod org_resolve;
 pub mod org_settings;
