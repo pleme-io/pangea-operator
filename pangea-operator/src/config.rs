@@ -1164,6 +1164,7 @@ mod tests {
 
     #[test]
     fn absent_file_is_reported_and_changes_nothing() {
+        let _g = ENV_GUARD.lock().unwrap();
         let path = std::env::temp_dir().join("pangea-operator-config-does-not-exist.yaml");
         let r = OperatorConfig::resolve_from(&path, Dict::new());
         assert_eq!(r.file, FileTier::Absent { path: path.clone() });
@@ -1175,6 +1176,7 @@ mod tests {
 
     #[test]
     fn file_tier_beats_default_and_env_beats_file() {
+        let _g = ENV_GUARD.lock().unwrap();
         let path = scratch_file(
             "precedence",
             "servers:\n  health_addr: 0.0.0.0:1111\n  grpc_addr: 0.0.0.0:2222\nrouting:\n  ntfy_base_url: https://ntfy.pleme.internal\n",
@@ -1200,6 +1202,7 @@ mod tests {
 
     #[test]
     fn malformed_file_is_refused_and_env_still_applies() {
+        let _g = ENV_GUARD.lock().unwrap();
         for (tag, body) in [
             (
                 "unknown-key",
@@ -1227,6 +1230,7 @@ mod tests {
 
     #[test]
     fn network_section_is_read_from_the_file_tier() {
+        let _g = ENV_GUARD.lock().unwrap();
         let path = scratch_file(
             "network",
             concat!(
