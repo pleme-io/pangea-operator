@@ -46,6 +46,7 @@ pub mod org_settings;
 // Typed shikumi progressive-discovery config surface (the operator's whole
 // env surface as one TieredConfig). See src/config.rs.
 pub mod config;
+pub mod config_status;
 pub mod controller;
 pub mod crd;
 // Bounded, in-flight-aware shutdown drain — waits on the admission budget
@@ -56,6 +57,7 @@ pub mod error;
 pub mod executor;
 pub mod executor_migration;
 pub mod leader;
+pub mod network;
 pub mod observability;
 pub mod ruby;
 // UTF-8-safe truncation, shared by every call site that caps

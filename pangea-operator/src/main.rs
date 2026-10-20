@@ -183,7 +183,10 @@ async fn main() -> Result<()> {
     // to the scattered `std::env::var` reads; see src/config.rs. Provenance
     // logging is a real operability win — "why is the executor magma / the
     // namespace X?" becomes a boot log line.
-    let resolved = pangea_operator::config::OperatorConfig::resolve();
+    let reporting = pangea_operator::config::OperatorConfig::resolve_reporting();
+    let file_tier = reporting.file;
+    let resolved = reporting.resolution;
+    info!(file_tier = ?file_tier, "operator config file tier");
     pangea_operator::config::OperatorConfig::log_provenance(resolved.provenance());
     let op_cfg = resolved.into_value();
 
@@ -227,6 +230,21 @@ async fn main() -> Result<()> {
         .map_err(|e| pangea_operator::Error::Kube(e))?;
 
     info!("Connected to Kubernetes cluster");
+
+    {
+        let status = pangea_operator::config_status::ConfigStatus::observe(
+            file_tier,
+            &op_cfg.network.resolve(),
+            &pangea_operator::config_status::NoObserver,
+        );
+        let status_client = client.clone();
+        let namespace = op_cfg.identity.namespace.clone();
+        tokio::spawn(async move {
+            if let Err(e) = status.publish(status_client, &namespace).await {
+                warn!(error = %e, "config status ConfigMap publish failed");
+            }
+        });
+    }
 
     // Initialize metrics
     let metrics = Arc::new(Metrics::new());

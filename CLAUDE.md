@@ -466,13 +466,24 @@ Chart `helmworks/charts/pangea-operator` 0.7.8+ ships:
   (`config.file.enabled: false`) — the live render is byte-unchanged. Secrets
   (`PGPASSWORD` / `PANGEA_API_TOKEN` / `PANGEA_GEM_AUTH_TOKEN`) are NEVER
   rendered by the mixin; they stay direct env / secretKeyRef (the operator's
-  deliberate secret exclusion, `src/config.rs`). **Follow-on (the cutover):**
-  `OperatorConfig` (`src/config.rs`) resolves env + the pod-identity discovered
-  tier only — it has no shikumi `ConfigStore` FILE discovery yet. Teaching it to
-  discover `/etc/pangea/config.yaml` as the file tier makes the ConfigMap a live
-  read and completes the env → reconciled-Helm cutover; until then the
-  ConfigMap is the committed target, not consumed. Behavior-preserving +
-  parity-tested when landed, same discipline as the env-surface migration.
+  deliberate secret exclusion, `src/config.rs`). **File tier is consumed
+  (2026-10-20):** `OperatorConfig::resolve_reporting` reads
+  `$PANGEA_CONFIG_FILE` (default `/etc/pangea/config.yaml`) as a Custom-tier
+  file overlay below env (`bare → discovered → default → file → env`). An
+  absent file is `absent`; a file that fails to parse or to extract
+  (`deny_unknown_fields`, so a secret key is refused too) is `refused{reason}`
+  and dropped whole while env still applies. The file carries a `network:`
+  section (`src/network.rs`): `fleet` / `sites.<s>` / `nodes.<n>` tiers of
+  `{defaults, services.<name>}` patches under `services.<name>` entries
+  `{node, site, posture, port, upstream, names[]}`, plus
+  `devices.<site>.<name> {kind, mac, address, posture}`; each entry resolves
+  or is refused alone. The observed status (`src/config_status.rs`:
+  `applied | drifted{fields} | refused{reason} | blind{reason}` per entry, plus
+  the file tier's state) is published at boot to the ConfigMap
+  `pangea-operator-config-status`, key `status.yaml`, in the operator
+  namespace. No observer exists yet, so every valid entry reads `blind`.
+  **Still open:** the chart does not yet mount the tiered-config ConfigMap into
+  the Deployment, so `config.file.enabled: true` alone reaches nothing.
 
 The HR's image is the lava (no-CRuby) image; Ruby templates compile in
 lava-ruby against the gem closure it bakes at `/usr/share/lava/ruby`.

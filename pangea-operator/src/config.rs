@@ -50,6 +50,8 @@
 //! deliberately NOT part of this serialized surface — they must never land in
 //! a provenance dump / `config-show`. They stay direct env reads.
 
+use std::path::{Path, PathBuf};
+
 use figment::providers::Serialized;
 use figment::value::Dict;
 use figment::Figment;
@@ -91,6 +93,8 @@ pub struct OperatorConfig {
     /// Embedded-Ruby gem cache (`PANGEA_GEM_CACHE_DIR`). Auth token is a
     /// secret, deliberately excluded.
     pub gem: GemConfig,
+    #[serde(default)]
+    pub network: crate::network::NetworkConfig,
 }
 
 /// Pod identity — the discovered tier.
@@ -600,6 +604,27 @@ impl EnvOverlay {
     }
 }
 
+pub const DEFAULT_CONFIG_FILE: &str = "/etc/pangea/config.yaml";
+pub const CONFIG_FILE_ENV: &str = "PANGEA_CONFIG_FILE";
+
+#[must_use]
+pub fn config_file_path() -> PathBuf {
+    PathBuf::from(env_nonempty(CONFIG_FILE_ENV).unwrap_or_else(|| DEFAULT_CONFIG_FILE.to_string()))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "lowercase")]
+pub enum FileTier {
+    Absent { path: PathBuf },
+    Loaded { path: PathBuf },
+    Refused { path: PathBuf, reason: String },
+}
+
+pub struct ResolvedOperatorConfig {
+    pub resolution: ProgressiveResolution<OperatorConfig>,
+    pub file: FileTier,
+}
+
 // ── TieredConfig — the sealed progressive fold ──
 
 impl TieredConfig for OperatorConfig {
@@ -666,6 +691,7 @@ impl TieredConfig for OperatorConfig {
             gem: GemConfig {
                 cache_dir: String::new(),
             },
+            network: crate::network::NetworkConfig::default(),
         }
     }
 
@@ -769,9 +795,59 @@ impl OperatorConfig {
     /// `main.rs` reaches for at startup.
     #[must_use]
     pub fn resolve() -> ProgressiveResolution<Self> {
-        let overlay =
-            ProgressiveLayer::env("pangea-operator", to_dict(&EnvOverlay::from_process_env()));
-        Self::resolve_progressive_with(&[overlay])
+        Self::resolve_reporting().resolution
+    }
+
+    #[must_use]
+    pub fn resolve_reporting() -> ResolvedOperatorConfig {
+        Self::resolve_from(
+            &config_file_path(),
+            to_dict(&EnvOverlay::from_process_env()),
+        )
+    }
+
+    #[must_use]
+    pub fn resolve_from(file: &Path, env: Dict) -> ResolvedOperatorConfig {
+        let (file_layer, file_tier) = Self::file_overlay(file);
+        let mut overlays: Vec<ProgressiveLayer> = file_layer.into_iter().collect();
+        overlays.push(ProgressiveLayer::env("pangea-operator", env));
+        ResolvedOperatorConfig {
+            resolution: Self::resolve_progressive_with(&overlays),
+            file: file_tier,
+        }
+    }
+
+    fn file_overlay(path: &Path) -> (Option<ProgressiveLayer>, FileTier) {
+        let shown = path.to_path_buf();
+        if !path.exists() {
+            return (None, FileTier::Absent { path: shown });
+        }
+        let layer = match ProgressiveLayer::try_from_file(path) {
+            Ok(layer) => layer,
+            Err(e) => {
+                return (
+                    None,
+                    FileTier::Refused {
+                        path: shown,
+                        reason: e.to_string(),
+                    },
+                )
+            }
+        };
+        let checked = Figment::new()
+            .merge(Serialized::defaults(Self::prescribed_default()))
+            .merge(Serialized::defaults(layer.dict()))
+            .extract::<Self>();
+        match checked {
+            Ok(_) => (Some(layer), FileTier::Loaded { path: shown }),
+            Err(e) => (
+                None,
+                FileTier::Refused {
+                    path: shown,
+                    reason: e.to_string(),
+                },
+            ),
+        }
     }
 
     /// Emit the resolved provenance at startup — a real operability win: the
@@ -1058,6 +1134,134 @@ mod tests {
         assert!(OperatorConfig::resolve().into_value().compiler.lava_ruby);
 
         clear_migrated();
+    }
+
+    fn scratch_file(tag: &str, body: &str) -> PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(
+            [
+                "pangea-operator-config-",
+                tag,
+                "-",
+                &std::process::id().to_string(),
+                ".yaml",
+            ]
+            .concat(),
+        );
+        std::fs::write(&p, body).unwrap();
+        p
+    }
+
+    fn env_dict(pairs: &[(&str, &str, &str)]) -> Dict {
+        let mut root = Dict::new();
+        for (section, key, value) in pairs {
+            let mut leaf = Dict::new();
+            leaf.insert((*key).to_string(), figment::value::Value::from(*value));
+            root.insert((*section).to_string(), figment::value::Value::from(leaf));
+        }
+        root
+    }
+
+    #[test]
+    fn absent_file_is_reported_and_changes_nothing() {
+        let path = std::env::temp_dir().join("pangea-operator-config-does-not-exist.yaml");
+        let r = OperatorConfig::resolve_from(&path, Dict::new());
+        assert_eq!(r.file, FileTier::Absent { path: path.clone() });
+        assert_eq!(
+            r.resolution.into_value(),
+            OperatorConfig::resolve_progressive().into_value()
+        );
+    }
+
+    #[test]
+    fn file_tier_beats_default_and_env_beats_file() {
+        let path = scratch_file(
+            "precedence",
+            "servers:\n  health_addr: 0.0.0.0:1111\n  grpc_addr: 0.0.0.0:2222\nrouting:\n  ntfy_base_url: https://ntfy.pleme.internal\n",
+        );
+        let r = OperatorConfig::resolve_from(
+            &path,
+            env_dict(&[("servers", "grpc_addr", "0.0.0.0:3333")]),
+        );
+        assert_eq!(r.file, FileTier::Loaded { path: path.clone() });
+        let prov = r.resolution.provenance().clone();
+        let v = r.resolution.into_value();
+        assert_eq!(v.servers.health_addr, "0.0.0.0:1111");
+        assert_eq!(v.servers.grpc_addr, "0.0.0.0:3333");
+        assert_eq!(v.routing.ntfy_base_url, "https://ntfy.pleme.internal");
+        assert_eq!(v.servers.metrics_addr, "0.0.0.0:9090");
+        let health = prov.provenance_of(&["servers", "health_addr"]).unwrap();
+        assert_eq!(health.tier(), shikumi::ConfigTierKind::Custom);
+        assert_eq!(health, &shikumi::Provenance::file(path.clone()));
+        let grpc = prov.provenance_of(&["servers", "grpc_addr"]).unwrap();
+        assert_eq!(grpc, &shikumi::Provenance::env("pangea-operator"));
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn malformed_file_is_refused_and_env_still_applies() {
+        for (tag, body) in [
+            (
+                "unknown-key",
+                "servers:\n  health_addr: x\nnot_a_section: 1\n",
+            ),
+            ("bad-type", "database:\n  port: not-a-port\n"),
+            ("not-yaml", "servers: [unclosed\n"),
+        ] {
+            let path = scratch_file(tag, body);
+            let r = OperatorConfig::resolve_from(
+                &path,
+                env_dict(&[("servers", "graphql_addr", "0.0.0.0:4444")]),
+            );
+            assert!(
+                matches!(r.file, FileTier::Refused { .. }),
+                "{tag}: {:?}",
+                r.file
+            );
+            let v = r.resolution.into_value();
+            assert_eq!(v.servers.graphql_addr, "0.0.0.0:4444", "{tag}");
+            assert_eq!(v.servers.health_addr, "0.0.0.0:8080", "{tag}");
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn network_section_is_read_from_the_file_tier() {
+        let path = scratch_file(
+            "network",
+            concat!(
+                "network:\n",
+                "  fleet:\n    defaults: { posture: tailnet, port: 443 }\n",
+                "  sites:\n    house:\n      defaults: { posture: lan }\n",
+                "  nodes:\n    plo:\n      site: house\n      services:\n        ha: { port: 8123 }\n",
+                "  services:\n",
+                "    ha: { node: plo, names: [ha.pleme.internal], upstream: 'http://127.0.0.1:8123' }\n",
+                "    grafana: { node: rio }\n",
+                "  devices:\n    house:\n      plug: { kind: plug, mac: 'aa:bb:cc:dd:ee:ff', posture: lan }\n",
+            ),
+        );
+        let r = OperatorConfig::resolve_from(&path, Dict::new());
+        assert_eq!(r.file, FileTier::Loaded { path: path.clone() });
+        let net = r.resolution.into_value().network.resolve();
+        let ha = net.services["ha"].clone().unwrap();
+        assert_eq!(ha.posture, crate::network::Posture::Lan);
+        assert_eq!(ha.port, 8123);
+        assert_eq!(ha.site.as_deref(), Some("house"));
+        let grafana = net.services["grafana"].clone().unwrap();
+        assert_eq!(grafana.posture, crate::network::Posture::Tailnet);
+        assert_eq!(grafana.port, 443);
+        assert!(net.devices[&("house".to_string(), "plug".to_string())].is_ok());
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn config_file_path_defaults_to_the_chart_mount() {
+        let _g = ENV_GUARD.lock().unwrap();
+        std::env::remove_var(CONFIG_FILE_ENV);
+        assert_eq!(config_file_path(), PathBuf::from("/etc/pangea/config.yaml"));
+        std::env::set_var(CONFIG_FILE_ENV, "/tmp/x.yaml");
+        assert_eq!(config_file_path(), PathBuf::from("/tmp/x.yaml"));
+        std::env::remove_var(CONFIG_FILE_ENV);
     }
 
     #[test]
