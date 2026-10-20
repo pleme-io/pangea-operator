@@ -594,6 +594,7 @@ pub fn record_for(row: &OrgRepoRow, live: Option<&LiveRepo>) -> RepoRecord {
         .actions_enabled
         .unwrap_or(declared_visibility != "internal");
     r.insert("actions_enabled".into(), b(actions_on));
+    r.insert("actions_disabled".into(), b(!actions_on));
 
     // ── AN ARCHIVED REPO IS NOT PROTECTED ───────────────────────────────
     // `protected = !cfg[:archived] && profile != :none` (lava-resolve-org:108).
@@ -1124,6 +1125,26 @@ mod tests {
         assert_eq!(record_for(&explicit(true), None)["actions_enabled"], "true");
     }
 
+    #[test]
+    fn actions_disabled_is_the_complement_of_actions_enabled() {
+        for vis in ["public", "private", "internal"] {
+            for explicit in [None, Some(true), Some(false)] {
+                let row = OrgRepoRow {
+                    name: "r".into(),
+                    overlay: RepoOverlay {
+                        visibility: Some(vis.to_string()),
+                        actions_enabled: explicit,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+                let rec = record_for(&row, None);
+                let on = rec["actions_enabled"] == "true";
+                assert_eq!(rec["actions_disabled"], if on { "false" } else { "true" });
+            }
+        }
+    }
+
     /// An archived repo is never protected, whatever preset it declares.
     #[test]
     fn archived_repos_are_not_protected() {
@@ -1333,6 +1354,7 @@ mod tests {
             ("{repo_delete_branch_on_merge}", "delete_branch_on_merge"),
             ("{repo_standard_labels}", "standard_labels"),
             ("{repo_actions_enabled}", "actions_enabled"),
+            ("{repo_actions_disabled}", "actions_disabled"),
             ("{repo_has_ci_shim}", "has_ci_shim"),
             ("{repo_ci_shim_slug}", "ci_shim_slug"),
             ("{repo_ci_shim_path}", "ci_shim_path"),
