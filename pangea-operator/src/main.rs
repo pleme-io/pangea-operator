@@ -1003,13 +1003,12 @@ async fn run_reconcile_repo_settings() -> Result<()> {
     let catalogue_path = value_of("--catalogue").ok_or_else(|| {
         config_err("--reconcile-repo-settings needs --catalogue <path to org.yaml>".into())
     })?;
-    let token_path = value_of("--token-file").ok_or_else(|| {
+    let token = github_credential(&args).await?.ok_or_else(|| {
         config_err(
-            "--reconcile-repo-settings needs --token-file <path>: it writes repository settings"
+            "--reconcile-repo-settings needs --app-dir <dir> or --token-file <path>: it writes repository settings"
                 .into(),
         )
     })?;
-    let token = pangea_operator::org_resolve::read_token_file(&token_path).map_err(config_err)?;
     let raw = std::fs::read_to_string(&catalogue_path)
         .map_err(|e| config_err(format!("reading {catalogue_path}: {e}")))?;
     let catalogue: pangea_operator::org_resolve::OrgCatalogue = serde_yaml::from_str(&raw)
@@ -1031,6 +1030,30 @@ async fn run_reconcile_repo_settings() -> Result<()> {
         serde_json::to_string_pretty(&outcomes).map_err(pangea_operator::Error::Serialization)?
     );
     Ok(())
+}
+
+/// The one place the org resolver and settings reconciler pick a credential.
+/// `--app-dir` mints a GitHub App installation token; `--token-file` and
+/// `GITHUB_TOKEN` are PATs, which `--pat-enabled false` configures off.
+async fn github_credential(args: &[String]) -> Result<Option<String>> {
+    let value_of = |flag: &str| -> Option<String> {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+    };
+    let policy = pangea_operator::github_credential::CredentialPolicy::parse(
+        value_of("--pat-enabled").as_deref(),
+    )
+    .map_err(pangea_operator::Error::Config)?;
+    pangea_operator::github_credential::resolve(pangea_operator::github_credential::CredentialRequest {
+        app_dir: value_of("--app-dir"),
+        token_file: value_of("--token-file"),
+        env_token: env::var("GITHUB_TOKEN").ok(),
+        policy,
+    })
+    .await
+    .map_err(pangea_operator::Error::Config)
 }
 
 /// One-shot org resolution — see the `--resolve-org` flag in `main`.
@@ -1152,13 +1175,7 @@ async fn run_resolve_org() -> Result<()> {
     // file wins when both are present: an explicit flag beats an ambient
     // variable, and silently preferring the ambient one is how a caller ends
     // up authenticating as somebody else.
-    let token = match value_of("--token-file") {
-        Some(path) => Some(
-            pangea_operator::org_resolve::read_token_file(&path)
-                .map_err(pangea_operator::Error::Config)?,
-        ),
-        None => env::var("GITHUB_TOKEN").ok(),
-    };
+    let token = github_credential(&args).await?;
 
     let records = pangea_operator::org_resolve::resolve(
         &catalogue,
