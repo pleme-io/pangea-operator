@@ -23,6 +23,12 @@ it existed (`#[serde(default)]`), with a bare, prescribed and env-overlay row an
 file-tier test; the first one is `reactive.honor_reconcile_requests`. Secrets are
 never in `config.file.data`.
 
+**Sunsetting a mechanism is configuration, never removal.** A superseded path keeps
+its code and tests behind a typed knob that defaults to the old behavior until the
+deployment flips it, and the refusal names the knob. Receipt: the org resolver's PAT
+(`github_credential.rs`, `--pat-enabled false`) beside the GitHub App default
+(`--app-dir`); the `http` compiler backend is the same shape.
+
 Pangea Kubernetes operator, CLI, and web UI (Rust). Workspace members:
 
 - `pangea-types` — shared types (CRD specs, GraphQL schema bridges).
