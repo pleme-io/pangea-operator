@@ -22,19 +22,9 @@ jobs:
       - name: Checkout operator
         uses: actions/checkout@v4
 
-      # ── Private git-dependency credential (same fix as release.yml's
-      # 32b16bd / image-push.yml's ccfd349) ── this job's Cargo.toml pulls
-      # several private pleme-io git deps (tsunagu, magma, shigoto, shikumi,
-      # gen) directly via `cargo run`, with zero git-credential wiring --
-      # "failed to get `tsunagu` as a dependency". actions/checkout@v4 also
-      # leaves its own ephemeral, THIS-repo-scoped GITHUB_TOKEN in local git
-      # config (http.https://github.com/.extraheader), matched by URL PREFIX
-      # against ANY git operation from this checkout -- unset it before
-      # configuring BOT_PAT or it silently wins instead.
-      - name: Configure git credentials for private git dependencies (cargo)
+      - name: Configure git credentials for git dependencies (cargo)
         uses: pleme-io/actions/git-credentials@main
         with:
-          bot-pat: ${{ secrets.BOT_PAT }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: dtolnay/rust-toolchain@stable
@@ -52,7 +42,7 @@ jobs:
       # package manager.
       - uses: DeterminateSystems/nix-installer-action@main
         with:
-          github-token: ${{ secrets.BOT_PAT }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Put a Nix-provided C toolchain on PATH
         run: echo "$(nix build --no-link --print-out-paths 'nixpkgs#gcc')/bin" >> "$GITHUB_PATH"
 

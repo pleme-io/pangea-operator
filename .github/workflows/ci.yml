@@ -38,27 +38,12 @@ jobs:
       # its own daemon config, so extra-substituters would silently no-op
       # under it -- install upstream Nix instead, where extra-conf is
       # honored by the trusted daemon regardless of trusted-user status.
-      # ADDED 2026-07-25 (real, load-bearing fix, task #80): the cache
-      # wiring above surfaced this job's ACTUAL standing failure -- every
-      # run for days (confirmed via `gh run list`, predates this commit)
-      # dies with `unable to download
-      # '.../repos/pleme-io/tsunagu/tarball/...': HTTP error 404`. tsunagu
-      # is a private flake input; an anonymous api.github.com tarball fetch
-      # 404s a private repo the same way it would a nonexistent one (GitHub
-      # never distinguishes the two for an unauthenticated caller). This
-      # job carried zero git credentials at the Nix level. Same fix,
-      # same line, as image-push.yml's own `access-tokens` addition
-      # (2026-07-23) for the identical class of gap.
-      - id: token
-        uses: pleme-io/actions/github-token@main
-        with:
-          pat: ${{ secrets.BOT_PAT }}
       - uses: DeterminateSystems/nix-installer-action@main
         with:
           determinate: false
           extra-conf: |
             sandbox = relaxed
-            access-tokens = github.com=${{ steps.token.outputs.token || secrets.GITHUB_TOKEN }}
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
             extra-substituters = ${{ vars.SUI_CACHE_URL }}
             require-sigs = ${{ vars.CAMELOT_SUI_REQUIRE_SIGS }}
       - name: nix build — native amd64 Ruby-free operator image (the FedRAMP variant)
@@ -178,31 +163,14 @@ jobs:
       # cargo-test's sibling job — this leg's whole point (per the comment
       # above) is a cheap, no-libruby-anywhere build; a minimal `gcc` shell
       # keeps that intent intact instead of pulling in ruby/libclang unused.
-      - id: token
-        uses: pleme-io/actions/github-token@main
-        with:
-          pat: ${{ secrets.BOT_PAT }}
       - uses: DeterminateSystems/nix-installer-action@main
         with:
-          github-token: ${{ steps.token.outputs.token || secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Put a Nix-provided C toolchain on PATH
         run: echo "$(nix build --no-link --print-out-paths 'nixpkgs#gcc')/bin" >> "$GITHUB_PATH"
-      # ── Private git-dependency credential (2026-07-25) ──────────────────
-      # A bare dtolnay/rust-toolchain + `cargo test` job has zero git-
-      # credential wiring for Cargo.toml's private git dep on tsunagu, so
-      # every run has been dying with "failed to authenticate when
-      # downloading repository ... tsunagu" — same failure class already
-      # fixed in release.yml's binaries job (32b16bd) and in the shared
-      # nix-devshell-cargo-test.yml reusable, never applied here. Unset
-      # actions/checkout's THIS-repo-scoped extraheader first (it silently
-      # wins over url.insteadOf by prefix match if left in place).
-      - name: Configure git credentials for private git dependencies (cargo)
-        # The BOT_PAT > GITHUB_TOKEN order AND the load-bearing extraheader-unset
-        # live in the action, once, instead of being hand-repeated here — which
-        # is what its own description says it exists for.
+      - name: Configure git credentials for git dependencies (cargo)
         uses: pleme-io/actions/git-credentials@main
         with:
-          bot-pat: ${{ steps.token.outputs.token }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: cargo test -p pangea-operator --no-default-features (no libruby, no magma)
         env:

@@ -503,9 +503,7 @@ jobs:
           #   public  -> ubuntu-24.04-arm. GitHub never assigns a public repo's
           #              jobs to a self-hosted runner, so the camelot label
           #              would QUEUE FOREVER — never failing, never alerting.
-          # Measured 2026-08-06: this repo is PRIVATE today, so this resolves
-          # to the camelot pool exactly as before. It flips itself the day
-          # visibility does.
+          # The repo is public, so this resolves to ubuntu-24.04-arm.
           # Quoted: a bare ${{ }} at the head of a YAML flow mapping does not parse.
           - { os: "${{ github.event.repository.private && 'camelot-builder-pleme-eks-arm64' || 'ubuntu-24.04-arm' }}", target: aarch64-unknown-linux-gnu, suffix: linux-aarch64, no-default-features: "true", features: "graphql grpc executor_magma" }
           # cross leg -- macos-latest is arm64 native, no x86_64 libruby available; drop embedded_ruby
@@ -515,30 +513,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ── Private git-dependency credential (fixed here, 2026-07-23) ──────
-      # Same failure class as image-push.yml's own incident (see that file's
-      # "Configure git credentials" step) -- this job's Cargo.toml pulls
-      # several private pleme-io git deps (tsunagu, magma, shigoto, shikumi,
-      # gen) directly via `cargo build`, with ZERO git-credential wiring
-      # anywhere in this job. Caught live on the newly-added arm64 leg
-      # (camelot-builder-pleme-eks-arm64): "failed to authenticate when
-      # downloading repository ... tsunagu" -- this job likely never
-      # actually succeeded with tsunagu in the dependency graph before, on
-      # ANY runner (hosted or self-hosted); surfaced, not caused, by the
-      # runner-routing change above (the credential gap was always here).
-      # actions/checkout@v4 also leaves its own ephemeral, THIS-repo-scoped
-      # GITHUB_TOKEN in local git config (http.https://github.com/.
-      # extraheader), matched by URL PREFIX against ANY git operation from
-      # this checkout -- unset it before configuring BOT_PAT or it silently
-      # wins instead (the exact bug image-push.yml's ccfd349 fixed).
-      - name: Configure git credentials for private git dependencies (cargo)
+      # Every repo in the build closure is public (24 of 24, 2026-10-21); this
+      # step stays for the extraheader unset, which a checkout credential needs.
+      - name: Configure git credentials for git dependencies (cargo)
         env:
-          # This repo has no PRIVATE pleme-io git dependency: magma is the only
-          # one in Cargo.lock and it is public. The rewrite is kept anyway
-          # because the `extraheader` unset below is the load-bearing half —
-          # actions/checkout leaves a this-repo-scoped credential matched by URL
-          # PREFIX against any git operation, which silently wins over whatever
-          # is configured here. Removing the step would take that unset with it.
           GIT_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config --global url."https://x-access-token:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"
