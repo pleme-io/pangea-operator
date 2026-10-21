@@ -241,6 +241,7 @@ async fn apply_reactive_policy(
         last_transition_time: healthy_transition,
         reason: healthy_reason,
         message: healthy_message,
+        observed_generation: None,
     });
 
     // Self-clearing breaker: a clean reconcile (no reactive policy
@@ -773,6 +774,7 @@ mod tests {
             // (type, status, reason, message) means the timestamps
             // also match. Tests reflect that contract.
             last_transition_time: chrono::Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
+            observed_generation: None,
         }
     }
 

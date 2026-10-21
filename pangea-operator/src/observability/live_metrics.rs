@@ -15,6 +15,8 @@ pub struct LiveMetrics {
     pub resources_total: IntGaugeVec,
     pub pending_creates: IntGaugeVec,
     pub generation_lag_seconds: IntGaugeVec,
+    pub stalled: IntGaugeVec,
+    pub stalls_total: IntCounterVec,
     pub reactions_total: IntCounterVec,
     pub reaction_notify_total: IntCounterVec,
     pub preflight_failures_total: IntCounterVec,
@@ -115,6 +117,18 @@ impl LiveMetrics {
                 registry,
                 "pangea_template_generation_lag_seconds",
                 "Seconds observedGeneration has trailed metadata.generation; 0 when caught up",
+                TEMPLATE,
+            ),
+            stalled: gauge(
+                registry,
+                "pangea_template_stalled",
+                "1 while the template's pass is Stalled (no heartbeat, or a generation not started within its deadline)",
+                TEMPLATE,
+            ),
+            stalls_total: counter(
+                registry,
+                "pangea_template_stalls_total",
+                "Transitions of a template's pass into Stalled",
                 TEMPLATE,
             ),
             reactions_total: counter(

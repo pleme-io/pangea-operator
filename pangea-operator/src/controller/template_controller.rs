@@ -39,6 +39,7 @@ use super::template::finalizer::{add_finalizer, has_finalizer, remove_finalizer}
 use super::template::freshness::{
     evaluate_source_freshness, materialize_repo, observe_head, Freshness, GitCredential,
 };
+use super::template::pass_driver::{finish_settled_pass, reconcile_request_pending, PassGuard};
 use super::template::provider_creds::resolve_provider_config;
 use super::template::secret_files::write_secret_files;
 use super::template::status::{
@@ -63,6 +64,9 @@ impl TemplateController {
     pub async fn run(self) -> Result<()> {
         let client = self.state.client.clone();
         let state = Arc::new(self.state);
+        tokio::spawn(crate::controller::template::pass_driver::run_watchdog(
+            Arc::clone(&state),
+        ));
 
         info!("Starting InfrastructureTemplate controller");
 
@@ -563,7 +567,7 @@ async fn reconcile_template(
         let observed_gen = template
             .status
             .as_ref()
-            .map(|s| s.observed_generation)
+            .map(|s| s.acknowledged())
             .unwrap_or(0);
         let current_gen = template.metadata.generation.unwrap_or(0);
         if auto_suspend_gate_should_clear(current_gen, observed_gen) {
@@ -749,7 +753,7 @@ async fn reconcile_template(
     let observed_gen = template
         .status
         .as_ref()
-        .map(|s| s.observed_generation)
+        .map(|s| s.acknowledged())
         .unwrap_or(0);
     let current_gen = template.metadata.generation.unwrap_or(0);
     let current_phase = template
@@ -2396,7 +2400,7 @@ async fn compiled_config_available(
     let observed_gen = template
         .status
         .as_ref()
-        .map(|s| s.observed_generation)
+        .map(|s| s.acknowledged())
         .unwrap_or(0);
     if generation_invalidates_render(current_gen, observed_gen) {
         info!(
@@ -2744,6 +2748,7 @@ async fn handle_planning(
     // the plan itself carries no such risk).
     let freshness = observe_source_freshness(template, state, &workspace).await?;
 
+    let _pass = PassGuard::begin(template, state, Phase::Planning).await;
     let plan_result = runner.plan(&workspace).await?;
 
     if !plan_result.success {
@@ -3636,6 +3641,7 @@ async fn handle_applying(
 
     let workspace = state.workspace_manager.get_workspace(template).await?;
     let plan_path = workspace.plan_path();
+    let _pass = PassGuard::begin(template, state, Phase::Applying).await;
 
     // Restart-safety (see handle_planning): a pod that resumes a CR at
     // phase=Applying on a fresh emptyDir workspace has no compiled
@@ -5506,7 +5512,13 @@ async fn handle_ready(
     // Throttle the EXPENSIVE plan only — the cheap HEAD observation above
     // already ran this tick. (The plan stays on the refreshInterval cadence;
     // the freshness probe does not.)
-    if let Some(last_check) = template.status.as_ref().and_then(|s| s.last_drift_check_at) {
+    let request_pending = reconcile_request_pending(template);
+    if let Some(last_check) = template
+        .status
+        .as_ref()
+        .and_then(|s| s.last_drift_check_at)
+        .filter(|_| !request_pending)
+    {
         let elapsed = Utc::now().signed_duration_since(last_check);
         let interval_chrono =
             chrono::Duration::from_std(interval).unwrap_or(chrono::Duration::minutes(5));
@@ -5521,7 +5533,11 @@ async fn handle_ready(
 
     debug!("Running drift detection");
 
+    let pass = PassGuard::begin(template, state, Phase::Planning).await;
     let plan_result = runner.plan(&workspace).await?;
+    drop(pass);
+
+    finish_settled_pass(template, state).await;
 
     update_drift_check_timestamp(template, state).await?;
 
@@ -8992,6 +9008,7 @@ mod suspended_diff_tests {
             // be tricked into "differing" just because the existing
             // condition was stamped earlier.
             last_transition_time: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
+            observed_generation: None,
         }
     }
 

@@ -21,6 +21,7 @@ mod packer_build;
 pub mod pangea_dashboard;
 pub mod pangea_fleet_status;
 mod pangea_namespace;
+pub mod pass_status;
 pub mod reconciliation_loop;
 pub mod schema_identity;
 pub mod synthesizer_format;
@@ -46,6 +47,8 @@ pub use infrastructure_template::{
     SecretKeySelector, SecretRef, SecretVariable, SecretVariableSource, SettlingExhaustionAction,
     SettlingPolicy, SeverityRollup, TemplateObjectRef, TemplateSource, VariableRef,
 };
+
+pub use pass_status::{PassKind, PassStatus};
 
 pub use live_status::{
     InFlightCall, LiveProgress, PendingCreateSource, PendingCreates, PreflightCheck,

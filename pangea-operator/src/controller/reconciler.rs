@@ -234,6 +234,7 @@ pub fn create_condition(
         last_transition_time: Utc::now(),
         reason: reason.to_string(),
         message: message.to_string(),
+        observed_generation: None,
     }
 }
 

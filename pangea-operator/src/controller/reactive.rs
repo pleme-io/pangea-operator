@@ -656,6 +656,7 @@ mod tests {
             reason: "GemNotLoaded".into(),
             message: "blocked".into(),
             last_transition_time: Utc::now(),
+            observed_generation: None,
         }];
         let now = Utc::now();
         let result = track_verified_blocked(&s, now);
@@ -673,6 +674,7 @@ mod tests {
             reason: "GemNotLoaded".into(),
             message: "still blocked".into(),
             last_transition_time: Utc::now(),
+            observed_generation: None,
         }];
         let result = track_verified_blocked(&s, Utc::now());
         assert_eq!(result, Some(started));
@@ -688,6 +690,7 @@ mod tests {
             reason: "AllGemsLoaded".into(),
             message: "ok".into(),
             last_transition_time: Utc::now(),
+            observed_generation: None,
         }];
         let result = track_verified_blocked(&s, Utc::now());
         assert_eq!(result, None);

@@ -173,6 +173,7 @@ fn ready_condition(status: &str, reason: &str, message: &str) -> Condition {
         reason: reason.to_string(),
         message: message.to_string(),
         last_transition_time: Utc::now(),
+        observed_generation: None,
     }
 }
 
@@ -183,6 +184,7 @@ fn members_condition(count: u32) -> Condition {
         reason: "SelectorEvaluated".to_string(),
         message: format!("{count} workspace(s) bound to this loop"),
         last_transition_time: Utc::now(),
+        observed_generation: None,
     }
 }
 

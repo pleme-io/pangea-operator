@@ -616,6 +616,7 @@ mod tests {
                 0,
             )
             .unwrap(),
+            observed_generation: None,
         }
     }
 

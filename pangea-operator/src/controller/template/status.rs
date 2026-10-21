@@ -14,7 +14,10 @@
 use chrono::Utc;
 use tracing::info;
 
+use super::pass::{ConditionSet, PassPhase};
+use super::pass_driver::live_generation;
 use crate::controller::reconciler::{conditions_for_phase, SourceFreshState};
+use crate::controller::status::merge_condition_transitions;
 use crate::controller::ControllerState;
 use crate::crd::{
     InfrastructureTemplate, Phase, PolicyDecision, PolicyEvaluation, ResourceSummary,
@@ -73,16 +76,29 @@ pub async fn update_phase(
         );
     }
     status.phase = Some(phase);
-    status.observed_generation = template.metadata.generation.unwrap_or(0);
-    // Recorded in lockstep with observedGeneration — the two answer the
-    // same question and a digest that lags its generation would let an
-    // approval-only edit read as a material change again.
+    let now = Utc::now();
+    let generation = template.metadata.generation.unwrap_or(0);
+    let live = live_generation(template, state).await;
+    let pass = PassPhase::entering(
+        phase,
+        generation,
+        None,
+        Some(&super::pass::stored_pass(&status, now)),
+        now,
+    )
+    .observe(live, now);
+    status.observed_generation = pass.observed_generation(status.observed_generation);
+    status.acknowledged_generation = generation;
     status.observed_spec_digest =
         crate::controller::template_controller::material_spec_digest(&template.spec);
-    // Always set conditions so FluxCD healthChecks see current state.
-    // The Ready condition is gated on the git-edge state — a phase==Ready
-    // transition while behind HEAD still yields Ready=False.
-    status.conditions = conditions_for_phase(phase, None, source_fresh_state(template));
+    status.conditions = ConditionSet::project(
+        conditions_for_phase(phase, None, source_fresh_state(template)),
+        &pass,
+        status.observed_generation,
+        live,
+        now,
+    )
+    .into_vec();
     // ReactivePolicy: bump phase_entered_at only on real transitions
     // — that's what phaseTimeout escalation measures against.
     if phase_changed {
@@ -112,6 +128,9 @@ pub async fn update_phase(
     let mut status_patch = serde_json::json!({
         "phase": status.phase,
         "observedGeneration": status.observed_generation,
+        "acknowledgedGeneration": status.acknowledged_generation,
+        "pass": pass.to_status(),
+        "generationLagSince": pass.lag_since(),
         // MUST ride in the same field-scoped patch as observedGeneration.
         // These patches only write the keys present here, so a digest set on
         // the in-memory struct but omitted here would never persist — the
@@ -123,6 +142,9 @@ pub async fn update_phase(
     });
     if phase_changed {
         status_patch["phaseEnteredAt"] = serde_json::json!(status.phase_entered_at);
+    }
+    if let Some(v) = super::pass_driver::unhandled_request(template) {
+        status_patch["lastReconcileRequestHandled"] = serde_json::json!(v);
     }
     if phase != Phase::Failed {
         status_patch["lastError"] = serde_json::Value::Null;
@@ -169,15 +191,31 @@ pub async fn update_phase_with_error(
         );
     }
     status.phase = Some(phase);
-    status.observed_generation = template.metadata.generation.unwrap_or(0);
-    // Recorded in lockstep with observedGeneration — the two answer the
-    // same question and a digest that lags its generation would let an
-    // approval-only edit read as a material change again.
+    let now = Utc::now();
+    let generation = template.metadata.generation.unwrap_or(0);
+    let live = live_generation(template, state).await;
+    let pass = PassPhase::entering(
+        phase,
+        generation,
+        Some(error_msg),
+        Some(&super::pass::stored_pass(&status, now)),
+        now,
+    )
+    .observe(live, now);
+    status.observed_generation = pass.observed_generation(status.observed_generation);
+    status.acknowledged_generation = generation;
     status.observed_spec_digest =
         crate::controller::template_controller::material_spec_digest(&template.spec);
     status.last_error = Some(error_msg.to_string());
     status.failure_count = status.failure_count.saturating_add(1);
-    status.conditions = conditions_for_phase(phase, Some(error_msg), source_fresh_state(template));
+    status.conditions = ConditionSet::project(
+        conditions_for_phase(phase, Some(error_msg), source_fresh_state(template)),
+        &pass,
+        status.observed_generation,
+        live,
+        now,
+    )
+    .into_vec();
     if phase_changed {
         status.phase_entered_at = Some(Utc::now());
     }
@@ -189,6 +227,9 @@ pub async fn update_phase_with_error(
     let mut status_patch = serde_json::json!({
         "phase": status.phase,
         "observedGeneration": status.observed_generation,
+        "acknowledgedGeneration": status.acknowledged_generation,
+        "pass": pass.to_status(),
+        "generationLagSince": pass.lag_since(),
         // MUST ride in the same field-scoped patch as observedGeneration.
         // These patches only write the keys present here, so a digest set on
         // the in-memory struct but omitted here would never persist — the
@@ -335,6 +376,16 @@ pub async fn update_plan_status(
     Ok(())
 }
 
+const APPLY_STATUS_FIELDS: &[&str] = &[
+    "outputs",
+    "lastAppliedAt",
+    "lastAppliedRevision",
+    "observedHeadRevision",
+    "pendingPlanHash",
+    "approvedPlanHash",
+    "conditions",
+];
+
 /// Update status after a successful apply.
 /// Clears the pending/approved plan hashes, records the revision the
 /// apply realized (threads `status.compiledRevision` into
@@ -348,13 +399,24 @@ pub async fn update_apply_status(
     revision: Option<&str>,
     state: &ControllerState,
 ) -> Result<()> {
-    let status = build_apply_status(
+    let mut status = build_apply_status(
         template.status.clone().unwrap_or_default(),
         outputs,
         revision,
     );
+    let now = Utc::now();
+    let live = live_generation(template, state).await;
+    let pass = super::pass::stored_pass(&status, now).observe(live, now);
+    status.conditions = ConditionSet::project(
+        std::mem::take(&mut status.conditions),
+        &pass,
+        pass.observed_generation(status.observed_generation),
+        live,
+        now,
+    )
+    .into_vec();
 
-    let patch = serde_json::json!({ "status": status });
+    let patch = scoped_status_patch(&status, APPLY_STATUS_FIELDS);
 
     crate::controller::status_patch::patch_status(template, &state.client, patch).await?;
 
@@ -602,6 +664,7 @@ fn build_settling_status_patch(
     outcome: &crate::controller::settling::SettlingOutcome,
     drift_details: &[crate::crd::DriftDetail],
     freshness: Option<&super::freshness::Freshness>,
+    live_generation: i64,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Option<serde_json::Value> {
     use crate::controller::settling::SettlingOutcome;
@@ -698,7 +761,23 @@ fn build_settling_status_patch(
         last_transition_time: new_settled_transition,
         reason: settled_reason,
         message: settled_msg,
+        observed_generation: None,
     });
+    let pass = PassPhase::Settled {
+        generation: prev_status.acknowledged(),
+    };
+    let observed = pass.observed_generation(prev_status.observed_generation);
+    status.conditions = merge_condition_transitions(
+        &prev_status.conditions,
+        ConditionSet::project(
+            std::mem::take(&mut status.conditions),
+            &pass,
+            observed,
+            live_generation,
+            now,
+        )
+        .into_vec(),
+    );
 
     // Diff-gate the PATCH. The Settled condition above already
     // preserves transition time when content matches; the only
@@ -753,9 +832,15 @@ pub async fn update_settling_status(
     state: &ControllerState,
 ) -> Result<()> {
     let prev_status = template.status.clone().unwrap_or_default();
-    let Some(patch) =
-        build_settling_status_patch(&prev_status, outcome, drift_details, freshness, Utc::now())
-    else {
+    let live = live_generation(template, state).await;
+    let Some(patch) = build_settling_status_patch(
+        &prev_status,
+        outcome,
+        drift_details,
+        freshness,
+        live,
+        Utc::now(),
+    ) else {
         tracing::debug!(
             "Settling status unchanged; skipping patch (avoids self-trigger watch loop)"
         );
@@ -1011,6 +1096,7 @@ mod tests {
             reason: reason.into(),
             message: msg.into(),
             last_transition_time: chrono::Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
+            observed_generation: None,
         }
     }
 
@@ -1176,6 +1262,7 @@ mod tests {
                 matched_policy: None,
             }],
             None,
+            0,
             t(0),
         )
         .expect("a Settled-condition flip with new drift must always patch");
@@ -1246,5 +1333,42 @@ mod tests {
             !freshness_check_too_recent(Some(t(0)), t(30)),
             "30s later patches"
         );
+    }
+
+    #[test]
+    fn settled_is_never_claimed_while_observed_generation_trails_the_live_generation() {
+        use crate::controller::settling::SettlingOutcome;
+        let prev = InfrastructureTemplateStatus {
+            observed_generation: 20,
+            acknowledged_generation: 20,
+            conditions: vec![crate::crd::Condition {
+                r#type: "Ready".into(),
+                status: "True".into(),
+                last_transition_time: t(0),
+                reason: "Ready".into(),
+                message: "Infrastructure is up to date".into(),
+                observed_generation: None,
+            }],
+            ..Default::default()
+        };
+        let behind =
+            build_settling_status_patch(&prev, &SettlingOutcome::Settled, &[], None, 21, t(5))
+                .expect("the new conditions must be written");
+        let conds: Vec<crate::crd::Condition> =
+            serde_json::from_value(behind["status"]["conditions"].clone()).unwrap();
+        for c in &conds {
+            if c.r#type == "Settled" || c.r#type == "Ready" {
+                assert_eq!(c.status, "False", "{c:?}");
+            }
+            assert_eq!(c.observed_generation, Some(21));
+        }
+        let caught_up =
+            build_settling_status_patch(&prev, &SettlingOutcome::Settled, &[], None, 20, t(5))
+                .expect("the new conditions must be written");
+        let conds: Vec<crate::crd::Condition> =
+            serde_json::from_value(caught_up["status"]["conditions"].clone()).unwrap();
+        let settled = conds.iter().find(|c| c.r#type == "Settled").unwrap();
+        assert_eq!(settled.status, "True");
+        assert_eq!(settled.observed_generation, Some(20));
     }
 }

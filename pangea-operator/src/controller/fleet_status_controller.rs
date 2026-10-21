@@ -331,6 +331,7 @@ async fn aggregate_fleet_status(
             last_transition_time: Utc::now(),
             reason: "FleetAggregated".into(),
             message: "Fleet status refreshed successfully.".into(),
+            observed_generation: None,
         }],
     })
 }

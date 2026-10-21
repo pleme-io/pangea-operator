@@ -101,6 +101,9 @@ const fn default_auto_on_conflict() -> bool {
     category = "pangea",
     shortname = "it",
     printcolumn = r#"{"name":"Phase","type":"string","jsonPath":".status.phase"}"#,
+    printcolumn = r#"{"name":"Generation","type":"integer","jsonPath":".metadata.generation"}"#,
+    printcolumn = r#"{"name":"Observed","type":"integer","jsonPath":".status.observedGeneration"}"#,
+    printcolumn = r#"{"name":"Age-In-Phase","type":"date","jsonPath":".status.phaseEnteredAt"}"#,
     printcolumn = r#"{"name":"Namespace","type":"string","jsonPath":".spec.pangeaNamespace"}"#,
     printcolumn = r#"{"name":"Resources","type":"integer","jsonPath":".status.resources.total"}"#,
     printcolumn = r#"{"name":"Cycle","type":"integer","jsonPath":".status.cycleCount"}"#,
@@ -1577,9 +1580,18 @@ pub struct InfrastructureTemplateStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_key: Option<String>,
 
-    /// Last observed generation of the spec.
+    /// Last generation for which a pass completed or failed with a recorded reason.
     #[serde(default)]
     pub observed_generation: i64,
+
+    #[serde(default)]
+    pub acknowledged_generation: i64,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pass: Option<super::pass_status::PassStatus>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_reconcile_request_handled: Option<String>,
 
     /// Number of consecutive failures.
     #[serde(default)]
@@ -2245,6 +2257,9 @@ pub struct Condition {
 
     /// Human-readable message.
     pub message: String,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_generation: Option<i64>,
 }
 
 /// Implements the shared `ConditionLike` accessor trait so this CRD's
@@ -2639,6 +2654,16 @@ pub struct ProfileResult {
     pub failed_control_ids: Vec<String>,
 }
 
+impl InfrastructureTemplateStatus {
+    pub fn acknowledged(&self) -> i64 {
+        if self.acknowledged_generation != 0 {
+            self.acknowledged_generation
+        } else {
+            self.observed_generation
+        }
+    }
+}
+
 impl InfrastructureTemplate {
     /// Check if this template needs a new reconciliation.
     pub fn needs_reconciliation(&self) -> bool {
@@ -2647,7 +2672,7 @@ impl InfrastructureTemplate {
         };
 
         // Check if spec has changed
-        if status.observed_generation != self.metadata.generation.unwrap_or(0) {
+        if status.acknowledged() != self.metadata.generation.unwrap_or(0) {
             return true;
         }
 
