@@ -11,6 +11,18 @@ pending-state-erosion-guard: a refresh that drops resources the last converged c
 > is in the org-level pleme-io/CLAUDE.md ★★★ section. Read both before
 > non-trivial changes.
 
+**Configuring the operator: one way.** The non-secret surface is the shikumi
+`OperatorConfig` (`pangea-operator/src/config.rs`), folded bare → discovered →
+prescribed → FILE → env. Deliver it as Helm: set `config.file.enabled: true` and
+the sections in `config.file.data` (helmworks `pangea-operator`; ryn's lives in
+`nix/nodes/ryn/github-org-repos-values.nix`). The chart renders the ConfigMap and
+mounts it at `/etc/pangea/config.yaml`; a change is a reconciled Helm revision.
+Env is only the higher override tier, never the first place to put a knob. A new
+knob is an additive `OperatorConfig` section whose default is the behavior before
+it existed (`#[serde(default)]`), with a bare, prescribed and env-overlay row and a
+file-tier test; the first one is `reactive.honor_reconcile_requests`. Secrets are
+never in `config.file.data`.
+
 Pangea Kubernetes operator, CLI, and web UI (Rust). Workspace members:
 
 - `pangea-types` — shared types (CRD specs, GraphQL schema bridges).

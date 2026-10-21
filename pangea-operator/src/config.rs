@@ -1263,6 +1263,19 @@ mod tests {
     }
 
     #[test]
+    fn reactive_section_is_read_from_the_file_tier() {
+        let _g = ENV_GUARD.lock().unwrap();
+        let path = scratch_file("reactive", "reactive:\n  honor_reconcile_requests: true\n");
+        let r = OperatorConfig::resolve_from(&path, Dict::new());
+        assert_eq!(r.file, FileTier::Loaded { path: path.clone() });
+        assert!(
+            r.resolution.into_value().reactive.honor_reconcile_requests,
+            "the chart's config.file.data reaches the operator through the file tier"
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn network_section_is_read_from_the_file_tier() {
         let _g = ENV_GUARD.lock().unwrap();
         let path = scratch_file(
