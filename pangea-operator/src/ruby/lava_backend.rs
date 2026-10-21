@@ -600,8 +600,8 @@ mod tests {
     (for-each ((i g) (enumerate rows))
       (discord-member-roles "{g_slug}" :user-id "{g_user_id}" :ttl "{g_ttl}" :txt "{g_txt}"))))
 "#;
-        let vars: std::collections::HashMap<String, serde_json::Value> = serde_json::from_value(
-            serde_json::json!({
+        let vars: std::collections::HashMap<String, serde_json::Value> =
+            serde_json::from_value(serde_json::json!({
                 "port": 8080,
                 "rows": [{
                     "slug": "a",
@@ -609,9 +609,8 @@ mod tests {
                     "ttl": 300,
                     "txt": "12345"
                 }]
-            }),
-        )
-        .unwrap();
+            }))
+            .unwrap();
         let b = bindings_from_variables(&vars).unwrap();
         let json = lava_eval::eval_architecture(src, &b)
             .unwrap()
