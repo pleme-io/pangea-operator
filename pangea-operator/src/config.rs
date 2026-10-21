@@ -95,6 +95,11 @@ pub struct OperatorConfig {
     pub gem: GemConfig,
     #[serde(default)]
     pub network: crate::network::NetworkConfig,
+    /// Event-driven reconcile triggers (`PANGEA_HONOR_RECONCILE_REQUESTS`).
+    /// Additive: every knob defaults to the behavior the operator had before
+    /// it existed, so an older config file reads unchanged.
+    #[serde(default)]
+    pub reactive: ReactiveConfig,
 }
 
 /// Pod identity — the discovered tier.
@@ -295,6 +300,19 @@ pub struct ApiConfig {
     pub enable_playground: bool,
 }
 
+/// Event-driven reconcile triggers.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReactiveConfig {
+    /// Treat a change of the `pangea.pleme.io/reconcile-requested` annotation
+    /// as a reconcile trigger, as a spec change is (`PANGEA_HONOR_RECONCILE_REQUESTS`;
+    /// default false). Off, the watch stream drops metadata-only edits, so the
+    /// GraphQL `requestReconcile` mutation and `kubectl annotate` are inert
+    /// and a settled template waits for its `refreshInterval` tick.
+    #[serde(default)]
+    pub honor_reconcile_requests: bool,
+}
+
 /// Embedded-Ruby gem cache (non-secret).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -414,6 +432,7 @@ struct EnvOverlay {
     routing: RoutingOverlay,
     api: ApiOverlay,
     gem: GemOverlay,
+    reactive: ReactiveOverlay,
 }
 
 #[derive(Serialize, Default)]
@@ -525,6 +544,12 @@ struct ApiOverlay {
 }
 
 #[derive(Serialize, Default)]
+struct ReactiveOverlay {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    honor_reconcile_requests: Option<bool>,
+}
+
+#[derive(Serialize, Default)]
 struct GemOverlay {
     #[serde(skip_serializing_if = "Option::is_none")]
     cache_dir: Option<String>,
@@ -595,6 +620,10 @@ impl EnvOverlay {
             },
             api: ApiOverlay {
                 enable_playground: env_present("PANGEA_ENABLE_PLAYGROUND")
+                    .map(|v| v == "true" || v == "1"),
+            },
+            reactive: ReactiveOverlay {
+                honor_reconcile_requests: env_present("PANGEA_HONOR_RECONCILE_REQUESTS")
                     .map(|v| v == "true" || v == "1"),
             },
             gem: GemOverlay {
@@ -692,6 +721,7 @@ impl TieredConfig for OperatorConfig {
                 cache_dir: String::new(),
             },
             network: crate::network::NetworkConfig::default(),
+            reactive: ReactiveConfig::default(),
         }
     }
 
@@ -960,6 +990,10 @@ mod tests {
         assert_eq!(p.routing.ntfy_base_url, "https://ntfy.sh");
         assert!(p.api.enable_playground);
         assert_eq!(p.gem.cache_dir, "/var/pangea/gems");
+        assert!(
+            !p.reactive.honor_reconcile_requests,
+            "the prescribed default preserves the pre-reactive behavior"
+        );
     }
 
     #[test]

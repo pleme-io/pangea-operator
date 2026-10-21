@@ -189,6 +189,9 @@ async fn main() -> Result<()> {
     info!(file_tier = ?file_tier, "operator config file tier");
     pangea_operator::config::OperatorConfig::log_provenance(resolved.provenance());
     let op_cfg = resolved.into_value();
+    pangea_operator::controller::generation_filter::set_honor_reconcile_requests(
+        op_cfg.reactive.honor_reconcile_requests,
+    );
 
     // ── EARLY DETECTION: refuse an incompatible (build, run) pair ──────────
     //

@@ -62,8 +62,52 @@ use kube::runtime::WatchStreamExt;
 use kube::Client;
 use kube::Resource;
 use serde::de::DeserializeOwned;
+use std::collections::hash_map::DefaultHasher;
 use std::fmt::Debug;
 use std::hash::Hash;
+use std::hash::Hasher;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// The annotation whose change asks for a reconcile now (the GraphQL
+/// `requestReconcile` mutation writes it).
+pub const RECONCILE_REQUESTED_ANNOTATION: &str = "pangea.pleme.io/reconcile-requested";
+
+static HONOR_RECONCILE_REQUESTS: AtomicBool = AtomicBool::new(false);
+
+/// Make a change of [`RECONCILE_REQUESTED_ANNOTATION`] a reconcile trigger on
+/// every filtered controller (`reactive.honorReconcileRequests`). Read per
+/// event, so it may be set after the controllers are built.
+pub fn set_honor_reconcile_requests(on: bool) {
+    HONOR_RECONCILE_REQUESTS.store(on, Ordering::Relaxed);
+}
+
+#[must_use]
+pub fn honors_reconcile_requests() -> bool {
+    HONOR_RECONCILE_REQUESTS.load(Ordering::Relaxed)
+}
+
+/// The value whose change lets a watch event through. Off, exactly
+/// `predicates::generation` (spec mutations only). On, also the reconcile
+/// request annotation, so a metadata-only edit that asks for work is a
+/// trigger and a status write still is not.
+#[must_use]
+pub fn trigger_key<K: Resource>(obj: &K, honor_requests: bool) -> Option<u64> {
+    let generation = obj.meta().generation.map(|g| g as u64);
+    if !honor_requests {
+        return generation;
+    }
+    let requested = obj
+        .meta()
+        .annotations
+        .as_ref()
+        .and_then(|a| a.get(RECONCILE_REQUESTED_ANNOTATION));
+    let mut h = DefaultHasher::new();
+    h.write_u64(generation.unwrap_or(0));
+    if let Some(v) = requested {
+        h.write(v.as_bytes());
+    }
+    Some(h.finish())
+}
 
 /// Build a `Controller<K>` whose trigger stream filters out watch
 /// events that don't bump `metadata.generation`.
@@ -89,6 +133,63 @@ where
         .default_backoff()
         .reflect(writer)
         .applied_objects()
-        .predicate_filter(kube::runtime::predicates::generation);
+        .predicate_filter(|obj: &K| trigger_key(obj, honors_reconcile_requests()));
     Controller::for_stream(stream, reader)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use k8s_openapi::api::core::v1::ConfigMap;
+    use std::collections::BTreeMap;
+
+    fn cm(generation: i64, requested: Option<&str>) -> ConfigMap {
+        let mut c = ConfigMap::default();
+        c.metadata.generation = Some(generation);
+        if let Some(r) = requested {
+            c.metadata.annotations = Some(BTreeMap::from([(
+                RECONCILE_REQUESTED_ANNOTATION.to_string(),
+                r.to_string(),
+            )]));
+        }
+        c
+    }
+
+    #[test]
+    fn off_it_is_exactly_the_generation() {
+        assert_eq!(trigger_key(&cm(3, Some("a")), false), Some(3));
+        assert_eq!(
+            trigger_key(&cm(3, Some("a")), false),
+            trigger_key(&cm(3, Some("b")), false),
+            "a request annotation is inert when not honored"
+        );
+    }
+
+    #[test]
+    fn on_a_new_request_is_a_new_trigger() {
+        assert_ne!(
+            trigger_key(&cm(3, Some("a")), true),
+            trigger_key(&cm(3, Some("b")), true)
+        );
+        assert_ne!(
+            trigger_key(&cm(3, None), true),
+            trigger_key(&cm(3, Some("a")), true)
+        );
+    }
+
+    #[test]
+    fn on_an_unchanged_object_is_not_a_new_trigger() {
+        assert_eq!(
+            trigger_key(&cm(3, Some("a")), true),
+            trigger_key(&cm(3, Some("a")), true)
+        );
+    }
+
+    #[test]
+    fn on_a_spec_change_still_triggers() {
+        assert_ne!(
+            trigger_key(&cm(3, Some("a")), true),
+            trigger_key(&cm(4, Some("a")), true)
+        );
+    }
 }
