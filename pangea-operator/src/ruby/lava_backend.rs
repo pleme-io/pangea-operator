@@ -239,11 +239,9 @@ fn check_bare_identifier(name: &str, what: &str) -> Result<(), BackendError> {
 /// the caller wrote. Structure belongs in the architecture, where it is
 /// typed, not smuggled through a variable.
 ///
-/// Numbers and booleans become their text. That is not a loss: lava
-/// re-types a scalar by shape at evaluation, so `8080` arrives as a JSON
-/// number in the rendered document, and a value that must stay text
-/// (a zero-padded id) survives because that re-typing is round-trip
-/// checked upstream.
+/// Scalars and record fields keep their JSON type. lava never re-types
+/// text, so a string stays a string and a number stays a number unless the
+/// architecture's interface declares the field's type.
 fn bindings_from_variables(
     variables: &std::collections::HashMap<String, serde_json::Value>,
 ) -> Result<lava_eval::InputBindings, BackendError> {
@@ -256,8 +254,8 @@ fn bindings_from_variables(
     for k in keys {
         match &variables[k] {
             Value::String(v) => b.set_str(k.clone(), v.clone()),
-            Value::Number(n) => b.set_str(k.clone(), n.to_string()),
-            Value::Bool(v) => b.set_str(k.clone(), v.to_string()),
+            Value::Number(n) => b.set_scalar(k.clone(), lava_eval::Scalar::Number(n.clone())),
+            Value::Bool(v) => b.set_scalar(k.clone(), *v),
             Value::Array(items) => {
                 // ── ★ AN ARRAY OF OBJECTS IS A RECORD LIST ────────────────
                 // This is what lets a catalogue reach lava at all. The org
@@ -286,10 +284,10 @@ fn bindings_from_variables(
                         let mut row = std::collections::BTreeMap::new();
                         for (field, v) in map {
                             let scalar = match v {
-                                Value::String(x) => x.clone(),
-                                Value::Number(x) => x.to_string(),
-                                Value::Bool(x) => x.to_string(),
-                                Value::Null => String::new(),
+                                Value::String(x) => lava_eval::Scalar::Text(x.clone()),
+                                Value::Number(x) => lava_eval::Scalar::Number(x.clone()),
+                                Value::Bool(x) => lava_eval::Scalar::Bool(*x),
+                                Value::Null => lava_eval::Scalar::Text(String::new()),
                                 _ => {
                                     return Err(BackendError::Evaluator(format!(
                                         "variable {k:?}[{i}].{field} is structured; a record \
@@ -302,7 +300,7 @@ fn bindings_from_variables(
                         }
                         rows.push(row);
                     }
-                    b.set_records(k.clone(), rows);
+                    b.set_scalar_records(k.clone(), rows);
                 } else {
                     let mut out = Vec::with_capacity(items.len());
                     for (i, it) in items.iter().enumerate() {
@@ -591,6 +589,39 @@ mod tests {
         assert_eq!(v["schemaVersion"], 39);
         // The PromQL label matcher survived — braces are not interpolation.
         assert!(out.contains(r#"min(up{job=\"api\"})"#), "{out}");
+    }
+
+    #[test]
+    fn bound_variables_keep_their_json_types_through_lava() {
+        let src = r#"
+(deflava-architecture grants
+  :inputs ((:port "0") (:rows ()))
+  :resources ((discord-member-roles "p" :port "{port}")
+    (for-each ((i g) (enumerate rows))
+      (discord-member-roles "{g_slug}" :user-id "{g_user_id}" :ttl "{g_ttl}" :txt "{g_txt}"))))
+"#;
+        let vars: std::collections::HashMap<String, serde_json::Value> = serde_json::from_value(
+            serde_json::json!({
+                "port": 8080,
+                "rows": [{
+                    "slug": "a",
+                    "user_id": "1234567890123456789",
+                    "ttl": 300,
+                    "txt": "12345"
+                }]
+            }),
+        )
+        .unwrap();
+        let b = bindings_from_variables(&vars).unwrap();
+        let json = lava_eval::eval_architecture(src, &b)
+            .unwrap()
+            .render_terraform_json()
+            .unwrap();
+        let r = &json["resource"]["discord_member_roles"];
+        assert_eq!(r["p"]["port"], serde_json::json!(8080));
+        assert_eq!(r["a"]["user_id"], serde_json::json!("1234567890123456789"));
+        assert_eq!(r["a"]["ttl"], serde_json::json!(300));
+        assert_eq!(r["a"]["txt"], serde_json::json!("12345"));
     }
 
     #[test]

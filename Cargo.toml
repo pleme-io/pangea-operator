@@ -165,36 +165,3 @@ lto = true
 codegen-units = 1
 opt-level = "z"
 strip = true
-
-# ── ★ THE LAVA CHAIN, PINNED BY GIT REV ──────────────────────────────────
-# lava's compile path (record iteration, shape-typed record fields, terraform
-# import blocks) is what lets this operator render the estate with no Ruby in
-# the process. Those changes are committed and unpublished, and the three
-# crates form a chain: lava-eval needs lava-arch needs lava-core.
-#
-# Patched here rather than waiting on three crates.io releases, for two
-# reasons. Publishing is irreversible — a version cannot be withdrawn, only
-# yanked — and it would have to happen three times in order before this image
-# could build at all. And a `path` patch cannot ship: it resolves only on the
-# machine that wrote it. A git rev is reproducible, pinned, and reviewable.
-#
-# It lives at the WORKSPACE ROOT because that is the only place
-# [patch.crates-io] applies. A patch in a member manifest is silently ignored,
-# and a member `path` dependency does not reach a TRANSITIVE registry dep —
-# which is why lava-eval kept resolving the published lava-arch and failing on
-# a missing add_import.
-#
-# ★ THE REVS HERE MUST MATCH the member manifest's, and both must be at or
-# ahead of the commit that introduced the symbol you are calling. They drifted
-# once and it cost a release: the patch pinned lava-eval at 34f7c353 while the
-# member manifest pinned a394fc4d, so Cargo.lock carried TWO lava-eval entries
-# and the build failed E0599 `no method named set_records` — because NEITHER
-# rev contained set_records, which landed later on main. A pin is only as good
-# as the commit it names; bumping the code without bumping the pin fails in CI
-# and nowhere else.
-#
-# Replace with plain version requirements once the three crates are published.
-[patch.crates-io]
-lava-core = { git = "https://github.com/pleme-io/lava-core", rev = "d541a050819f99288b1cd797c56f277014195a74" }
-lava-arch = { git = "https://github.com/pleme-io/lava-arch", rev = "f53e9e011d8080a561238ecda5b4a2b15637a641" }
-lava-eval = { git = "https://github.com/pleme-io/lava-eval", rev = "c3bee928a0936aabe92533a0e3e4a924cfd30aaa" }

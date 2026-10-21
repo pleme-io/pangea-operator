@@ -130,8 +130,8 @@ executor_magma = [
 
 [dependencies]
 lava-ruby = { path = "../lava-ruby" }
-lava-core = { git = "https://github.com/pleme-io/lava-core", rev = "d541a050819f99288b1cd797c56f277014195a74" }
-lava-eval = { git = "https://github.com/pleme-io/lava-eval", rev = "c3bee928a0936aabe92533a0e3e4a924cfd30aaa" }
+lava-core = "0.2.4"
+lava-eval = "0.2.8"
 # Shared types
 pangea-types = { workspace = true, features = ["server"] }
 
