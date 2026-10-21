@@ -343,11 +343,6 @@ prometheus = { version = "0.13", default-features = false, features = ["process"
 # adding as a direct dep so the source of truth is clear.
 blake3 = "1"
 
-# GitHub App JWT signing (RS256) for the github_credential module. rsa is
-# already in the lock through magma's TLS stack; sha2 is its digest.
-rsa = { version = "0.9", features = ["sha2"] }
-sha2 = "0.10"
-
 # Direct rustls dep so main() can install a process-wide CryptoProvider.
 # The executor_magma deps (tonic → rustls) feature-unify BOTH aws-lc-rs
 # and ring, so rustls 0.23 can no longer auto-select; pick explicitly.

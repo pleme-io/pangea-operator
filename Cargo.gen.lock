@@ -1,12 +1,12 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "70c4daced6ffc324ef4704cae1a0ac65e32d06010338366adec90a1dd18ee40c",
+  "cargo_lock_sha256": "f249767ae08fcc5e2da1c0a17ce4285dbc630987f95ac9501075afc71090bd4d",
   "manifest_sha256": {
     "Cargo.toml": "fa3d83bb4eddee0b393f7375cbce4652573cbd213363ad75550f6e6790c5fbd2",
     "lava-ruby/Cargo.toml": "a2d172e3cffd2088bd2c849c579de254aec964cbe53b992a5b381a42c1f80933",
     "pangea-cli/Cargo.toml": "a15be7008ea6fc2ab76b2773e257aec0aa73f3191584a590f73d160530e157f7",
     "pangea-operator-mcp/Cargo.toml": "72a01f5815a03b1c418697a985ede13816d4f5aec385332ec436e2155713dea8",
-    "pangea-operator/Cargo.toml": "9c43de7df28a36a0029b38f68bdc786983bcdea6fbedc76ed625677c815c4866",
+    "pangea-operator/Cargo.toml": "61510be7a5c79b9cc80f7b6d88c58ff2be489dcd02d41abdce4d452407f714c8",
     "pangea-ruby-eval/Cargo.toml": "a65712c95619fda84a8cebaa9f887919acf4e71f4125f085797dfaf478eb380a",
     "pangea-types/Cargo.toml": "bba5d0bee1d04b3ddaefa9f7234a1e5a11e3388dd89e62a3deb4a91b66cd4abc",
     "roles-anywhere/Cargo.toml": "82d3c7379682699c55a98bced056af9bf0a853f9c0248e674b729d72007bea5a"
@@ -19313,18 +19313,6 @@
             "tree": "target"
           },
           {
-            "name": "rsa",
-            "package_key": "rsa-0.9.10",
-            "kind": "normal",
-            "features": [
-              "sha2"
-            ],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
             "name": "rustls",
             "package_key": "rustls-0.23.45",
             "kind": "normal",
@@ -19371,16 +19359,6 @@
           {
             "name": "serde_yaml",
             "package_key": "serde_yaml-0.9.34+deprecated",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "sha2",
-            "package_key": "sha2-0.10.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -23609,18 +23587,6 @@
             "tree": "target"
           },
           {
-            "name": "sha2",
-            "package_key": "sha2-0.10.9",
-            "kind": "normal",
-            "features": [
-              "oid"
-            ],
-            "uses_default_features": false,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
             "name": "signature",
             "package_key": "signature-2.2.0",
             "kind": "normal",
@@ -23673,7 +23639,6 @@
         "features": [
           "default",
           "pem",
-          "sha2",
           "std",
           "u64_digit"
         ]
@@ -24886,7 +24851,6 @@
         "build_dependencies": [],
         "features": [
           "default",
-          "oid",
           "std"
         ]
       },

@@ -1003,9 +1003,9 @@ async fn run_reconcile_repo_settings() -> Result<()> {
     let catalogue_path = value_of("--catalogue").ok_or_else(|| {
         config_err("--reconcile-repo-settings needs --catalogue <path to org.yaml>".into())
     })?;
-    let token = github_credential(&args).await?.ok_or_else(|| {
+    let token = github_credential(&args)?.ok_or_else(|| {
         config_err(
-            "--reconcile-repo-settings needs --app-dir <dir> or --token-file <path>: it writes repository settings"
+            "--reconcile-repo-settings needs --app-token-file <path> or --token-file <path>: it writes repository settings"
                 .into(),
         )
     })?;
@@ -1033,9 +1033,10 @@ async fn run_reconcile_repo_settings() -> Result<()> {
 }
 
 /// The one place the org resolver and settings reconciler pick a credential.
-/// `--app-dir` mints a GitHub App installation token; `--token-file` and
-/// `GITHUB_TOKEN` are PATs, which `--pat-enabled false` configures off.
-async fn github_credential(args: &[String]) -> Result<Option<String>> {
+/// `--app-token-file` names a GitHub App installation token minted outside this
+/// binary; `--token-file` and `GITHUB_TOKEN` are PATs, which `--pat-enabled false`
+/// configures off.
+fn github_credential(args: &[String]) -> Result<Option<String>> {
     let value_of = |flag: &str| -> Option<String> {
         args.iter()
             .position(|a| a == flag)
@@ -1047,12 +1048,11 @@ async fn github_credential(args: &[String]) -> Result<Option<String>> {
     )
     .map_err(pangea_operator::Error::Config)?;
     pangea_operator::github_credential::resolve(pangea_operator::github_credential::CredentialRequest {
-        app_dir: value_of("--app-dir"),
+        app_token_file: value_of("--app-token-file"),
         token_file: value_of("--token-file"),
         env_token: env::var("GITHUB_TOKEN").ok(),
         policy,
     })
-    .await
     .map_err(pangea_operator::Error::Config)
 }
 
@@ -1175,7 +1175,7 @@ async fn run_resolve_org() -> Result<()> {
     // file wins when both are present: an explicit flag beats an ambient
     // variable, and silently preferring the ambient one is how a caller ends
     // up authenticating as somebody else.
-    let token = github_credential(&args).await?;
+    let token = github_credential(&args)?;
 
     let records = pangea_operator::org_resolve::resolve(
         &catalogue,

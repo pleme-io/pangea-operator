@@ -27,7 +27,7 @@ never in `config.file.data`.
 its code and tests behind a typed knob that defaults to the old behavior until the
 deployment flips it, and the refusal names the knob. Receipt: the org resolver's PAT
 (`github_credential.rs`, `--pat-enabled false`) beside the GitHub App default
-(`--app-dir`); the `http` compiler backend is the same shape.
+(`--app-token-file`, minted per run by `github-installation-token-file`); the `http` compiler backend is the same shape.
 
 Pangea Kubernetes operator, CLI, and web UI (Rust). Workspace members:
 
