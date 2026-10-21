@@ -644,6 +644,12 @@ async fn main() -> Result<()> {
         None
     };
 
+    tokio::spawn(pangea_operator::observability::projection::run(
+        client.clone(),
+        metrics.clone(),
+        op_cfg.identity.namespace.clone(),
+    ));
+
     // Spawn controllers
     let template_state = state.clone();
     let template_controller = tokio::spawn(async move {

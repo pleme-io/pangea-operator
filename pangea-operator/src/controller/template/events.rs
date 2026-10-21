@@ -13,6 +13,12 @@ pub async fn record_event(
     message: &str,
 ) {
     let obj_ref = template.object_ref(&());
+    state.metrics.live.record_template_event(
+        template.metadata.name.as_deref().unwrap_or_default(),
+        template.metadata.namespace.as_deref().unwrap_or_default(),
+        &format!("{event_type:?}"),
+        reason,
+    );
     let event = Event {
         type_: event_type,
         reason: reason.into(),

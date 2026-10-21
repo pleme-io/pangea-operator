@@ -305,6 +305,10 @@ pub struct Metrics {
     pub magma_failed_changes_total: IntCounterVec,
 
     pub live: super::live_metrics::LiveMetrics,
+
+    pub projection: super::projection::ProjectionMetrics,
+
+    pub progress_gate: std::sync::Arc<super::projection::ProgressGate>,
 }
 
 impl Metrics {
@@ -748,6 +752,9 @@ impl Metrics {
         // cannot happen for a fresh per-`Metrics` registry — so the
         // `let _ =` swallow is safe and keeps `new()` infallible.
         let live = super::live_metrics::LiveMetrics::register(&registry);
+        let projection = super::projection::ProjectionMetrics::register(&registry);
+        let progress_gate =
+            std::sync::Arc::new(super::projection::ProgressGate::new(chrono::Utc::now()));
 
         #[cfg(target_os = "linux")]
         {
@@ -794,6 +801,8 @@ impl Metrics {
             magma_resources_failed,
             magma_failed_changes_total,
             live,
+            projection,
+            progress_gate,
         }
     }
 
@@ -1150,6 +1159,7 @@ impl Default for Metrics {
 #[must_use = "the guard decrements pangea_active_reconciliations on drop; bind it to a name"]
 pub struct ActiveReconcileGuard {
     gauge: IntGauge,
+    gate: std::sync::Arc<super::projection::ProgressGate>,
 }
 
 impl ActiveReconcileGuard {
@@ -1158,13 +1168,17 @@ impl ActiveReconcileGuard {
     pub fn enter(metrics: &Metrics) -> Self {
         let gauge = metrics.active_reconciliations.clone();
         gauge.inc();
-        Self { gauge }
+        Self {
+            gauge,
+            gate: metrics.progress_gate.clone(),
+        }
     }
 }
 
 impl Drop for ActiveReconcileGuard {
     fn drop(&mut self) {
         self.gauge.dec();
+        self.gate.reconciled(chrono::Utc::now());
     }
 }
 

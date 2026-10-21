@@ -21,6 +21,9 @@ pub struct LiveMetrics {
     pub reaction_notify_total: IntCounterVec,
     pub preflight_failures_total: IntCounterVec,
     pub resumed_after_restart_total: IntCounterVec,
+    pub template_events_total: IntCounterVec,
+    pub provider_process_exits_total: IntCounterVec,
+    pub provider_rpc_seconds: HistogramVec,
 }
 
 fn gauge(registry: &Registry, name: &str, help: &str, labels: &[&str]) -> IntGaugeVec {
@@ -56,6 +59,20 @@ impl LiveMetrics {
         .expect("metric can be created");
         registry
             .register(Box::new(phase_duration_seconds.clone()))
+            .expect("metric can be registered");
+        let provider_rpc_seconds = HistogramVec::new(
+            HistogramOpts::new(
+                "pangea_provider_rpc_seconds",
+                "Wall time of one provider plugin RPC, by provider and RPC",
+            )
+            .buckets(vec![
+                0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0,
+            ]),
+            &["provider", "rpc"],
+        )
+        .expect("metric can be created");
+        registry
+            .register(Box::new(provider_rpc_seconds.clone()))
             .expect("metric can be registered");
         Self {
             events_total: counter(
@@ -155,7 +172,44 @@ impl LiveMetrics {
                 "Phases found running from a previous operator process and restarted cleanly",
                 &["template", "namespace", "phase"],
             ),
+            template_events_total: counter(
+                registry,
+                "pangea_template_events_total",
+                "Events recorded against a template, by type and reason (Imported, ImportFailed, ...)",
+                &["template", "namespace", "type", "reason"],
+            ),
+            provider_process_exits_total: counter(
+                registry,
+                "pangea_provider_process_exits_total",
+                "Provider plugin processes that exited while the operator still held them, by provider and reason",
+                &["provider", "reason"],
+            ),
+            provider_rpc_seconds,
         }
+    }
+
+    pub fn record_template_event(
+        &self,
+        template: &str,
+        namespace: &str,
+        event_type: &str,
+        reason: &str,
+    ) {
+        self.template_events_total
+            .with_label_values(&[template, namespace, event_type, reason])
+            .inc();
+    }
+
+    pub fn record_provider_exit(&self, provider: &str, reason: &str) {
+        self.provider_process_exits_total
+            .with_label_values(&[provider, reason])
+            .inc();
+    }
+
+    pub fn observe_provider_rpc(&self, provider: &str, rpc: &str, seconds: f64) {
+        self.provider_rpc_seconds
+            .with_label_values(&[provider, rpc])
+            .observe(seconds);
     }
 
     pub fn record_event_delivery(&self, api: &str) {
@@ -245,6 +299,9 @@ mod tests {
         p.finished_at = Some(at(1_300));
         m.finish_phase("t", "ns", &p);
         m.record_event_delivery("ring");
+        m.record_template_event("t", "ns", "Warning", "ImportFailed");
+        m.record_provider_exit("aws", "signal");
+        m.observe_provider_rpc("aws", "ApplyResourceChange", 2.0);
         let text = {
             use prometheus::Encoder;
             let mut buf = Vec::new();
@@ -261,6 +318,14 @@ mod tests {
         );
         assert!(text.contains("pangea_template_phase_duration_seconds_sum{phase=\"Planning\"} 300"));
         assert!(text.contains("pangea_events_total{api=\"ring\"} 1"));
+        assert!(text.contains(
+            "pangea_template_events_total{namespace=\"ns\",reason=\"ImportFailed\",template=\"t\",type=\"Warning\"} 1"
+        ));
+        assert!(text
+            .contains("pangea_provider_process_exits_total{provider=\"aws\",reason=\"signal\"} 1"));
+        assert!(text.contains(
+            "pangea_provider_rpc_seconds_count{provider=\"aws\",rpc=\"ApplyResourceChange\"} 1"
+        ));
         assert!(text
             .contains("pangea_template_seconds_since_progress{namespace=\"ns\",template=\"t\"} 0"));
     }

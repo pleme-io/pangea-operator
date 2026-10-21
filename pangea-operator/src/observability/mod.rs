@@ -5,6 +5,7 @@
 pub mod bounded_writer;
 pub mod live_metrics;
 mod metrics;
+pub mod projection;
 mod tracing_setup;
 
 pub use bounded_writer::{Bound, BoundedMakeWriter, ClipStats};
@@ -37,8 +38,30 @@ type ReadyPool = Option<Arc<RwLock<sqlx::PgPool>>>;
 /// Health check response — liveness only. Always 200 while the process
 /// is up; never gates on dependencies (a flapping dependency must not
 /// kill the pod, only mark it not-ready).
-async fn health() -> &'static str {
-    "OK"
+async fn health(metrics: axum::Extension<std::sync::Arc<Metrics>>) -> (StatusCode, String) {
+    progress_verdict(&metrics, projection::wedge_window_from_env())
+}
+
+fn progress_verdict(metrics: &Metrics, window_seconds: i64) -> (StatusCode, String) {
+    match metrics
+        .progress_gate
+        .verdict(chrono::Utc::now(), window_seconds)
+    {
+        projection::Progress::Wedged {
+            pending_seconds,
+            idle_seconds,
+        } => {
+            warn!(
+                pending_seconds,
+                idle_seconds, "progress gate: work pending and no template reconcile finished"
+            );
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!("wedged: work pending {pending_seconds}s, no template reconcile for {idle_seconds}s"),
+            )
+        }
+        _ => (StatusCode::OK, "OK".to_string()),
+    }
 }
 
 /// Readiness check — verifies the operator can serve. When a Postgres
@@ -59,7 +82,14 @@ async fn health() -> &'static str {
 async fn ready(
     pool: axum::Extension<ReadyPool>,
     shutting_down: axum::Extension<ShuttingDown>,
+    metrics: axum::Extension<std::sync::Arc<Metrics>>,
 ) -> (StatusCode, &'static str) {
+    if progress_verdict(&metrics, projection::wedge_window_from_env() / 2).0 != StatusCode::OK {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "controller not progressing",
+        );
+    }
     if shutting_down.0.load(Ordering::Relaxed) {
         // Draining — never report ready again regardless of DB state,
         // so the Service pulls this endpoint before new work routes in.
