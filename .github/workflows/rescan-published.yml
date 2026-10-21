@@ -1,0 +1,34 @@
+name: rescan-published
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: rescan-published
+  cancel-in-progress: false
+
+jobs:
+  rescan:
+    if: github.repository == 'pleme-io/pangea-operator'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Registry login
+        uses: pleme-io/actions/registry-login@main
+        with:
+          registry: ghcr.io
+          client: docker
+          username: ${{ github.actor }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Zero-tolerance re-scan of the live tag
+        uses: pleme-io/actions/image-scan@main
+        with:
+          image-ref: ghcr.io/pleme-io/pangea-operator:latest-embedded-amd64
+          fail-on-severity: UNKNOWN
+          go-reachability: "true"

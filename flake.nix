@@ -32,6 +32,7 @@
     # config-only.
     openwrt-uci.url = "github:pleme-io/openwrt-uci";
     openwrt-uci.inputs.nixpkgs.follows = "nixpkgs";
+    openwrt-uci.inputs.substrate.follows = "substrate";
 
     # The lava dashboard catalogue — the `.tlisp` architectures the Ruby-free
     # image resolves `spec.source.architecture.name` against.
@@ -780,7 +781,16 @@
           # EVERY variant is checked against its own catalog row. Derived with
           # mapAttrs over the catalog, so a new variant brings its own check
           # rather than needing one remembered.
-          checks.${system} = lib.optionalAttrs (system == "x86_64-linux") (
+          checks.${system} = lib.optionalAttrs (system == "x86_64-linux") ({
+            "magma-provider-mirror-go-floor" =
+              (import "${substrate}/lib/security/go-binary-floor-check.nix" {
+                pkgs = nixpkgs.legacyPackages.${system};
+              }).mkGoBinaryFloorCheck {
+                name = "magma-provider-mirror";
+                tree = magmaProviderMirrorFor system;
+                expectBinaries = 8;
+              };
+          } // (
             lib.mapAttrs' (
               variantName: _v:
               lib.nameValuePair "pangea-operator-${variantName}-capabilities-match" (mkVariantCapabilityCheck {
@@ -788,7 +798,7 @@
                 buildSystem = system;
               })
             ) operatorVariants
-          );
+          ));
         };
 
       lavaRubyGemsFor =
