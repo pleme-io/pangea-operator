@@ -840,6 +840,21 @@ pub struct ProviderCredentials {
     /// back to the pod's ambient credential chain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub datadog: Option<DatadogCredentials>,
+
+    /// 1Password credentials. Ruby-side: the Secret's data keys are installed
+    /// verbatim as env vars; the `opadmin` provider reads
+    /// `OP_SERVICE_ACCOUNT_TOKEN`.
+    #[serde(
+        default,
+        rename = "onePassword",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub opadmin: Option<OnePasswordCredentials>,
+
+    /// Discord credentials. Ruby-side: the Secret's data keys are installed
+    /// verbatim as env vars; the Discord provider reads `DISCORD_TOKEN`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discord: Option<DiscordCredentials>,
 }
 
 /// Typed identifier for each provider known to the operator.
@@ -862,6 +877,8 @@ pub enum ProviderKind {
     Porkbun,
     Akeyless,
     Datadog,
+    OnePassword,
+    Discord,
 }
 
 impl ProviderKind {
@@ -876,6 +893,8 @@ impl ProviderKind {
             ProviderKind::Porkbun => "porkbun",
             ProviderKind::Akeyless => "akeyless",
             ProviderKind::Datadog => "datadog",
+            ProviderKind::OnePassword => "opadmin",
+            ProviderKind::Discord => "discord",
         }
     }
 
@@ -949,6 +968,8 @@ impl ProviderKind {
             // `provider :datadog, api_key: ENV.fetch('DD_API_KEY', ''), ...`.
             // A parallel operator-rendered block would collide with it.
             ProviderKind::Datadog => false,
+            ProviderKind::OnePassword => false,
+            ProviderKind::Discord => false,
         }
     }
 }
@@ -976,6 +997,8 @@ impl ProviderCredentials {
             porkbun,
             akeyless,
             datadog,
+            opadmin,
+            discord,
         } = self;
 
         let mut out = Vec::new();
@@ -996,6 +1019,12 @@ impl ProviderCredentials {
         }
         if let Some(c) = akeyless {
             out.push((ProviderKind::Akeyless, &c.secret_ref));
+        }
+        if let Some(c) = opadmin {
+            out.push((ProviderKind::OnePassword, &c.secret_ref));
+        }
+        if let Some(c) = discord {
+            out.push((ProviderKind::Discord, &c.secret_ref));
         }
         out
     }
@@ -1206,6 +1235,26 @@ impl AwsCredentials {
 #[serde(rename_all = "camelCase")]
 pub struct DatadogCredentials {
     /// Secret containing the Datadog API and application keys.
+    pub secret_ref: SecretRef,
+}
+
+/// 1Password credentials configuration. Ruby-side authority, same model as
+/// Datadog: the Secret's `OP_SERVICE_ACCOUNT_TOKEN` key is installed as an env
+/// var and the operator renders no provider block.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OnePasswordCredentials {
+    /// Secret containing the 1Password service account token.
+    pub secret_ref: SecretRef,
+}
+
+/// Discord credentials configuration. Ruby-side authority, same model as
+/// Datadog: the Secret's `DISCORD_TOKEN` key is installed as an env var and
+/// the operator renders no provider block.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscordCredentials {
+    /// Secret containing the Discord bot token.
     pub secret_ref: SecretRef,
 }
 
@@ -2745,6 +2794,8 @@ mod tests {
             porkbun: None,
             akeyless: None,
             datadog: None,
+            opadmin: None,
+            discord: None,
         };
         assert!(creds.iter_secret_refs().is_empty());
     }
@@ -2762,6 +2813,8 @@ mod tests {
             porkbun: None,
             akeyless: None,
             datadog: None,
+            opadmin: None,
+            discord: None,
         };
         let refs = creds.iter_secret_refs();
         assert_eq!(refs.len(), 2);
@@ -2943,6 +2996,8 @@ rolesAnywhere:
             porkbun: None,
             akeyless: None,
             datadog: None,
+            opadmin: None,
+            discord: None,
         };
         assert!(creds.iter_secret_refs().is_empty());
     }
@@ -2993,6 +3048,9 @@ rolesAnywhere:
 
     #[test]
     fn iter_secret_refs_yields_all_when_all_populated() {
+        let opadmin = Some(OnePasswordCredentials {
+            secret_ref: empty_secret_ref("op"),
+        });
         let creds = ProviderCredentials {
             aws: Some(AwsCredentials {
                 source: AwsCredentialSource::SecretRef(empty_secret_ref("aws")),
@@ -3014,9 +3072,13 @@ rolesAnywhere:
             datadog: Some(DatadogCredentials {
                 secret_ref: empty_secret_ref("dd"),
             }),
+            opadmin,
+            discord: Some(DiscordCredentials {
+                secret_ref: empty_secret_ref("dc"),
+            }),
         };
         let refs = creds.iter_secret_refs();
-        assert_eq!(refs.len(), 6);
+        assert_eq!(refs.len(), 8);
 
         // The exhaustiveness contract: count must equal the number
         // of fields on ProviderCredentials. If a future commit adds
@@ -3047,6 +3109,70 @@ rolesAnywhere:
             .find(|(k, _)| *k == ProviderKind::Akeyless)
             .map(|(_, sref)| sref.name.as_str());
         assert_eq!(akeyless_ref, Some("ak"));
+
+        let opadmin_ref = refs
+            .iter()
+            .find(|(k, _)| *k == ProviderKind::OnePassword)
+            .map(|(_, sref)| sref.name.as_str());
+        assert_eq!(opadmin_ref, Some("op"));
+
+        let discord_ref = refs
+            .iter()
+            .find(|(k, _)| *k == ProviderKind::Discord)
+            .map(|(_, sref)| sref.name.as_str());
+        assert_eq!(discord_ref, Some("dc"));
+    }
+
+    #[test]
+    fn a_spec_naming_only_the_new_kinds_validates_and_round_trips() {
+        let yaml = r#"
+source:
+  gitRepository:
+    url: "https://example.invalid/org/repo.git"
+    ref: "main"
+    path: "workspaces/example/entry.rb"
+pangeaNamespace: "example"
+providerCredentials:
+  onePassword:
+    secretRef:
+      name: "op-provider-credentials"
+  discord:
+    secretRef:
+      name: "discord-provider-credentials"
+      namespace: "other"
+"#;
+        let spec: InfrastructureTemplateSpec =
+            serde_yaml::from_str(yaml).expect("a CR naming only the new kinds must parse");
+        let creds = spec.provider_credentials.as_ref().expect("credentials");
+        assert!(creds.aws.is_none() && creds.datadog.is_none());
+        let refs = creds.iter_secret_refs();
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0].0, ProviderKind::OnePassword);
+        assert_eq!(refs[0].1.name, "op-provider-credentials");
+        assert_eq!(refs[1].0, ProviderKind::Discord);
+        assert_eq!(refs[1].1.namespace.as_deref(), Some("other"));
+
+        let back = serde_yaml::to_string(&spec).expect("serialize");
+        let again: InfrastructureTemplateSpec = serde_yaml::from_str(&back).expect("reparse");
+        assert_eq!(
+            again.provider_credentials.unwrap().iter_secret_refs().len(),
+            2
+        );
+    }
+
+    #[test]
+    fn the_new_kinds_are_ruby_side_and_named_for_their_providers() {
+        assert!(!ProviderKind::OnePassword.operator_emits_provider_block());
+        assert!(!ProviderKind::Discord.operator_emits_provider_block());
+        assert_eq!(ProviderKind::OnePassword.name(), "opadmin");
+        assert_eq!(ProviderKind::Discord.name(), "discord");
+    }
+
+    #[test]
+    fn crd_schema_carries_the_new_credential_fields() {
+        let crd = serde_yaml::to_string(&InfrastructureTemplate::crd()).unwrap();
+        assert!(crd.contains("onePassword"));
+        assert!(crd.contains("discord"));
     }
 
     #[test]

@@ -444,6 +444,13 @@ fn provider_config_object(
             }
             Some(serde_json::Value::Object(obj))
         }
+        ProviderKind::Discord => {
+            let token = first_present(data, &["token", "DISCORD_TOKEN"])?;
+            let mut obj = serde_json::Map::new();
+            obj.insert("token".to_string(), serde_json::Value::String(token));
+            Some(serde_json::Value::Object(obj))
+        }
+        ProviderKind::OnePassword => None,
         ProviderKind::Akeyless => {
             let access_id = first_present(data, &["access_id", "AKEYLESS_ACCESS_ID"])?;
             let access_key = first_present(data, &["access_key", "AKEYLESS_ACCESS_KEY"])?;
@@ -922,6 +929,22 @@ mod tests {
     fn datadog_is_ruby_side_and_emits_no_provider_block() {
         assert!(!ProviderKind::Datadog.operator_emits_provider_block());
         assert_eq!(ProviderKind::Datadog.name(), "datadog");
+    }
+
+    #[test]
+    fn discord_resolves_its_token_into_a_flat_config() {
+        let d = data(&[("DISCORD_TOKEN", "fake-token")]);
+        let obj = provider_config_object(ProviderKind::Discord, &d, None).expect("config object");
+        assert_eq!(obj, serde_json::json!({ "token": "fake-token" }));
+        let d = data(&[("token", "fake-token")]);
+        assert!(provider_config_object(ProviderKind::Discord, &d, None).is_some());
+        assert!(provider_config_object(ProviderKind::Discord, &data(&[]), None).is_none());
+    }
+
+    #[test]
+    fn opadmin_forwards_no_config_object() {
+        let d = data(&[("OP_SERVICE_ACCOUNT_TOKEN", "fake-token")]);
+        assert!(provider_config_object(ProviderKind::OnePassword, &d, None).is_none());
     }
 
     #[test]

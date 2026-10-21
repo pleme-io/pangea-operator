@@ -486,12 +486,52 @@ spec:
                     required:
                     - secretRef
                     type: object
+                  discord:
+                    description: 'Discord credentials. Ruby-side: the Secret''s data keys are installed verbatim as env vars; the Discord provider reads `DISCORD_TOKEN`.'
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the Discord bot token.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
                   github:
                     description: 'GitHub credentials configuration. Used by templates that declare github_* providers (e.g. pangea-github''s `cloudflare_zero_trust_*` adjacent shapes — repos, runner groups, branch protection). Same shape as the cloudflare credentials block: a secretRef to a Secret containing a PAT.'
                     nullable: true
                     properties:
                       secretRef:
                         description: Secret containing the GitHub PAT.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
+                  onePassword:
+                    description: '1Password credentials. Ruby-side: the Secret''s data keys are installed verbatim as env vars; the `opadmin` provider reads `OP_SERVICE_ACCOUNT_TOKEN`.'
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the 1Password service account token.
                         properties:
                           name:
                             description: Name of the Secret.
@@ -2557,12 +2597,52 @@ spec:
                     required:
                     - secretRef
                     type: object
+                  discord:
+                    description: 'Discord credentials. Ruby-side: the Secret''s data keys are installed verbatim as env vars; the Discord provider reads `DISCORD_TOKEN`.'
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the Discord bot token.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
                   github:
                     description: 'GitHub credentials configuration. Used by templates that declare github_* providers (e.g. pangea-github''s `cloudflare_zero_trust_*` adjacent shapes — repos, runner groups, branch protection). Same shape as the cloudflare credentials block: a secretRef to a Secret containing a PAT.'
                     nullable: true
                     properties:
                       secretRef:
                         description: Secret containing the GitHub PAT.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
+                  onePassword:
+                    description: '1Password credentials. Ruby-side: the Secret''s data keys are installed verbatim as env vars; the `opadmin` provider reads `OP_SERVICE_ACCOUNT_TOKEN`.'
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the 1Password service account token.
                         properties:
                           name:
                             description: Name of the Secret.
@@ -3028,12 +3108,52 @@ spec:
                     required:
                     - secretRef
                     type: object
+                  discord:
+                    description: 'Discord credentials. Ruby-side: the Secret''s data keys are installed verbatim as env vars; the Discord provider reads `DISCORD_TOKEN`.'
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the Discord bot token.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
                   github:
                     description: 'GitHub credentials configuration. Used by templates that declare github_* providers (e.g. pangea-github''s `cloudflare_zero_trust_*` adjacent shapes — repos, runner groups, branch protection). Same shape as the cloudflare credentials block: a secretRef to a Secret containing a PAT.'
                     nullable: true
                     properties:
                       secretRef:
                         description: Secret containing the GitHub PAT.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
+                  onePassword:
+                    description: '1Password credentials. Ruby-side: the Secret''s data keys are installed verbatim as env vars; the `opadmin` provider reads `OP_SERVICE_ACCOUNT_TOKEN`.'
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the 1Password service account token.
                         properties:
                           name:
                             description: Name of the Secret.
@@ -3412,12 +3532,52 @@ spec:
                         required:
                         - secretRef
                         type: object
+                      discord:
+                        description: 'Discord credentials. Ruby-side: the Secret''s data keys are installed verbatim as env vars; the Discord provider reads `DISCORD_TOKEN`.'
+                        nullable: true
+                        properties:
+                          secretRef:
+                            description: Secret containing the Discord bot token.
+                            properties:
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                              namespace:
+                                description: Namespace of the Secret (defaults to same namespace as the resource).
+                                nullable: true
+                                type: string
+                            required:
+                            - name
+                            type: object
+                        required:
+                        - secretRef
+                        type: object
                       github:
                         description: 'GitHub credentials configuration. Used by templates that declare github_* providers (e.g. pangea-github''s `cloudflare_zero_trust_*` adjacent shapes — repos, runner groups, branch protection). Same shape as the cloudflare credentials block: a secretRef to a Secret containing a PAT.'
                         nullable: true
                         properties:
                           secretRef:
                             description: Secret containing the GitHub PAT.
+                            properties:
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                              namespace:
+                                description: Namespace of the Secret (defaults to same namespace as the resource).
+                                nullable: true
+                                type: string
+                            required:
+                            - name
+                            type: object
+                        required:
+                        - secretRef
+                        type: object
+                      onePassword:
+                        description: '1Password credentials. Ruby-side: the Secret''s data keys are installed verbatim as env vars; the `opadmin` provider reads `OP_SERVICE_ACCOUNT_TOKEN`.'
+                        nullable: true
+                        properties:
+                          secretRef:
+                            description: Secret containing the 1Password service account token.
                             properties:
                               name:
                                 description: Name of the Secret.
@@ -3858,12 +4018,52 @@ spec:
                         required:
                         - secretRef
                         type: object
+                      discord:
+                        description: 'Discord credentials. Ruby-side: the Secret''s data keys are installed verbatim as env vars; the Discord provider reads `DISCORD_TOKEN`.'
+                        nullable: true
+                        properties:
+                          secretRef:
+                            description: Secret containing the Discord bot token.
+                            properties:
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                              namespace:
+                                description: Namespace of the Secret (defaults to same namespace as the resource).
+                                nullable: true
+                                type: string
+                            required:
+                            - name
+                            type: object
+                        required:
+                        - secretRef
+                        type: object
                       github:
                         description: 'GitHub credentials configuration. Used by templates that declare github_* providers (e.g. pangea-github''s `cloudflare_zero_trust_*` adjacent shapes — repos, runner groups, branch protection). Same shape as the cloudflare credentials block: a secretRef to a Secret containing a PAT.'
                         nullable: true
                         properties:
                           secretRef:
                             description: Secret containing the GitHub PAT.
+                            properties:
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                              namespace:
+                                description: Namespace of the Secret (defaults to same namespace as the resource).
+                                nullable: true
+                                type: string
+                            required:
+                            - name
+                            type: object
+                        required:
+                        - secretRef
+                        type: object
+                      onePassword:
+                        description: '1Password credentials. Ruby-side: the Secret''s data keys are installed verbatim as env vars; the `opadmin` provider reads `OP_SERVICE_ACCOUNT_TOKEN`.'
+                        nullable: true
+                        properties:
+                          secretRef:
+                            description: Secret containing the 1Password service account token.
                             properties:
                               name:
                                 description: Name of the Secret.
@@ -4541,12 +4741,52 @@ spec:
                     required:
                     - secretRef
                     type: object
+                  discord:
+                    description: 'Discord credentials. Ruby-side: the Secret''s data keys are installed verbatim as env vars; the Discord provider reads `DISCORD_TOKEN`.'
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the Discord bot token.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
                   github:
                     description: 'GitHub credentials configuration. Used by templates that declare github_* providers (e.g. pangea-github''s `cloudflare_zero_trust_*` adjacent shapes — repos, runner groups, branch protection). Same shape as the cloudflare credentials block: a secretRef to a Secret containing a PAT.'
                     nullable: true
                     properties:
                       secretRef:
                         description: Secret containing the GitHub PAT.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
+                  onePassword:
+                    description: '1Password credentials. Ruby-side: the Secret''s data keys are installed verbatim as env vars; the `opadmin` provider reads `OP_SERVICE_ACCOUNT_TOKEN`.'
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the 1Password service account token.
                         properties:
                           name:
                             description: Name of the Secret.
