@@ -1489,6 +1489,9 @@ spec:
                     format: date-time
                     nullable: true
                     type: string
+                  incarnation:
+                    nullable: true
+                    type: string
                   kind:
                     enum:
                     - settled
@@ -1511,6 +1514,16 @@ spec:
                     type: string
                   since:
                     format: date-time
+                    nullable: true
+                    type: string
+                  stall:
+                    enum:
+                    - queuedBehind
+                    - pendingNotStarted
+                    - heartbeatLost
+                    - orphanedPhase
+                    - noProgress
+                    - unnamed
                     nullable: true
                     type: string
                 required:

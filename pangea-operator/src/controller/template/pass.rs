@@ -1,7 +1,9 @@
 use chrono::{DateTime, Duration, Utc};
 
 use crate::controller::status::merge_condition_transitions;
-use crate::crd::{Condition, InfrastructureTemplateStatus, PassKind, PassStatus, Phase};
+use crate::crd::{
+    Condition, InfrastructureTemplateStatus, PassKind, PassStatus, Phase, StallState,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Queued {
@@ -37,14 +39,27 @@ pub enum PassPhase {
     Stalled {
         generation: i64,
         since: DateTime<Utc>,
+        state: StallState,
         reason: String,
     },
+}
+
+static INCARNATION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+pub fn incarnation() -> &'static str {
+    INCARNATION.get_or_init(|| {
+        let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "operator".to_string());
+        format!("{host}-{}", Utc::now().timestamp())
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Deadlines {
     pub heartbeat: Duration,
     pub pending_start: Duration,
+    pub orphan_grace: Duration,
+    pub no_progress: Duration,
+    pub backstop: Duration,
 }
 
 impl Default for Deadlines {
@@ -52,6 +67,9 @@ impl Default for Deadlines {
         Self {
             heartbeat: Duration::minutes(5),
             pending_start: Duration::minutes(30),
+            orphan_grace: Duration::minutes(2),
+            no_progress: Duration::minutes(10),
+            backstop: Duration::minutes(120),
         }
     }
 }
@@ -70,6 +88,9 @@ impl Deadlines {
         Self {
             heartbeat: read("PANGEA_WATCHDOG_HEARTBEAT_SECS", d.heartbeat),
             pending_start: read("PANGEA_WATCHDOG_PENDING_START_SECS", d.pending_start),
+            orphan_grace: read("PANGEA_WATCHDOG_ORPHAN_GRACE_SECS", d.orphan_grace),
+            no_progress: read("PANGEA_WATCHDOG_NO_PROGRESS_SECS", d.no_progress),
+            backstop: read("PANGEA_WATCHDOG_BACKSTOP_SECS", d.backstop),
         }
     }
 }
@@ -183,6 +204,7 @@ impl PassPhase {
             PassKind::Stalled => Self::Stalled {
                 generation,
                 since,
+                state: status.stall.unwrap_or(StallState::Unnamed),
                 reason,
             },
         }
@@ -197,6 +219,8 @@ impl PassPhase {
             reason: None,
             queued_generation: None,
             queued_since: None,
+            stall: None,
+            incarnation: Some(incarnation().to_string()),
         };
         match self {
             Self::Settled { .. } => {}
@@ -219,8 +243,14 @@ impl PassPhase {
                 s.queued_since = queued.as_ref().map(|q| q.since);
             }
             Self::Failed { reason, .. } => s.reason = Some(reason.clone()),
-            Self::Stalled { since, reason, .. } => {
+            Self::Stalled {
+                since,
+                state,
+                reason,
+                ..
+            } => {
                 s.since = Some(*since);
+                s.stall = Some(*state);
                 s.reason = Some(reason.clone());
             }
         }
@@ -357,9 +387,15 @@ impl PassPhase {
                     since: queued.map(|q| q.since).unwrap_or(now),
                 }),
             },
-            Self::Stalled { since, reason, .. } => Self::Stalled {
+            Self::Stalled {
+                since,
+                state,
+                reason,
+                ..
+            } => Self::Stalled {
                 generation: live_generation,
                 since,
+                state,
                 reason,
             },
         }
@@ -416,6 +452,7 @@ impl PassPhase {
                     return Self::Stalled {
                         generation: queued.as_ref().map(|q| q.generation).unwrap_or(*generation),
                         since: now,
+                        state: StallState::HeartbeatLost,
                         reason: format!(
                             "{label} pass for generation {generation} started {} has no heartbeat for {}s",
                             started_at.to_rfc3339(),
@@ -428,6 +465,7 @@ impl PassPhase {
                         return Self::Stalled {
                             generation: q.generation,
                             since: now,
+                            state: StallState::QueuedBehind,
                             reason: format!(
                                 "generation {} queued {}s behind {label} pass for generation {generation} started {}",
                                 q.generation,
@@ -437,12 +475,24 @@ impl PassPhase {
                         };
                     }
                 }
+                if now - *started_at > deadlines.backstop {
+                    return Self::Stalled {
+                        generation: *generation,
+                        since: now,
+                        state: StallState::Unnamed,
+                        reason: format!(
+                            "unnamed stall: {label} pass for generation {generation} running {}s with no named wedge state matched; name this state",
+                            (now - *started_at).num_seconds()
+                        ),
+                    };
+                }
                 self
             }
             Self::Pending { generation, since } if now - *since > deadlines.pending_start => {
                 Self::Stalled {
                     generation: *generation,
                     since: now,
+                    state: StallState::PendingNotStarted,
                     reason: format!(
                         "generation {generation} pending for {}s and no pass started",
                         (now - *since).num_seconds()
@@ -563,13 +613,79 @@ pub fn stored_pass(status: &InfrastructureTemplateStatus, now: DateTime<Utc>) ->
     }
 }
 
+pub fn named_stall(
+    status: &InfrastructureTemplateStatus,
+    pass: PassPhase,
+    now: DateTime<Utc>,
+    deadlines: &Deadlines,
+) -> PassPhase {
+    let (generation, heartbeat) = match &pass {
+        PassPhase::Planning {
+            generation,
+            heartbeat,
+            ..
+        }
+        | PassPhase::Applying {
+            generation,
+            heartbeat,
+            ..
+        } => (*generation, *heartbeat),
+        _ => return pass,
+    };
+    let owner = status.pass.as_ref().and_then(|p| p.incarnation.as_deref());
+    if owner != Some(incarnation()) && now - heartbeat > deadlines.orphan_grace {
+        return PassPhase::Stalled {
+            generation,
+            since: now,
+            state: StallState::OrphanedPhase,
+            reason: format!(
+                "{} pass for generation {generation} belongs to incarnation {} and this is {}; no heartbeat for {}s",
+                pass.kind(),
+                owner.unwrap_or("unrecorded"),
+                incarnation(),
+                (now - heartbeat).num_seconds()
+            ),
+        };
+    }
+    if let Some(progress) = status.progress.as_ref() {
+        let quiet = now - progress.last_progress_at;
+        if progress.finished_at.is_none() && quiet > deadlines.no_progress {
+            let total = progress
+                .resources_total
+                .map(|t| t.to_string())
+                .unwrap_or_else(|| "?".into());
+            return PassPhase::Stalled {
+                generation,
+                since: now,
+                state: StallState::NoProgress,
+                reason: format!(
+                    "no progress for {}s with {}/{total} resources done{}",
+                    quiet.num_seconds(),
+                    progress.resources_done,
+                    progress
+                        .in_flight
+                        .as_ref()
+                        .map(|c| format!(
+                            "; in flight: {} {} since {}",
+                            c.rpc.as_deref().unwrap_or("rpc"),
+                            c.address,
+                            c.since.to_rfc3339()
+                        ))
+                        .unwrap_or_default()
+                ),
+            };
+        }
+    }
+    pass
+}
+
 pub fn project_status(
     status: &InfrastructureTemplateStatus,
     live_generation: i64,
     now: DateTime<Utc>,
     deadlines: &Deadlines,
 ) -> StatusProjection {
-    let pass = stored_pass(status, now)
+    let pass = named_stall(status, stored_pass(status, now), now, deadlines)
         .observe(live_generation, now)
         .watchdog(now, deadlines);
     let observed_generation = pass.observed_generation(status.observed_generation);
@@ -720,6 +836,7 @@ mod tests {
             PassKind::Stalled => PassPhase::Stalled {
                 generation,
                 since: at(0),
+                state: StallState::Unnamed,
                 reason: "stuck".into(),
             },
         }
@@ -1110,6 +1227,155 @@ mod tests {
         let p2 = project_status(&st2, 21, later, &Deadlines::default());
         assert_eq!(p2.pass.kind(), PassKind::Planning);
         assert_eq!(status_of(&p2.conditions, "Ready"), "False");
+    }
+
+    fn active_status(kind: PassKind) -> InfrastructureTemplateStatus {
+        let mut status = stale_ready_status();
+        status.pass = Some(sample(kind, 20).to_status());
+        status
+    }
+
+    fn stall_of(p: &StatusProjection) -> Option<StallState> {
+        match &p.pass {
+            PassPhase::Stalled { state, .. } => Some(*state),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_phase_left_by_a_previous_incarnation_is_named_orphaned() {
+        let mut status = active_status(PassKind::Planning);
+        status.pass.as_mut().unwrap().incarnation = Some("old-pod-1".into());
+        let d = Deadlines::default();
+        let fresh = project_status(&status, 20, at(60), &d);
+        assert_eq!(stall_of(&fresh), None);
+        let p = project_status(&status, 20, at(130), &d);
+        assert_eq!(stall_of(&p), Some(StallState::OrphanedPhase));
+        match &p.pass {
+            PassPhase::Stalled { reason, .. } => assert!(reason.contains("old-pod-1")),
+            other => panic!("{other:?}"),
+        }
+        let mut own = active_status(PassKind::Planning);
+        own.pass.as_mut().unwrap().incarnation = Some(incarnation().to_string());
+        assert_eq!(stall_of(&project_status(&own, 20, at(130), &d)), None);
+    }
+
+    #[test]
+    fn a_pass_whose_progress_stopped_is_named_no_progress_with_the_call_in_flight() {
+        use crate::crd::{InFlightCall, LiveProgress};
+        let mut status = active_status(PassKind::Planning);
+        status.pass.as_mut().unwrap().heartbeat_at = Some(at(695));
+        let mut progress = LiveProgress::new(Phase::Planning, at(0), None);
+        progress.resources_total = Some(2049);
+        progress.resources_done = 811;
+        progress.last_progress_at = at(10);
+        progress.in_flight = Some(InFlightCall {
+            address: "github_repository.x".into(),
+            rpc: Some("ReadResource".into()),
+            since: at(10),
+        });
+        status.progress = Some(progress);
+        let d = Deadlines::default();
+        assert_eq!(stall_of(&project_status(&status, 20, at(300), &d)), None);
+        let p = project_status(&status, 20, at(700), &d);
+        assert_eq!(stall_of(&p), Some(StallState::NoProgress));
+        match &p.pass {
+            PassPhase::Stalled { reason, .. } => {
+                assert!(reason.contains("811/2049"));
+                assert!(reason.contains("ReadResource github_repository.x"));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_slow_pass_that_keeps_moving_is_never_stalled_by_the_named_states() {
+        use crate::crd::LiveProgress;
+        let mut status = active_status(PassKind::Planning);
+        let mut progress = LiveProgress::new(Phase::Planning, at(0), None);
+        progress.resources_done = 5;
+        status.progress = Some(progress.clone());
+        let d = Deadlines::default();
+        for minute in 1..=100 {
+            let now = at(minute * 60);
+            let mut st = status.clone();
+            st.pass.as_mut().unwrap().heartbeat_at = Some(now);
+            let mut pr = progress.clone();
+            pr.last_progress_at = now;
+            st.progress = Some(pr);
+            assert_eq!(
+                stall_of(&project_status(&st, 20, now, &d)),
+                None,
+                "minute {minute}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_backstop_reports_an_unnamed_state() {
+        let mut status = active_status(PassKind::Applying);
+        status.pass.as_mut().unwrap().heartbeat_at = Some(at(7199));
+        let p = project_status(&status, 20, at(7201), &Deadlines::default());
+        assert_eq!(stall_of(&p), Some(StallState::Unnamed));
+        match &p.pass {
+            PassPhase::Stalled { reason, .. } => assert!(reason.contains("name this state")),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_stalled_pass_recovers_when_the_next_attempt_beats() {
+        let d = Deadlines::default();
+        let mut status = active_status(PassKind::Planning);
+        let stalled = project_status(&status, 20, at(400), &d);
+        assert_eq!(stall_of(&stalled), Some(StallState::HeartbeatLost));
+        status.pass = Some(stalled.pass.to_status());
+        status.conditions = stalled.conditions.clone();
+        assert_eq!(status_of(&status.conditions, "Stalled"), "True");
+        let retry = PassPhase::entering(
+            Phase::Planning,
+            20,
+            None,
+            Some(&PassPhase::from_status(
+                status.pass.as_ref().unwrap(),
+                at(400),
+            )),
+            at(410),
+        );
+        status.pass = Some(retry.to_status());
+        let after = project_status(&status, 20, at(420), &d);
+        assert_eq!(stall_of(&after), None);
+        assert_eq!(status_of(&after.conditions, "Stalled"), "False");
+        let legacy = crate::controller::reconciler::conditions_for_phase(
+            Phase::Ready,
+            None,
+            crate::controller::reconciler::SourceFreshState::NotApplicable,
+        );
+        let rebuilt = ConditionSet::project(
+            crate::controller::template::pass_driver::settled_base(&after.conditions, legacy),
+            &PassPhase::Settled { generation: 20 },
+            20,
+            20,
+            at(430),
+        );
+        assert_eq!(status_of(rebuilt.conditions(), "Ready"), "True");
+        assert_eq!(status_of(rebuilt.conditions(), "Stalled"), "False");
+    }
+
+    #[test]
+    fn each_named_state_has_its_own_wire_label() {
+        let labels: std::collections::BTreeSet<String> =
+            StallState::ALL.iter().map(|s| s.to_string()).collect();
+        assert_eq!(labels.len(), StallState::ALL.len());
+        for s in StallState::ALL {
+            let p = PassPhase::Stalled {
+                generation: 1,
+                since: at(0),
+                state: s,
+                reason: "r".into(),
+            };
+            assert_eq!(PassPhase::from_status(&p.to_status(), at(0)), p);
+        }
     }
 
     #[test]

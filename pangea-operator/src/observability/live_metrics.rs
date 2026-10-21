@@ -145,8 +145,8 @@ impl LiveMetrics {
             stalls_total: counter(
                 registry,
                 "pangea_template_stalls_total",
-                "Transitions of a template's pass into Stalled",
-                TEMPLATE,
+                "Transitions of a template's pass into Stalled, by named wedge state (unnamed means a state nobody has named yet)",
+                &["template", "namespace", "state"],
             ),
             reactions_total: counter(
                 registry,

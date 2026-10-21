@@ -66,6 +66,22 @@ pub fn reconcile_request_pending(template: &InfrastructureTemplate) -> bool {
     unhandled_request(template).is_some()
 }
 
+pub fn settled_base(
+    previous: &[crate::crd::Condition],
+    legacy_ready: Vec<crate::crd::Condition>,
+) -> Vec<crate::crd::Condition> {
+    let owned: std::collections::BTreeSet<String> =
+        legacy_ready.iter().map(|c| c.r#type.clone()).collect();
+    let mut base = legacy_ready;
+    base.extend(
+        previous
+            .iter()
+            .filter(|c| !owned.contains(&c.r#type) && c.r#type != "Stalled")
+            .cloned(),
+    );
+    base
+}
+
 pub async fn finish_settled_pass(template: &InfrastructureTemplate, state: &ControllerState) {
     let now = Utc::now();
     let generation = template.metadata.generation.unwrap_or(0);
@@ -93,8 +109,18 @@ pub async fn finish_settled_pass(template: &InfrastructureTemplate, state: &Cont
         };
     }
     let observed = PassPhase::Settled { generation }.observed_generation(base.observed_generation);
-    let conditions =
-        super::pass::ConditionSet::project(base.conditions.clone(), &pass, observed, live, now);
+    let legacy = crate::controller::reconciler::conditions_for_phase(
+        Phase::Ready,
+        None,
+        super::status::source_fresh_state(template),
+    );
+    let conditions = super::pass::ConditionSet::project(
+        settled_base(&base.conditions, legacy),
+        &pass,
+        observed,
+        live,
+        now,
+    );
     let conditions = crate::controller::status::merge_condition_transitions(
         &base.conditions,
         conditions.into_vec(),
@@ -182,6 +208,23 @@ impl PassGuard {
     }
 }
 
+pub const MAX_NUDGES: u32 = 5;
+
+pub fn nudge_backoff(attempts: u32) -> chrono::Duration {
+    chrono::Duration::seconds((60i64 << attempts.min(5)).min(1800))
+}
+
+pub fn nudge_due(
+    attempts: u32,
+    last: Option<chrono::DateTime<Utc>>,
+    now: chrono::DateTime<Utc>,
+) -> bool {
+    attempts < MAX_NUDGES && last.map_or(true, |l| now - l >= nudge_backoff(attempts))
+}
+
+#[derive(Default)]
+pub struct Nudges(std::collections::HashMap<String, (u32, chrono::DateTime<Utc>)>);
+
 pub async fn run_watchdog(state: Arc<ControllerState>) {
     let deadlines = Deadlines::from_env();
     info!(
@@ -191,6 +234,7 @@ pub async fn run_watchdog(state: Arc<ControllerState>) {
     );
     let api: Api<InfrastructureTemplate> = Api::all(state.client.clone());
     let mut tick = tokio::time::interval(WATCHDOG_TICK);
+    let mut nudges = Nudges::default();
     loop {
         tick.tick().await;
         let templates = match api.list(&ListParams::default()).await {
@@ -201,12 +245,17 @@ pub async fn run_watchdog(state: Arc<ControllerState>) {
             }
         };
         for template in templates {
-            watch_one(&template, &state, &deadlines).await;
+            watch_one(&template, &state, &deadlines, &mut nudges).await;
         }
     }
 }
 
-async fn watch_one(template: &InfrastructureTemplate, state: &ControllerState, d: &Deadlines) {
+async fn watch_one(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+    d: &Deadlines,
+    nudges: &mut Nudges,
+) {
     if template.metadata.deletion_timestamp.is_some() || template.spec.suspend {
         return;
     }
@@ -241,35 +290,118 @@ async fn watch_one(template: &InfrastructureTemplate, state: &ControllerState, d
                 .map(|s| (now - s).num_seconds().max(0))
                 .unwrap_or(0),
         );
-    let Some(patch) = projection_patch(status, &projection) else {
+    let key = format!("{namespace}/{name}");
+    let stall = match &projection.pass {
+        PassPhase::Stalled { state, reason, .. } => Some((*state, reason.clone())),
+        _ => None,
+    };
+    if stall.is_none() {
+        nudges.0.remove(&key);
+    }
+    let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
+    if let Some(mut patch) = projection_patch(status, &projection) {
+        if let (Some((kind, _)), true) = (&stall, !was_stalled) {
+            patch["status"]["reactions"] = ledger_with(status, *kind, now);
+        }
+        if let Err(e) = api
+            .patch_status(
+                &name,
+                &PatchParams::apply("pangea-operator"),
+                &Patch::Merge(&patch),
+            )
+            .await
+        {
+            warn!(error = %e, %name, "pass watchdog status write failed");
+            return;
+        }
+    }
+    let Some((kind, reason)) = stall else {
         return;
     };
-    let api: Api<InfrastructureTemplate> = Api::namespaced(state.client.clone(), &namespace);
-    if let Err(e) = api
-        .patch_status(
-            &name,
-            &PatchParams::apply("pangea-operator"),
-            &Patch::Merge(&patch),
-        )
-        .await
-    {
-        warn!(error = %e, %name, "pass watchdog status write failed");
-        return;
-    }
-    if is_stalled && !was_stalled {
-        let reason = match &projection.pass {
-            PassPhase::Stalled { reason, .. } => reason.clone(),
-            _ => String::new(),
-        };
-        warn!(%name, %namespace, %reason, "template pass stalled");
+    if !was_stalled {
+        warn!(%name, %namespace, state = %kind, %reason, "template pass stalled");
+        let label = kind.to_string();
         state
             .metrics
             .live
             .stalls_total
-            .with_label_values(&labels)
+            .with_label_values(&[name.as_str(), namespace.as_str(), label.as_str()])
             .inc();
-        record_event(template, state, EventType::Warning, "Stalled", &reason).await;
+        record_event(
+            template,
+            state,
+            EventType::Warning,
+            &format!("Stalled{}", capitalize(&label)),
+            &format!("{reason}. Remedy: {}.", kind.remedy()),
+        )
+        .await;
     }
+    if !kind.redispatches() {
+        return;
+    }
+    let (attempts, last) = nudges
+        .0
+        .get(&key)
+        .map(|(a, l)| (*a, Some(*l)))
+        .unwrap_or((0, None));
+    if nudge_due(attempts, last, now) {
+        let patch = serde_json::json!({
+            "metadata": { "annotations": {
+                crate::controller::generation_filter::RECONCILE_REQUESTED_ANNOTATION:
+                    format!("watchdog-{}", now.timestamp_millis())
+            }}
+        });
+        match api
+            .patch(&name, &PatchParams::default(), &Patch::Merge(&patch))
+            .await
+        {
+            Ok(_) => {
+                info!(%name, attempt = attempts + 1, state = %kind, "stalled pass: re-dispatching the reconcile");
+                nudges.0.insert(key, (attempts + 1, now));
+            }
+            Err(e) => warn!(error = %e, %name, "stalled pass: re-dispatch failed"),
+        }
+    } else if attempts == MAX_NUDGES {
+        nudges
+            .0
+            .insert(key, (attempts, now + chrono::Duration::days(3650)));
+        record_event(
+            template,
+            state,
+            EventType::Warning,
+            "StallEscalated",
+            &format!(
+                "{reason}. {MAX_NUDGES} re-dispatches did not move it; a human or the reactive policy must act."
+            ),
+        )
+        .await;
+    }
+}
+
+fn capitalize(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+        None => String::new(),
+    }
+}
+
+fn ledger_with(
+    status: &crate::crd::InfrastructureTemplateStatus,
+    kind: crate::crd::StallState,
+    now: chrono::DateTime<Utc>,
+) -> serde_json::Value {
+    let mut ledger = status.reactions.clone().unwrap_or_default();
+    let trigger = format!("Stalled:{kind}");
+    *ledger.counts.entry(trigger.clone()).or_insert(0) += 1;
+    ledger.active_since.insert(trigger.clone(), now);
+    ledger.last = Some(crate::crd::ReactionRecord {
+        trigger,
+        at: now,
+        age_seconds: 0,
+        notified: false,
+    });
+    serde_json::json!(ledger)
 }
 
 #[cfg(test)]
@@ -386,5 +518,41 @@ mod tests {
         }
         let cond = &status["conditions"]["items"]["properties"];
         assert!(cond.get("observedGeneration").is_some());
+    }
+
+    #[test]
+    fn nudges_back_off_and_stop_at_the_cap() {
+        let t0 = Utc::now();
+        assert!(nudge_due(0, None, t0));
+        assert!(!nudge_due(1, Some(t0), t0 + chrono::Duration::seconds(60)));
+        assert!(nudge_due(1, Some(t0), t0 + chrono::Duration::seconds(120)));
+        assert_eq!(nudge_backoff(0), chrono::Duration::seconds(60));
+        assert_eq!(nudge_backoff(4), chrono::Duration::seconds(960));
+        assert_eq!(nudge_backoff(30), chrono::Duration::seconds(1800));
+        assert!(!nudge_due(
+            MAX_NUDGES,
+            Some(t0),
+            t0 + chrono::Duration::days(1)
+        ));
+    }
+
+    #[test]
+    fn every_named_stall_has_a_remedy_and_only_the_redispatchable_are_nudged() {
+        use crate::crd::StallState;
+        for s in StallState::ALL {
+            assert!(!s.remedy().is_empty());
+        }
+        assert!(!StallState::QueuedBehind.redispatches());
+        assert!(!StallState::Unnamed.redispatches());
+        assert!(StallState::OrphanedPhase.redispatches());
+        assert!(StallState::HeartbeatLost.redispatches());
+    }
+
+    #[test]
+    fn the_ledger_counts_each_named_stall_apart() {
+        let status = crate::crd::InfrastructureTemplateStatus::default();
+        let l = ledger_with(&status, crate::crd::StallState::OrphanedPhase, Utc::now());
+        assert_eq!(l["counts"]["Stalled:orphanedPhase"], 1);
+        assert_eq!(l["last"]["trigger"], "Stalled:orphanedPhase");
     }
 }

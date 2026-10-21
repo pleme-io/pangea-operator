@@ -48,7 +48,7 @@ pub use infrastructure_template::{
     SettlingPolicy, SeverityRollup, TemplateObjectRef, TemplateSource, VariableRef,
 };
 
-pub use pass_status::{PassKind, PassStatus};
+pub use pass_status::{PassKind, PassStatus, StallState};
 
 pub use live_status::{
     InFlightCall, LiveProgress, PendingCreateSource, PendingCreates, PreflightCheck,
