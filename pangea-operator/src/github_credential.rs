@@ -65,7 +65,12 @@ pub fn resolve(request: CredentialRequest) -> Result<Option<String>, String> {
 mod tests {
     use super::*;
 
-    fn request(app: Option<&str>, file: Option<&str>, env: Option<&str>, pat: bool) -> CredentialRequest {
+    fn request(
+        app: Option<&str>,
+        file: Option<&str>,
+        env: Option<&str>,
+        pat: bool,
+    ) -> CredentialRequest {
         CredentialRequest {
             app_token_file: app.map(str::to_string),
             token_file: file.map(str::to_string),

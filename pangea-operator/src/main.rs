@@ -1047,12 +1047,14 @@ fn github_credential(args: &[String]) -> Result<Option<String>> {
         value_of("--pat-enabled").as_deref(),
     )
     .map_err(pangea_operator::Error::Config)?;
-    pangea_operator::github_credential::resolve(pangea_operator::github_credential::CredentialRequest {
-        app_token_file: value_of("--app-token-file"),
-        token_file: value_of("--token-file"),
-        env_token: env::var("GITHUB_TOKEN").ok(),
-        policy,
-    })
+    pangea_operator::github_credential::resolve(
+        pangea_operator::github_credential::CredentialRequest {
+            app_token_file: value_of("--app-token-file"),
+            token_file: value_of("--token-file"),
+            env_token: env::var("GITHUB_TOKEN").ok(),
+            policy,
+        },
+    )
     .map_err(pangea_operator::Error::Config)
 }
 
