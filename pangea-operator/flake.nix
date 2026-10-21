@@ -12,31 +12,6 @@
       url = "github:ipetkov/crane";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    # Reference nexus flake for nexus-deploy and nix-lib. Corrected 2026-07-21:
-    # was "path:../../../.." (4 levels up from this file's directory,
-    # resolving to ~/code — no flake.nix there, `path '/flake.nix' does not
-    # exist`). A same-level-count fix ("path:../../nexus") still fails
-    # differently: `nix develop` addresses a dirty git tree as
-    # `git+file://<repo-root>`, and a git-tree flake reference cannot resolve
-    # a relative `path:` input past its OWN repository root to a sibling repo
-    # outside it ("'nexus' is too short to be a valid store path") — this
-    # isn't a `../` counting bug, `path:` to a separate sibling git repo is
-    # structurally unsupported here. A real remote reference is the durable
-    # fix (also removes the checkout-layout fragility that caused the
-    # original break — this input no longer depends on where `nexus` happens
-    # to be checked out locally).
-    nexus.url = "github:pleme-io/nexus";
-    # Local dev against an uncommitted nexus checkout: DO NOT change this URL
-    # back to a path: input (see the fragility above). Instead override at
-    # the CLI, per-invocation, never committed:
-    #   nix develop --impure \
-    #     --override-input nexus /absolute/path/to/nexus \
-    #     --no-write-lock-file
-    # Absolute path (not relative) avoids both bugs above: no `../` count to
-    # get wrong, and — resolved as its own top-level flake ref rather than a
-    # relative traversal inside this flake's git-tree addressing — it
-    # doesn't hit the git-tree-boundary restriction either. `--no-write-
-    # lock-file` keeps the override out of the committed flake.lock.
     # Hardened OCI base images (distroless-glibc, no shell, nonroot-by-
     # default) — the SAME fleet-wide primitive breathe + tool-image.nix
     # build against (org CLAUDE.md Pillar 8 + hardened-images-by-default).
@@ -46,7 +21,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, rust-overlay, flake-utils, crane, nexus, substrate }:
+  outputs = { self, nixpkgs, rust-overlay, flake-utils, crane, substrate }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         overlays = [ (import rust-overlay) ];
@@ -54,10 +29,6 @@
           inherit system overlays;
           config.allowUnfree = true;
         };
-
-        # Get nexus-deploy from nexus flake
-        nexusDeploy = nexus.packages.${system}.nexus-deploy or pkgs.hello;
-        nexusDeployCmd = "${nexusDeploy}/bin/nexus-deploy";
 
         # Centralized tokens
         defaultAtticToken = let
@@ -278,85 +249,6 @@
 
               echo ""
               echo "📦 Next step: Run 'nix run .#push' to push to GitHub Packages"
-            '');
-          };
-
-          # Push Docker image to GHCR
-          push = {
-            type = "app";
-            program = toString (pkgs.writeShellScript "pangea-operator-push" ''
-              set -euo pipefail
-
-              export ATTIC_TOKEN="${defaultAtticToken}"
-              export GITHUB_TOKEN="${defaultGhcrToken}"
-              export GHCR_TOKEN="${defaultGhcrToken}"
-              ${mkRuntimeToolsEnv { tools = ["skopeo" "attic"]; }}
-
-              echo "📤 Pushing ${toolName} to GitHub Packages..."
-
-              REPO_ROOT=$(${pkgs.git}/bin/git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
-              WORK_DIR="$REPO_ROOT/pkgs/products/pangea/pangea-operator"
-
-              cd "$WORK_DIR"
-
-              if [ ! -L "result" ]; then
-                echo "❌ Error: No Docker image found. Run 'nix run .#build' first"
-                exit 1
-              fi
-
-              exec ${nexusDeployCmd} push \
-                --image-path "$(readlink -f result)" \
-                --registry "${registry}" \
-                --auto-tags \
-                --retries 3
-            '');
-          };
-
-          # Full release workflow
-          release = {
-            type = "app";
-            program = toString (pkgs.writeShellScript "pangea-operator-release" ''
-              set -euo pipefail
-
-              export ATTIC_TOKEN="${defaultAtticToken}"
-              export GITHUB_TOKEN="${defaultGhcrToken}"
-              export GHCR_TOKEN="${defaultGhcrToken}"
-              ${mkRuntimeToolsEnv { tools = ["skopeo" "attic" "git"]; }}
-
-              echo "🚀 ${toolName} Release Workflow"
-              echo "$(printf '=%.0s' {1..50})"
-              echo ""
-
-              REPO_ROOT=$(${pkgs.git}/bin/git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
-              WORK_DIR="$REPO_ROOT/pkgs/products/pangea/pangea-operator"
-
-              cd "$WORK_DIR"
-
-              # Step 1: Build
-              echo "Step 1/2: Building Docker image..."
-              nix build .#pangea-operator-image
-
-              if [ ! -L "result" ]; then
-                echo "❌ Build failed"
-                exit 1
-              fi
-
-              echo "✅ Build complete"
-              echo ""
-
-              # Step 2: Push
-              echo "Step 2/2: Pushing to GitHub Packages..."
-              ${nexusDeployCmd} push \
-                --image-path "$(readlink -f result)" \
-                --registry "${registry}" \
-                --auto-tags \
-                --retries 3
-
-              echo ""
-              echo "✅ Release complete!"
-              echo ""
-              echo "The ${toolName} is now available at:"
-              echo "  docker pull ${registry}:latest"
             '');
           };
 
