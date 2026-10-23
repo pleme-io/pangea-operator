@@ -2875,8 +2875,14 @@ async fn handle_planning(
                 if let pangea_leaf::admission::Admission::Refuse(msg) = &assessment.admission {
                     warn!(%msg, "fat template refused at admission");
                     update_phase_with_error(template, Phase::Failed, msg, state).await?;
-                    record_event(template, state, EventType::Warning, "FatTemplateRefused", msg)
-                        .await;
+                    record_event(
+                        template,
+                        state,
+                        EventType::Warning,
+                        "FatTemplateRefused",
+                        msg,
+                    )
+                    .await;
                     return Ok(ReconcileAction::Requeue(ERROR_REQUEUE_INTERVAL));
                 }
             }

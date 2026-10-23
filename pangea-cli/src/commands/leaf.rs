@@ -16,7 +16,11 @@ pub enum LeafCommands {
 pub struct PlanArgs {
     #[arg(long)]
     template: PathBuf,
-    #[arg(long, conflicts_with = "addresses", required_unless_present = "addresses")]
+    #[arg(
+        long,
+        conflicts_with = "addresses",
+        required_unless_present = "addresses"
+    )]
     state: Option<PathBuf>,
     #[arg(long)]
     addresses: Option<PathBuf>,
@@ -37,7 +41,8 @@ pub struct PlanArgs {
 }
 
 fn read_value(path: &Path) -> Result<Value> {
-    let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     serde_yaml::from_str(&text).with_context(|| format!("parsing {}", path.display()))
 }
 
@@ -59,12 +64,16 @@ fn summary(plan: &MigrationPlan) -> Value {
 }
 
 fn write_yaml(path: &Path, v: &Value) -> Result<()> {
-    std::fs::write(path, serde_yaml::to_string(v)?).with_context(|| format!("writing {}", path.display()))
+    std::fs::write(path, serde_yaml::to_string(v)?)
+        .with_context(|| format!("writing {}", path.display()))
 }
 
 fn emit(dir: &Path, plan: &MigrationPlan) -> Result<()> {
     std::fs::create_dir_all(dir.join("leaves"))?;
-    std::fs::write(dir.join("plan.json"), serde_json::to_string_pretty(&summary(plan))?)?;
+    std::fs::write(
+        dir.join("plan.json"),
+        serde_json::to_string_pretty(&summary(plan))?,
+    )?;
     std::fs::write(
         dir.join("state-moves.json"),
         serde_json::to_string_pretty(&plan.state_moves)?,

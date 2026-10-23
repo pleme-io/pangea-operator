@@ -33,7 +33,11 @@ fn suffix(key: &LeafKey) -> String {
 }
 
 fn clip(s: &str, max: usize) -> String {
-    s.chars().take(max).collect::<String>().trim_end_matches('-').to_string()
+    s.chars()
+        .take(max)
+        .collect::<String>()
+        .trim_end_matches('-')
+        .to_string()
 }
 
 #[must_use]
@@ -69,7 +73,10 @@ mod tests {
 
     #[test]
     fn names_are_dns_labels_prefixed_by_the_fat_name() {
-        let n = leaf_names("repos", &[k("Akeyless_Cursor"), LeafKey::Module("module.vpc".into())]);
+        let n = leaf_names(
+            "repos",
+            &[k("Akeyless_Cursor"), LeafKey::Module("module.vpc".into())],
+        );
         assert_eq!(n[&k("Akeyless_Cursor")], "repos-akeyless-cursor");
         assert_eq!(n[&LeafKey::Module("module.vpc".into())], "repos-module-vpc");
     }

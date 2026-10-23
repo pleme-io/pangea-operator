@@ -184,12 +184,13 @@ fn interpolated_targets(v: &Value, out: &mut BTreeSet<String>) {
             while let Some(pos) = rest.find("${") {
                 rest = &rest[pos + 2..];
                 let end = rest
-                    .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.'))
+                    .find(|c: char| {
+                        !(c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+                    })
                     .unwrap_or(rest.len());
                 let mut parts = rest[..end].split('.');
                 if let (Some(t), Some(n)) = (parts.next(), parts.next()) {
-                    if !t.is_empty() && !n.is_empty() && t != "var" && t != "local" && t != "each"
-                    {
+                    if !t.is_empty() && !n.is_empty() && t != "var" && t != "local" && t != "each" {
                         out.insert(format!("{t}.{n}"));
                     }
                 }
@@ -244,7 +245,12 @@ pub fn plan_view(plan: &Value) -> Result<PlanView, SourceError> {
                 let list: Vec<String> = c
                     .pointer("/change/actions")
                     .and_then(Value::as_array)
-                    .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_string)
+                            .collect()
+                    })
                     .unwrap_or_default();
                 let action = PlanAction::from_actions(&list)
                     .ok_or_else(|| SourceError::Plan(format!("`{s}` has actions {list:?}")))?;
@@ -345,7 +351,10 @@ mod tests {
 
     #[test]
     fn lines_skip_blanks_and_comments() {
-        assert_eq!(addresses_from_lines("a.b\n\n# c\n  d.e  \n"), vec!["a.b", "d.e"]);
+        assert_eq!(
+            addresses_from_lines("a.b\n\n# c\n  d.e  \n"),
+            vec!["a.b", "d.e"]
+        );
     }
 
     #[test]
@@ -383,7 +392,9 @@ mod tests {
         let v = plan_view(&p).unwrap();
         assert_eq!(v.changes[0].0, "gh_perm.p");
         assert_eq!(v.changes[1].0, "module.m.gh_repo.r[\"k\"]");
-        assert!(v.references.contains(&("gh_perm.p".into(), "gh_repo.r".into())));
+        assert!(v
+            .references
+            .contains(&("gh_perm.p".into(), "gh_repo.r".into())));
         assert_eq!(v.references.len(), 1);
     }
 

@@ -223,7 +223,10 @@ mod tests {
             leaf_key("a.b[1"),
             Err(AddressError::UnterminatedIndex(_))
         ));
-        assert!(matches!(leaf_key("a..b"), Err(AddressError::EmptySegment(_))));
+        assert!(matches!(
+            leaf_key("a..b"),
+            Err(AddressError::EmptySegment(_))
+        ));
         assert!(matches!(
             leaf_key("a.b[1]c"),
             Err(AddressError::TrailingAfterIndex { .. })

@@ -70,7 +70,11 @@ pub fn assess(
     cycle_p95_ms: Option<u64>,
     budget_ms: Option<u64>,
 ) -> Result<Assessment, AddressError> {
-    let classification = classify(addresses.iter().map(String::as_str), cycle_p95_ms, budget_ms)?;
+    let classification = classify(
+        addresses.iter().map(String::as_str),
+        cycle_p95_ms,
+        budget_ms,
+    )?;
     let annotation = template
         .metadata
         .annotations
@@ -123,7 +127,14 @@ mod tests {
 
     #[test]
     fn a_new_fat_template_is_refused() {
-        let a = assess(&template(None, false), AdmissionMode::Enforce, &fat(), None, None).unwrap();
+        let a = assess(
+            &template(None, false),
+            AdmissionMode::Enforce,
+            &fat(),
+            None,
+            None,
+        )
+        .unwrap();
         assert!(a.admission.refused());
         assert!(a.classification.fat);
     }
@@ -143,20 +154,41 @@ mod tests {
 
     #[test]
     fn the_setting_admits_it() {
-        let a = assess(&template(None, false), AdmissionMode::Off, &fat(), None, None).unwrap();
+        let a = assess(
+            &template(None, false),
+            AdmissionMode::Off,
+            &fat(),
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(a.admission, Admission::AdmitOff);
     }
 
     #[test]
     fn a_reconciled_template_is_grandfathered() {
-        let a = assess(&template(None, true), AdmissionMode::Enforce, &fat(), None, None).unwrap();
+        let a = assess(
+            &template(None, true),
+            AdmissionMode::Enforce,
+            &fat(),
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(a.admission, Admission::AdmitGrandfathered);
     }
 
     #[test]
     fn a_leaf_template_is_admitted() {
         let one = vec!["a.b[\"x\"]".to_string(), "c.d[\"x\"]".to_string()];
-        let a = assess(&template(None, false), AdmissionMode::Enforce, &one, None, None).unwrap();
+        let a = assess(
+            &template(None, false),
+            AdmissionMode::Enforce,
+            &one,
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(a.admission, Admission::Admit);
     }
 

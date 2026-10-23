@@ -75,12 +75,7 @@ mod tests {
 
     #[test]
     fn one_keyed_set_is_a_leaf() {
-        let c = classify(
-            ["a.b[\"x\"]", "c.d[\"x\"]"],
-            None,
-            None,
-        )
-        .unwrap();
+        let c = classify(["a.b[\"x\"]", "c.d[\"x\"]"], None, None).unwrap();
         assert_eq!(c.leaf_keys, 1);
         assert!(!c.fat);
     }
@@ -90,7 +85,10 @@ mod tests {
         let c = classify(["a.b[\"x\"]", "a.b[\"y\"]"], None, None).unwrap();
         assert_eq!(c.leaf_keys, 2);
         assert!(c.fat);
-        assert_eq!(c.reasons, vec![FatReason::MultipleLeafKeys { leaf_keys: 2 }]);
+        assert_eq!(
+            c.reasons,
+            vec![FatReason::MultipleLeafKeys { leaf_keys: 2 }]
+        );
     }
 
     #[test]
@@ -125,6 +123,10 @@ mod tests {
 
     #[test]
     fn empty_state_is_not_fat() {
-        assert!(!classify(std::iter::empty::<&str>(), None, None).unwrap().fat);
+        assert!(
+            !classify(std::iter::empty::<&str>(), None, None)
+                .unwrap()
+                .fat
+        );
     }
 }

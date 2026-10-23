@@ -24,7 +24,9 @@ impl AdmissionMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum SkipReason {
     ProviderSingleton,
@@ -113,9 +115,9 @@ pub fn decide(
     }
     let valid: Vec<&str> = SkipReason::ALL.iter().map(|r| r.as_str()).collect();
     let skip_note = match skip {
-        SkipDeclaration::Invalid(v) => format!(
-            "annotation {SKIP_LEAF_ANNOTATION}=`{v}` is not a typed world-fact reason"
-        ),
+        SkipDeclaration::Invalid(v) => {
+            format!("annotation {SKIP_LEAF_ANNOTATION}=`{v}` is not a typed world-fact reason")
+        }
         _ => format!("no {SKIP_LEAF_ANNOTATION} annotation"),
     };
     Admission::Refuse(format!(
@@ -144,15 +146,27 @@ mod tests {
     #[test]
     fn a_leaf_is_always_admitted() {
         assert_eq!(
-            decide(AdmissionMode::Enforce, true, &lean(), &SkipDeclaration::Absent),
+            decide(
+                AdmissionMode::Enforce,
+                true,
+                &lean(),
+                &SkipDeclaration::Absent
+            ),
             Admission::Admit
         );
     }
 
     #[test]
     fn a_new_fat_template_is_refused_with_the_remedies_named() {
-        let a = decide(AdmissionMode::Enforce, true, &fat(), &SkipDeclaration::Absent);
-        let Admission::Refuse(msg) = a else { panic!("expected refusal") };
+        let a = decide(
+            AdmissionMode::Enforce,
+            true,
+            &fat(),
+            &SkipDeclaration::Absent,
+        );
+        let Admission::Refuse(msg) = a else {
+            panic!("expected refusal")
+        };
         assert!(msg.contains("pangea leaf plan"));
         assert!(msg.contains(SKIP_LEAF_ANNOTATION));
         assert!(msg.contains("leaf.admission=off"));
@@ -173,7 +187,9 @@ mod tests {
         let s = skip_declaration(Some("no-time"));
         assert!(matches!(s, SkipDeclaration::Invalid(_)));
         let a = decide(AdmissionMode::Enforce, true, &fat(), &s);
-        let Admission::Refuse(msg) = a else { panic!("expected refusal") };
+        let Admission::Refuse(msg) = a else {
+            panic!("expected refusal")
+        };
         assert!(msg.contains("not a typed world-fact reason"));
     }
 
@@ -183,13 +199,24 @@ mod tests {
             decide(AdmissionMode::Off, true, &fat(), &SkipDeclaration::Absent),
             Admission::AdmitOff
         );
-        assert!(decide(AdmissionMode::Enforce, true, &fat(), &SkipDeclaration::Absent).refused());
+        assert!(decide(
+            AdmissionMode::Enforce,
+            true,
+            &fat(),
+            &SkipDeclaration::Absent
+        )
+        .refused());
     }
 
     #[test]
     fn a_template_that_already_reconciled_is_grandfathered_not_refused() {
         assert_eq!(
-            decide(AdmissionMode::Enforce, false, &fat(), &SkipDeclaration::Absent),
+            decide(
+                AdmissionMode::Enforce,
+                false,
+                &fat(),
+                &SkipDeclaration::Absent
+            ),
             Admission::AdmitGrandfathered
         );
     }
@@ -209,7 +236,10 @@ mod tests {
     #[test]
     fn mode_parsing_is_closed() {
         assert_eq!(AdmissionMode::parse("OFF"), Some(AdmissionMode::Off));
-        assert_eq!(AdmissionMode::parse("enforce"), Some(AdmissionMode::Enforce));
+        assert_eq!(
+            AdmissionMode::parse("enforce"),
+            Some(AdmissionMode::Enforce)
+        );
         assert_eq!(AdmissionMode::parse("maybe"), None);
     }
 }

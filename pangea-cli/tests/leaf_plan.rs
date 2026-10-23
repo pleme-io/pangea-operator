@@ -26,7 +26,11 @@ fn state() -> Value {
 }
 
 fn run(args: &[&str]) -> std::process::Output {
-    Command::cargo_bin("pangea").unwrap().args(args).output().unwrap()
+    Command::cargo_bin("pangea")
+        .unwrap()
+        .args(args)
+        .output()
+        .unwrap()
 }
 
 #[test]
@@ -35,10 +39,14 @@ fn a_fat_template_plans_ready_and_emits_manifests() {
     let s = scratch("s.json", &state());
     let out = std::env::temp_dir().join(format!("pangea-leaf-emit-{}", std::process::id()));
     let o = run(&[
-        "leaf", "plan",
-        "--template", t.to_str().unwrap(),
-        "--state", s.to_str().unwrap(),
-        "--emit-dir", out.to_str().unwrap(),
+        "leaf",
+        "plan",
+        "--template",
+        t.to_str().unwrap(),
+        "--state",
+        s.to_str().unwrap(),
+        "--emit-dir",
+        out.to_str().unwrap(),
         "--summary",
     ]);
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
@@ -67,10 +75,14 @@ fn grouping_references_merges_a_repo_with_its_permission() {
         ]}),
     );
     let o = run(&[
-        "leaf", "plan",
-        "--template", t.to_str().unwrap(),
-        "--state", s.to_str().unwrap(),
-        "--plan", p.to_str().unwrap(),
+        "leaf",
+        "plan",
+        "--template",
+        t.to_str().unwrap(),
+        "--state",
+        s.to_str().unwrap(),
+        "--plan",
+        p.to_str().unwrap(),
         "--group-references",
         "--summary",
     ]);
@@ -91,10 +103,14 @@ fn a_plan_with_a_change_exits_nonzero_and_names_the_failed_check() {
         ]}),
     );
     let o = run(&[
-        "leaf", "plan",
-        "--template", t.to_str().unwrap(),
-        "--state", s.to_str().unwrap(),
-        "--plan", p.to_str().unwrap(),
+        "leaf",
+        "plan",
+        "--template",
+        t.to_str().unwrap(),
+        "--state",
+        s.to_str().unwrap(),
+        "--plan",
+        p.to_str().unwrap(),
         "--summary",
     ]);
     assert_eq!(o.status.code(), Some(2));
@@ -110,9 +126,12 @@ fn a_malformed_state_address_fails_closed() {
         &json!({"resources": [{"mode": "managed", "type": "a", "name": "b", "module": "module..x", "instances": [{}]}]}),
     );
     let o = run(&[
-        "leaf", "plan",
-        "--template", t.to_str().unwrap(),
-        "--state", s.to_str().unwrap(),
+        "leaf",
+        "plan",
+        "--template",
+        t.to_str().unwrap(),
+        "--state",
+        s.to_str().unwrap(),
         "--summary",
     ]);
     assert!(!o.status.success());
@@ -124,9 +143,12 @@ fn a_single_leaf_state_is_not_fat() {
     let a = std::env::temp_dir().join(format!("pangea-leaf-addr-{}.txt", std::process::id()));
     std::fs::write(&a, "x.y[\"k\"]\nz.w[\"k\"]\n").unwrap();
     let o = run(&[
-        "leaf", "plan",
-        "--template", t.to_str().unwrap(),
-        "--addresses", a.to_str().unwrap(),
+        "leaf",
+        "plan",
+        "--template",
+        t.to_str().unwrap(),
+        "--addresses",
+        a.to_str().unwrap(),
         "--summary",
     ]);
     assert!(o.status.success());

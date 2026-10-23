@@ -142,7 +142,11 @@ impl Partition {
     pub fn leaf_of(&self, address: &str) -> Option<&LeafKey> {
         self.leaves
             .values()
-            .find(|l| l.addresses.binary_search_by(|a| a.as_str().cmp(address)).is_ok())
+            .find(|l| {
+                l.addresses
+                    .binary_search_by(|a| a.as_str().cmp(address))
+                    .is_ok()
+            })
             .map(|l| &l.key)
     }
 
@@ -224,7 +228,11 @@ mod tests {
     fn a_dropped_address_fails_the_bijection() {
         let before = addrs(&["r.a[\"x\"]", "r.a[\"y\"]"]);
         let mut p = Partition::build(&before).unwrap();
-        p.leaves.get_mut(&LeafKey::Keyed("y".into())).unwrap().addresses.clear();
+        p.leaves
+            .get_mut(&LeafKey::Keyed("y".into()))
+            .unwrap()
+            .addresses
+            .clear();
         assert!(!p.bijection(&before).ok);
     }
 
@@ -263,8 +271,14 @@ mod tests {
         let before = addrs(&["a.one", "b.two", "c.three", "d.four"]);
         let mut p = Partition::build(&before).unwrap();
         p.merge(&[
-            (LeafKey::Address("a.one".into()), LeafKey::Address("b.two".into())),
-            (LeafKey::Address("b.two".into()), LeafKey::Address("c.three".into())),
+            (
+                LeafKey::Address("a.one".into()),
+                LeafKey::Address("b.two".into()),
+            ),
+            (
+                LeafKey::Address("b.two".into()),
+                LeafKey::Address("c.three".into()),
+            ),
         ]);
         assert_eq!(p.len(), 2);
         let big = p.leaves().find(|l| l.addresses.len() == 3).unwrap();
@@ -277,7 +291,10 @@ mod tests {
     fn merge_ignores_edges_to_unknown_leaves() {
         let before = addrs(&["a.one"]);
         let mut p = Partition::build(&before).unwrap();
-        p.merge(&[(LeafKey::Address("a.one".into()), LeafKey::Address("zz".into()))]);
+        p.merge(&[(
+            LeafKey::Address("a.one".into()),
+            LeafKey::Address("zz".into()),
+        )]);
         assert_eq!(p.len(), 1);
     }
 }

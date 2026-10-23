@@ -219,7 +219,10 @@ pub fn plan_migration(input: &PlannerInput<'_>) -> Result<MigrationPlan, PlanErr
     let edges = singleton_edges(&partition, input.plan);
     let mut upstreams: BTreeMap<LeafKey, BTreeSet<LeafKey>> = BTreeMap::new();
     for (from, to) in &edges {
-        upstreams.entry(from.clone()).or_default().insert(to.clone());
+        upstreams
+            .entry(from.clone())
+            .or_default()
+            .insert(to.clone());
     }
 
     let mut dag = TemplateDag::new();
@@ -300,7 +303,10 @@ pub fn plan_migration(input: &PlannerInput<'_>) -> Result<MigrationPlan, PlanErr
         },
     });
 
-    let verdict = if checks.iter().any(|c| matches!(c.status, CheckStatus::Fail(_))) {
+    let verdict = if checks
+        .iter()
+        .any(|c| matches!(c.status, CheckStatus::Fail(_)))
+    {
         Verdict::Refused
     } else {
         Verdict::Ready
@@ -596,7 +602,12 @@ mod tests {
         assert_eq!(p.verdict, Verdict::Ready);
         assert_eq!(
             p.projected,
-            Some(Projected { add: 0, change: 0, destroy: 0, no_op: 2 })
+            Some(Projected {
+                add: 0,
+                change: 0,
+                destroy: 0,
+                no_op: 2
+            })
         );
         let c = p.checks.iter().find(|c| c.name == "no-change").unwrap();
         assert_eq!(c.status, CheckStatus::Pass);
@@ -638,9 +649,14 @@ mod tests {
         let t = tmpl();
         let a = addrs(&["gh.perm[\"x\"]", "gh.perm[\"y\"]", "module.net.vpc.main"]);
         let mut view = PlanView::default();
-        view.references.insert(("gh.perm".into(), "module.net.vpc.main".into()));
+        view.references
+            .insert(("gh.perm".into(), "module.net.vpc.main".into()));
         let p = plan_migration(&input(&t, &a, Some(&view))).unwrap();
-        let x = p.leaves.iter().find(|l| l.key == LeafKey::Keyed("x".into())).unwrap();
+        let x = p
+            .leaves
+            .iter()
+            .find(|l| l.key == LeafKey::Keyed("x".into()))
+            .unwrap();
         assert_eq!(x.upstreams.len(), 1);
         let m = p
             .leaf_templates
@@ -668,8 +684,10 @@ mod tests {
         let t = tmpl();
         let a = addrs(&["gh.repo_a", "gh.perm_a", "gh.repo_b", "gh.perm_b"]);
         let mut view = PlanView::default();
-        view.references.insert(("gh.perm_a".into(), "gh.repo_a".into()));
-        view.references.insert(("gh.perm_b".into(), "gh.repo_b".into()));
+        view.references
+            .insert(("gh.perm_a".into(), "gh.repo_a".into()));
+        view.references
+            .insert(("gh.perm_b".into(), "gh.repo_b".into()));
         let mut i = input(&t, &a, Some(&view));
         i.group_references = true;
         let p = plan_migration(&i).unwrap();
