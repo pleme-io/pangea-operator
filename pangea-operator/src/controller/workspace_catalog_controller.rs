@@ -22,6 +22,7 @@
 //! controller owns the workspace level (cascade level 2).
 
 use chrono::Utc;
+use kube::ResourceExt;
 use kube::{
     api::{Api, ListParams},
     runtime::controller::Action,
@@ -143,6 +144,7 @@ async fn reconcile(wsc: Arc<WorkspaceCatalog>, ctx: Arc<Context>) -> Result<Acti
     let lp = ListParams::default().labels(&label_selector);
     let templates = tmpl_api.list(&lp).await?;
     let template_count = templates.items.len() as u32;
+    request_changed_leaves(&ctx.client, &wsc, &templates.items).await;
 
     let now = Utc::now();
     let conditions = vec![
@@ -209,6 +211,77 @@ async fn reconcile(wsc: Arc<WorkspaceCatalog>, ctx: Arc<Context>) -> Result<Acti
 
     // 5-min default cadence — same shape as ArchitectureGem reconciler.
     Ok(Action::requeue(Duration::from_secs(300)))
+}
+
+async fn request_changed_leaves(
+    client: &Client,
+    wsc: &WorkspaceCatalog,
+    templates: &[InfrastructureTemplate],
+) {
+    if !crate::controller::generation_filter::honors_reconcile_requests() {
+        return;
+    }
+    let catalog_vars = wsc
+        .spec
+        .variables
+        .as_ref()
+        .and_then(|v| serde_json::to_value(v).ok());
+    let current: Vec<(String, String)> = templates
+        .iter()
+        .map(|t| {
+            (
+                format!("{}/{}", t.namespace().unwrap_or_default(), t.name_any()),
+                crate::controller::template::leaf::digest_of(t, catalog_vars.as_ref()),
+            )
+        })
+        .collect();
+    let recorded: Vec<Option<&str>> = templates
+        .iter()
+        .map(|t| {
+            t.status
+                .as_ref()
+                .and_then(|s| s.leaf.as_ref())
+                .and_then(|l| l.inputs_digest.as_deref())
+        })
+        .collect();
+    let stale = pangea_leaf::schedule::stale_leaves(
+        current
+            .iter()
+            .zip(&recorded)
+            .map(|((name, digest), rec)| (name.as_str(), *rec, digest.as_str())),
+    );
+    for t in templates {
+        let key = format!("{}/{}", t.namespace().unwrap_or_default(), t.name_any());
+        if !stale.contains(&key) {
+            continue;
+        }
+        let digest = &current
+            .iter()
+            .find(|(n, _)| *n == key)
+            .expect("listed above")
+            .1;
+        let already = t.metadata.annotations.as_ref().and_then(|a| {
+            a.get(crate::controller::generation_filter::RECONCILE_REQUESTED_ANNOTATION)
+        });
+        if already == Some(digest) {
+            continue;
+        }
+        let api: Api<InfrastructureTemplate> =
+            Api::namespaced(client.clone(), &t.namespace().unwrap_or_default());
+        let patch = serde_json::json!({"metadata": {"annotations": {
+            crate::controller::generation_filter::RECONCILE_REQUESTED_ANNOTATION: digest
+        }}});
+        if let Err(e) = api
+            .patch(
+                &t.name_any(),
+                &kube::api::PatchParams::default(),
+                &kube::api::Patch::Merge(&patch),
+            )
+            .await
+        {
+            warn!(template = %key, error = %e, "leaf reconcile request could not be written");
+        }
+    }
 }
 
 fn gems_loaded_reason(missing: &[String], not_loaded: &[String]) -> &'static str {

@@ -297,14 +297,32 @@ impl FairBudget {
     /// permit frees the slot on drop), else `None` — the caller requeues.
     /// Never blocks.
     pub fn try_acquire(self: &Arc<Self>, scope: &str) -> Option<BudgetPermit> {
+        self.try_acquire_capped(scope, None)
+    }
+
+    /// [`try_acquire`](Self::try_acquire) with a per-scope cap that replaces the
+    /// uniform `per_scope` for this scope (`WorkspaceCatalog.spec.maxConcurrentLeaves`).
+    /// `None` keeps the uniform cap. The global pool still bounds every scope.
+    pub fn try_acquire_capped(
+        self: &Arc<Self>,
+        scope: &str,
+        scope_cap: Option<usize>,
+    ) -> Option<BudgetPermit> {
         let id = budget_job_id(scope);
         let mut t = self.tree.lock().expect("budget mutex poisoned");
         // FairBudget applies `per_scope` uniformly to every scope, never
         // pre-declared — register this scope's cap lazily, the first time
         // it's seen (BudgetTree treats an absent scope as unbounded).
-        t.by_scope
-            .entry(id.scope.clone())
-            .or_insert_with(|| cap(self.cfg.per_scope));
+        match scope_cap {
+            Some(n) => {
+                t.by_scope.insert(id.scope.clone(), cap(n));
+            }
+            None => {
+                t.by_scope
+                    .entry(id.scope.clone())
+                    .or_insert_with(|| cap(self.cfg.per_scope));
+            }
+        }
         match t.try_allocate(&id) {
             Ok(()) => Some(BudgetPermit {
                 budget: Arc::clone(self),
@@ -537,6 +555,38 @@ mod tests {
             b.try_acquire("a").is_none(),
             "3rd acquire on scope a refused (cap 2)"
         );
+    }
+
+    #[test]
+    fn a_scope_cap_replaces_the_uniform_cap_for_that_scope_only() {
+        let b = budget(2, 100);
+        let mut held = Vec::new();
+        for _ in 0..10 {
+            if let Some(p) = b.try_acquire_capped("wide", Some(5)) {
+                held.push(p);
+            }
+        }
+        assert_eq!(b.in_flight("wide"), 5, "the catalog value, not the default");
+        let _narrow = b.try_acquire_capped("narrow", Some(1)).unwrap();
+        assert!(b.try_acquire_capped("narrow", Some(1)).is_none());
+        let _p1 = b.try_acquire("plain").unwrap();
+        let _p2 = b.try_acquire("plain").unwrap();
+        assert!(
+            b.try_acquire("plain").is_none(),
+            "unset keeps the uniform cap"
+        );
+    }
+
+    #[test]
+    fn a_scope_cap_is_still_bounded_by_the_global_pool() {
+        let b = budget(2, 3);
+        let mut held = Vec::new();
+        for _ in 0..10 {
+            if let Some(p) = b.try_acquire_capped("wide", Some(50)) {
+                held.push(p);
+            }
+        }
+        assert_eq!(b.total_in_flight(), 3);
     }
 
     #[test]

@@ -143,6 +143,8 @@ pub struct LeafStatus {
     pub regressions: Vec<Regression>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skip_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inputs_digest: Option<String>,
 }
 
 pub const P95_BUCKET_MS: u64 = 1_000;
@@ -160,6 +162,7 @@ pub fn next_status(
     p95_ms: Option<u64>,
     tolerance_percent: u32,
     skip_reason: Option<String>,
+    inputs_digest: Option<String>,
 ) -> LeafStatus {
     let p95 = p95_ms.map(bucket_up);
     let v = evaluate(
@@ -175,6 +178,7 @@ pub fn next_status(
         floor: Some(v.floor),
         regressions: v.regressions,
         skip_reason,
+        inputs_digest,
     }
 }
 
@@ -290,7 +294,7 @@ mod tests {
 
     #[test]
     fn next_status_buckets_the_p95_up_to_a_second() {
-        let st = next_status(None, 2, true, Some(1_001), 10, None);
+        let st = next_status(None, 2, true, Some(1_001), 10, None, None);
         assert_eq!(st.cycle_p95_ms, Some(2_000));
         assert_eq!(
             st.floor,
@@ -303,8 +307,8 @@ mod tests {
 
     #[test]
     fn next_status_carries_regressions_and_a_falling_floor() {
-        let first = next_status(None, 3, true, Some(5_000), 10, None);
-        let split = next_status(Some(&first), 1, false, Some(900), 10, None);
+        let first = next_status(None, 3, true, Some(5_000), 10, None, None);
+        let split = next_status(Some(&first), 1, false, Some(900), 10, None, None);
         assert_eq!(
             split.floor,
             Some(Floor {
@@ -313,15 +317,15 @@ mod tests {
             })
         );
         assert!(split.regressions.is_empty());
-        let back = next_status(Some(&split), 3, true, Some(5_000), 10, None);
+        let back = next_status(Some(&split), 3, true, Some(5_000), 10, None, None);
         assert_eq!(back.regressions.len(), 2);
         assert_eq!(back.floor, split.floor);
     }
 
     #[test]
     fn the_same_observation_yields_an_identical_status() {
-        let a = next_status(None, 2, true, Some(1_500), 10, None);
-        let b = next_status(Some(&a), 2, true, Some(1_500), 10, None);
+        let a = next_status(None, 2, true, Some(1_500), 10, None, None);
+        let b = next_status(Some(&a), 2, true, Some(1_500), 10, None, None);
         assert_eq!(a, b);
     }
 }

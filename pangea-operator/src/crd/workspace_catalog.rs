@@ -62,6 +62,14 @@ pub struct WorkspaceCatalogSpec {
     /// Suspend reconciliation of every template under this catalog.
     #[serde(default)]
     pub suspend: bool,
+
+    /// How many of this workspace's templates (its leaves) may compile, plan or
+    /// apply at once. Unset keeps the operator-wide per-workspace budget
+    /// (`reconcile.budget_per_workspace`); a value replaces it for this
+    /// workspace (a floor of 1), still bounded by the global pool. Size it by the
+    /// slowest provider's rate budget, not by the leaf count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_concurrent_leaves: Option<u32>,
 }
 
 /// Where to read a workspace's source from.

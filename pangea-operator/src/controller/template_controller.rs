@@ -952,7 +952,28 @@ async fn dispatch_template_phase(
         Phase::Compiling | Phase::Planning | Phase::Applying
     ) {
         let scope = workspace_scope(template);
-        match state.workspace_budgets.try_acquire(&scope) {
+        let blocked = crate::controller::template::leaf::blocked_upstreams(
+            state,
+            template,
+            current_phase == Phase::Applying,
+        )
+        .await;
+        if !blocked.is_empty() {
+            tracing::info!(
+                scope = %scope,
+                phase = %current_phase,
+                upstreams = %blocked.join(", "),
+                "leaf waits on upstream outputs; no budget slot taken"
+            );
+            return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
+        }
+        let leaf_cap = crate::controller::template::leaf::catalog_view(state, template)
+            .await
+            .max_concurrent_leaves
+            .map(|n| {
+                pangea_leaf::schedule::scope_cap(Some(n), state.workspace_budgets.caps().per_scope)
+            });
+        match state.workspace_budgets.try_acquire_capped(&scope, leaf_cap) {
             Some(_permit) => handler.handle(template, state).await,
             None => {
                 // `Phase: Display` (strum) is the typed stringify surface — no format!().

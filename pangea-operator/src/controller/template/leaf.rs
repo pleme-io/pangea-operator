@@ -1,5 +1,6 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use kube::runtime::events::EventType;
 use kube::ResourceExt;
@@ -9,6 +10,7 @@ use pangea_leaf::admission::{
 };
 use pangea_leaf::classify::{classify, Classification};
 use pangea_leaf::ratchet::{next_status, CycleWindow, LeafStatus};
+use pangea_leaf::schedule::{blocked_by, inputs_digest, Upstream};
 use pangea_leaf::sources::normalize_address;
 use tracing::warn;
 
@@ -16,7 +18,7 @@ use crate::config::LeafConfig;
 use crate::controller::template::events::record_event;
 use crate::controller::ControllerState;
 
-use crate::crd::{InfrastructureTemplate, InfrastructureTemplateStatus};
+use crate::crd::{InfrastructureTemplate, InfrastructureTemplateStatus, WorkspaceCatalog};
 use crate::executor::cycle_artifact::CycleArtifact;
 use crate::executor::Plan;
 
@@ -110,6 +112,126 @@ pub fn assess(
     })
 }
 
+const CATALOG_TTL: Duration = Duration::from_secs(30);
+
+#[derive(Debug, Clone, Default)]
+pub struct CatalogView {
+    pub max_concurrent_leaves: Option<u32>,
+    pub variables: Option<serde_json::Value>,
+}
+
+static CATALOGS: Mutex<BTreeMap<String, (Instant, CatalogView)>> = Mutex::new(BTreeMap::new());
+
+pub async fn catalog_view(
+    state: &ControllerState,
+    template: &InfrastructureTemplate,
+) -> CatalogView {
+    let Some(name) = template
+        .metadata
+        .labels
+        .as_ref()
+        .and_then(|l| l.get(crate::controller::workspace_catalog_controller::WORKSPACE_LABEL))
+    else {
+        return CatalogView::default();
+    };
+    if let Some((at, v)) = CATALOGS
+        .lock()
+        .expect("leaf catalog mutex poisoned")
+        .get(name)
+    {
+        if at.elapsed() < CATALOG_TTL {
+            return v.clone();
+        }
+    }
+    let api: kube::Api<WorkspaceCatalog> = kube::Api::all(state.client.clone());
+    let view = match api.get_opt(name).await {
+        Ok(Some(wsc)) => CatalogView {
+            max_concurrent_leaves: wsc.spec.max_concurrent_leaves,
+            variables: wsc
+                .spec
+                .variables
+                .as_ref()
+                .and_then(|v| serde_json::to_value(v).ok()),
+        },
+        Ok(None) => CatalogView::default(),
+        Err(e) => {
+            warn!(error = %e, catalog = %name, "WorkspaceCatalog lookup failed; leaf cap unset");
+            return CatalogView::default();
+        }
+    };
+    CATALOGS
+        .lock()
+        .expect("leaf catalog mutex poisoned")
+        .insert(name.clone(), (Instant::now(), view.clone()));
+    view
+}
+
+#[must_use]
+pub fn digest_of(
+    template: &InfrastructureTemplate,
+    catalog_variables: Option<&serde_json::Value>,
+) -> String {
+    let vars = template
+        .spec
+        .variables
+        .as_ref()
+        .and_then(|v| serde_json::to_value(v).ok());
+    let refs = template
+        .spec
+        .variable_refs
+        .as_ref()
+        .and_then(|v| serde_json::to_value(v).ok());
+    inputs_digest(catalog_variables, vars.as_ref(), refs.as_ref())
+}
+
+pub async fn blocked_upstreams(
+    state: &ControllerState,
+    template: &InfrastructureTemplate,
+    applying: bool,
+) -> Vec<String> {
+    let Some(refs) = template
+        .spec
+        .variable_refs
+        .as_ref()
+        .filter(|r| !r.is_empty())
+    else {
+        return Vec::new();
+    };
+    let own_ns = template.namespace().unwrap_or_default();
+    let mut upstreams = Vec::new();
+    let mut ready = BTreeSet::new();
+    let mut missing = BTreeSet::new();
+    for r in refs.values() {
+        let name = r.template_ref.name.clone();
+        let ns = r
+            .template_ref
+            .namespace
+            .clone()
+            .unwrap_or_else(|| own_ns.clone());
+        let api: kube::Api<InfrastructureTemplate> =
+            kube::Api::namespaced(state.client.clone(), &ns);
+        let has_output = match api.get_opt(&name).await {
+            Ok(Some(up)) => up
+                .status
+                .as_ref()
+                .and_then(|s| s.outputs.as_ref())
+                .is_some_and(|o| o.contains_key(&r.output_key)),
+            _ => false,
+        };
+        if has_output {
+            ready.insert(name.clone());
+        } else {
+            missing.insert(name.clone());
+        }
+        upstreams.push(Upstream {
+            template: name,
+            has_mock: r.mock_output.is_some(),
+        });
+    }
+    ready.retain(|n| !missing.contains(n));
+    blocked_by(&template.name_any(), &upstreams, &ready, applying)
+}
+
 pub enum Judgement {
     Admitted,
     Refused(String),
@@ -154,6 +276,10 @@ pub async fn judge(
         p95,
         cfg.ratchet_tolerance_percent,
         skip_reason_of(&assessment.admission),
+        Some(digest_of(
+            template,
+            catalog_view(state, template).await.variables.as_ref(),
+        )),
     );
     if prev != Some(&next) {
         write_status(template, state, &next, prev).await;
