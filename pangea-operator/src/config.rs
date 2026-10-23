@@ -318,7 +318,7 @@ pub struct ReactiveConfig {
 }
 
 /// Leaf-by-default knobs. Each one configures a behavior off; none deletes it.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LeafConfig {
     /// `enforce` (default) refuses a never-reconciled fat template unless it
@@ -326,6 +326,29 @@ pub struct LeafConfig {
     /// already reconciled is never refused (`PANGEA_LEAF_ADMISSION`).
     #[serde(default)]
     pub admission: pangea_leaf::admission::AdmissionMode,
+    /// How far (percent) the planning-phase p95 may rise above its floor before
+    /// the ratchet reports a regression (`PANGEA_LEAF_RATCHET_TOLERANCE_PERCENT`;
+    /// default 10).
+    #[serde(default = "default_ratchet_tolerance_percent")]
+    pub ratchet_tolerance_percent: u32,
+    /// A template whose planning-phase p95 exceeds this many seconds is fat even
+    /// with one leaf key set (`PANGEA_LEAF_CYCLE_BUDGET_SECS`; default unset).
+    #[serde(default)]
+    pub cycle_budget_secs: Option<u64>,
+}
+
+fn default_ratchet_tolerance_percent() -> u32 {
+    pangea_leaf::ratchet::DEFAULT_TOLERANCE_PERCENT
+}
+
+impl Default for LeafConfig {
+    fn default() -> Self {
+        Self {
+            admission: pangea_leaf::admission::AdmissionMode::default(),
+            ratchet_tolerance_percent: default_ratchet_tolerance_percent(),
+            cycle_budget_secs: None,
+        }
+    }
 }
 
 /// Embedded-Ruby gem cache (non-secret).
@@ -569,6 +592,10 @@ struct ReactiveOverlay {
 struct LeafOverlay {
     #[serde(skip_serializing_if = "Option::is_none")]
     admission: Option<pangea_leaf::admission::AdmissionMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ratchet_tolerance_percent: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cycle_budget_secs: Option<u64>,
 }
 
 #[derive(Serialize, Default)]
@@ -654,6 +681,10 @@ impl EnvOverlay {
             leaf: LeafOverlay {
                 admission: env_present("PANGEA_LEAF_ADMISSION")
                     .and_then(|v| pangea_leaf::admission::AdmissionMode::parse(&v)),
+                ratchet_tolerance_percent: env_parse::<u32>(
+                    "PANGEA_LEAF_RATCHET_TOLERANCE_PERCENT",
+                ),
+                cycle_budget_secs: env_parse::<u64>("PANGEA_LEAF_CYCLE_BUDGET_SECS"),
             },
         }
     }
@@ -1025,6 +1056,8 @@ mod tests {
             p.leaf.admission,
             pangea_leaf::admission::AdmissionMode::Enforce
         );
+        assert_eq!(p.leaf.ratchet_tolerance_percent, 10);
+        assert_eq!(p.leaf.cycle_budget_secs, None);
     }
 
     #[test]
@@ -1315,6 +1348,24 @@ mod tests {
         assert_eq!(
             r.resolution.into_value().leaf.admission,
             pangea_leaf::admission::AdmissionMode::Off
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn leaf_ratchet_and_budget_are_read_from_the_file_tier() {
+        let _g = ENV_GUARD.lock().unwrap();
+        let path = scratch_file(
+            "leaf-ratchet",
+            "leaf:\n  ratchet_tolerance_percent: 0\n  cycle_budget_secs: 600\n",
+        );
+        let r = OperatorConfig::resolve_from(&path, Dict::new());
+        let leaf = r.resolution.into_value().leaf;
+        assert_eq!(leaf.ratchet_tolerance_percent, 0);
+        assert_eq!(leaf.cycle_budget_secs, Some(600));
+        assert_eq!(
+            leaf.admission,
+            pangea_leaf::admission::AdmissionMode::Enforce
         );
         std::fs::remove_file(path).unwrap();
     }

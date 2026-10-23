@@ -1,34 +1,51 @@
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::collections::BTreeMap;
+use std::sync::Mutex;
 
+use kube::runtime::events::EventType;
+use kube::ResourceExt;
 use pangea_leaf::address::AddressError;
 use pangea_leaf::admission::{
     decide, skip_declaration, Admission, AdmissionMode, SKIP_LEAF_ANNOTATION,
 };
 use pangea_leaf::classify::{classify, Classification};
+use pangea_leaf::ratchet::{next_status, CycleWindow, LeafStatus};
 use pangea_leaf::sources::normalize_address;
+use tracing::warn;
+
+use crate::config::LeafConfig;
+use crate::controller::template::events::record_event;
+use crate::controller::ControllerState;
 
 use crate::crd::{InfrastructureTemplate, InfrastructureTemplateStatus};
 use crate::executor::cycle_artifact::CycleArtifact;
 use crate::executor::Plan;
 
-static ADMISSION_MODE: AtomicU8 = AtomicU8::new(0);
+static SETTINGS: Mutex<Option<LeafConfig>> = Mutex::new(None);
+static WINDOWS: Mutex<BTreeMap<String, CycleWindow>> = Mutex::new(BTreeMap::new());
 
-pub fn set_admission_mode(mode: AdmissionMode) {
-    ADMISSION_MODE.store(
-        match mode {
-            AdmissionMode::Enforce => 0,
-            AdmissionMode::Off => 1,
-        },
-        Ordering::Relaxed,
-    );
+pub fn configure(cfg: &LeafConfig) {
+    *SETTINGS.lock().expect("leaf settings mutex poisoned") = Some(cfg.clone());
 }
 
 #[must_use]
-pub fn admission_mode() -> AdmissionMode {
-    match ADMISSION_MODE.load(Ordering::Relaxed) {
-        1 => AdmissionMode::Off,
-        _ => AdmissionMode::Enforce,
+pub fn settings() -> LeafConfig {
+    SETTINGS
+        .lock()
+        .expect("leaf settings mutex poisoned")
+        .clone()
+        .unwrap_or_default()
+}
+
+pub const MIN_SAMPLES: usize = 5;
+
+fn observe_cycle(key: &str, ms: u64) -> Option<u64> {
+    let mut windows = WINDOWS.lock().expect("leaf windows mutex poisoned");
+    let w = windows.entry(key.to_string()).or_default();
+    w.push(ms);
+    if w.samples_ms.len() < MIN_SAMPLES {
+        return None;
     }
+    w.p95_ms()
 }
 
 #[must_use]
@@ -91,6 +108,89 @@ pub fn assess(
         classification,
         admission,
     })
+}
+
+pub enum Judgement {
+    Admitted,
+    Refused(String),
+}
+
+fn skip_reason_of(admission: &Admission) -> Option<String> {
+    match admission {
+        Admission::AdmitSkipped(r) => Some(r.as_str().to_string()),
+        _ => None,
+    }
+}
+
+pub async fn judge(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+    addresses: &[String],
+    plan_ms: u64,
+) -> Judgement {
+    let cfg = settings();
+    let key = format!(
+        "{}/{}",
+        template.namespace().unwrap_or_default(),
+        template.name_any()
+    );
+    let p95 = observe_cycle(&key, plan_ms);
+    let budget_ms = cfg.cycle_budget_secs.map(|s| s.saturating_mul(1_000));
+    let assessment = match assess(template, cfg.admission, addresses, p95, budget_ms) {
+        Ok(a) => a,
+        Err(e) => {
+            warn!(error = %e, "leaf classification skipped: a plan address did not parse");
+            return Judgement::Admitted;
+        }
+    };
+    if let Admission::Refuse(msg) = &assessment.admission {
+        return Judgement::Refused(msg.clone());
+    }
+    let prev = template.status.as_ref().and_then(|s| s.leaf.as_ref());
+    let next = next_status(
+        prev,
+        u32::try_from(assessment.classification.leaf_keys).unwrap_or(u32::MAX),
+        assessment.classification.fat,
+        p95,
+        cfg.ratchet_tolerance_percent,
+        skip_reason_of(&assessment.admission),
+    );
+    if prev != Some(&next) {
+        write_status(template, state, &next, prev).await;
+    }
+    Judgement::Admitted
+}
+
+async fn write_status(
+    template: &InfrastructureTemplate,
+    state: &ControllerState,
+    next: &LeafStatus,
+    prev: Option<&LeafStatus>,
+) {
+    let patch = serde_json::json!({ "status": { "leaf": next } });
+    if let Err(e) =
+        crate::controller::status_patch::patch_status(template, &state.client, patch).await
+    {
+        warn!(error = %e, "status.leaf could not be written");
+        return;
+    }
+    let prior = prev.map(|p| p.regressions.as_slice()).unwrap_or(&[]);
+    if !next.regressions.is_empty() && next.regressions != prior {
+        let msg = next
+            .regressions
+            .iter()
+            .map(|r| r.describe())
+            .collect::<Vec<_>>()
+            .join("; ");
+        record_event(
+            template,
+            state,
+            EventType::Warning,
+            "LeafRatchetRegressed",
+            &msg,
+        )
+        .await;
+    }
 }
 
 #[cfg(test)]
@@ -205,10 +305,28 @@ mod tests {
     }
 
     #[test]
-    fn the_mode_switch_round_trips() {
-        set_admission_mode(AdmissionMode::Off);
-        assert_eq!(admission_mode(), AdmissionMode::Off);
-        set_admission_mode(AdmissionMode::Enforce);
-        assert_eq!(admission_mode(), AdmissionMode::Enforce);
+    fn configure_round_trips_the_settings() {
+        let cfg = LeafConfig {
+            admission: AdmissionMode::Off,
+            ratchet_tolerance_percent: 3,
+            cycle_budget_secs: Some(9),
+        };
+        configure(&cfg);
+        assert_eq!(settings(), cfg);
+        configure(&LeafConfig::default());
+        assert_eq!(settings().admission, AdmissionMode::Enforce);
+    }
+
+    #[test]
+    fn the_window_yields_a_p95_per_template() {
+        let k = "ns/window-test";
+        for ms in 1..MIN_SAMPLES as u64 {
+            assert_eq!(observe_cycle(k, ms), None);
+        }
+        for ms in MIN_SAMPLES as u64..=20 {
+            observe_cycle(k, ms);
+        }
+        assert_eq!(observe_cycle(k, 20), Some(20));
+        assert_eq!(observe_cycle("ns/other", 5), None);
     }
 }

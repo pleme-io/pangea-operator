@@ -192,7 +192,7 @@ async fn main() -> Result<()> {
     pangea_operator::controller::generation_filter::set_honor_reconcile_requests(
         op_cfg.reactive.honor_reconcile_requests,
     );
-    pangea_operator::controller::template::leaf::set_admission_mode(op_cfg.leaf.admission);
+    pangea_operator::controller::template::leaf::configure(&op_cfg.leaf);
 
     // ── EARLY DETECTION: refuse an incompatible (build, run) pair ──────────
     //

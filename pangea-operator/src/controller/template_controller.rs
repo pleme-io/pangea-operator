@@ -2749,6 +2749,7 @@ async fn handle_planning(
     let freshness = observe_source_freshness(template, state, &workspace).await?;
 
     let _pass = PassGuard::begin(template, state, Phase::Planning).await;
+    let plan_started = std::time::Instant::now();
     let plan_result = runner.plan(&workspace).await?;
 
     if !plan_result.success {
@@ -2864,31 +2865,26 @@ async fn handle_planning(
     let has_changes = plan_result.has_changes;
 
     if let Some(addresses) = observed_addresses.as_deref() {
-        match crate::controller::template::leaf::assess(
-            template,
-            crate::controller::template::leaf::admission_mode(),
-            addresses,
-            None,
-            None,
-        ) {
-            Ok(assessment) => {
-                if let pangea_leaf::admission::Admission::Refuse(msg) = &assessment.admission {
-                    warn!(%msg, "fat template refused at admission");
-                    update_phase_with_error(template, Phase::Failed, msg, state).await?;
-                    record_event(
-                        template,
-                        state,
-                        EventType::Warning,
-                        "FatTemplateRefused",
-                        msg,
-                    )
-                    .await;
-                    return Ok(ReconcileAction::Requeue(ERROR_REQUEUE_INTERVAL));
-                }
-            }
-            Err(e) => {
-                warn!(error = %e, "leaf classification skipped: a plan address did not parse");
-            }
+        if let crate::controller::template::leaf::Judgement::Refused(msg) =
+            crate::controller::template::leaf::judge(
+                template,
+                state,
+                addresses,
+                u64::try_from(plan_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            )
+            .await
+        {
+            warn!(%msg, "fat template refused at admission");
+            update_phase_with_error(template, Phase::Failed, &msg, state).await?;
+            record_event(
+                template,
+                state,
+                EventType::Warning,
+                "FatTemplateRefused",
+                &msg,
+            )
+            .await;
+            return Ok(ReconcileAction::Requeue(ERROR_REQUEUE_INTERVAL));
         }
     }
 

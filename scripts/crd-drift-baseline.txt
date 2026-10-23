@@ -17,3 +17,7 @@
 #     it silently exempts that CRD from the gate forever.
 #
 # Adding a name here means "I could not regenerate this now". Say why, and date it.
+# 2026-10-23: leaf-by-default adds status.leaf (and, with maxConcurrentLeaves, workspacecatalogs
+# spec). The chart CRDs live in pleme-io/helmworks, outside this change. Remove each name here
+# when helmworks charts/pangea-operator/crds is regenerated from --generate-crds.
+infrastructuretemplates.pangea.pleme.io

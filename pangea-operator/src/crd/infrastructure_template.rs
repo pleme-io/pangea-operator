@@ -1847,6 +1847,12 @@ pub struct InfrastructureTemplateStatus {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reactions: Option<super::live_status::ReactionLedger>,
+
+    /// Leaf-by-default receipt: the leaf key-set count, whether the template is
+    /// fat, the planning-phase p95, and the ratchet floor those two numbers may
+    /// only fall from. `regressions` names every number that rose past it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leaf: Option<pangea_leaf::ratchet::LeafStatus>,
 }
 
 /// Receipt for one reconcile cycle. Surfaces the answer to "what did
