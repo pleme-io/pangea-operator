@@ -100,6 +100,10 @@ pub struct OperatorConfig {
     /// it existed, so an older config file reads unchanged.
     #[serde(default)]
     pub reactive: ReactiveConfig,
+    /// Leaf-by-default admission (`PANGEA_LEAF_ADMISSION`). Additive: a
+    /// config file without the section reads as the enforced default.
+    #[serde(default)]
+    pub leaf: LeafConfig,
 }
 
 /// Pod identity — the discovered tier.
@@ -313,6 +317,17 @@ pub struct ReactiveConfig {
     pub honor_reconcile_requests: bool,
 }
 
+/// Leaf-by-default knobs. Each one configures a behavior off; none deletes it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LeafConfig {
+    /// `enforce` (default) refuses a never-reconciled fat template unless it
+    /// declares `pangea.pleme.io/skip-leaf`; `off` admits it. A template that
+    /// already reconciled is never refused (`PANGEA_LEAF_ADMISSION`).
+    #[serde(default)]
+    pub admission: pangea_leaf::admission::AdmissionMode,
+}
+
 /// Embedded-Ruby gem cache (non-secret).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -433,6 +448,7 @@ struct EnvOverlay {
     api: ApiOverlay,
     gem: GemOverlay,
     reactive: ReactiveOverlay,
+    leaf: LeafOverlay,
 }
 
 #[derive(Serialize, Default)]
@@ -550,6 +566,12 @@ struct ReactiveOverlay {
 }
 
 #[derive(Serialize, Default)]
+struct LeafOverlay {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    admission: Option<pangea_leaf::admission::AdmissionMode>,
+}
+
+#[derive(Serialize, Default)]
 struct GemOverlay {
     #[serde(skip_serializing_if = "Option::is_none")]
     cache_dir: Option<String>,
@@ -628,6 +650,10 @@ impl EnvOverlay {
             },
             gem: GemOverlay {
                 cache_dir: env_present("PANGEA_GEM_CACHE_DIR"),
+            },
+            leaf: LeafOverlay {
+                admission: env_present("PANGEA_LEAF_ADMISSION")
+                    .and_then(|v| pangea_leaf::admission::AdmissionMode::parse(&v)),
             },
         }
     }
@@ -722,6 +748,7 @@ impl TieredConfig for OperatorConfig {
             },
             network: crate::network::NetworkConfig::default(),
             reactive: ReactiveConfig::default(),
+            leaf: LeafConfig::default(),
         }
     }
 
@@ -993,6 +1020,10 @@ mod tests {
         assert!(
             !p.reactive.honor_reconcile_requests,
             "the prescribed default preserves the pre-reactive behavior"
+        );
+        assert_eq!(
+            p.leaf.admission,
+            pangea_leaf::admission::AdmissionMode::Enforce
         );
     }
 
@@ -1273,6 +1304,28 @@ mod tests {
             "the chart's config.file.data reaches the operator through the file tier"
         );
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn leaf_admission_is_read_from_the_file_tier() {
+        let _g = ENV_GUARD.lock().unwrap();
+        let path = scratch_file("leaf", "leaf:\n  admission: off\n");
+        let r = OperatorConfig::resolve_from(&path, Dict::new());
+        assert_eq!(r.file, FileTier::Loaded { path: path.clone() });
+        assert_eq!(
+            r.resolution.into_value().leaf.admission,
+            pangea_leaf::admission::AdmissionMode::Off
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn leaf_admission_env_overrides_the_default() {
+        let _g = ENV_GUARD.lock().unwrap();
+        std::env::set_var("PANGEA_LEAF_ADMISSION", "off");
+        let v = OperatorConfig::resolve().into_value();
+        std::env::remove_var("PANGEA_LEAF_ADMISSION");
+        assert_eq!(v.leaf.admission, pangea_leaf::admission::AdmissionMode::Off);
     }
 
     #[test]

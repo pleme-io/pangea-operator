@@ -13,6 +13,7 @@ pub mod cycle_receipts;
 pub mod events;
 pub mod finalizer;
 pub mod freshness;
+pub mod leaf;
 pub mod output_bindings;
 pub mod pass;
 pub mod pass_driver;

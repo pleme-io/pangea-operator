@@ -2787,9 +2787,14 @@ async fn handle_planning(
     // rest. The status object is kept tractable by capping at the status write
     // (`DRIFT_STATUS_CAP`), which is where the tractability concern actually
     // lives.
+    let mut observed_addresses: Option<Vec<String>> = None;
     let (summary, raw_drifts) = if !plan_result.raw_show_json.is_empty() {
         match Plan::from_json(&plan_result.raw_show_json) {
             Ok(plan) => {
+                observed_addresses = crate::controller::template::leaf::plan_addresses(
+                    &plan_result.raw_show_json,
+                    None,
+                );
                 let s = plan.summary();
                 let details: Vec<crate::crd::DriftDetail> = plan
                     .drift_details(usize::MAX)
@@ -2821,6 +2826,7 @@ async fn handle_planning(
     } else if let Some(art) = plan_result.artifact.as_ref() {
         // Magma disk-fallback path: derive equivalent shapes from the
         // typed artifact `plan_result` already carries.
+        observed_addresses = crate::controller::template::leaf::plan_addresses("", Some(art));
         let (s, details) = plan_summary_and_drifts_from_artifact(art);
         info!(
             runner = runner.name(),
@@ -2836,6 +2842,7 @@ async fn handle_planning(
         // always `None` here by design — fetch the just-persisted
         // bundle back from Postgres instead. See
         // `fetch_db_backed_cycle_artifact`'s doc comment.
+        observed_addresses = crate::controller::template::leaf::plan_addresses("", Some(&art));
         let (s, details) = plan_summary_and_drifts_from_artifact(&art);
         info!(
             runner = runner.name(),
@@ -2855,6 +2862,29 @@ async fn handle_planning(
     };
 
     let has_changes = plan_result.has_changes;
+
+    if let Some(addresses) = observed_addresses.as_deref() {
+        match crate::controller::template::leaf::assess(
+            template,
+            crate::controller::template::leaf::admission_mode(),
+            addresses,
+            None,
+            None,
+        ) {
+            Ok(assessment) => {
+                if let pangea_leaf::admission::Admission::Refuse(msg) = &assessment.admission {
+                    warn!(%msg, "fat template refused at admission");
+                    update_phase_with_error(template, Phase::Failed, msg, state).await?;
+                    record_event(template, state, EventType::Warning, "FatTemplateRefused", msg)
+                        .await;
+                    return Ok(ReconcileAction::Requeue(ERROR_REQUEUE_INTERVAL));
+                }
+            }
+            Err(e) => {
+                warn!(error = %e, "leaf classification skipped: a plan address did not parse");
+            }
+        }
+    }
 
     // THE correctness gate (the tested law, `freshness::ready_drift_decision`
     // — "a stale compile can never produce Settled or a trusted drift
