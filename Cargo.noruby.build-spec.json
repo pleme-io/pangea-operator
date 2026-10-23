@@ -7,6 +7,10 @@
         "relative_path": "pangea-types"
       },
       {
+        "name": "pangea-leaf",
+        "relative_path": "pangea-leaf"
+      },
+      {
         "name": "pangea-operator",
         "relative_path": "pangea-operator"
       },
@@ -37942,6 +37946,16 @@
           "tree": "target"
         },
         {
+          "name": "pangea_leaf",
+          "package_key": "pangea-leaf-0.1.0",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
           "name": "pangea_types",
           "package_key": "pangea-types-0.1.0",
           "kind": "normal",
@@ -38070,6 +38084,12 @@
             "rename": "cynic_codegen"
           }
         ],
+        "pangea-leaf": [
+          {
+            "version": "0.1.0",
+            "rename": "pangea_leaf"
+          }
+        ],
         "pangea-types": [
           {
             "version": "0.1.0",
@@ -38088,6 +38108,12 @@
               "rename": "cynic_codegen"
             }
           ],
+          "pangea-leaf": [
+            {
+              "version": "0.1.0",
+              "rename": "pangea_leaf"
+            }
+          ],
           "pangea-types": [
             {
               "version": "0.1.0",
@@ -38098,6 +38124,138 @@
         "release": true,
         "build": "build.rs",
         "preBuild": "export CARGO_CRATE_NAME=pangea_cli;"
+      }
+    },
+    "pangea-leaf-0.1.0": {
+      "name": "pangea-leaf",
+      "version": "0.1.0",
+      "edition": "2021",
+      "source": {
+        "kind": "path",
+        "relative_path": "pangea-leaf"
+      },
+      "features": [],
+      "proc_macro": false,
+      "build_script": null,
+      "links": null,
+      "binaries": [],
+      "lib_target": {
+        "name": "pangea_leaf",
+        "path": "src/lib.rs"
+      },
+      "runtime_dependencies": [
+        {
+          "name": "blake3",
+          "package_key": "blake3-1.8.7",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "schemars",
+          "package_key": "schemars-0.8.22",
+          "kind": "normal",
+          "features": [
+            "chrono"
+          ],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "serde",
+          "package_key": "serde-1.0.229",
+          "kind": "normal",
+          "features": [
+            "derive"
+          ],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "serde_json",
+          "package_key": "serde_json-1.0.151",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "shigoto_dag",
+          "package_key": "shigoto-dag-0.1.15",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "shigoto_types",
+          "package_key": "shigoto-types-0.1.15",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "thiserror",
+          "package_key": "thiserror-2.0.20",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        }
+      ],
+      "build_dependencies": [],
+      "crate_renames": {
+        "shigoto-dag": [
+          {
+            "version": "0.1.15",
+            "rename": "shigoto_dag"
+          }
+        ],
+        "shigoto-types": [
+          {
+            "version": "0.1.15",
+            "rename": "shigoto_types"
+          }
+        ]
+      },
+      "build_rust_crate_args": {
+        "crateName": "pangea-leaf",
+        "version": "0.1.0",
+        "edition": "2021",
+        "crateRenames": {
+          "shigoto-dag": [
+            {
+              "version": "0.1.15",
+              "rename": "shigoto_dag"
+            }
+          ],
+          "shigoto-types": [
+            {
+              "version": "0.1.15",
+              "rename": "shigoto_types"
+            }
+          ]
+        },
+        "release": true,
+        "libName": "pangea_leaf",
+        "libPath": "src/lib.rs",
+        "preBuild": "export CARGO_CRATE_NAME=pangea_leaf;"
       }
     },
     "pangea-operator-0.1.0": {
@@ -38624,6 +38782,16 @@
           "features": [
             "rt-tokio"
           ],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
+          "tree": "target"
+        },
+        {
+          "name": "pangea_leaf",
+          "package_key": "pangea-leaf-0.1.0",
+          "kind": "normal",
+          "features": [],
           "uses_default_features": true,
           "optional": false,
           "target": null,
@@ -39192,6 +39360,12 @@
             "rename": "opentelemetry_otlp"
           }
         ],
+        "pangea-leaf": [
+          {
+            "version": "0.1.0",
+            "rename": "pangea_leaf"
+          }
+        ],
         "pangea-types": [
           {
             "version": "0.1.0",
@@ -39445,6 +39619,12 @@
             {
               "version": "0.32.0",
               "rename": "opentelemetry_otlp"
+            }
+          ],
+          "pangea-leaf": [
+            {
+              "version": "0.1.0",
+              "rename": "pangea_leaf"
             }
           ],
           "pangea-types": [
@@ -63813,6 +63993,7 @@
   "root_crate": "pangea-types-0.1.0",
   "workspace_members": [
     "pangea-types-0.1.0",
+    "pangea-leaf-0.1.0",
     "pangea-operator-0.1.0",
     "lava-ruby-0.1.0",
     "pangea-ruby-eval-0.1.0",
@@ -63827,6 +64008,10 @@
     },
     "pangea-cli": {
       "default_bin": "pangea",
+      "repo": "pleme-io/pangea-operator"
+    },
+    "pangea-leaf": {
+      "default_bin": null,
       "repo": "pleme-io/pangea-operator"
     },
     "pangea-operator": {
@@ -82441,6 +82626,16 @@
             "tree": "target"
           },
           {
+            "name": "pangea_leaf",
+            "package_key": "pangea-leaf-0.1.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
             "name": "pangea_types",
             "package_key": "pangea-types-0.1.0",
             "kind": "normal",
@@ -82562,6 +82757,86 @@
             "tree": "host"
           }
         ],
+        "features": []
+      },
+      "pangea-leaf-0.1.0": {
+        "runtime_dependencies": [
+          {
+            "name": "blake3",
+            "package_key": "blake3-1.8.7",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "schemars",
+            "package_key": "schemars-0.8.22",
+            "kind": "normal",
+            "features": [
+              "chrono"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde",
+            "package_key": "serde-1.0.229",
+            "kind": "normal",
+            "features": [
+              "derive"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde_json",
+            "package_key": "serde_json-1.0.151",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "shigoto_dag",
+            "package_key": "shigoto-dag-0.1.15",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "shigoto_types",
+            "package_key": "shigoto-types-0.1.15",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.20",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
         "features": []
       },
       "pangea-operator-0.1.0": {
@@ -83059,6 +83334,16 @@
             "features": [
               "rt-tokio"
             ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "pangea_leaf",
+            "package_key": "pangea-leaf-0.1.0",
+            "kind": "normal",
+            "features": [],
             "uses_default_features": true,
             "optional": false,
             "target": null,
@@ -101679,13 +101964,14 @@
       }
     }
   },
-  "cargo_lock_sha256": "6db5182452486a915eaa1ff5d9fd7ba9868b21cbda1a29d03bdf9dd5aa49fb50",
+  "cargo_lock_sha256": "47e8a4aba4a2bc9872e7f617669d3b64b45f51e277ca27440fac830df9f84d5f",
   "manifest_sha256": {
-    "Cargo.toml": "ad3204782330beccfe65dfff56528109ecd6e8c7af05d8db85f786a10e34df95",
+    "Cargo.toml": "aac7092cc210c7759a20858712fba79144f06955761eb499d89148e0c03ea9d2",
     "lava-ruby/Cargo.toml": "a2d172e3cffd2088bd2c849c579de254aec964cbe53b992a5b381a42c1f80933",
-    "pangea-cli/Cargo.toml": "a15be7008ea6fc2ab76b2773e257aec0aa73f3191584a590f73d160530e157f7",
+    "pangea-cli/Cargo.toml": "e70a319c53857fbf9dcce678bffd0247ed194eebde2db08c7770cec532d3f148",
+    "pangea-leaf/Cargo.toml": "fc458280a33e86f8d12834e60deb109fe59e1d8d596b714524484356586ce4af",
     "pangea-operator-mcp/Cargo.toml": "72a01f5815a03b1c418697a985ede13816d4f5aec385332ec436e2155713dea8",
-    "pangea-operator/Cargo.toml": "52912ddb3a25035ed27c44d81c318bf14cba24e01703c10a17c76c8f2c113734",
+    "pangea-operator/Cargo.toml": "b67c00584d47dcf767b009e53577d0de91163f60a8c715465259c139d8c0e9eb",
     "pangea-ruby-eval/Cargo.toml": "a65712c95619fda84a8cebaa9f887919acf4e71f4125f085797dfaf478eb380a",
     "pangea-types/Cargo.toml": "bba5d0bee1d04b3ddaefa9f7234a1e5a11e3388dd89e62a3deb4a91b66cd4abc",
     "roles-anywhere/Cargo.toml": "82d3c7379682699c55a98bced056af9bf0a853f9c0248e674b729d72007bea5a"

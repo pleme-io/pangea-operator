@@ -1,0 +1,17 @@
+[package]
+name = "pangea-leaf"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Leaf-by-default: address partitioning, fat classification, migration planning and the ratchet"
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+blake3 = "1"
+shigoto-types = { workspace = true }
+shigoto-dag = { workspace = true }
+schemars.workspace = true

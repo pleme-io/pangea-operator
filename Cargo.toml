@@ -3,6 +3,7 @@ resolver = "2"
 # pangea-web is excluded - built separately with WASM toolchain
 members = [
     "pangea-types",
+    "pangea-leaf",
     "pangea-operator",
     "pangea-cli",
     "pangea-ruby-eval",

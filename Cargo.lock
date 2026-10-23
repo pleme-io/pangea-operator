@@ -4722,6 +4722,7 @@ dependencies = [
  "directories",
  "futures",
  "indicatif",
+ "pangea-leaf",
  "pangea-types",
  "predicates",
  "reqwest 0.13.4",
@@ -4733,6 +4734,19 @@ dependencies = [
  "tokio",
  "toml",
  "url",
+]
+
+[[package]]
+name = "pangea-leaf"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "shigoto-dag",
+ "shigoto-types",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -4786,6 +4800,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
+ "pangea-leaf",
  "pangea-ruby-eval",
  "pangea-types",
  "pretty_assertions",

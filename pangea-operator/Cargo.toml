@@ -140,6 +140,7 @@ gen-platform = { workspace = true }
 gen-types = { workspace = true }
 
 # Convergence primitives — CascadePolicy for the reactive-policy cascade.
+pangea-leaf = { path = "../pangea-leaf" }
 shigoto-types = { workspace = true }
 
 # Scheduling substrate — the controller's fair-priority ranking

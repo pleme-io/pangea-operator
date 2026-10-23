@@ -129,6 +129,12 @@ enum Commands {
         follow: bool,
     },
 
+    /// Leaf-by-default migration tooling (offline, never writes a cluster)
+    Leaf {
+        #[command(subcommand)]
+        command: commands::leaf::LeafCommands,
+    },
+
     /// Show CLI configuration
     Config {
         #[command(subcommand)]
@@ -177,6 +183,10 @@ enum ConfigCommands {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    if let Commands::Leaf { command } = cli.command {
+        return commands::leaf::execute(command);
+    }
 
     // Load configuration
     let mut config = Config::load()?;
@@ -242,6 +252,8 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
+
+        Commands::Leaf { .. } => unreachable!("handled before the client is built"),
 
         Commands::Logs {
             template,

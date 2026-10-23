@@ -38,7 +38,7 @@ pub mod settling;
 pub mod shard_lifecycle;
 pub mod status;
 pub mod status_patch;
-pub mod template_dag;
+pub use pangea_leaf::dag as template_dag;
 pub mod template_dependency;
 pub mod template_phase;
 pub mod workspace_budget;
