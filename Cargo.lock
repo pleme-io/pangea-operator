@@ -3516,6 +3516,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "k8s-openapi"
+version = "0.27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51b326f5219dd55872a72c1b6ddd1b830b8334996c667449c29391d657d78d5e"
+dependencies = [
+ "base64 0.22.1",
+ "jiff",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "kotae"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3560,7 +3572,7 @@ version = "0.99.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9a4eb20010536b48abe97fec37d23d43069bcbe9686adcf9932202327bc5ca6e"
 dependencies = [
- "k8s-openapi",
+ "k8s-openapi 0.24.0",
  "kube-client",
  "kube-core",
  "kube-derive",
@@ -3588,7 +3600,7 @@ dependencies = [
  "hyper-timeout",
  "hyper-util",
  "jsonpath-rust",
- "k8s-openapi",
+ "k8s-openapi 0.24.0",
  "kube-core",
  "pem",
  "rustls",
@@ -3614,7 +3626,7 @@ dependencies = [
  "form_urlencoded",
  "http",
  "json-patch",
- "k8s-openapi",
+ "k8s-openapi 0.24.0",
  "schemars 0.8.22",
  "serde",
  "serde-value",
@@ -3652,7 +3664,7 @@ dependencies = [
  "hashbrown 0.15.5",
  "hostname",
  "json-patch",
- "k8s-openapi",
+ "k8s-openapi 0.24.0",
  "kube-client",
  "parking_lot",
  "pin-project",
@@ -4771,7 +4783,7 @@ dependencies = [
  "handan",
  "helm-forge",
  "hex",
- "k8s-openapi",
+ "k8s-openapi 0.27.1",
  "kube",
  "lava-core",
  "lava-eval",
@@ -4849,7 +4861,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "k8s-openapi",
+ "k8s-openapi 0.27.1",
  "kotae",
  "kube",
  "rmcp",
@@ -4883,7 +4895,7 @@ dependencies = [
  "async-graphql",
  "chrono",
  "cynic",
- "k8s-openapi",
+ "k8s-openapi 0.27.1",
  "kube",
  "schemars 0.8.22",
  "serde",
