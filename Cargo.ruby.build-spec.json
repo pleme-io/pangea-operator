@@ -12107,15 +12107,15 @@
         "preBuild": "export CARGO_CRATE_NAME=futures_util;"
       }
     },
-    "gen-macros-0.1.34": {
+    "gen-macros-0.1.52": {
       "name": "gen-macros",
-      "version": "0.1.34",
+      "version": "0.1.52",
       "edition": "2024",
       "source": {
         "kind": "registry",
-        "url": "https://static.crates.io/crates/gen-macros/gen-macros-0.1.34.crate",
-        "sha256": "e87d6e8b417dad4ba0d2ed96c58c2cd7af538f592dcf698db0cd8480b08225ed",
-        "name_with_ext": "gen-macros-0.1.34.tar.gz"
+        "url": "https://static.crates.io/crates/gen-macros/gen-macros-0.1.52.crate",
+        "sha256": "45aa54e78709c6e9644351c49be01154ea4e2ec8f52197e06312d594b3fc9b7b",
+        "name_with_ext": "gen-macros-0.1.52.tar.gz"
       },
       "features": [],
       "proc_macro": true,
@@ -12169,7 +12169,7 @@
       },
       "build_rust_crate_args": {
         "crateName": "gen-macros",
-        "version": "0.1.34",
+        "version": "0.1.52",
         "edition": "2024",
         "crateRenames": {
           "proc-macro2": [
@@ -12184,15 +12184,15 @@
         "preBuild": "export CARGO_CRATE_NAME=gen_macros;"
       }
     },
-    "gen-platform-0.1.46": {
+    "gen-platform-0.1.52": {
       "name": "gen-platform",
-      "version": "0.1.46",
+      "version": "0.1.52",
       "edition": "2024",
       "source": {
         "kind": "registry",
-        "url": "https://static.crates.io/crates/gen-platform/gen-platform-0.1.46.crate",
-        "sha256": "b5b1b8a59c6b345927b7ee13a9b11ab2b78f4fb460874d348034a540d009bb14",
-        "name_with_ext": "gen-platform-0.1.46.tar.gz"
+        "url": "https://static.crates.io/crates/gen-platform/gen-platform-0.1.52.crate",
+        "sha256": "1bbe0fc580d799cdec0d3e87f0b70eac8958aaf5d5f2051652512aca3ea2c07b",
+        "name_with_ext": "gen-platform-0.1.52.tar.gz"
       },
       "features": [],
       "proc_macro": false,
@@ -12203,7 +12203,7 @@
       "runtime_dependencies": [
         {
           "name": "gen_macros",
-          "package_key": "gen-macros-0.1.34",
+          "package_key": "gen-macros-0.1.52",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -12213,7 +12213,7 @@
         },
         {
           "name": "gen_types",
-          "package_key": "gen-types-0.1.46",
+          "package_key": "gen-types-0.1.52",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -12268,31 +12268,31 @@
       "crate_renames": {
         "gen-macros": [
           {
-            "version": "0.1.34",
+            "version": "0.1.52",
             "rename": "gen_macros"
           }
         ],
         "gen-types": [
           {
-            "version": "0.1.46",
+            "version": "0.1.52",
             "rename": "gen_types"
           }
         ]
       },
       "build_rust_crate_args": {
         "crateName": "gen-platform",
-        "version": "0.1.46",
+        "version": "0.1.52",
         "edition": "2024",
         "crateRenames": {
           "gen-macros": [
             {
-              "version": "0.1.34",
+              "version": "0.1.52",
               "rename": "gen_macros"
             }
           ],
           "gen-types": [
             {
-              "version": "0.1.46",
+              "version": "0.1.52",
               "rename": "gen_types"
             }
           ]
@@ -12301,15 +12301,15 @@
         "preBuild": "export CARGO_CRATE_NAME=gen_platform;"
       }
     },
-    "gen-types-0.1.46": {
+    "gen-types-0.1.52": {
       "name": "gen-types",
-      "version": "0.1.46",
+      "version": "0.1.52",
       "edition": "2024",
       "source": {
         "kind": "registry",
-        "url": "https://static.crates.io/crates/gen-types/gen-types-0.1.46.crate",
-        "sha256": "364d82f3b231e0e2f3f93c694fa4adc2bf5e970fb5b1e7998edf7611186e80e9",
-        "name_with_ext": "gen-types-0.1.46.tar.gz"
+        "url": "https://static.crates.io/crates/gen-types/gen-types-0.1.52.crate",
+        "sha256": "a36de42423d45a3a53484df348c00d9691603252d6630dd3f980e01d560da7eb",
+        "name_with_ext": "gen-types-0.1.52.tar.gz"
       },
       "features": [],
       "proc_macro": false,
@@ -12399,7 +12399,7 @@
       "crate_renames": {},
       "build_rust_crate_args": {
         "crateName": "gen-types",
-        "version": "0.1.46",
+        "version": "0.1.52",
         "edition": "2024",
         "release": true,
         "preBuild": "export CARGO_CRATE_NAME=gen_types;"
@@ -17381,7 +17381,7 @@
         },
         {
           "name": "hashbrown",
-          "package_key": "hashbrown-0.17.1",
+          "package_key": "hashbrown-0.15.5",
           "kind": "normal",
           "features": [
             "default-hasher",
@@ -23861,7 +23861,6 @@
         "name_with_ext": "hashbrown-0.17.1.tar.gz"
       },
       "features": [
-        "default-hasher",
         "inline-more"
       ],
       "proc_macro": false,
@@ -23869,18 +23868,7 @@
       "links": null,
       "binaries": [],
       "lib_target": null,
-      "runtime_dependencies": [
-        {
-          "name": "foldhash",
-          "package_key": "foldhash-0.2.0",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": false,
-          "optional": true,
-          "target": null,
-          "tree": "target"
-        }
-      ],
+      "runtime_dependencies": [],
       "build_dependencies": [],
       "crate_renames": {},
       "build_rust_crate_args": {
@@ -23888,7 +23876,6 @@
         "version": "0.17.1",
         "edition": "2024",
         "features": [
-          "default-hasher",
           "inline-more"
         ],
         "release": true,
@@ -31892,7 +31879,7 @@
         },
         {
           "name": "gen_platform",
-          "package_key": "gen-platform-0.1.46",
+          "package_key": "gen-platform-0.1.52",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -32054,7 +32041,7 @@
         ],
         "gen-platform": [
           {
-            "version": "0.1.46",
+            "version": "0.1.52",
             "rename": "gen_platform"
           }
         ],
@@ -32114,7 +32101,7 @@
           ],
           "gen-platform": [
             {
-              "version": "0.1.46",
+              "version": "0.1.52",
               "rename": "gen_platform"
             }
           ],
@@ -32276,7 +32263,7 @@
         },
         {
           "name": "gen_platform",
-          "package_key": "gen-platform-0.1.46",
+          "package_key": "gen-platform-0.1.52",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -32341,7 +32328,7 @@
       "crate_renames": {
         "gen-platform": [
           {
-            "version": "0.1.46",
+            "version": "0.1.52",
             "rename": "gen_platform"
           }
         ],
@@ -32359,7 +32346,7 @@
         "crateRenames": {
           "gen-platform": [
             {
-              "version": "0.1.46",
+              "version": "0.1.52",
               "rename": "gen_platform"
             }
           ],
@@ -34957,7 +34944,7 @@
         },
         {
           "name": "gen_platform",
-          "package_key": "gen-platform-0.1.46",
+          "package_key": "gen-platform-0.1.52",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -34967,7 +34954,7 @@
         },
         {
           "name": "gen_types",
-          "package_key": "gen-types-0.1.46",
+          "package_key": "gen-types-0.1.52",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -35037,13 +35024,13 @@
       "crate_renames": {
         "gen-platform": [
           {
-            "version": "0.1.46",
+            "version": "0.1.52",
             "rename": "gen_platform"
           }
         ],
         "gen-types": [
           {
-            "version": "0.1.46",
+            "version": "0.1.52",
             "rename": "gen_types"
           }
         ]
@@ -35055,13 +35042,13 @@
         "crateRenames": {
           "gen-platform": [
             {
-              "version": "0.1.46",
+              "version": "0.1.52",
               "rename": "gen_platform"
             }
           ],
           "gen-types": [
             {
-              "version": "0.1.46",
+              "version": "0.1.52",
               "rename": "gen_types"
             }
           ]
@@ -38453,7 +38440,7 @@
         },
         {
           "name": "gen_platform",
-          "package_key": "gen-platform-0.1.46",
+          "package_key": "gen-platform-0.1.52",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -38463,7 +38450,7 @@
         },
         {
           "name": "gen_types",
-          "package_key": "gen-types-0.1.46",
+          "package_key": "gen-types-0.1.52",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -38992,7 +38979,7 @@
         },
         {
           "name": "shikumi",
-          "package_key": "shikumi-0.1.679",
+          "package_key": "shikumi-0.1.1083",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -39236,13 +39223,13 @@
         ],
         "gen-platform": [
           {
-            "version": "0.1.46",
+            "version": "0.1.52",
             "rename": "gen_platform"
           }
         ],
         "gen-types": [
           {
-            "version": "0.1.46",
+            "version": "0.1.52",
             "rename": "gen_types"
           }
         ],
@@ -39505,13 +39492,13 @@
           ],
           "gen-platform": [
             {
-              "version": "0.1.46",
+              "version": "0.1.52",
               "rename": "gen_platform"
             }
           ],
           "gen-types": [
             {
-              "version": "0.1.46",
+              "version": "0.1.52",
               "rename": "gen_types"
             }
           ],
@@ -52193,7 +52180,7 @@
         },
         {
           "name": "gen_platform",
-          "package_key": "gen-platform-0.1.46",
+          "package_key": "gen-platform-0.1.52",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -52203,7 +52190,7 @@
         },
         {
           "name": "gen_types",
-          "package_key": "gen-types-0.1.46",
+          "package_key": "gen-types-0.1.52",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -52276,13 +52263,13 @@
         ],
         "gen-platform": [
           {
-            "version": "0.1.46",
+            "version": "0.1.52",
             "rename": "gen_platform"
           }
         ],
         "gen-types": [
           {
-            "version": "0.1.46",
+            "version": "0.1.52",
             "rename": "gen_types"
           }
         ]
@@ -52300,13 +52287,13 @@
           ],
           "gen-platform": [
             {
-              "version": "0.1.46",
+              "version": "0.1.52",
               "rename": "gen_platform"
             }
           ],
           "gen-types": [
             {
-              "version": "0.1.46",
+              "version": "0.1.52",
               "rename": "gen_types"
             }
           ]
@@ -52315,15 +52302,15 @@
         "preBuild": "export CARGO_CRATE_NAME=shigoto_types;"
       }
     },
-    "shikumi-0.1.679": {
+    "shikumi-0.1.1083": {
       "name": "shikumi",
-      "version": "0.1.679",
+      "version": "0.1.1083",
       "edition": "2024",
       "source": {
         "kind": "registry",
-        "url": "https://static.crates.io/crates/shikumi/shikumi-0.1.679.crate",
-        "sha256": "7e4316e5e78d81f3e6da280181fb7ed54271aa0be86bc67fe3edf1b731716b98",
-        "name_with_ext": "shikumi-0.1.679.tar.gz"
+        "url": "https://static.crates.io/crates/shikumi/shikumi-0.1.1083.crate",
+        "sha256": "253ee1f04558dcc476384a4be719428df4322816ad73c5e2e7731d3808cc5523",
+        "name_with_ext": "shikumi-0.1.1083.tar.gz"
       },
       "features": [
         "default"
@@ -52370,7 +52357,7 @@
         },
         {
           "name": "gen_platform",
-          "package_key": "gen-platform-0.1.46",
+          "package_key": "gen-platform-0.1.52",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -52380,7 +52367,7 @@
         },
         {
           "name": "gen_types",
-          "package_key": "gen-types-0.1.46",
+          "package_key": "gen-types-0.1.52",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -52408,6 +52395,16 @@
           "uses_default_features": false,
           "optional": false,
           "target": "cfg(target_os = \"macos\")",
+          "tree": "target"
+        },
+        {
+          "name": "schemars",
+          "package_key": "schemars-1.2.1",
+          "kind": "normal",
+          "features": [],
+          "uses_default_features": true,
+          "optional": false,
+          "target": null,
           "tree": "target"
         },
         {
@@ -52479,20 +52476,20 @@
         ],
         "gen-platform": [
           {
-            "version": "0.1.46",
+            "version": "0.1.52",
             "rename": "gen_platform"
           }
         ],
         "gen-types": [
           {
-            "version": "0.1.46",
+            "version": "0.1.52",
             "rename": "gen_types"
           }
         ]
       },
       "build_rust_crate_args": {
         "crateName": "shikumi",
-        "version": "0.1.679",
+        "version": "0.1.1083",
         "edition": "2024",
         "features": [
           "default"
@@ -52512,13 +52509,13 @@
           ],
           "gen-platform": [
             {
-              "version": "0.1.46",
+              "version": "0.1.52",
               "rename": "gen_platform"
             }
           ],
           "gen-types": [
             {
-              "version": "0.1.46",
+              "version": "0.1.52",
               "rename": "gen_types"
             }
           ]
@@ -69498,7 +69495,7 @@
           "std"
         ]
       },
-      "gen-macros-0.1.34": {
+      "gen-macros-0.1.52": {
         "runtime_dependencies": [
           {
             "name": "proc_macro2",
@@ -69537,11 +69534,11 @@
         "build_dependencies": [],
         "features": []
       },
-      "gen-platform-0.1.46": {
+      "gen-platform-0.1.52": {
         "runtime_dependencies": [
           {
             "name": "gen_macros",
-            "package_key": "gen-macros-0.1.34",
+            "package_key": "gen-macros-0.1.52",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -69551,7 +69548,7 @@
           },
           {
             "name": "gen_types",
-            "package_key": "gen-types-0.1.46",
+            "package_key": "gen-types-0.1.52",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -69605,7 +69602,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "gen-types-0.1.46": {
+      "gen-types-0.1.52": {
         "runtime_dependencies": [
           {
             "name": "blake3",
@@ -72151,7 +72148,7 @@
           },
           {
             "name": "hashbrown",
-            "package_key": "hashbrown-0.17.1",
+            "package_key": "hashbrown-0.15.5",
             "kind": "normal",
             "features": [
               "default-hasher",
@@ -75400,21 +75397,9 @@
         ]
       },
       "hashbrown-0.17.1": {
-        "runtime_dependencies": [
-          {
-            "name": "foldhash",
-            "package_key": "foldhash-0.2.0",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": false,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          }
-        ],
+        "runtime_dependencies": [],
         "build_dependencies": [],
         "features": [
-          "default-hasher",
           "inline-more"
         ]
       },
@@ -79442,7 +79427,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.46",
+            "package_key": "gen-platform-0.1.52",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -79671,7 +79656,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.46",
+            "package_key": "gen-platform-0.1.52",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -81286,7 +81271,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.46",
+            "package_key": "gen-platform-0.1.52",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -81296,7 +81281,7 @@
           },
           {
             "name": "gen_types",
-            "package_key": "gen-types-0.1.46",
+            "package_key": "gen-types-0.1.52",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -83029,7 +83014,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.46",
+            "package_key": "gen-platform-0.1.52",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -83039,7 +83024,7 @@
           },
           {
             "name": "gen_types",
-            "package_key": "gen-types-0.1.46",
+            "package_key": "gen-types-0.1.52",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -83568,7 +83553,7 @@
           },
           {
             "name": "shikumi",
-            "package_key": "shikumi-0.1.679",
+            "package_key": "shikumi-0.1.1083",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -89547,7 +89532,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.46",
+            "package_key": "gen-platform-0.1.52",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -89557,7 +89542,7 @@
           },
           {
             "name": "gen_types",
-            "package_key": "gen-types-0.1.46",
+            "package_key": "gen-types-0.1.52",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -89623,7 +89608,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shikumi-0.1.679": {
+      "shikumi-0.1.1083": {
         "runtime_dependencies": [
           {
             "name": "arc_swap",
@@ -89661,7 +89646,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.46",
+            "package_key": "gen-platform-0.1.52",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -89671,7 +89656,7 @@
           },
           {
             "name": "gen_types",
-            "package_key": "gen-types-0.1.46",
+            "package_key": "gen-types-0.1.52",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -89699,6 +89684,16 @@
             "uses_default_features": false,
             "optional": false,
             "target": "cfg(target_os = \"macos\")",
+            "tree": "target"
+          },
+          {
+            "name": "schemars",
+            "package_key": "schemars-1.2.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
             "tree": "target"
           },
           {
@@ -102002,7 +101997,7 @@
       }
     }
   },
-  "cargo_lock_sha256": "47e8a4aba4a2bc9872e7f617669d3b64b45f51e277ca27440fac830df9f84d5f",
+  "cargo_lock_sha256": "4fd99e93d5fb627c7d2cf5246cf51205abafc8c45b35391d0cecf0258adb7f2f",
   "manifest_sha256": {
     "Cargo.toml": "aac7092cc210c7759a20858712fba79144f06955761eb499d89148e0c03ea9d2",
     "lava-ruby/Cargo.toml": "a2d172e3cffd2088bd2c849c579de254aec964cbe53b992a5b381a42c1f80933",
