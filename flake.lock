@@ -2217,11 +2217,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1792182010,
-        "narHash": "sha256-06QIDZMCnWcQNEdhnjWBrUUW/DwLH4bY+SMN8qlhKWM=",
+        "lastModified": 1792886072,
+        "narHash": "sha256-PnoSWBS9eeOm2YWSf6pGKjiJhvZI2Vq+jfyJGtoH+nY=",
         "owner": "pleme-io",
         "repo": "openwrt-uci",
-        "rev": "aa88cab2aed5d5d79f09684533a943e5a64f3fb7",
+        "rev": "8eafe737feb917c1314d84777eead93db47cf820",
         "type": "github"
       },
       "original": {
