@@ -3,20 +3,21 @@ name: ci
 on: [push, pull_request]
 
 jobs:
+  resolve-runner:
+    name: resolve build runner
+    runs-on: ubuntu-24.04
+    outputs:
+      runner: ${{ steps.resolve.outputs.runner }}
+    steps:
+      - id: resolve
+        uses: pleme-io/actions/runner-resolve@main
+        with:
+          public-runner-default: ${{ vars.PUBLIC_BUILDER_RUNNER || 'pleme-public-build' }}
+          private-runner-default: ${{ vars.PRIVATE_BUILDER_RUNNER || 'pleme-private' }}
+
   flake-check:
-    # ★ 2026-08-06 — MEASURED PRIVATE TODAY; PUBLIC IS THE INTENT.
-    # Anonymous GitHub API, 2026-08-06: `/repos/pleme-io/pangea-operator`
-    # returns 404 while `/repos/pleme-io/breathe` returns 200 — so this repo
-    # is PRIVATE today, and the billing-gate note below is ACCURATE for now.
-    # Making it public is the stated intent, not the current state.
-    #
-    # The expression below is kept because it is now doing the OPPOSITE and
-    # correct thing: on a public repo the visibility tier resolves to the
-    # hosted runner, and a self-hosted pin here would have queued FOREVER
-    # (GitHub never assigns a public repo's jobs to a self-hosted runner).
-    # It is left conditional rather than hardcoded so the answer stays right
-    # if visibility ever changes again.
-    runs-on: ${{ github.event.repository.private && 'camelot-builder-pleme-eks' || 'ubuntu-24.04' }}
+    needs: resolve-runner
+    runs-on: ${{ needs.resolve-runner.outputs.runner }}
     steps:
       - uses: actions/checkout@v4
       # magic-nix-cache-action is EOL'd upstream (repo-scoped, can't carry a
@@ -39,6 +40,7 @@ jobs:
       # under it -- install upstream Nix instead, where extra-conf is
       # honored by the trusted daemon regardless of trusted-user status.
       - uses: DeterminateSystems/nix-installer-action@main
+        if: runner.environment == 'github-hosted'
         with:
           determinate: false
           extra-conf: |
