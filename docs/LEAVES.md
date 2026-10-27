@@ -9,7 +9,7 @@ of every grandfathered fat template.
 
 Sections 1 to 3 are the baseline. Sections 4 to 15 are one committed answer
 per question, each with the alternative it rejects. Section 16 is the rollout
-order. Section 17 is the build plan.
+order. Section 17 is scaling by leaf work. Section 18 is the build plan.
 
 ---
 
@@ -89,7 +89,7 @@ resources.
 The 10 s budget: one leaf compile < 1 s; state read from Postgres < 0.1 s; a
 2-resource refresh is about 4.5 calls, about 1.5 s at 3.125 req/s; the
 in-memory diff < 0.1 s; a pooled provider adds 0 s (a cold start is the one
-cost not yet measured, §17 item M1).
+cost not yet measured, §18 item M1).
 
 ---
 
@@ -136,7 +136,7 @@ and `FairBudget`, which is the parallel mechanism the operator forbade.
 600 bytes of inputs (597 KB / 1,005 repos), so the store holds less than
 today's one object. Writes fall: a status patch rewrites a few KB, not 1.1 MB.
 Heartbeat writes are bounded by the global cap, because only admitted leaves
-beat. engenho's behaviour at 1,000 objects is unmeasured; §17 item E1 measures
+beat. engenho's behaviour at 1,000 objects is unmeasured; §18 item E1 measures
 it before cutover.
 
 ## 6. State boundary and key
@@ -270,7 +270,7 @@ cycle, a broken bijection, a key that does not parse) is refused by name.
 **Opt out.** Per template: `pangea.pleme.io/skip-leaf: provider-singleton |
 atomic-bootstrap | external-contract | shared-lifecycle`. For the operator:
 `leaf.admission: off`. A template with either runs monolithic, under the same
-controller. Both modes stay in the test suite (§17 item O2).
+controller. Both modes stay in the test suite (§18 item O2).
 
 **Rejected: hand-written leaf CRs** (what `pangea leaf plan --emit-dir`
 produces for a human to apply). 1,023 files to keep in step with org.yaml is
@@ -400,7 +400,7 @@ Plans and applies run in the magma engine inside the operator. A leaf's state
 is a magma state, read from and written to its `states` row. A leaf's plan is
 `refresh_then_plan` in memory: no state file, no subprocess of tofu. Provider
 plugins stay processes, because Terraform providers ship as plugin binaries (a
-world fact). A pool in the operator reuses them across leaves (§17 item M1).
+world fact). A pool in the operator reuses them across leaves (§18 item M1).
 
 **Configured-off legacy, not designed on:**
 
@@ -468,7 +468,118 @@ mode is one field away, never a rebuild.
 
 ---
 
-## 17. Build plan
+## 17. Scaling by leaf work
+
+### Baseline (2026-10-27, ryn, read only)
+
+| Fact | Value | Source |
+|---|---|---|
+| Operator RSS during the generation-29 fat plan | 23.6 to 55.6 MiB, mean 45.6 MiB, 40 samples | `ps` every 15 s, 13:22:55 to 13:32:56 UTC (ryn hosts the pod as a native process) |
+| GitHub provider RSS in the same window | 21.2 to 33.2 MiB, mean 30.4 MiB | same samples |
+| Pod limits | request 128Mi, limit 512Mi | pod spec |
+| Restarts | 2; `lastState` is empty | engenho records no termination reason |
+| metrics.k8s.io for the pod | "Metrics not available" | `kubectl top` |
+
+The peak is 11% of the limit, so this window gives no sign of an OOM. The two
+restarts have no recorded cause. a1e6e3b names a lease-renewal failure for the
+12:19 one. The per-leaf footprint after cutover is not measured: on
+2026-10-27 the cutover stopped at §9 step 4 (theory e4851bf). It lacks the
+`StateMove` executor (item O10) and a per-leaf input slice (items O2, L1).
+
+### The metric: pending weighted actions, capped by budget
+
+Answer: weight by action kind. The weight is the provider calls the action
+costs, because calls are the bottleneck (§1).
+
+```
+work(leaf)  = Σ_k  w_k · n_k(leaf)          over k ∈ {refresh, create, update, delete, import, replace}
+n_k(leaf)   = the action counts of the leaf's newest plan (status.lastCycle.actionDistribution);
+              a leaf with no plan yet counts n_refresh = its resource count
+pending_c   = Σ work(leaf)  over queued and running leaves whose credential is c
+metric      = Σ_c min(pending_c, r_c · H)  +  Σ (work of leaves with no paced credential)
+desired     = clamp(⌈metric / T⌉, min, max)
+```
+
+`r_c` is the paced rate for credential `c` (3.125 req/s on ryn). `H` is the
+scale horizon (default 300 s). `T` is the per-replica target. The cap `r_c ·
+H` keeps out replicas that one credential's budget cannot feed. More workers
+never raise a rate ceiling. Default weights: refresh 1, delete 2, update 2,
+import 2, create 3, replace 5. They are estimates until item O12 calibrates
+them from `pangea_provider_rpc_seconds_count` by action. Default `T` = 600
+weighted actions, about 3 minutes of one credential's budget.
+
+**Rejected: an unweighted count of actions.** A create costs about three
+calls and a no-op refresh one. An unweighted count over-scales on drift and
+under-scales on creates.
+
+### The scale-out unit: workers claim leaves from a Postgres lease
+
+Answer: leaf worker replicas claim work from a queue the leader writes. The
+leader keeps the lease (`leader.rs`), admission, the graph and `happa::admit`.
+It writes the admitted, ordered queue to `pangea_meta.leaf_queue`. A worker
+claims the head with `SELECT … FOR UPDATE SKIP LOCKED` into
+`pangea_meta.leaf_claims (leaf, holder, lease_until)`. It renews the lease
+with each heartbeat and runs the leaf in its own magma engine. The state lock
+stays as it is. When a lease lapses, the leaf goes back to the queue, so a
+dead worker loses one leaf's progress and nothing more. With `workers.replicas:
+0` the leader runs every leaf in process, as it does today.
+
+The rate budget stays one budget. For each credential, the leader gives
+each worker a share of `r_c`. The share is in proportion to the leaves of
+`c` that the worker holds (`happa::shares`). The worker builds its
+`shared_pacer` with that quota. The sum of the shares never exceeds `r_c`.
+
+**Rejected: consistent-hash shards of the leaf key.** A scale event moves
+leaves while they plan. Hashing ignores load, so one shard can get every
+changed leaf while the others sit idle.
+
+### Memory: derived, not guessed
+
+```
+request = base_rss + cap_worker · max_leaf_peak + providers · provider_rss
+limit   = request · 1.5
+```
+
+`base_rss` is the worker's idle RSS. `max_leaf_peak` is the largest
+`status.leaf.peakRssBytes` (new). A calibration pass measures it: the pass
+plans each leaf alone (cap 1) and records the RSS delta. `providers` is the
+pool size (item M1), and `provider_rss` is 33 MiB for GitHub from the baseline.
+The typed setting is `workers.memory: derived | <quantity>`, and `derived` is
+the default. Until calibration runs, `derived` takes the fat-plan peak
+(55.6 MiB) as the bound for one leaf. This bound is safe, because a leaf is a
+subset of the fat plan.
+
+### Rendering: a real HPA, and engenho's dormant controller woken
+
+engenho serves `autoscaling/v2` `HorizontalPodAutoscaler` and
+`metrics.k8s.io`. It serves no `custom.metrics.k8s.io` and no
+`external.metrics.k8s.io` (both NotFound, 2026-10-27). Its HPA controller is
+compiled but dormant (`Dormant::Hpa`, `DormantReason::NoMetricsSource`). It
+also has a known defect: `target_gv` sends most kinds to the core group.
+keisoku is a blue measurement bidama, not a metrics adapter.
+
+Answer: the chart renders one standard `autoscaling/v2` HPA on the worker
+Deployment. The HPA uses `type: External`, metric
+`pangea_leaf_pending_work`, `target.averageValue: T`, and `min` and `max`
+from typed config. The leader publishes the metric two ways: as a gauge on
+`/metrics`, and in `PangeaFleetStatus/default` as `status.leafWork`. On a
+standard cluster, prometheus-adapter serves the gauge. On engenho, item EH1
+wakes the HPA controller with a `MetricsProvider` that reads
+`status.leafWork`. That item also fixes `target_gv` to read the target's own
+`apiVersion`. The HPA object is the same on both clusters.
+
+| Setting | Default | Off |
+|---|---|---|
+| `workers.autoscaling.enabled` | `true` | `false` = fixed `workers.replicas` (default 0: the leader runs every leaf, as today) |
+| `workers.autoscaling.min` / `max` | 0 / 4 | — |
+| `workers.autoscaling.target` (`T`) | 600 | — |
+| `workers.autoscaling.horizonSecs` (`H`) | 300 | — |
+| `workers.memory` | `derived` | a fixed quantity |
+
+**Rejected: an engenho-only scaler CRD.** The HPA API already exists on
+engenho. A second scaler shape would split the chart by cluster.
+
+## 18. Build plan
 
 Each item is one repo. Each names its test, seen red then green, and its off
 switch. Items in one row group are independent.
@@ -494,6 +605,9 @@ switch. Items in one row group are independent.
 | O8 | Metrics: `workspace` label, `pangea_workspace_leaves`, `pangea_leaf_plan_seconds`, the label cap | 300 unhealthy leaves emit 256 labelled and `unlabeled 44` | `observability.leaf_series: all \| off` |
 | O9 | Parent `LeafFailed` and `LeafStalled` events | one event per leaf per transition, none on a repeat | none |
 | O10 | `StateMove` executor (`pangea leaf migrate`) in one Postgres transaction, with archive and `leaf-migration` artifact | a forged bijection writes nothing; a good one writes N rows that read back to the same multiset; reverse merge restores the fat row byte-equal | run nothing; the fat row is untouched |
+| O11 | Worker mode: `pangea_meta.leaf_queue`, `leaf_claims` with lease, the leader writes the queue, workers claim with `SKIP LOCKED`, `happa::shares` splits each credential's rate | two workers and 20 leaves: each leaf runs once; a killed worker's leaf runs again on the other; the summed pacer quota stays at `r_c` | `workers.replicas: 0` |
+| O12 | `pangea_leaf_pending_work` gauge and `PangeaFleetStatus.status.leafWork`, by the §17 formula; weights calibrated from `pangea_provider_rpc_seconds_count` | a fixed queue gives the hand-computed value; a starved credential caps at `r_c · H` | `workers.autoscaling.enabled: false` |
+| O13 | `status.leaf.peakRssBytes` from a calibration pass, and `workers.memory: derived` | the derived request equals the formula on fixture leaves | `workers.memory: <quantity>` |
 
 ### magma
 
@@ -519,10 +633,17 @@ switch. Items in one row group are independent.
 |---|---|---|---|
 | C1 | Regenerate CRDs (`status.leaf`, `maxConcurrentLeaves`, `spec.leaves`, `status.leaves`); clear the drift baseline | `crd-drift.yml` red before, green after | n/a |
 | C2 | `github-org-repos.yaml` gains `leaves:`; `PANGEA_FORBID_TOFU` defaults on; alert rules group by `workspace` | `helm unittest` and the `promtool` rule tests with a `workspace` label | `githubOrgReconciliation.leaves.enabled: false` |
+| C3 | Worker Deployment and its `autoscaling/v2` HPA (`External`, `pangea_leaf_pending_work`); requests and limits from `workers.memory` | `helm unittest`: `enabled: false` renders no HPA and fixed replicas | `workers.autoscaling.enabled: false` |
+
+### engenho
+
+| # | Item | Test | Off |
+|---|---|---|---|
+| EH1 | Wake `Dormant::Hpa`: a `MetricsProvider` that reads `PangeaFleetStatus.status.leafWork`; `target_gv` from the target's `apiVersion` | an HPA on a Deployment (`apps/v1`) scales it; the dormant-catalog test loses the row | the dormant row stays (no HPA controller runs) |
 
 ### Live (needs the operator's go-ahead; this doc made no cluster write)
 
 | # | Item | Check |
 |---|---|---|
 | E1 | Load test engenho at 1,100 `InfrastructureTemplate` objects on a scratch cluster | list and watch latency, store size |
-| E2 | Cut over `pleme-io-github-repos` with O10, then settle | 0/0/0 across 1,023 leaves; then a 1-repo change plans in ≤ 10 s |
+| E2 | Cut over `pleme-io-github-repos` with O10, then settle. Another session owns it. On 2026-10-27 it stopped at §9 step 4: there is no O10, and there is no per-leaf slice (O2, L1) (theory e4851bf, 1,024 leaves on serial 181) | 0/0/0 across all leaves; then a 1-repo change plans in ≤ 10 s; then the per-leaf RSS for O13 |
