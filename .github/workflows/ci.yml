@@ -177,6 +177,35 @@ jobs:
           CARGO_NET_GIT_FETCH_WITH_CLI: "true"
         run: cargo test -p pangea-operator --no-default-features --lib --no-fail-fast
 
+  leaf-migration-postgres:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Configure git credentials for git dependencies (cargo)
+        uses: pleme-io/actions/git-credentials@main
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: cargo test --test leaf_migration_pg (against the service Postgres)
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+          PANGEA_TEST_DATABASE_URL: postgres://postgres@127.0.0.1:5432/postgres
+          PANGEA_REQUIRE_TEST_DATABASE: "1"
+        run: cargo test -p pangea-operator --no-default-features --test leaf_migration_pg -- --test-threads=1
+
   coverage:
     needs: cargo-test
     # ★ 2026-08-06 — MEASURED PRIVATE TODAY; PUBLIC IS THE INTENT.

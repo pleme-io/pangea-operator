@@ -32,7 +32,14 @@ fn moves(fat: &str) -> Vec<StateMove> {
 }
 
 async fn pool() -> Option<PgPool> {
-    let url = std::env::var("PANGEA_TEST_DATABASE_URL").ok()?;
+    let required = std::env::var("PANGEA_REQUIRE_TEST_DATABASE").is_ok_and(|v| v == "1");
+    let url = match std::env::var("PANGEA_TEST_DATABASE_URL") {
+        Ok(u) => u,
+        Err(_) if required => {
+            panic!("PANGEA_REQUIRE_TEST_DATABASE=1 and no PANGEA_TEST_DATABASE_URL")
+        }
+        Err(_) => return None,
+    };
     Some(
         PgPool::connect(&url)
             .await
