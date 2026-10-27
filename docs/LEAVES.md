@@ -144,8 +144,10 @@ it before cutover.
 
 ## 6. State boundary and key
 
-**Answer.** One state row per leaf in the parent's `PangeaNamespace` schema:
-`"{schema}".states` with `name = <leaf template name>`. The lock is
+**Answer.** One state row per leaf, in the layout magma already reads for
+every template: `"{schema}_{leaf}_states".states`, row `default`
+(`backend::schema::tofu_state_table_ident`; corrected 2026-10-27, the layout is
+one folded schema per template, not one `states` table per namespace). The lock is
 `pangea_meta.state_locks (schema, leaf)`. The leaf name is
 `<parent>-<leaf key slug>`, made by `pangea-leaf/src/names.rs` (to move to
 blue, §11).
@@ -452,8 +454,8 @@ world fact). A pool in the operator reuses them across leaves (§18 item M1).
 to_template, pangea_namespace, addresses }` and the bijection. The missing
 piece is its executor. In Postgres, in one transaction:
 
-1. copy the fat template's `states` row to an archive row
-   (`<parent>@pre-leaf`);
+1. copy the fat template's `default` row to the archive row `pre-leaf` in
+   the same table; the `default` row is never written;
 2. for each `StateMove`, write the leaf's row: the magma state with only that
    leaf's resource instances, attributes unchanged, a new lineage, serial 1;
 3. write the bijection (BLAKE3 before and after, disjointness) to
@@ -670,7 +672,7 @@ switch. Items in one row group are independent.
 | O7 | Rate-limited leaf: `status.rateLimitedUntil`, permit release, requeue | a mocked 403 with `retry-after`: the leaf waits, its siblings apply | none |
 | O8 | Metrics: `workspace` label, `pangea_workspace_leaves`, `pangea_leaf_plan_seconds`, the label cap | 300 unhealthy leaves emit 256 labelled and `unlabeled 44` | `observability.leaf_series: all \| off` |
 | O9 | Parent `LeafFailed` and `LeafStalled` events | one event per leaf per transition, none on a repeat | none |
-| O10 | `StateMove` executor (`pangea leaf migrate`) in one Postgres transaction, with archive and `leaf-migration` artifact | a forged bijection writes nothing; a good one writes N rows that read back to the same multiset; reverse merge restores the fat row byte-equal | run nothing; the fat row is untouched |
+| O10 | `StateMove` executor (`pangea leaf migrate`) in one Postgres transaction, with archive and `leaf-migration` artifact. **BUILT + TESTED, not run live** (2026-10-27): pure split and merge in `pangea-leaf/src/migrate.rs` (1996d30), the one-transaction executor `backend::leaf_migration::{forward, reverse}` (c1a3e2f), the offline file form `pangea leaf migrate` (1ed2e40). Nothing calls `forward` in the operator yet: engenho serves no port-forward, so the live run needs an in-operator trigger (with O2) | a forged bijection writes nothing; a good one writes N rows that read back to the same multiset; reverse merge restores the fat row byte-equal. `pangea-leaf/tests/migrate.rs` (9), `pangea-operator/tests/leaf_migration_pg.rs` (3, Postgres 17.10; CI has no `PANGEA_TEST_DATABASE_URL`, so they pass there without a database: only-mitigated), `pangea-cli/tests/leaf_migrate.rs` (2) | run nothing; the fat row is untouched |
 | O11 | Leaf queue on JetStream: one message per leaf action, `Nats-Msg-Id` = leaf, action and input digest, a durable consumer per credential with `MaxAckPending` = cap, `+WIP` per heartbeat, `MaxDeliver` advisory to `Failed`, `happa::shares` splits each credential's rate | against a test `nats-server`: a republished action is dropped; a killed worker's message reaches the other worker after `AckWait`; the summed pacer quota stays at `r_c` | `leaf.queue: in_process` |
 | O12 | `pangea_leaf_pending_work` gauge and `PangeaFleetStatus.status.leafWork`, by the §17 formula; weights calibrated from `pangea_provider_rpc_seconds_count` | a fixed queue gives the hand-computed value; a starved credential caps at `r_c · H` | `workers.autoscaling.enabled: false` |
 | O13 | `status.leaf.peakRssBytes` from a calibration pass, and `workers.memory: derived` | the derived request equals the formula on fixture leaves | `workers.memory: <quantity>` |
