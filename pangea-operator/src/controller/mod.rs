@@ -450,6 +450,8 @@ pub struct ControllerState {
 
     pub progress: Arc<progress::ProgressRegistry>,
 
+    pub passes: Arc<template::pass_registry::PassRegistry>,
+
     pub events: Arc<event_sink::EventSink>,
 }
 
@@ -531,6 +533,7 @@ impl ControllerState {
             workspace_budgets,
             executor_timeout: Duration::from_secs(executor_config.timeout_secs),
             progress: Arc::new(progress::ProgressRegistry::new()),
+            passes: Arc::new(template::pass_registry::PassRegistry::default()),
             events,
         })
     }

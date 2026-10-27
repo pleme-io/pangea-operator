@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
 
@@ -10,8 +11,9 @@ use tracing::{debug, info, warn};
 
 use super::events::record_event;
 use super::pass::{project_status, projection_patch, stored_pass, Deadlines, PassPhase};
+use super::pass_registry::{pass_key, PassRegistry};
 use crate::controller::ControllerState;
-use crate::crd::{InfrastructureTemplate, PassKind, Phase};
+use crate::crd::{InfrastructureTemplate, PassKind, PassStatus, Phase, StallState};
 
 pub const HEARTBEAT_PERIOD: StdDuration = StdDuration::from_secs(30);
 pub const WATCHDOG_TICK: StdDuration = StdDuration::from_secs(15);
@@ -182,30 +184,126 @@ impl PassGuard {
             .await
         {
             warn!(error = %e, %name, "could not record the pass start in status.pass");
+        } else {
+            state.passes.beat_landed(&pass_key(&namespace, &name), now);
         }
+        let key = pass_key(&namespace, &name);
+        let passes = Arc::clone(&state.passes);
         let beat_api = api.clone();
         let beat = tokio::spawn(async move {
             let mut tick = tokio::time::interval(HEARTBEAT_PERIOD);
             tick.tick().await;
             loop {
                 tick.tick().await;
-                let patch = serde_json::json!({
-                    "status": { "pass": { "heartbeatAt": Utc::now() } }
-                });
-                if let Err(e) = beat_api
-                    .patch_status(
-                        &name,
-                        &PatchParams::apply("pangea-operator"),
-                        &Patch::Merge(&patch),
-                    )
-                    .await
-                {
-                    debug!(error = %e, %name, "pass heartbeat write failed");
+                let now = Utc::now();
+                if beat_once(&beat_api, &name, &pass, now, resumes_on_heartbeat()).await {
+                    passes.beat_landed(&key, now);
                 }
             }
         });
         Self { beat }
     }
+}
+
+static RESUME_ON_HEARTBEAT: AtomicBool = AtomicBool::new(true);
+static PREEMPT_STALLED_PASS: AtomicBool = AtomicBool::new(true);
+
+pub fn set_resume_on_heartbeat(on: bool) {
+    RESUME_ON_HEARTBEAT.store(on, Ordering::Relaxed);
+}
+
+#[must_use]
+pub fn resumes_on_heartbeat() -> bool {
+    RESUME_ON_HEARTBEAT.load(Ordering::Relaxed)
+}
+
+pub fn set_preempt_stalled_pass(on: bool) {
+    PREEMPT_STALLED_PASS.store(on, Ordering::Relaxed);
+}
+
+#[must_use]
+pub fn preempts_stalled_pass() -> bool {
+    PREEMPT_STALLED_PASS.load(Ordering::Relaxed)
+}
+
+#[must_use]
+pub fn withdraws_heartbeat_lost(stored: Option<&PassStatus>) -> bool {
+    stored
+        .is_some_and(|p| p.kind == PassKind::Stalled && p.stall == Some(StallState::HeartbeatLost))
+}
+
+pub async fn beat_once(
+    api: &Api<InfrastructureTemplate>,
+    name: &str,
+    owned: &PassPhase,
+    now: chrono::DateTime<Utc>,
+    resume: bool,
+) -> bool {
+    let patch = serde_json::json!({
+        "status": { "pass": { "heartbeatAt": now } }
+    });
+    let stored = match api
+        .patch_status(
+            name,
+            &PatchParams::apply("pangea-operator"),
+            &Patch::Merge(&patch),
+        )
+        .await
+    {
+        Ok(stored) => stored,
+        Err(e) => {
+            debug!(error = %e, %name, "pass heartbeat write failed");
+            return false;
+        }
+    };
+    let stored_pass = stored.status.as_ref().and_then(|s| s.pass.as_ref());
+    if resume && withdraws_heartbeat_lost(stored_pass) {
+        let patch = serde_json::json!({
+            "metadata": { "resourceVersion": stored.resource_version() },
+            "status": { "pass": owned.clone().beat(now).to_status() }
+        });
+        match api
+            .patch_status(
+                name,
+                &PatchParams::apply("pangea-operator"),
+                &Patch::Merge(&patch),
+            )
+            .await
+        {
+            Ok(_) => {
+                info!(%name, kind = %owned.kind(), "pass heartbeat landed again; the heartbeatLost stall is withdrawn")
+            }
+            Err(e) => {
+                debug!(error = %e, %name, "heartbeatLost withdrawal not written; the next beat retries")
+            }
+        }
+    }
+    true
+}
+
+pub async fn redispatch(
+    api: &Api<InfrastructureTemplate>,
+    passes: &PassRegistry,
+    namespace: &str,
+    name: &str,
+    stall: StallState,
+    now: chrono::DateTime<Utc>,
+    heartbeat: chrono::Duration,
+    preempt: bool,
+) -> kube::Result<bool> {
+    let preempted = preempt && passes.preempt(&pass_key(namespace, name), stall, now, heartbeat);
+    if preempted {
+        warn!(%name, %namespace, state = %stall, "stalled pass: preempting the in-process pass so the re-dispatch starts a fresh one");
+    }
+    let patch = serde_json::json!({
+        "metadata": { "annotations": {
+            crate::controller::generation_filter::RECONCILE_REQUESTED_ANNOTATION:
+                format!("watchdog-{}", now.timestamp_millis())
+        }}
+    });
+    api.patch(name, &PatchParams::default(), &Patch::Merge(&patch))
+        .await?;
+    Ok(preempted)
 }
 
 pub const MAX_NUDGES: u32 = 5;
@@ -345,18 +443,20 @@ async fn watch_one(
         .map(|(a, l)| (*a, Some(*l)))
         .unwrap_or((0, None));
     if nudge_due(attempts, last, now) {
-        let patch = serde_json::json!({
-            "metadata": { "annotations": {
-                crate::controller::generation_filter::RECONCILE_REQUESTED_ANNOTATION:
-                    format!("watchdog-{}", now.timestamp_millis())
-            }}
-        });
-        match api
-            .patch(&name, &PatchParams::default(), &Patch::Merge(&patch))
-            .await
+        match redispatch(
+            &api,
+            &state.passes,
+            &namespace,
+            &name,
+            kind,
+            now,
+            d.heartbeat,
+            preempts_stalled_pass(),
+        )
+        .await
         {
-            Ok(_) => {
-                info!(%name, attempt = attempts + 1, state = %kind, "stalled pass: re-dispatching the reconcile");
+            Ok(preempted) => {
+                info!(%name, attempt = attempts + 1, state = %kind, preempted, "stalled pass: re-dispatching the reconcile");
                 nudges.0.insert(key, (attempts + 1, now));
             }
             Err(e) => warn!(error = %e, %name, "stalled pass: re-dispatch failed"),
@@ -546,6 +646,243 @@ mod tests {
         assert!(!StallState::Unnamed.redispatches());
         assert!(StallState::OrphanedPhase.redispatches());
         assert!(StallState::HeartbeatLost.redispatches());
+    }
+
+    mod fake_api {
+        use super::*;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+        pub const TEMPLATE_PATH: &str =
+            "/apis/pangea.pleme.io/v1alpha1/namespaces/default/infrastructuretemplates/t";
+
+        pub fn body(pass: serde_json::Value) -> serde_json::Value {
+            serde_json::json!({
+                "apiVersion": "pangea.pleme.io/v1alpha1",
+                "kind": "InfrastructureTemplate",
+                "metadata": { "name": "t", "namespace": "default", "resourceVersion": "7", "generation": 28 },
+                "spec": { "pangeaNamespace": "n", "source": { "inline": "" } },
+                "status": { "pass": pass },
+            })
+        }
+
+        pub async fn server(stored_pass: serde_json::Value) -> MockServer {
+            let server = MockServer::start().await;
+            let reply = body(stored_pass);
+            Mock::given(method("PATCH"))
+                .and(path(format!("{TEMPLATE_PATH}/status")))
+                .respond_with(ResponseTemplate::new(200).set_body_json(reply.clone()))
+                .mount(&server)
+                .await;
+            Mock::given(method("PATCH"))
+                .and(path(TEMPLATE_PATH))
+                .respond_with(ResponseTemplate::new(200).set_body_json(reply))
+                .mount(&server)
+                .await;
+            server
+        }
+
+        pub fn api(server: &MockServer) -> Api<InfrastructureTemplate> {
+            let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+            let config = kube::Config::new(server.uri().parse().expect("a mock uri"));
+            let client = kube::Client::try_from(config).expect("a client for the mock");
+            Api::namespaced(client, "default")
+        }
+
+        pub async fn patches(server: &MockServer, suffix: &str) -> Vec<serde_json::Value> {
+            let want = format!("{TEMPLATE_PATH}{suffix}");
+            server
+                .received_requests()
+                .await
+                .unwrap_or_default()
+                .iter()
+                .filter(|r: &&Request| r.method.as_str() == "PATCH" && r.url.path() == want)
+                .map(|r| serde_json::from_slice(&r.body).expect("a json patch body"))
+                .collect()
+        }
+    }
+
+    fn stalled_wire(stall: &str) -> serde_json::Value {
+        serde_json::json!({
+            "kind": "stalled",
+            "generation": 28,
+            "since": "2026-10-27T12:05:20.663013Z",
+            "stall": stall,
+            "reason": "Planning pass for generation 28 started 2026-10-27T11:55:39.523447+00:00 has no heartbeat for 310s",
+            "heartbeatAt": "2026-10-27T12:17:44.539569Z",
+            "incarnation": "operator-1793096482",
+        })
+    }
+
+    fn owned_planning() -> PassPhase {
+        let started = chrono::DateTime::parse_from_rfc3339("2026-10-27T11:55:39.523447Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        PassPhase::Planning {
+            generation: 28,
+            started_at: started,
+            heartbeat: started,
+            queued: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn receipt_2026_10_27_a_landed_beat_withdraws_the_heartbeat_lost_stall_of_its_own_pass() {
+        let server = fake_api::server(stalled_wire("heartbeatLost")).await;
+        let api = fake_api::api(&server);
+        let now = Utc::now();
+        assert!(beat_once(&api, "t", &owned_planning(), now, true).await);
+        let writes = fake_api::patches(&server, "/status").await;
+        assert_eq!(
+            writes.len(),
+            2,
+            "heartbeat, then the withdrawal: {writes:?}"
+        );
+        let restore = &writes[1];
+        assert_eq!(restore["metadata"]["resourceVersion"], "7");
+        assert_eq!(restore["status"]["pass"]["kind"], "planning");
+        assert_eq!(restore["status"]["pass"]["generation"], 28);
+        assert_eq!(
+            restore["status"]["pass"]["since"],
+            serde_json::json!(owned_planning().to_status().since)
+        );
+        assert!(restore["status"]["pass"]["stall"].is_null());
+        assert!(restore["status"]["pass"]["reason"].is_null());
+    }
+
+    #[tokio::test]
+    async fn a_beat_never_withdraws_a_stall_it_does_not_disprove() {
+        for stall in ["noProgress", "queuedBehind", "orphanedPhase", "unnamed"] {
+            let server = fake_api::server(stalled_wire(stall)).await;
+            let api = fake_api::api(&server);
+            assert!(beat_once(&api, "t", &owned_planning(), Utc::now(), true).await);
+            assert_eq!(
+                fake_api::patches(&server, "/status").await.len(),
+                1,
+                "{stall}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn resume_off_leaves_the_stall_in_place() {
+        let server = fake_api::server(stalled_wire("heartbeatLost")).await;
+        let api = fake_api::api(&server);
+        assert!(beat_once(&api, "t", &owned_planning(), Utc::now(), false).await);
+        assert_eq!(fake_api::patches(&server, "/status").await.len(), 1);
+    }
+
+    async fn hung_pass(
+        passes: &Arc<PassRegistry>,
+        budgets: &Arc<crate::controller::scheduling::FairBudget>,
+    ) -> tokio::task::JoinHandle<Option<()>> {
+        let runner = Arc::clone(passes);
+        let held = Arc::clone(budgets);
+        let pass = tokio::spawn(async move {
+            runner
+                .run(pass_key("default", "t"), async move {
+                    let _permit = held.try_acquire("ws").expect("a free slot");
+                    futures::future::pending::<()>().await;
+                })
+                .await
+        });
+        while !passes.holds("default/t") || budgets.in_flight("ws") == 0 {
+            tokio::task::yield_now().await;
+        }
+        pass
+    }
+
+    fn one_slot() -> Arc<crate::controller::scheduling::FairBudget> {
+        crate::controller::scheduling::FairBudget::new(
+            crate::controller::scheduling::BudgetConfig {
+                per_scope: 1,
+                global: 1,
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn receipt_2026_10_27_redispatch_preempts_the_hung_pass_so_the_nudge_starts_a_fresh_one()
+    {
+        let server = fake_api::server(stalled_wire("heartbeatLost")).await;
+        let api = fake_api::api(&server);
+        let passes = Arc::new(PassRegistry::default());
+        let budgets = one_slot();
+        let pass = hung_pass(&passes, &budgets).await;
+        let now = Utc::now() + chrono::Duration::minutes(10);
+        let preempted = redispatch(
+            &api,
+            &passes,
+            "default",
+            "t",
+            StallState::HeartbeatLost,
+            now,
+            chrono::Duration::minutes(5),
+            true,
+        )
+        .await
+        .expect("the nudge lands");
+        assert!(preempted);
+        let out = tokio::time::timeout(StdDuration::from_secs(5), pass)
+            .await
+            .expect("the hung pass returns once preempted")
+            .expect("the task joins");
+        assert_eq!(out, None);
+        assert_eq!(budgets.in_flight("ws"), 0, "the budget slot is released");
+        assert!(!passes.holds("default/t"), "the registry entry is released");
+        let nudges = fake_api::patches(&server, "").await;
+        assert_eq!(nudges.len(), 1);
+        assert!(
+            nudges[0]["metadata"]["annotations"][RECONCILE_REQUESTED_ANNOTATION]
+                .as_str()
+                .is_some_and(|v| v.starts_with("watchdog-"))
+        );
+    }
+
+    #[tokio::test]
+    async fn preempt_off_only_nudges() {
+        let server = fake_api::server(stalled_wire("heartbeatLost")).await;
+        let api = fake_api::api(&server);
+        let passes = Arc::new(PassRegistry::default());
+        let budgets = one_slot();
+        let pass = hung_pass(&passes, &budgets).await;
+        let now = Utc::now() + chrono::Duration::minutes(10);
+        let preempted = redispatch(
+            &api,
+            &passes,
+            "default",
+            "t",
+            StallState::HeartbeatLost,
+            now,
+            chrono::Duration::minutes(5),
+            false,
+        )
+        .await
+        .expect("the nudge lands");
+        assert!(!preempted);
+        assert!(passes.holds("default/t"));
+        assert_eq!(budgets.in_flight("ws"), 1);
+        assert_eq!(fake_api::patches(&server, "").await.len(), 1);
+        pass.abort();
+    }
+
+    #[test]
+    fn the_stall_switches_default_on() {
+        assert!(resumes_on_heartbeat());
+        assert!(preempts_stalled_pass());
+        assert!(withdraws_heartbeat_lost(Some(
+            &PassPhase::Stalled {
+                generation: 1,
+                since: Utc::now(),
+                state: StallState::HeartbeatLost,
+                reason: String::new(),
+            }
+            .to_status()
+        )));
+        assert!(!withdraws_heartbeat_lost(Some(
+            &owned_planning().to_status()
+        )));
+        assert!(!withdraws_heartbeat_lost(None));
     }
 
     #[test]

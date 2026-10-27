@@ -305,7 +305,7 @@ pub struct ApiConfig {
 }
 
 /// Event-driven reconcile triggers.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReactiveConfig {
     /// Treat a change of the `pangea.pleme.io/reconcile-requested` annotation
@@ -315,6 +315,34 @@ pub struct ReactiveConfig {
     /// and a settled template waits for its `refreshInterval` tick.
     #[serde(default)]
     pub honor_reconcile_requests: bool,
+    /// A pass whose own heartbeat lands again withdraws the watchdog's
+    /// `heartbeatLost` stall and restores its Planning/Applying pass
+    /// (`PANGEA_RESUME_STALLED_ON_HEARTBEAT`; default true). Off, the stall
+    /// stands until a new pass begins.
+    #[serde(default = "default_on")]
+    pub resume_stalled_on_heartbeat: bool,
+    /// The watchdog's re-dispatch of a stalled template first aborts the
+    /// in-process reconcile still holding it, releasing its budget slot,
+    /// heartbeat task and kube-runtime slot, so the nudge starts a fresh pass
+    /// (`PANGEA_PREEMPT_STALLED_PASS`; default true). A pass whose own beat
+    /// landed within the heartbeat deadline is never preempted. Off, the nudge
+    /// waits behind the in-flight reconcile.
+    #[serde(default = "default_on")]
+    pub preempt_stalled_pass: bool,
+}
+
+fn default_on() -> bool {
+    true
+}
+
+impl Default for ReactiveConfig {
+    fn default() -> Self {
+        Self {
+            honor_reconcile_requests: false,
+            resume_stalled_on_heartbeat: true,
+            preempt_stalled_pass: true,
+        }
+    }
 }
 
 /// Leaf-by-default knobs. Each one configures a behavior off; none deletes it.
@@ -586,6 +614,10 @@ struct ApiOverlay {
 struct ReactiveOverlay {
     #[serde(skip_serializing_if = "Option::is_none")]
     honor_reconcile_requests: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resume_stalled_on_heartbeat: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preempt_stalled_pass: Option<bool>,
 }
 
 #[derive(Serialize, Default)]
@@ -673,6 +705,10 @@ impl EnvOverlay {
             },
             reactive: ReactiveOverlay {
                 honor_reconcile_requests: env_present("PANGEA_HONOR_RECONCILE_REQUESTS")
+                    .map(|v| v == "true" || v == "1"),
+                resume_stalled_on_heartbeat: env_present("PANGEA_RESUME_STALLED_ON_HEARTBEAT")
+                    .map(|v| v == "true" || v == "1"),
+                preempt_stalled_pass: env_present("PANGEA_PREEMPT_STALLED_PASS")
                     .map(|v| v == "true" || v == "1"),
             },
             gem: GemOverlay {
@@ -778,7 +814,11 @@ impl TieredConfig for OperatorConfig {
                 cache_dir: String::new(),
             },
             network: crate::network::NetworkConfig::default(),
-            reactive: ReactiveConfig::default(),
+            reactive: ReactiveConfig {
+                honor_reconcile_requests: false,
+                resume_stalled_on_heartbeat: false,
+                preempt_stalled_pass: false,
+            },
             leaf: LeafConfig::default(),
         }
     }
@@ -873,6 +913,7 @@ impl TieredConfig for OperatorConfig {
         c.gem = GemConfig {
             cache_dir: "/var/pangea/gems".to_string(),
         };
+        c.reactive = ReactiveConfig::default();
         c
     }
 }
@@ -1052,6 +1093,8 @@ mod tests {
             !p.reactive.honor_reconcile_requests,
             "the prescribed default preserves the pre-reactive behavior"
         );
+        assert!(p.reactive.resume_stalled_on_heartbeat);
+        assert!(p.reactive.preempt_stalled_pass);
         assert_eq!(
             p.leaf.admission,
             pangea_leaf::admission::AdmissionMode::Enforce
@@ -1089,6 +1132,8 @@ mod tests {
         assert!(!b.executor.forbid_tofu);
         assert!(!b.leader.election_enabled);
         assert_eq!(b.database.port, 0);
+        assert!(!b.reactive.resume_stalled_on_heartbeat);
+        assert!(!b.reactive.preempt_stalled_pass);
     }
 
     #[test]
@@ -1336,6 +1381,32 @@ mod tests {
             r.resolution.into_value().reactive.honor_reconcile_requests,
             "the chart's config.file.data reaches the operator through the file tier"
         );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn the_stall_switches_are_on_without_a_file_and_off_through_the_file_tier() {
+        let _g = ENV_GUARD.lock().unwrap();
+        let partial = scratch_file(
+            "reactive-partial",
+            "reactive:\n  honor_reconcile_requests: true\n",
+        );
+        let on = OperatorConfig::resolve_from(&partial, Dict::new())
+            .resolution
+            .into_value()
+            .reactive;
+        assert!(on.resume_stalled_on_heartbeat && on.preempt_stalled_pass);
+        std::fs::remove_file(partial).unwrap();
+        let path = scratch_file(
+            "reactive-off",
+            "reactive:\n  resume_stalled_on_heartbeat: false\n  preempt_stalled_pass: false\n",
+        );
+        let off = OperatorConfig::resolve_from(&path, Dict::new())
+            .resolution
+            .into_value()
+            .reactive;
+        assert!(!off.resume_stalled_on_heartbeat);
+        assert!(!off.preempt_stalled_pass);
         std::fs::remove_file(path).unwrap();
     }
 

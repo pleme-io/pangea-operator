@@ -120,7 +120,17 @@ impl TemplateController {
             .run(
                 move |template, ctx| {
                     let state = Arc::clone(&ctx);
-                    async move { reconcile_template(template, state).await }
+                    async move {
+                        let key = super::template::pass_registry::pass_key(
+                            &template.namespace().unwrap_or_default(),
+                            &template.name_any(),
+                        );
+                        let passes = Arc::clone(&state.passes);
+                        passes
+                            .run(key, reconcile_template(template, state))
+                            .await
+                            .unwrap_or_else(|| Ok(Action::requeue(SHORT_REQUEUE_INTERVAL)))
+                    }
                 },
                 error_policy,
                 state,

@@ -192,6 +192,12 @@ async fn main() -> Result<()> {
     pangea_operator::controller::generation_filter::set_honor_reconcile_requests(
         op_cfg.reactive.honor_reconcile_requests,
     );
+    pangea_operator::controller::template::pass_driver::set_resume_on_heartbeat(
+        op_cfg.reactive.resume_stalled_on_heartbeat,
+    );
+    pangea_operator::controller::template::pass_driver::set_preempt_stalled_pass(
+        op_cfg.reactive.preempt_stalled_pass,
+    );
     pangea_operator::controller::template::leaf::configure(&op_cfg.leaf);
 
     // ── EARLY DETECTION: refuse an incompatible (build, run) pair ──────────

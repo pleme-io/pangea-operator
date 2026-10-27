@@ -17,6 +17,7 @@ pub mod leaf;
 pub mod output_bindings;
 pub mod pass;
 pub mod pass_driver;
+pub mod pass_registry;
 pub mod provider_creds;
 pub mod reactive_policy;
 pub mod secret_files;
