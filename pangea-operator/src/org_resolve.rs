@@ -1000,6 +1000,7 @@ pub fn moves_for(records: &[RepoRecord]) -> Vec<RepoRecord> {
                 let mut m = RepoRecord::new();
                 m.insert("from".into(), format!("{ty}.{old}{sfx}"));
                 m.insert("to".into(), format!("{ty}.{slug}{sfx}"));
+                m.insert("slug".into(), slug.clone());
                 out.push(m);
             }
         }
@@ -1552,6 +1553,18 @@ mod live {
             cr_patch("o", &[rec("tend")])["spec"]["variables"]["moves"],
             serde_json::json!([])
         );
+    }
+
+    #[test]
+    fn every_move_carries_the_leaf_key_of_the_repo_it_moves_into() {
+        let moves = moves_for(&[record_for(
+            &renamed("ensaio-akeyless", &["ensaio"], true),
+            None,
+        )]);
+        assert!(!moves.is_empty());
+        for m in &moves {
+            assert_eq!(m.get("slug").map(String::as_str), Some("ensaio_akeyless"));
+        }
     }
 
     #[test]
