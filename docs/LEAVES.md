@@ -238,9 +238,8 @@ so a change always finds a slot.
 keep the pacer fed while a leaf waits on compile or Postgres. More slots only
 hold permits idle.
 
-**Rejected: a samba JetStream drain per credential.** It adds NATS to calls
-that stay inside one process. The in-process `LeakyBucket` is already samba's
-own bucket, shared by credential.
+**The queue.** With `leaf.queue: jetstream`, admitted work leaves through a
+JetStream consumer per credential (§17). The caps above stay the leader's.
 
 ## 10. Every language derives leaves
 
@@ -532,6 +531,7 @@ work(leaf)  = Σ_k  w_k · n_k(leaf)          over k ∈ {refresh, create, updat
 n_k(leaf)   = the action counts of the leaf's newest plan (status.lastCycle.actionDistribution);
               a leaf with no plan yet counts n_refresh = its resource count
 pending_c   = Σ work(leaf)  over queued and running leaves whose credential is c
+              (with JetStream: Σ Pangea-Cost over unacked messages of c)
 metric      = Σ_c min(pending_c, r_c · H)  +  Σ (work of leaves with no paced credential)
 desired     = clamp(⌈metric / T⌉, min, max)
 ```
@@ -548,26 +548,56 @@ weighted actions, about 3 minutes of one credential's budget.
 calls and a no-op refresh one. An unweighted count over-scales on drift and
 under-scales on creates.
 
-### The scale-out unit: workers claim leaves from a Postgres lease
+### The work queue: NATS JetStream
 
-Answer: leaf worker replicas claim work from a queue the leader writes. The
-leader keeps the lease (`leader.rs`), admission, the graph and `happa::admit`.
-It writes the admitted, ordered queue to `pangea_meta.leaf_queue`. A worker
-claims the head with `SELECT … FOR UPDATE SKIP LOCKED` into
-`pangea_meta.leaf_claims (leaf, holder, lease_until)`. It renews the lease
-with each heartbeat and runs the leaf in its own magma engine. The state lock
-stays as it is. When a lease lapses, the leaf goes back to the queue, so a
-dead worker loses one leaf's progress and nothing more. With `workers.replicas:
-0` the leader runs every leaf in process, as it does today.
+Answer: the queue is a JetStream stream. The leader keeps the lease
+(`leader.rs`), admission, the graph and `happa::admit`. It publishes one
+message per admitted leaf action to `pangea.leaf.<credential>.<action>`, where
+the action is `plan`, `apply`, `drift` or `import`. The `Nats-Msg-Id` is
+`<leaf>:<action>:<input digest>`, so a republish of the same work is dropped
+inside the stream's duplicate window (default 10 min). The `Pangea-Cost`
+header carries `work(leaf)`.
 
-The rate budget stays one budget. For each credential, the leader gives
-each worker a share of `r_c`. The share is in proportion to the leaves of
-`c` that the worker holds (`happa::shares`). The worker builds its
+Workers pull from one durable consumer per credential. `MaxAckPending` is
+the per-credential cap (§9). A worker sends an in-progress ack (`+WIP`) with
+every leaf heartbeat, at most every `AckWait / 2` (`AckWait` 60 s). When a
+worker crashes, the message is redelivered after `AckWait`. After
+`MaxDeliver` (default 5) the advisory marks the leaf `Failed`, and the catalog
+names it (§12). The state lock in `pangea_meta.state_locks` still guards each
+leaf's state row, so a late duplicate cannot write twice.
+
+The rate budget stays one budget. For each credential, the leader gives each
+worker a share of `r_c`. The share is in proportion to the messages of `c`
+that the worker holds (`happa::shares`). The worker builds its
 `shared_pacer` with that quota. The sum of the shares never exceeds `r_c`.
+
+The scaling metric is the consumer lag, weighted. `pending_c` in the formula
+above is the sum of `Pangea-Cost` over the messages of `c` that are not yet
+acked. The leader keeps this sum from its publishes and the acks. JetStream's
+own `num_pending` and `num_ack_pending` are its check.
+
+**Off.** `leaf.queue: in_process` (default until NATS runs on the node) is
+today's scheduler. The leader runs every leaf in process under the §9 caps,
+and no worker exists. `leaf.queue: jetstream` needs `leaf.nats.url`. When the
+url is absent, that one entry is refused and the queue stays in process.
+
+**Rejected: a Postgres work claim** (`SELECT … FOR UPDATE SKIP LOCKED` on a
+lease table). It rebuilds what JetStream already gives: redelivery, dedupe by
+message id, in-progress acks and a lag figure. It also polls the state
+database at the queue's rate. NATS JetStream is the fleet's queue for
+rate-limited consumers (samba, `theory/RATE-LIMITED-CONSUMERS.md`).
 
 **Rejected: consistent-hash shards of the leaf key.** A scale event moves
 leaves while they plan. Hashing ignores load, so one shard can get every
 changed leaf while the others sit idle.
+
+**Where NATS runs (2026-10-27).**
+
+| Node | NATS | What it needs |
+|---|---|---|
+| ryn | none: no pod, no process, no service | ryn's engenho has no `runtime.oci` capability (scheduler log 12:44), so the `pleme-nats` chart's `nats:2.10.20-alpine` image cannot run there. It needs a nix-built `nats-server` image, through `mkHardenedImageSet`, with a JetStream file store on a host path and auth on (the chart ships `auth.enabled: false`) |
+| plo | the house bus (lareira `components.nats`). `nodes/plo/ROLE.md` records a crash loop on `:4222`, with the fix `tailnet = false` | unreachable today; confirm it runs before you depend on it |
+| rio | not checked | — |
 
 ### Memory: derived, not guessed
 
@@ -606,7 +636,7 @@ wakes the HPA controller with a `MetricsProvider` that reads
 
 | Setting | Default | Off |
 |---|---|---|
-| `workers.autoscaling.enabled` | `true` | `false` = fixed `workers.replicas` (default 0: the leader runs every leaf, as today) |
+| `workers.autoscaling.enabled` | `true` | `false` = fixed `workers.replicas` (default 0, or `leaf.queue: in_process`: the leader runs every leaf, as today) |
 | `workers.autoscaling.min` / `max` | 0 / 4 | — |
 | `workers.autoscaling.target` (`T`) | 600 | — |
 | `workers.autoscaling.horizonSecs` (`H`) | 300 | — |
@@ -641,7 +671,7 @@ switch. Items in one row group are independent.
 | O8 | Metrics: `workspace` label, `pangea_workspace_leaves`, `pangea_leaf_plan_seconds`, the label cap | 300 unhealthy leaves emit 256 labelled and `unlabeled 44` | `observability.leaf_series: all \| off` |
 | O9 | Parent `LeafFailed` and `LeafStalled` events | one event per leaf per transition, none on a repeat | none |
 | O10 | `StateMove` executor (`pangea leaf migrate`) in one Postgres transaction, with archive and `leaf-migration` artifact | a forged bijection writes nothing; a good one writes N rows that read back to the same multiset; reverse merge restores the fat row byte-equal | run nothing; the fat row is untouched |
-| O11 | Worker mode: `pangea_meta.leaf_queue`, `leaf_claims` with lease, the leader writes the queue, workers claim with `SKIP LOCKED`, `happa::shares` splits each credential's rate | two workers and 20 leaves: each leaf runs once; a killed worker's leaf runs again on the other; the summed pacer quota stays at `r_c` | `workers.replicas: 0` |
+| O11 | Leaf queue on JetStream: one message per leaf action, `Nats-Msg-Id` = leaf, action and input digest, a durable consumer per credential with `MaxAckPending` = cap, `+WIP` per heartbeat, `MaxDeliver` advisory to `Failed`, `happa::shares` splits each credential's rate | against a test `nats-server`: a republished action is dropped; a killed worker's message reaches the other worker after `AckWait`; the summed pacer quota stays at `r_c` | `leaf.queue: in_process` |
 | O12 | `pangea_leaf_pending_work` gauge and `PangeaFleetStatus.status.leafWork`, by the §17 formula; weights calibrated from `pangea_provider_rpc_seconds_count` | a fixed queue gives the hand-computed value; a starved credential caps at `r_c · H` | `workers.autoscaling.enabled: false` |
 | O13 | `status.leaf.peakRssBytes` from a calibration pass, and `workers.memory: derived` | the derived request equals the formula on fixture leaves | `workers.memory: <quantity>` |
 
@@ -671,6 +701,8 @@ switch. Items in one row group are independent.
 | C1 | Regenerate CRDs (`status.leaf`, `maxConcurrentLeaves`, `WorkspaceCatalog.status.leaves`); clear the drift baseline | `crd-drift.yml` red before, green after | n/a |
 | C2 | `github-org-repos.yaml` keeps the fat CR declared and suspended (the leaves come from pangea-architectures); `PANGEA_FORBID_TOFU` defaults on; alert rules group by `workspace` | `helm unittest` and the `promtool` rule tests with a `workspace` label | `githubOrgReconciliation.leaves.enabled: false` |
 | C3 | Worker Deployment and its `autoscaling/v2` HPA (`External`, `pangea_leaf_pending_work`); requests and limits from `workers.memory` | `helm unittest`: `enabled: false` renders no HPA and fixed replicas | `workers.autoscaling.enabled: false` |
+
+| C4 | A JetStream stream and per-credential consumers for leaves, through `pleme-lib.jetstream`; `pleme-nats` gains a nix-built hardened `nats-server` image and `auth.enabled: true` | `helm unittest` renders the stream with `duplicate_window` 10m; the image scan reads 0 CVEs | `leaf.queue: in_process` |
 
 ### engenho
 
