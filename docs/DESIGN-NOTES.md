@@ -86,3 +86,21 @@ split the small lifecycle handoff out of the large compliance bundle
 first, so the bundle write can be `bundle_id`-gated without touching FSM
 semantics — a design change, not a write-skip.
 
+## Stalled-pass recovery
+
+A stalled pass is released, not waited on. kube-runtime never runs two
+reconciles of one template at once, so the watchdog's re-dispatch annotation
+(`template/pass_driver.rs`) waits behind whatever reconcile still holds it. Every
+template reconcile runs inside `template/pass_registry.rs`: the re-dispatch first
+aborts the in-process pass (dropping its budget permit, heartbeat task and state
+lock) unless its own reconcile signed within the heartbeat deadline (`noProgress`
+preempts regardless), a pass whose beat lands again withdraws a `heartbeatLost`
+stall, and the first reconcile of a new incarnation adopts the pass its
+predecessor died in (Pending, own incarnation) instead of leaving it for the
+`orphanedPhase` verdict. All three are on by default:
+`reactive.preempt_stalled_pass` (`PANGEA_PREEMPT_STALLED_PASS`),
+`reactive.resume_stalled_on_heartbeat` (`PANGEA_RESUME_STALLED_ON_HEARTBEAT`) and
+`reactive.adopt_orphaned_pass` (`PANGEA_ADOPT_ORPHANED_PASS`).
+Receipt: ryn 2026-10-27, `pleme-io-github-repos` read Stalled heartbeatLost for
+13 minutes while its 11:55 drift plan was still beating; three nudges queued
+behind it until the pod restarted.

@@ -29,18 +29,7 @@ deployment flips it, and the refusal names the knob. Receipt: the org resolver's
 (`github_credential.rs`, `--pat-enabled false`) beside the GitHub App default
 (`--app-token-file`, minted per run by `github-installation-token-file`); the `http` compiler backend is the same shape.
 
-**A stalled pass is released, not waited on.** kube-runtime never runs two
-reconciles of one template at once, so the watchdog's re-dispatch annotation
-(`template/pass_driver.rs`) waits behind whatever reconcile still holds it. Every
-template reconcile runs inside `template/pass_registry.rs`: the re-dispatch first
-aborts the in-process pass (dropping its budget permit, heartbeat task and state
-lock) unless its own beat landed within the heartbeat deadline, and a pass whose
-beat lands again withdraws a `heartbeatLost` stall. Both are on by default:
-`reactive.preempt_stalled_pass` (`PANGEA_PREEMPT_STALLED_PASS`) and
-`reactive.resume_stalled_on_heartbeat` (`PANGEA_RESUME_STALLED_ON_HEARTBEAT`).
-Receipt: ryn 2026-10-27, `pleme-io-github-repos` read Stalled heartbeatLost for
-13 minutes while its 11:55 drift plan was still beating; three nudges queued
-behind it until the pod restarted.
+**A stalled pass is released, not waited on** (preempt, resume, adopt; three `reactive.*` knobs, all on): [`docs/DESIGN-NOTES.md`](./docs/DESIGN-NOTES.md#stalled-pass-recovery).
 
 Pangea Kubernetes operator, CLI, and web UI (Rust). Workspace members:
 

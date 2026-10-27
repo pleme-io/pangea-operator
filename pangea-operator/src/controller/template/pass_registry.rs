@@ -105,8 +105,8 @@ pub fn local_pass_is_stuck(
     heartbeat: Duration,
 ) -> bool {
     match stall {
-        StallState::HeartbeatLost => now - last_sign > heartbeat,
-        other => other.redispatches(),
+        StallState::NoProgress => true,
+        other => other.redispatches() && now - last_sign > heartbeat,
     }
 }
 
@@ -179,6 +179,24 @@ mod tests {
         assert!(local_pass_is_stuck(StallState::NoProgress, t0, t0, five));
         assert!(!local_pass_is_stuck(StallState::QueuedBehind, t0, t0, five));
         assert!(!local_pass_is_stuck(StallState::Unnamed, t0, t0, five));
+    }
+
+    #[test]
+    fn receipt_2026_10_27_an_orphan_verdict_never_preempts_the_new_incarnations_live_reconcile() {
+        let boot = Utc::now();
+        let five = Duration::minutes(5);
+        for stall in [StallState::OrphanedPhase, StallState::PendingNotStarted] {
+            assert!(
+                !local_pass_is_stuck(stall, boot, boot + Duration::seconds(82), five),
+                "{stall}: a compile 82s into the new incarnation is live"
+            );
+            assert!(local_pass_is_stuck(
+                stall,
+                boot,
+                boot + Duration::minutes(6),
+                five
+            ));
+        }
     }
 
     #[tokio::test]

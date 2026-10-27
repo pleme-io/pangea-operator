@@ -281,6 +281,73 @@ pub async fn beat_once(
     true
 }
 
+static ADOPT_ORPHANED_PASS: AtomicBool = AtomicBool::new(true);
+
+pub fn set_adopt_orphaned_pass(on: bool) {
+    ADOPT_ORPHANED_PASS.store(on, Ordering::Relaxed);
+}
+
+#[must_use]
+pub fn adopts_orphaned_pass() -> bool {
+    ADOPT_ORPHANED_PASS.load(Ordering::Relaxed)
+}
+
+#[must_use]
+pub fn orphaned_by_restart(stored: Option<&PassStatus>, own: &str) -> bool {
+    stored.is_some_and(|p| {
+        let foreign = p.incarnation.as_deref() != Some(own);
+        match p.kind {
+            PassKind::Planning | PassKind::Applying => foreign,
+            PassKind::Stalled => p.stall == Some(StallState::OrphanedPhase),
+            _ => false,
+        }
+    })
+}
+
+pub async fn adopt_orphaned_pass(
+    api: &Api<InfrastructureTemplate>,
+    template: &InfrastructureTemplate,
+    own: &str,
+    now: chrono::DateTime<Utc>,
+    adopt: bool,
+) -> bool {
+    let stored = template.status.as_ref().and_then(|s| s.pass.as_ref());
+    if !adopt || !orphaned_by_restart(stored, own) {
+        return false;
+    }
+    let Some(stored) = stored else {
+        return false;
+    };
+    let name = template.name_any();
+    let mut pass = PassPhase::Pending {
+        generation: stored.generation,
+        since: now,
+    }
+    .to_status();
+    pass.incarnation = Some(own.to_string());
+    let patch = serde_json::json!({
+        "metadata": { "resourceVersion": template.resource_version() },
+        "status": { "pass": pass }
+    });
+    match api
+        .patch_status(
+            &name,
+            &PatchParams::apply("pangea-operator"),
+            &Patch::Merge(&patch),
+        )
+        .await
+    {
+        Ok(_) => {
+            info!(%name, from = stored.incarnation.as_deref().unwrap_or("unrecorded"), "adopted the pass a previous incarnation left; this reconcile restarts it");
+            true
+        }
+        Err(e) => {
+            debug!(error = %e, %name, "orphaned pass not adopted; the watchdog still names it");
+            false
+        }
+    }
+}
+
 pub async fn redispatch(
     api: &Api<InfrastructureTemplate>,
     passes: &PassRegistry,
@@ -866,8 +933,70 @@ mod tests {
         pass.abort();
     }
 
+    fn planning_wire(incarnation: &str) -> serde_json::Value {
+        serde_json::json!({
+            "kind": "planning",
+            "generation": 29,
+            "since": "2026-10-27T12:58:09.741596Z",
+            "heartbeatAt": "2026-10-27T12:59:39.741596Z",
+            "incarnation": incarnation,
+        })
+    }
+
+    async fn adopt_against(
+        stored: serde_json::Value,
+        adopt: bool,
+    ) -> (bool, Vec<serde_json::Value>) {
+        let server = fake_api::server(stored.clone()).await;
+        let api = fake_api::api(&server);
+        let template: InfrastructureTemplate =
+            serde_json::from_value(fake_api::body(stored)).expect("the fake template parses");
+        let adopted =
+            adopt_orphaned_pass(&api, &template, "operator-1793106007", Utc::now(), adopt).await;
+        (adopted, fake_api::patches(&server, "/status").await)
+    }
+
+    #[tokio::test]
+    async fn receipt_2026_10_27_the_new_incarnation_adopts_the_pass_its_predecessor_died_in() {
+        let (adopted, writes) = adopt_against(planning_wire("operator-1793103538"), true).await;
+        assert!(adopted);
+        assert_eq!(writes.len(), 1, "{writes:?}");
+        let pass = &writes[0]["status"]["pass"];
+        assert_eq!(writes[0]["metadata"]["resourceVersion"], "7");
+        assert_eq!(pass["kind"], "pending");
+        assert_eq!(pass["generation"], 29);
+        assert!(pass["stall"].is_null());
+
+        let mut orphan = stalled_wire("orphanedPhase");
+        orphan["incarnation"] = "operator-1793106007".into();
+        let (adopted, writes) = adopt_against(orphan, true).await;
+        assert!(adopted);
+        assert_eq!(writes[0]["status"]["pass"]["kind"], "pending");
+    }
+
+    #[tokio::test]
+    async fn a_pass_of_this_incarnation_or_a_settled_one_is_not_adopted() {
+        for stored in [
+            planning_wire("operator-1793106007"),
+            stalled_wire("heartbeatLost"),
+            serde_json::json!({ "kind": "settled", "generation": 29, "incarnation": "old" }),
+        ] {
+            let (adopted, writes) = adopt_against(stored.clone(), true).await;
+            assert!(!adopted, "{stored}");
+            assert!(writes.is_empty(), "{stored}");
+        }
+    }
+
+    #[tokio::test]
+    async fn adopt_off_leaves_the_orphan_to_the_watchdog() {
+        let (adopted, writes) = adopt_against(planning_wire("operator-1793103538"), false).await;
+        assert!(!adopted);
+        assert!(writes.is_empty());
+    }
+
     #[test]
     fn the_stall_switches_default_on() {
+        assert!(adopts_orphaned_pass());
         assert!(resumes_on_heartbeat());
         assert!(preempts_stalled_pass());
         assert!(withdraws_heartbeat_lost(Some(

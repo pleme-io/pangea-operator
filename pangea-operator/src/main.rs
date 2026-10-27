@@ -198,6 +198,9 @@ async fn main() -> Result<()> {
     pangea_operator::controller::template::pass_driver::set_preempt_stalled_pass(
         op_cfg.reactive.preempt_stalled_pass,
     );
+    pangea_operator::controller::template::pass_driver::set_adopt_orphaned_pass(
+        op_cfg.reactive.adopt_orphaned_pass,
+    );
     pangea_operator::controller::template::leaf::configure(&op_cfg.leaf);
 
     // ── EARLY DETECTION: refuse an incompatible (build, run) pair ──────────

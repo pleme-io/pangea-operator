@@ -329,6 +329,13 @@ pub struct ReactiveConfig {
     /// waits behind the in-flight reconcile.
     #[serde(default = "default_on")]
     pub preempt_stalled_pass: bool,
+    /// The first reconcile of a template in a new incarnation adopts a pass a
+    /// previous incarnation left Planning, Applying or orphaned, recording it
+    /// Pending under this incarnation as the reconcile restarts it
+    /// (`PANGEA_ADOPT_ORPHANED_PASS`; default true). Off, the watchdog names it
+    /// `orphanedPhase` after the orphan grace and re-dispatches.
+    #[serde(default = "default_on")]
+    pub adopt_orphaned_pass: bool,
 }
 
 fn default_on() -> bool {
@@ -341,6 +348,7 @@ impl Default for ReactiveConfig {
             honor_reconcile_requests: false,
             resume_stalled_on_heartbeat: true,
             preempt_stalled_pass: true,
+            adopt_orphaned_pass: true,
         }
     }
 }
@@ -618,6 +626,8 @@ struct ReactiveOverlay {
     resume_stalled_on_heartbeat: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     preempt_stalled_pass: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    adopt_orphaned_pass: Option<bool>,
 }
 
 #[derive(Serialize, Default)]
@@ -709,6 +719,8 @@ impl EnvOverlay {
                 resume_stalled_on_heartbeat: env_present("PANGEA_RESUME_STALLED_ON_HEARTBEAT")
                     .map(|v| v == "true" || v == "1"),
                 preempt_stalled_pass: env_present("PANGEA_PREEMPT_STALLED_PASS")
+                    .map(|v| v == "true" || v == "1"),
+                adopt_orphaned_pass: env_present("PANGEA_ADOPT_ORPHANED_PASS")
                     .map(|v| v == "true" || v == "1"),
             },
             gem: GemOverlay {
@@ -818,6 +830,7 @@ impl TieredConfig for OperatorConfig {
                 honor_reconcile_requests: false,
                 resume_stalled_on_heartbeat: false,
                 preempt_stalled_pass: false,
+                adopt_orphaned_pass: false,
             },
             leaf: LeafConfig::default(),
         }
@@ -1095,6 +1108,7 @@ mod tests {
         );
         assert!(p.reactive.resume_stalled_on_heartbeat);
         assert!(p.reactive.preempt_stalled_pass);
+        assert!(p.reactive.adopt_orphaned_pass);
         assert_eq!(
             p.leaf.admission,
             pangea_leaf::admission::AdmissionMode::Enforce
@@ -1134,6 +1148,7 @@ mod tests {
         assert_eq!(b.database.port, 0);
         assert!(!b.reactive.resume_stalled_on_heartbeat);
         assert!(!b.reactive.preempt_stalled_pass);
+        assert!(!b.reactive.adopt_orphaned_pass);
     }
 
     #[test]
@@ -1395,11 +1410,13 @@ mod tests {
             .resolution
             .into_value()
             .reactive;
-        assert!(on.resume_stalled_on_heartbeat && on.preempt_stalled_pass);
+        assert!(
+            on.resume_stalled_on_heartbeat && on.preempt_stalled_pass && on.adopt_orphaned_pass
+        );
         std::fs::remove_file(partial).unwrap();
         let path = scratch_file(
             "reactive-off",
-            "reactive:\n  resume_stalled_on_heartbeat: false\n  preempt_stalled_pass: false\n",
+            "reactive:\n  resume_stalled_on_heartbeat: false\n  preempt_stalled_pass: false\n  adopt_orphaned_pass: false\n",
         );
         let off = OperatorConfig::resolve_from(&path, Dict::new())
             .resolution
@@ -1407,6 +1424,7 @@ mod tests {
             .reactive;
         assert!(!off.resume_stalled_on_heartbeat);
         assert!(!off.preempt_stalled_pass);
+        assert!(!off.adopt_orphaned_pass);
         std::fs::remove_file(path).unwrap();
     }
 

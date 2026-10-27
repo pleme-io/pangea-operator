@@ -126,6 +126,18 @@ impl TemplateController {
                             &template.name_any(),
                         );
                         let passes = Arc::clone(&state.passes);
+                        let api: Api<InfrastructureTemplate> = Api::namespaced(
+                            state.client.clone(),
+                            &template.namespace().unwrap_or_default(),
+                        );
+                        super::template::pass_driver::adopt_orphaned_pass(
+                            &api,
+                            &template,
+                            super::template::pass::incarnation(),
+                            chrono::Utc::now(),
+                            super::template::pass_driver::adopts_orphaned_pass(),
+                        )
+                        .await;
                         passes
                             .run(key, reconcile_template(template, state))
                             .await
