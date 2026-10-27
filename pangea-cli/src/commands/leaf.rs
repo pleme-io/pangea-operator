@@ -10,6 +10,68 @@ use serde_json::{json, Value};
 #[derive(Subcommand)]
 pub enum LeafCommands {
     Plan(PlanArgs),
+    Migrate(MigrateArgs),
+}
+
+#[derive(Args)]
+pub struct MigrateArgs {
+    #[arg(long)]
+    fat_template: String,
+    #[arg(long)]
+    state: PathBuf,
+    #[arg(long, required_unless_present = "reverse")]
+    moves: Option<PathBuf>,
+    #[arg(long)]
+    emit_dir: PathBuf,
+    #[arg(long, requires = "receipt")]
+    reverse: bool,
+    #[arg(long)]
+    receipt: Option<PathBuf>,
+}
+
+fn migrate(a: &MigrateArgs) -> Result<()> {
+    let fat = std::fs::read(&a.state).with_context(|| format!("reading {}", a.state.display()))?;
+    std::fs::create_dir_all(&a.emit_dir)?;
+    if a.reverse {
+        let receipt_path = a.receipt.as_ref().context("--reverse needs --receipt")?;
+        let receipt: pangea_leaf::migrate::Receipt =
+            serde_json::from_slice(&std::fs::read(receipt_path)?)?;
+        let mut leaves = Vec::new();
+        for l in &receipt.leaves {
+            let p = a.emit_dir.join(format!("{}.tfstate.json", l.template));
+            leaves.push(pangea_leaf::migrate::LeafState {
+                template: l.template.clone(),
+                bytes: std::fs::read(&p).with_context(|| format!("reading {}", p.display()))?,
+            });
+        }
+        let merged = pangea_leaf::migrate::merge(&fat, &receipt, &leaves)?;
+        let out = a
+            .emit_dir
+            .join(format!("{}.merged.tfstate.json", a.fat_template));
+        std::fs::write(&out, merged)?;
+        println!("{}", out.display());
+        return Ok(());
+    }
+    let moves_path = a.moves.as_ref().context("--moves is required")?;
+    let moves: Vec<pangea_leaf::plan::StateMove> =
+        serde_json::from_slice(&std::fs::read(moves_path)?)?;
+    let split = match pangea_leaf::migrate::split(&a.fat_template, &fat, &moves) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("refused: {e}");
+            std::process::exit(2);
+        }
+    };
+    for l in &split.leaves {
+        std::fs::write(
+            a.emit_dir.join(format!("{}.tfstate.json", l.template)),
+            &l.bytes,
+        )?;
+    }
+    let receipt = serde_json::to_string_pretty(&split.receipt)?;
+    std::fs::write(a.emit_dir.join("receipt.json"), &receipt)?;
+    println!("{receipt}");
+    Ok(())
 }
 
 #[derive(Args)]
@@ -95,7 +157,10 @@ fn emit(dir: &Path, plan: &MigrationPlan) -> Result<()> {
 }
 
 pub fn execute(command: LeafCommands) -> Result<()> {
-    let LeafCommands::Plan(a) = command;
+    let a = match command {
+        LeafCommands::Plan(a) => a,
+        LeafCommands::Migrate(m) => return migrate(&m),
+    };
     let template = read_value(&a.template)?;
     let addresses = match (&a.state, &a.addresses) {
         (Some(p), None) => addresses_from_state(&read_value(p)?)?,
