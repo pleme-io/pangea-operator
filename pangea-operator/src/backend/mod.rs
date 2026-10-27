@@ -5,6 +5,7 @@
 
 mod artifact_store;
 mod config;
+pub mod leaf_migration;
 mod lock;
 mod postgres;
 mod retry;
