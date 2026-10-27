@@ -2,6 +2,7 @@ pub mod address;
 pub mod admission;
 pub mod classify;
 pub mod dag;
+pub mod migrate;
 pub mod names;
 pub mod partition;
 pub mod plan;

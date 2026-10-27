@@ -74,6 +74,35 @@ fn index_text(key: &Value) -> Option<String> {
     }
 }
 
+pub fn resource_base(r: &Value) -> Result<String, SourceError> {
+    let ty = r
+        .get("type")
+        .and_then(Value::as_str)
+        .ok_or_else(|| SourceError::State("resource without `type`".into()))?;
+    let name = r
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| SourceError::State("resource without `name`".into()))?;
+    let module = r.get("module").and_then(Value::as_str);
+    Ok(match module {
+        Some(m) if !m.is_empty() => format!("{m}.{ty}.{name}"),
+        _ => format!("{ty}.{name}"),
+    })
+}
+
+#[must_use]
+pub fn instance_address(base: &str, instance: &Value) -> String {
+    match instance.get("index_key").and_then(index_text) {
+        Some(ix) => format!("{base}{ix}"),
+        None => base.to_string(),
+    }
+}
+
+#[must_use]
+pub fn is_managed(r: &Value) -> bool {
+    r.get("mode").and_then(Value::as_str) == Some("managed")
+}
+
 pub fn addresses_from_state(state: &Value) -> Result<Vec<String>, SourceError> {
     let resources = state
         .get("resources")
@@ -81,32 +110,15 @@ pub fn addresses_from_state(state: &Value) -> Result<Vec<String>, SourceError> {
         .ok_or_else(|| SourceError::State("no `resources` array".into()))?;
     let mut out = Vec::new();
     for r in resources {
-        if r.get("mode").and_then(Value::as_str) != Some("managed") {
+        if !is_managed(r) {
             continue;
         }
-        let ty = r
-            .get("type")
-            .and_then(Value::as_str)
-            .ok_or_else(|| SourceError::State("resource without `type`".into()))?;
-        let name = r
-            .get("name")
-            .and_then(Value::as_str)
-            .ok_or_else(|| SourceError::State("resource without `name`".into()))?;
-        let module = r.get("module").and_then(Value::as_str);
-        let base = match module {
-            Some(m) if !m.is_empty() => format!("{m}.{ty}.{name}"),
-            _ => format!("{ty}.{name}"),
-        };
+        let base = resource_base(r)?;
         let instances = r
             .get("instances")
             .and_then(Value::as_array)
             .ok_or_else(|| SourceError::State(format!("`{base}` has no `instances`")))?;
-        for inst in instances {
-            match inst.get("index_key").and_then(index_text) {
-                Some(ix) => out.push(format!("{base}{ix}")),
-                None => out.push(base.clone()),
-            }
-        }
+        out.extend(instances.iter().map(|inst| instance_address(&base, inst)));
     }
     Ok(out)
 }
