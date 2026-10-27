@@ -114,11 +114,14 @@ Every protection needs a cross-unit edge to its repository.
 
 ## 5. The leaf is a child CR; its work runs in process
 
-**Answer.** Each leaf is its own `InfrastructureTemplate`. The parent
-template owns it (`ownerReferences`), labels it
-`pangea.pleme.io/workspace: <parent>`, and aggregates it (§12). Every leaf's
-compile, plan and apply runs as an async task in the operator, in the embedded
-magma engine. Nothing spawns tofu.
+**Answer.** Each leaf is its own `InfrastructureTemplate`. pangea-architectures
+declares the leaf set and renders it (§10). The operator never invents a leaf.
+The parent is the leaf set's `WorkspaceCatalog`. Each leaf carries the label
+`pangea.pleme.io/workspace: <catalog>` and an `ownerReference` to the catalog.
+The catalog holds the shared variables and `maxConcurrentLeaves`, and it
+aggregates the leaves (§12). Every leaf's compile, plan and apply runs as an
+async task in the operator, in the embedded magma engine. Nothing spawns tofu.
+The operator reconciles, schedules, queues and reports.
 
 **Why.** The per-template machinery already gives each leaf its own phase,
 pass, heartbeat, stall verdict, preempt, state row, lock, events, admission
@@ -174,14 +177,19 @@ isolate on it.
 
 ## 8. Change-scoped planning and drift
 
-**Answer, change.** The parent writes every leaf with server-side apply. The
-leaf spec carries only its own inputs. When a leaf's inputs do not change, the
-apply is a no-op: no generation bump, no reconcile, no compile, no API call.
-When they change, the generation moves and the existing generation filter
-starts that leaf alone. The digest is `happa::digest` over the canonical
-inputs, the source revision and the architecture's content hash. The parent
-stamps it as `pangea.pleme.io/leaf-digest` for audit only; the generation is
-the trigger.
+**Answer, change.** pangea-architectures renders every leaf manifest, and the
+existing delivery path applies them server-side. On ryn that path is the
+sanctioned `kubectl apply --server-side`; elsewhere it is Flux. A leaf spec
+carries only its own inputs. When a leaf's inputs do not change, its manifest
+does not change. The apply is then a no-op: no generation bump, no reconcile,
+no compile, no API call. When the inputs change, the generation moves and the
+existing generation filter starts that leaf alone. The digest is
+`happa::digest` over the canonical inputs, the source revision and the
+architecture's content hash. The render stamps it as
+`pangea.pleme.io/leaf-digest` for audit only. The generation is the trigger.
+The org resolver's live facts (`repo_exists_on_github`,
+`repo_live_visibility`) go to each leaf under the resolver's own field
+manager. A fact that did not change is a no-op patch.
 
 **Answer, drift.** Each leaf runs its own drift plan once per
 `refreshInterval`. `happa::drift_due` places leaf `k` at offset
@@ -239,10 +247,11 @@ own bucket, shared by credential.
 `InfrastructureTemplate.spec.dialect` today is `auto | ruby | lava | json`
 (`crd/infrastructure_template.rs`). `ArchitectureGem.sourceKind` adds `Lisp`
 (terreno) and `Wasm`, both reserved. blue has no dialect yet. Two derivations
-cover every surface:
+cover every surface. Both run in pangea-architectures at render time. Neither
+runs in the operator:
 
-- **render then slice (universal).** The parent compiles once with the
-  language's own front end. `happa::split` partitions the rendered Terraform
+- **render then slice (universal).** The render compiles the source once with
+  the language's own front end. `happa::split` partitions the rendered Terraform
   JSON by the §9 key with reference closure. `happa::slice` cuts each leaf's
   JSON. The leaf runs `dialect: json` with that body. Cost: one full compile
   per input change (61 to 78 s for this org today).
@@ -260,12 +269,33 @@ cover every surface:
 | blue | none today (`Dialect::Blue` is new) | a blue infrastructure declaration is entries; each entry is a leaf before lowering, so the split is `happa::split` over entries, in blue | native: the split is blue |
 | raw Terraform JSON (`dialect: json`) | passthrough | render then slice (the body is already rendered); references come from `${…}` | n/a |
 
+**Where leaves are declared.** In pangea-architectures, next to the data
+they come from: `workspaces/<ws>/leaves.b`. This is a blue file of `happa`
+entries, one per leaf set:
+
+```
+leaves("pleme-io-github-repos",
+  from: data("org.yaml", :repos), key: :slug,
+  architecture: lava("github-org-repos"), shared: [:owner, :labels],
+  namespace: "pleme-io-github", credentials: github("github-api-token"),
+  policy: {destroyProtection: true, importPolicy: :autoOnConflict})
+```
+
+`nix run .#render-leaves` lowers each entry to `workspaces/<ws>/leaves/`. That
+tree is generated: one `InfrastructureTemplate` per leaf, plus the
+`WorkspaceCatalog`. `nix flake check` gates the render. It checks freshness
+(the `generated-tree` rule), a total key, an acyclic graph and the keyed-render
+equality. The `fleet.yaml` flows and `constellation.json` layers stay as they
+are. A layer is a whole workspace boundary, and a leaf set lives inside one.
+New territory takes one declaration. A new workspace's leaves are one
+`leaves(...)` entry. A new leaf type is one new architecture and one entry.
+When a repo is added to org.yaml, its leaf appears on the next render.
+
 **Where the default lives.** One place: the `leaf.admission` entry in the
-operator's embedded `happa` declaration, read through `LeafConfig`. Its
-default changes from `enforce` (refuse a new fat template) to **`generate`**:
-a never-reconciled fat template becomes a parent and its leaves are derived
-for it. `enforce` and `off` stay as values. A split that fails a check (a
-cycle, a broken bijection, a key that does not parse) is refused by name.
+operator's embedded `happa` declaration, read through `LeafConfig`. The
+default stays `enforce`. A never-reconciled fat template is refused, and the
+refusal names `workspaces/<ws>/leaves.b` as the fix. `off` stays as a value.
+The operator never derives leaves at runtime.
 
 **Opt out.** Per template: `pangea.pleme.io/skip-leaf: provider-singleton |
 atomic-bootstrap | external-contract | shared-lifecycle`. For the operator:
@@ -273,8 +303,14 @@ atomic-bootstrap | external-contract | shared-lifecycle`. For the operator:
 controller. Both modes stay in the test suite (§18 item O2).
 
 **Rejected: hand-written leaf CRs** (what `pangea leaf plan --emit-dir`
-produces for a human to apply). 1,023 files to keep in step with org.yaml is
-hand-written repetition; the parent generates them.
+produces for a human to apply). Keeping 1,023 files in step with org.yaml by
+hand is repetition. The render generates them.
+
+**Rejected: the operator derives leaves from a parent at runtime.** The leaf
+set would then exist only in a running process. A reviewer could not read it,
+diff it or gate it, and a new leaf would arrive without a commit. A
+declaration in pangea-architectures is reviewed, rendered and gated before it
+reaches a cluster.
 
 ## 11. Decisions are blue: the `happa` bidama
 
@@ -304,7 +340,7 @@ addresses, the digests and the leaf states in as values.
 | `happa::caps(declaration)` | the knobs of §9, each an entry | `config.rs` (`LeafConfig`, budget) |
 | `happa::admit(candidates, caps, in_flight)` | who runs next, in what class | new |
 | `happa::drift_due(leaves, now, interval)` | which leaves are due, spread by hash | new |
-| `happa::admission(classification, skip, mode, reconciled)` | admit, generate or refuse | `admission.rs` |
+| `happa::admission(classification, skip, mode, reconciled)` | admit or refuse | `admission.rs` |
 | `happa::ratchet(prev, measured)` | the `status.leaf` floor | `ratchet.rs` |
 | `happa::health(leaf, now)` | one leaf's verdict and alert verdict (§13) | new |
 | `happa::judge(leaves)` | the parent's partial-state verdict (§12) | new |
@@ -340,7 +376,7 @@ with a retry hint) writes `status.rateLimitedUntil`, releases its permit and
 requeues at that time; the shared pacer drops to its emergency rate for the
 credential, so its siblings slow down but continue.
 
-**The parent's status.** `status.leaves`:
+**The parent's status.** `WorkspaceCatalog.status.leaves`:
 
 ```yaml
 leaves:
@@ -354,7 +390,7 @@ leaves:
   truncated: 0            # names past 50 per list are counted, not listed
 ```
 
-The parent's `phase` is `Ready`, `Progressing` or `Partial`. It is never one
+The catalog's verdict is `Converged`, `Progressing` or `Partial`. It is never one
 `Failed` for the whole org. A whole-template failure is a bad state, not a
 mode (§9.1 row 6). `happa::judge` computes the verdict.
 
@@ -434,14 +470,14 @@ the org (about 24 min, once).
 reads and 2,053 chances of an ambiguous import (the 2026-10-26 `estudio`
 import reported success and left no instance).
 
-**Reverse.** Setting the parent back to monolithic runs the same executor the
+**Reverse.** Declaring the workspace monolithic again (`skip-leaf`) runs the same executor the
 other way: the leaf rows merge into one, with the same bijection. Monolithic
 mode is one field away, never a rebuild.
 
 ## 16. Rollout order
 
 1. `pleme-io-github-repos` (ryn). Keyed lava derivation. The dry run is done.
-2. Every new template: `leaf.admission: generate` makes it leaves from birth.
+2. Every new template: declared as a leaf set in `workspaces/<ws>/leaves.b`. Admission refuses a fat one.
 3. `roteador-buzios`, `repetidor-buzios` (raw JSON, one router each). A router
    commits UCI as one transaction, so each is a `skip-leaf: shared-lifecycle`
    candidate; the classification and the cycle p95 decide, and the annotation
@@ -461,7 +497,7 @@ mode is one field away, never a rebuild.
 | `docs/TERRAGRUNT-PARITY.md` Gap 3 and P3 | point here; the run-all DAG is `happa::graph` |
 | `TemplateDag::apply_order`, `destroy_order`: no live caller | `happa::admit` and the reverse-destroy order use them |
 | `pangea-leaf` decisions in Rust | `happa` (§11), Rust kept as oracle |
-| §9 step 6 "suspend the fat template" | the fat template becomes the parent (generator), not suspended |
+| §9 step 6 "suspend the fat template" | the fat template stays declared and suspended; its catalog becomes the parent |
 | `reconcile.workers` 4 below `budget_global` 16 | raise the default to 16 |
 | tofu rows in §14 | `PANGEA_FORBID_TOFU=true` by default in the chart |
 | one CR holding 597 KB of variables | each leaf holds its own slice |
@@ -596,9 +632,9 @@ switch. Items in one row group are independent.
 |---|---|---|---|
 | H1 | `blue/happa/happa.b` with the §11 words | `blue test`; differential: each word equals its `pangea-leaf` source on the 2026-10-23 address set (1,023 leaves) | `leaf.engine: rust` |
 | O1 | Embed `happa` (`include_str!`, `Loader`, `posture(&[])`) in `src/leaf_engine.rs` | one refused host call per capability (kensa `event_tests.rs` form) | `leaf.engine: rust` |
-| O2 | Parent generator: `spec.leaves { derive: render \| inputs, each, key, enabled }`; SSA of leaf CRs with owner, label, digest | a mock executor sees 0 calls when no input moved, 1 leaf planned when one moved; both modes (`leaves` and monolithic) in the suite | `spec.leaves.enabled: false` or `skip-leaf` |
-| O3 | Parent rollup `status.leaves` and phase `Partial` | one leaf `Failed`: parent `Partial` names it, its siblings reach `Ready`, its dependent is `blocked` | none (§9.1 row 6) |
-| O4 | `leaf.admission: generate` | a new fat template yields leaves; a failed split is refused by name | `leaf.admission: enforce \| off` |
+| O2 | Leaf-set contract: a leaf names its catalog by label and owner; a leaf whose catalog is missing is refused alone; no runtime generation path exists | a leaf with no catalog is `Failed` by name and its siblings reach `Ready`; both modes (a leaf set and a `skip-leaf` monolith) in the suite | `skip-leaf` per template |
+| O3 | Catalog rollup `WorkspaceCatalog.status.leaves` and its verdict `Partial`, aggregated over the declared leaves | one leaf `Failed`: the catalog reads `Partial` and names it, its siblings reach `Ready`, its dependent is `blocked` | none (§9.1 row 6) |
+| O4 | The admission refusal names `workspaces/<ws>/leaves.b` | the refusal message carries the path | `leaf.admission: off` |
 | O5 | Priority and caps in the dispatch gate: `happa::admit`, `leaf.per_credential_cap`, drift reserve; workers default 16. **After** the stalled-pass work in `pass_driver` and the budget code lands | 20 drift-due leaves and 1 changed leaf with 4 slots: the changed leaf is admitted first | `leaf.priority: off`, caps at monolithic values |
 | O6 | Drift lane: `happa::drift_due`, the `:drift` shared pacer, `leaf.drift_share` | over a fake hour, 1,023 leaves are each due once, no minute holds more than ⌈1,023/60⌉ + 1 | `leaf.drift_share: 0` |
 | O7 | Rate-limited leaf: `status.rateLimitedUntil`, permit release, requeue | a mocked 403 with `retry-after`: the leaf waits, its siblings apply | none |
@@ -626,13 +662,14 @@ switch. Items in one row group are independent.
 | # | Item | Test | Off |
 |---|---|---|---|
 | R1 | `leaf_key:` for architectures that iterate a collection; `GitHubOrgWorkspace`'s `shard:` reads it | rspec: the union of keyed renders equals the whole render | no key: render then slice |
+| R2 | `workspaces/<ws>/leaves.b` with `happa` entries, `nix run .#render-leaves` to `workspaces/<ws>/leaves/`, and the `nix flake check` gate; `pleme-io-opensource` first (org.yaml, `repos`, `slug`) | the gate is red on a stale tree and on a duplicate key, and green after a render; adding one org.yaml repo adds one leaf file | no `leaves.b`: the workspace stays monolithic |
 
 ### helmworks
 
 | # | Item | Test | Off |
 |---|---|---|---|
-| C1 | Regenerate CRDs (`status.leaf`, `maxConcurrentLeaves`, `spec.leaves`, `status.leaves`); clear the drift baseline | `crd-drift.yml` red before, green after | n/a |
-| C2 | `github-org-repos.yaml` gains `leaves:`; `PANGEA_FORBID_TOFU` defaults on; alert rules group by `workspace` | `helm unittest` and the `promtool` rule tests with a `workspace` label | `githubOrgReconciliation.leaves.enabled: false` |
+| C1 | Regenerate CRDs (`status.leaf`, `maxConcurrentLeaves`, `WorkspaceCatalog.status.leaves`); clear the drift baseline | `crd-drift.yml` red before, green after | n/a |
+| C2 | `github-org-repos.yaml` keeps the fat CR declared and suspended (the leaves come from pangea-architectures); `PANGEA_FORBID_TOFU` defaults on; alert rules group by `workspace` | `helm unittest` and the `promtool` rule tests with a `workspace` label | `githubOrgReconciliation.leaves.enabled: false` |
 | C3 | Worker Deployment and its `autoscaling/v2` HPA (`External`, `pangea_leaf_pending_work`); requests and limits from `workers.memory` | `helm unittest`: `enabled: false` renders no HPA and fixed replicas | `workers.autoscaling.enabled: false` |
 
 ### engenho
