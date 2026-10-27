@@ -161,8 +161,8 @@ command budget and the 600s planning-phase budget — so every cycle was
 killed just short of completing and force-reset, freezing `cycleCount` and
 the state serial at 35 and losing the import pre-pass's adopted resources
 every pass. If a workspace's phase durations approach these numbers, raise
-both together (and prefer sharding the workspace — one state boundary per
-template — over ever-growing static bounds).
+both together (and prefer leaves, `docs/LEAVES.md`, over ever-growing
+static bounds).
 
 ### `applying` is judged by PROGRESS; `compiling` / `planning` still by the clock
 
@@ -435,13 +435,13 @@ closure via `RUBYLIB`.
 
 ## Leaf-by-default (BACIA §9)
 
-A template is one state, one plan, one apply. `pangea leaf plan --template cr.yaml --state tfstate.json [--plan plan.json] [--group-references] [--max-concurrent-leaves N] [--emit-dir DIR]` classifies it, partitions its addresses by `leaf_key` (first `for_each`/`count` key, else top-level module instance, else address), lifts variables to a `WorkspaceCatalog`, and emits the leaf templates, the `state mv` plan with the BLAKE3 bijection, and a `suspend: true` patch for the fat template. It writes local files only; exit 2 means a check failed and nothing was emitted. Logic lives in `pangea-leaf`, shared with the operator.
+A template is one state, plan and apply. `pangea leaf plan --template cr.yaml --state tfstate.json [--plan plan.json] [--group-references] [--emit-dir DIR]` (`pangea-leaf`) partitions by `leaf_key`, checks the bijection, emits leaf manifests; local files only.
 
-- **Admission:** a never-reconciled fat template goes `Failed` (`FatTemplateRefused`) unless it carries `pangea.pleme.io/skip-leaf: provider-singleton|atomic-bootstrap|external-contract|shared-lifecycle`. A template that already reconciled is grandfathered. `leaf.admission: off` / `PANGEA_LEAF_ADMISSION=off` turns it off.
-- **Ratchet:** `status.leaf` (`leafKeys`, `fat`, `cycleP95Ms`, `floor`, `regressions`, `inputsDigest`). Tuning: `leaf.ratchet_tolerance_percent`, `leaf.cycle_budget_secs`.
-- **Concurrency:** `WorkspaceCatalog.spec.maxConcurrentLeaves`. A leaf with an upstream output missing waits before it takes a slot (`TemplateDag`).
-- **Trigger by diff:** needs `reactive.honor_reconcile_requests: true`.
-- **CRD sync:** `status.leaf` and `maxConcurrentLeaves` are in `scripts/crd-drift-baseline.txt` until helmworks `charts/pangea-operator/crds` is regenerated; remove both names then.
+- **Admission:** a never-reconciled fat template goes `Failed` (`FatTemplateRefused`) unless it carries `pangea.pleme.io/skip-leaf: <reason>` (reasons in `pangea-leaf/src/admission.rs`); a reconciled one is grandfathered. Off: `leaf.admission: off` / `PANGEA_LEAF_ADMISSION=off`.
+- **Ratchet:** `status.leaf`; tuning `leaf.ratchet_tolerance_percent`, `leaf.cycle_budget_secs`.
+- **Concurrency:** `WorkspaceCatalog.spec.maxConcurrentLeaves`; a leaf without its upstream output waits. Trigger by diff: `reactive.honor_reconcile_requests`.
+- **CRD sync:** both leaf fields stay in `scripts/crd-drift-baseline.txt` until helmworks regenerates.
+- **§9.1 mechanics and build plan:** `docs/LEAVES.md`.
 
 ## Reconciler state machine
 

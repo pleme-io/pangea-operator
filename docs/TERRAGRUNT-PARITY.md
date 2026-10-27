@@ -7,6 +7,10 @@ semantics* — so a production-scale Terragrunt fleet (single-root inheritance +
 per-unit isolated state + a cross-unit dependency DAG) is fully authorable as
 pangea CRDs and reconciled by the operator, never Terragrunt.
 
+**Superseded in part (2026-10-27):** a Terragrunt unit is a leaf (BACIA §9).
+Gap 3's run-all DAG, the scheduler, per-unit state and change-scoped planning
+are designed in [`LEAVES.md`](LEAVES.md).
+
 This doc leads with the destination (Operating Principle #0), grounded in two
 code surveys: the **real** Terragrunt feature usage in a reference estate of
 488 live units, and the **current** pangea expressive surface.
