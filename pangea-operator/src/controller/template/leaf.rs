@@ -1009,6 +1009,7 @@ mod tests {
             cycle_budget_secs: Some(9),
             migrate: false,
             adopt: false,
+            ..LeafConfig::default()
         };
         configure(&cfg);
         assert_eq!(settings(), cfg);

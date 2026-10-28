@@ -14,6 +14,7 @@ pub mod events;
 pub mod finalizer;
 pub mod freshness;
 pub mod leaf;
+pub mod leaf_gate;
 pub mod output_bindings;
 pub mod pass;
 pub mod pass_driver;

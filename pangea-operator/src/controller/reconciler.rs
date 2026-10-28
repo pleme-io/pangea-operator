@@ -114,7 +114,7 @@ pub fn next_requeue(outcome: RequeueOutcome, cooldowns: &RequeueCooldowns) -> Du
 /// applies that fight for the same workspace dir or state lock.
 /// Raise via `PANGEA_RECONCILE_WORKERS` env var when the fleet has
 /// more than ~10 active templates per controller.
-pub const DEFAULT_RECONCILE_WORKERS: usize = 4;
+pub const DEFAULT_RECONCILE_WORKERS: usize = 16;
 
 /// Clamp a raw worker-count value to the safe inclusive range [1, 32],
 /// falling back to [`DEFAULT_RECONCILE_WORKERS`] when `raw` is `None`
@@ -786,7 +786,7 @@ mod tests {
         // 4 chosen as a balance: enough parallelism that a tight loop
         // doesn't dominate, low enough not to slam tofu/PG. Pin the
         // value so a future change is intentional.
-        assert_eq!(DEFAULT_RECONCILE_WORKERS, 4);
+        assert_eq!(DEFAULT_RECONCILE_WORKERS, 16);
     }
 
     // ── The one test that still touches the environment ───────────

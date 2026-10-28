@@ -1023,7 +1023,9 @@ async fn dispatch_template_phase(
             current_phase == Phase::Applying,
         )
         .await;
+        let gate_key = crate::controller::template::leaf_gate::key_of(template);
         if !blocked.is_empty() {
+            state.leaf_gate.note_blocked(&gate_key);
             tracing::info!(
                 scope = %scope,
                 phase = %current_phase,
@@ -1038,7 +1040,28 @@ async fn dispatch_template_phase(
             .map(|n| {
                 pangea_leaf::schedule::scope_cap(Some(n), state.workspace_budgets.caps().per_scope)
             });
-        match state.workspace_budgets.try_acquire_capped(&scope, leaf_cap) {
+        let was_blocked = state.leaf_gate.take_blocked(&gate_key);
+        let class = crate::controller::template::leaf_gate::work_class(
+            template,
+            current_phase,
+            was_blocked,
+        );
+        let candidate = pangea_leaf::admit::Candidate {
+            name: gate_key,
+            scope: scope.clone(),
+            credential: crate::controller::template::leaf_gate::credential_of(template),
+            class,
+            depth: crate::controller::template::leaf_gate::depth_of(template),
+            since: 0,
+        };
+        let admitted = state.leaf_gate.try_admit(
+            &state.workspace_budgets,
+            candidate,
+            leaf_cap,
+            &crate::controller::template::leaf::settings(),
+            std::time::Instant::now(),
+        );
+        match admitted {
             Some(_permit) => handler.handle(template, state).await,
             None => {
                 // `Phase: Display` (strum) is the typed stringify surface — no format!().

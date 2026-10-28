@@ -1,4 +1,5 @@
 pub mod address;
+pub mod admit;
 pub mod admission;
 pub mod classify;
 pub mod dag;

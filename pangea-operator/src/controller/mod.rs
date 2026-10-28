@@ -428,6 +428,7 @@ pub struct ControllerState {
     /// `shigoto-budget::BudgetTree`); ordering (`shigoto-rank`) plugs
     /// in once dispatch grows a central pending set (S2/S3).
     pub workspace_budgets: Arc<workspace_budget::WorkspaceBudgets>,
+    pub leaf_gate: Arc<template::leaf_gate::LeafGate>,
 
     /// Executor call timeout (`PANGEA_TIMEOUT`, default 600s). Applied
     /// to `TofuExecutor` at construction (the subprocess spawn already
@@ -531,6 +532,7 @@ impl ControllerState {
             ),
             anomaly_emitter: anomaly_emitter_arc,
             workspace_budgets,
+            leaf_gate: Arc::new(template::leaf_gate::LeafGate::default()),
             executor_timeout: Duration::from_secs(executor_config.timeout_secs),
             progress: Arc::new(progress::ProgressRegistry::new()),
             passes: Arc::new(template::pass_registry::PassRegistry::default()),

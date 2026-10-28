@@ -379,6 +379,16 @@ pub struct LeafConfig {
     pub migrate: bool,
     #[serde(default = "default_leaf_adopt")]
     pub adopt: bool,
+    #[serde(default)]
+    pub priority: pangea_leaf::admit::PriorityMode,
+    #[serde(default = "default_per_credential_cap")]
+    pub per_credential_cap: usize,
+    #[serde(default)]
+    pub drift_share: pangea_leaf::admit::Share,
+}
+
+fn default_per_credential_cap() -> usize {
+    8
 }
 
 fn default_leaf_adopt() -> bool {
@@ -401,6 +411,9 @@ impl Default for LeafConfig {
             cycle_budget_secs: None,
             migrate: default_leaf_migrate(),
             adopt: default_leaf_adopt(),
+            priority: pangea_leaf::admit::PriorityMode::default(),
+            per_credential_cap: default_per_credential_cap(),
+            drift_share: pangea_leaf::admit::Share::default(),
         }
     }
 }
@@ -660,6 +673,12 @@ struct LeafOverlay {
     migrate: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     adopt: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    priority: Option<pangea_leaf::admit::PriorityMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    per_credential_cap: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    drift_share: Option<pangea_leaf::admit::Share>,
 }
 
 #[derive(Serialize, Default)]
@@ -757,6 +776,11 @@ impl EnvOverlay {
                 cycle_budget_secs: env_parse::<u64>("PANGEA_LEAF_CYCLE_BUDGET_SECS"),
                 migrate: env_parse::<bool>("PANGEA_LEAF_MIGRATE"),
                 adopt: env_parse::<bool>("PANGEA_LEAF_ADOPT"),
+                priority: env_present("PANGEA_LEAF_PRIORITY")
+                    .and_then(|v| pangea_leaf::admit::PriorityMode::parse(&v)),
+                per_credential_cap: env_parse::<usize>("PANGEA_LEAF_PER_CREDENTIAL_CAP"),
+                drift_share: env_present("PANGEA_LEAF_DRIFT_SHARE")
+                    .and_then(|v| pangea_leaf::admit::Share::parse(&v)),
             },
         }
     }
@@ -928,7 +952,7 @@ impl TieredConfig for OperatorConfig {
             pool_max_connections: 5,
         };
         c.reconcile = ReconcileConfig {
-            workers: 4,
+            workers: 16,
             budget_per_workspace: 4,
             budget_global: 16,
             // Safe under the Kubernetes default terminationGracePeriodSeconds
@@ -1118,7 +1142,7 @@ mod tests {
         assert_eq!(p.database.port, 5432);
         assert_eq!(p.database.user, "postgres");
         assert_eq!(p.database.database, "pangea_state");
-        assert_eq!(p.reconcile.workers, 4);
+        assert_eq!(p.reconcile.workers, 16);
         assert_eq!(p.reconcile.budget_per_workspace, 4);
         assert_eq!(p.reconcile.budget_global, 16);
         assert_eq!(p.observability.log_format, "pretty");
@@ -1479,6 +1503,39 @@ mod tests {
         assert_eq!(
             leaf.admission,
             pangea_leaf::admission::AdmissionMode::Enforce
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn leaf_priority_caps_and_drift_share_are_read_from_the_file_tier() {
+        let _g = ENV_GUARD.lock().unwrap();
+        let defaults = OperatorConfig::prescribed_default().leaf;
+        assert_eq!(defaults.priority, pangea_leaf::admit::PriorityMode::On);
+        assert_eq!(defaults.per_credential_cap, 8);
+        assert_eq!(defaults.drift_share, pangea_leaf::admit::Share::HALF);
+        let path = scratch_file(
+            "leaf-priority",
+            "leaf:\n  priority: off\n  per_credential_cap: 0\n  drift_share: 0\n",
+        );
+        let r = OperatorConfig::resolve_from(&path, Dict::new());
+        assert_eq!(r.file, FileTier::Loaded { path: path.clone() });
+        let leaf = r.resolution.into_value().leaf;
+        assert_eq!(leaf.priority, pangea_leaf::admit::PriorityMode::Off);
+        assert_eq!(leaf.per_credential_cap, 0);
+        assert_eq!(leaf.drift_share, pangea_leaf::admit::Share::NONE);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn a_drift_share_outside_the_unit_interval_refuses_the_file() {
+        let _g = ENV_GUARD.lock().unwrap();
+        let path = scratch_file("leaf-share", "leaf:\n  drift_share: 1.5\n");
+        let r = OperatorConfig::resolve_from(&path, Dict::new());
+        assert!(matches!(r.file, FileTier::Refused { .. }));
+        assert_eq!(
+            r.resolution.into_value().leaf.drift_share,
+            pangea_leaf::admit::Share::HALF
         );
         std::fs::remove_file(path).unwrap();
     }

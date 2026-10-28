@@ -58,6 +58,7 @@ pub mod error;
 pub mod executor;
 pub mod executor_migration;
 pub mod leader;
+pub mod leaf_engine;
 pub mod network;
 pub mod observability;
 pub mod ruby;
