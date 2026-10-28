@@ -43,7 +43,11 @@ pub struct ConditionRow {
     pub generations_behind: i64,
 }
 
-pub const PROJECTED_CONDITIONS: [&str; 2] = ["Ready", "Settled"];
+pub const PROJECTED_CONDITIONS: [&str; 3] = [
+    "Ready",
+    "Settled",
+    crate::controller::template::inputs::INPUTS_STALE,
+];
 
 fn age(now: DateTime<Utc>, at: DateTime<Utc>) -> i64 {
     (now - at).num_seconds().max(0)
@@ -721,6 +725,38 @@ mod tests {
         .unwrap();
         t.status = Some(status);
         t
+    }
+
+    #[test]
+    fn a_stale_inputs_condition_is_projected_and_its_absence_adds_no_row() {
+        let status = InfrastructureTemplateStatus {
+            phase: Some(Phase::Ready),
+            observed_generation: 7,
+            conditions: vec![condition(
+                crate::controller::template::inputs::INPUTS_STALE,
+                "True",
+                Some(7),
+            )],
+            ..Default::default()
+        };
+        let row = template_row(&template(7, status), at(100)).unwrap();
+        assert_eq!(
+            row.conditions,
+            vec![ConditionRow {
+                kind: crate::controller::template::inputs::INPUTS_STALE.into(),
+                status: "True".into(),
+                generations_behind: 0
+            }]
+        );
+        let quiet = InfrastructureTemplateStatus {
+            phase: Some(Phase::Ready),
+            observed_generation: 7,
+            ..Default::default()
+        };
+        assert!(template_row(&template(7, quiet), at(100))
+            .unwrap()
+            .conditions
+            .is_empty());
     }
 
     #[test]

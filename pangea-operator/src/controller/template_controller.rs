@@ -799,6 +799,18 @@ async fn reconcile_template(
         return Ok(Action::requeue(DEFAULT_REQUEUE_INTERVAL));
     }
 
+    if let Some(patch) = crate::controller::template::inputs::patch_for(
+        &template,
+        Utc::now(),
+        crate::controller::template::inputs::stale_after(),
+    ) {
+        if let Err(e) =
+            crate::controller::status_patch::patch_status(&*template, &state.client, patch).await
+        {
+            warn!(error = %e, "InputsStale condition patch failed");
+        }
+    }
+
     // Detect spec changes (generation mismatch) — clean workspace and restart from Pending.
     // This ensures stale .terraform state, lock files, and cached providers are cleared
     // when the template source or configuration changes.

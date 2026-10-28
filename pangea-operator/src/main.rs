@@ -203,6 +203,7 @@ async fn main() -> Result<()> {
     );
     pangea_operator::controller::template::leaf::configure(&op_cfg.leaf);
     pangea_operator::leaf_work::configure(&op_cfg.workers);
+    pangea_operator::controller::template::inputs::configure(&op_cfg.inputs);
     if let Some(refusal) = pangea_operator::leaf_engine::configure(op_cfg.leaf.engine) {
         tracing::warn!(%refusal, "leaf.engine refused");
     }

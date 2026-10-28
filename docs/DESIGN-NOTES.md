@@ -104,3 +104,18 @@ predecessor died in (Pending, own incarnation) instead of leaving it for the
 Receipt: ryn 2026-10-27, `pleme-io-github-repos` read Stalled heartbeatLost for
 13 minutes while its 11:55 drift plan was still beating; three nudges queued
 behind it until the pod restarted.
+
+## Stale inputs
+
+A template whose `spec.variables` another job writes (a CronJob that lists repos,
+a sync that renders hosts) cannot tell a quiet world from a dead writer: the
+operator reconciles the last variables it was given and reads Ready either way.
+A writer that stamps `pangea.pleme.io/variables-updated-at` (RFC 3339) on each
+write gets an `InputsStale` condition (`template/inputs.rs`): `False`
+VariablesFresh inside the window, `True` VariablesNotUpdated past it, `Unknown`
+UnreadableTimestamp when the stamp does not parse. A template without the
+annotation gets no condition. The condition is projected like every other one
+(`pangea_template_condition`), so an alert reads it with no new series. The
+window is `inputs.stale_after_secs` (`PANGEA_INPUTS_STALE_AFTER_SECONDS`;
+default 7200); `0` is off and removes the condition. Suspended templates are not
+judged.

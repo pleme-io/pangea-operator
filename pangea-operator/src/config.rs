@@ -106,6 +106,11 @@ pub struct OperatorConfig {
     pub leaf: LeafConfig,
     #[serde(default)]
     pub workers: WorkersConfig,
+    /// `InputsStale` on a template whose `spec.variables` writer stamps
+    /// `pangea.pleme.io/variables-updated-at` (`PANGEA_INPUTS_STALE_AFTER_SECONDS`;
+    /// default 7200, 0 is off).
+    #[serde(default)]
+    pub inputs: crate::controller::template::inputs::InputsConfig,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -666,6 +671,13 @@ struct EnvOverlay {
     reactive: ReactiveOverlay,
     leaf: LeafOverlay,
     workers: WorkersOverlay,
+    inputs: InputsOverlay,
+}
+
+#[derive(Serialize, Default)]
+struct InputsOverlay {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stale_after_secs: Option<u64>,
 }
 
 #[derive(Serialize, Default)]
@@ -965,6 +977,13 @@ impl EnvOverlay {
                 engine: env_present("PANGEA_LEAF_ENGINE")
                     .and_then(|v| crate::leaf_engine::EngineKind::parse(&v)),
             },
+            inputs: InputsOverlay {
+                stale_after_secs: env_present(crate::controller::template::inputs::STALE_AFTER_ENV)
+                    .map(|v| {
+                        crate::controller::template::inputs::StaleAfter::parse(Some(v.as_str()))
+                            .secs()
+                    }),
+            },
         }
     }
 }
@@ -1067,6 +1086,9 @@ impl TieredConfig for OperatorConfig {
             },
             leaf: LeafConfig::default(),
             workers: WorkersConfig::default(),
+            inputs: crate::controller::template::inputs::InputsConfig {
+                stale_after_secs: 0,
+            },
         }
     }
 
@@ -1163,6 +1185,7 @@ impl TieredConfig for OperatorConfig {
             cache_dir: "/var/pangea/gems".to_string(),
         };
         c.reactive = ReactiveConfig::default();
+        c.inputs = crate::controller::template::inputs::InputsConfig::default();
         c
     }
 }
@@ -1830,6 +1853,32 @@ mod tests {
             pangea_leaf::admit::Share::HALF
         );
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn inputs_staleness_defaults_on_and_turns_off_through_the_file_tier() {
+        let _g = ENV_GUARD.lock().unwrap();
+        assert_eq!(OperatorConfig::bare().inputs.stale_after_secs, 0);
+        assert_eq!(
+            OperatorConfig::prescribed_default().inputs.stale_after_secs,
+            crate::controller::template::inputs::DEFAULT_STALE_AFTER_SECONDS
+        );
+        let path = scratch_file("inputs", "inputs:\n  stale_after_secs: 0\n");
+        let r = OperatorConfig::resolve_from(&path, Dict::new());
+        assert_eq!(r.file, FileTier::Loaded { path: path.clone() });
+        assert_eq!(r.resolution.into_value().inputs.stale_after_secs, 0);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn inputs_staleness_env_overrides_the_default() {
+        let _g = ENV_GUARD.lock().unwrap();
+        for (raw, want) in [("off", 0), ("900", 900), ("soon", 7_200)] {
+            std::env::set_var(crate::controller::template::inputs::STALE_AFTER_ENV, raw);
+            let v = OperatorConfig::resolve().into_value();
+            std::env::remove_var(crate::controller::template::inputs::STALE_AFTER_ENV);
+            assert_eq!(v.inputs.stale_after_secs, want, "{raw}");
+        }
     }
 
     #[test]
