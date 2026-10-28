@@ -188,6 +188,7 @@ fn fleet_status_changed(
         || p.pangea_dashboards != new.pangea_dashboards
         || p.synthesizer_formats != new.synthesizer_formats
         || p.leaf_work != new.leaf_work
+        || p.worker_memory != new.worker_memory
 }
 
 /// List every tracked pangea CRD class and return a populated
@@ -210,6 +211,7 @@ async fn aggregate_fleet_status(
     let templates = it_api.list(&lp).await?;
     let infrastructure_templates = aggregate_templates(&templates.items);
     let leaf_work = crate::leaf_work::status(&templates.items);
+    let worker_memory = Some(crate::leaf_work::memory(&templates.items));
 
     // Fleet `pangea_templates_by_phase` gauge — the ONE place the operator
     // sees every template's phase at once. Count by phase (a template with no
@@ -336,6 +338,7 @@ async fn aggregate_fleet_status(
             observed_generation: None,
         }],
         leaf_work,
+        worker_memory,
     })
 }
 
@@ -538,6 +541,7 @@ mod tests {
             last_updated_at: Some(chrono::Utc::now()),
             conditions: vec![],
             leaf_work: None,
+            worker_memory: None,
         }
     }
 

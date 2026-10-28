@@ -121,6 +121,9 @@ pub struct PangeaFleetStatusStatus {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub leaf_work: Option<pangea_leaf::work::LeafWorkStatus>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_memory: Option<pangea_leaf::memory::WorkerMemoryStatus>,
 }
 
 /// WorkspaceCatalog aggregation. `summary` is a printer-column-friendly

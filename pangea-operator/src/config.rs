@@ -115,6 +115,8 @@ pub struct WorkersConfig {
     pub autoscaling: AutoscalingConfig,
     #[serde(default)]
     pub weights: pangea_leaf::work::Weights,
+    #[serde(default)]
+    pub memory: pangea_leaf::memory::WorkerMemory,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -446,6 +448,8 @@ pub struct LeafConfig {
     pub queue: LeafQueueKind,
     #[serde(default)]
     pub nats: LeafNatsConfig,
+    #[serde(default)]
+    pub calibrate: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -532,6 +536,7 @@ impl Default for LeafConfig {
             drift_share: pangea_leaf::admit::Share::default(),
             queue: LeafQueueKind::default(),
             nats: LeafNatsConfig::default(),
+            calibrate: false,
         }
     }
 }
@@ -663,6 +668,8 @@ struct EnvOverlay {
 #[derive(Serialize, Default)]
 struct WorkersOverlay {
     autoscaling: AutoscalingOverlay,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    memory: Option<pangea_leaf::memory::WorkerMemory>,
 }
 
 #[derive(Serialize, Default)]
@@ -817,6 +824,8 @@ struct LeafOverlay {
     queue: Option<LeafQueueKind>,
     #[serde(skip_serializing_if = "NatsOverlay::is_empty")]
     nats: NatsOverlay,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    calibrate: Option<bool>,
 }
 
 #[derive(Serialize, Default)]
@@ -926,6 +935,8 @@ impl EnvOverlay {
                     enabled: env_present("PANGEA_WORKERS_AUTOSCALING")
                         .map(|v| crate::executor::backend_select::parse_truthy(Some(v.as_str()))),
                 },
+                memory: env_present("PANGEA_WORKERS_MEMORY")
+                    .and_then(|v| pangea_leaf::memory::WorkerMemory::parse(&v)),
             },
             leaf: LeafOverlay {
                 admission: env_present("PANGEA_LEAF_ADMISSION")
@@ -945,6 +956,7 @@ impl EnvOverlay {
                 nats: NatsOverlay {
                     url: env_nonempty("PANGEA_LEAF_NATS_URL"),
                 },
+                calibrate: env_parse::<bool>("PANGEA_LEAF_CALIBRATE"),
             },
         }
     }
@@ -1748,6 +1760,20 @@ mod tests {
         assert!(!w.autoscaling.enabled);
         assert_eq!(w.weights.create, 4);
         assert_eq!(w.weights.replace, 5);
+        assert_eq!(w.memory, pangea_leaf::memory::WorkerMemory::Derived);
+        std::fs::remove_file(path).unwrap();
+        let path = scratch_file(
+            "workers-memory",
+            "workers:\n  memory: 768Mi\nleaf:\n  calibrate: true\n",
+        );
+        let v = OperatorConfig::resolve_from(&path, Dict::new())
+            .resolution
+            .into_value();
+        assert_eq!(
+            v.workers.memory,
+            pangea_leaf::memory::WorkerMemory::Fixed(768 * 1_048_576)
+        );
+        assert!(v.leaf.calibrate);
         std::fs::remove_file(path).unwrap();
     }
 

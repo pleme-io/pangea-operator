@@ -145,6 +145,8 @@ pub struct LeafStatus {
     pub skip_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inputs_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_rss_bytes: Option<u64>,
 }
 
 pub const P95_BUCKET_MS: u64 = 1_000;
@@ -179,6 +181,7 @@ pub fn next_status(
         regressions: v.regressions,
         skip_reason,
         inputs_digest,
+        peak_rss_bytes: prev.and_then(|p| p.peak_rss_bytes),
     }
 }
 

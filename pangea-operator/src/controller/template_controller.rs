@@ -2906,7 +2906,9 @@ async fn handle_planning(
 
     let _pass = PassGuard::begin(template, state, Phase::Planning).await;
     let plan_started = std::time::Instant::now();
+    let rss_probe = crate::controller::template::leaf::calibration_probe(template);
     let plan_result = runner.plan(&workspace).await?;
+    let peak_rss = rss_probe.and_then(crate::controller::template::leaf::RssProbe::finish);
 
     if !plan_result.success {
         let err_msg = format!("plan failed: {}", plan_result.raw_stderr);
@@ -3027,6 +3029,7 @@ async fn handle_planning(
                 state,
                 addresses,
                 u64::try_from(plan_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                peak_rss,
             )
             .await
         {

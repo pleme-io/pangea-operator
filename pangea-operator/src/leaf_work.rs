@@ -109,6 +109,42 @@ pub fn status_with(
 }
 
 #[must_use]
+pub fn memory_with(
+    templates: &[InfrastructureTemplate],
+    setting: pangea_leaf::memory::WorkerMemory,
+    cap_worker: u64,
+) -> pangea_leaf::memory::WorkerMemoryStatus {
+    let inputs = pangea_leaf::memory::MemoryInputs {
+        base_rss: pangea_leaf::memory::BASE_RSS_BYTES,
+        cap_worker,
+        max_leaf_peak: pangea_leaf::memory::max_peak(templates.iter().map(|t| {
+            t.status
+                .as_ref()
+                .and_then(|s| s.leaf.as_ref())
+                .and_then(|l| l.peak_rss_bytes)
+        })),
+        providers: 1,
+        provider_rss: pangea_leaf::memory::GITHUB_PROVIDER_RSS_BYTES,
+    };
+    pangea_leaf::memory::derive(setting, &inputs)
+}
+
+#[must_use]
+pub fn memory(templates: &[InfrastructureTemplate]) -> pangea_leaf::memory::WorkerMemoryStatus {
+    let leaf = crate::controller::template::leaf::settings();
+    let cap = if leaf.per_credential_cap == 0 {
+        16
+    } else {
+        leaf.per_credential_cap
+    };
+    memory_with(
+        templates,
+        settings().memory,
+        u64::try_from(cap).unwrap_or(u64::MAX),
+    )
+}
+
+#[must_use]
 pub fn status(templates: &[InfrastructureTemplate]) -> Option<LeafWorkStatus> {
     status_with(
         templates,
@@ -175,6 +211,40 @@ mod tests {
         assert_eq!(s.credentials[0].pending, 2046);
         assert_eq!(s.metric, 937);
         assert_eq!(s.desired, 2);
+    }
+
+    #[test]
+    fn the_derived_worker_memory_equals_the_formula_on_fixture_leaves() {
+        let mi = 1_048_576u64;
+        let mut templates = vec![
+            leaf("a", "Ready", 2, None),
+            leaf("b", "Ready", 2, None),
+            leaf("c", "Ready", 2, None),
+        ];
+        for (t, peak) in templates
+            .iter_mut()
+            .zip([Some(12 * mi), Some(30 * mi), None])
+        {
+            if let Some(s) = t.status.as_mut() {
+                s.leaf = serde_json::from_value(serde_json::json!({
+                    "leafKeys": 1, "fat": false, "peakRssBytes": peak
+                }))
+                .ok();
+            }
+        }
+        let m = memory_with(&templates, pangea_leaf::memory::WorkerMemory::Derived, 8);
+        let request = pangea_leaf::memory::BASE_RSS_BYTES
+            + 8 * 30 * mi
+            + pangea_leaf::memory::GITHUB_PROVIDER_RSS_BYTES;
+        assert_eq!(m.request_bytes, request);
+        assert_eq!(m.limit_bytes, request + request / 2);
+        assert!(m.calibrated);
+        let fixed = memory_with(
+            &templates,
+            pangea_leaf::memory::WorkerMemory::Fixed(256 * mi),
+            8,
+        );
+        assert_eq!(fixed.request_bytes, 256 * mi);
     }
 
     #[test]

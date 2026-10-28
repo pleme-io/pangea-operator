@@ -153,6 +153,9 @@ impl LeafGate {
             drift_share_permille: cfg.drift_share.permille(),
             priority: cfg.priority,
         };
+        if cfg.calibrate {
+            caps.global = 1;
+        }
         let mut in_flight = InFlight {
             total: budgets.total_in_flight(),
             ..InFlight::default()
@@ -308,6 +311,26 @@ mod tests {
         let later = now + WAIT_TTL + Duration::from_secs(1);
         assert!(gate
             .try_admit(&b, cand("drift", WorkClass::Drift), None, &cfg, later)
+            .is_some());
+    }
+
+    #[test]
+    fn a_calibration_pass_admits_one_expensive_phase_at_a_time() {
+        let gate = LeafGate::default();
+        let b = budgets(4);
+        let cfg = LeafConfig {
+            calibrate: true,
+            ..LeafConfig::default()
+        };
+        let now = Instant::now();
+        let first = gate.try_admit(&b, cand("a", WorkClass::Change), None, &cfg, now);
+        assert!(first.is_some());
+        assert!(gate
+            .try_admit(&b, cand("b", WorkClass::Change), None, &cfg, now)
+            .is_none());
+        drop(first);
+        assert!(gate
+            .try_admit(&b, cand("b", WorkClass::Change), None, &cfg, now)
             .is_some());
     }
 

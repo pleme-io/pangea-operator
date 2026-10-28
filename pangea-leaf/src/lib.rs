@@ -4,6 +4,7 @@ pub mod admit;
 pub mod classify;
 pub mod dag;
 pub mod drift;
+pub mod memory;
 pub mod migrate;
 pub mod names;
 pub mod pace;

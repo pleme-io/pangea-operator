@@ -758,11 +758,43 @@ fn skip_reason_of(admission: &Admission) -> Option<String> {
     }
 }
 
+#[must_use]
+pub fn parse_status_kb(status: &str, field: &str) -> Option<u64> {
+    status.lines().find_map(|l| {
+        let rest = l.strip_prefix(field)?.strip_prefix(':')?;
+        let kb: u64 = rest.trim().trim_end_matches("kB").trim().parse().ok()?;
+        Some(kb * 1024)
+    })
+}
+
+pub struct RssProbe {
+    base: u64,
+}
+
+impl RssProbe {
+    #[must_use]
+    pub fn finish(self) -> Option<u64> {
+        let status = std::fs::read_to_string("/proc/self/status").ok()?;
+        parse_status_kb(&status, "VmHWM").map(|hwm| hwm.saturating_sub(self.base))
+    }
+}
+
+#[must_use]
+pub fn calibration_probe(template: &InfrastructureTemplate) -> Option<RssProbe> {
+    if !settings().calibrate || !matches!(membership(template, true), Membership::Leaf { .. }) {
+        return None;
+    }
+    std::fs::write("/proc/self/clear_refs", "5").ok()?;
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    parse_status_kb(&status, "VmRSS").map(|base| RssProbe { base })
+}
+
 pub async fn judge(
     template: &InfrastructureTemplate,
     state: &ControllerState,
     addresses: &[String],
     plan_ms: u64,
+    peak_rss: Option<u64>,
 ) -> Judgement {
     let cfg = settings();
     let key = format!(
@@ -791,7 +823,7 @@ pub async fn judge(
         return Judgement::Refused(msg.clone());
     }
     let prev = template.status.as_ref().and_then(|s| s.leaf.as_ref());
-    let next = next_status(
+    let mut next = next_status(
         prev,
         u32::try_from(assessment.classification.leaf_keys).unwrap_or(u32::MAX),
         assessment.classification.fat,
@@ -803,6 +835,9 @@ pub async fn judge(
             catalog_view(state, template).await.variables.as_ref(),
         )),
     );
+    if let Some(peak) = peak_rss {
+        next.peak_rss_bytes = Some(peak);
+    }
     if prev != Some(&next) {
         write_status(template, state, &next, prev).await;
     }
@@ -1179,6 +1214,14 @@ mod tests {
         };
         assert!(msg.contains("workspaces/pleme-io-github-repos/leaves.b"));
         assert!(!msg.contains("leaves(\""));
+    }
+
+    #[test]
+    fn the_peak_rss_is_read_from_proc_status_in_bytes() {
+        let status = "Name:\tpangea-operator\nVmHWM:\t   57012 kB\nVmRSS:\t   24168 kB\n";
+        assert_eq!(parse_status_kb(status, "VmHWM"), Some(57_012 * 1024));
+        assert_eq!(parse_status_kb(status, "VmRSS"), Some(24_168 * 1024));
+        assert_eq!(parse_status_kb(status, "VmSwap"), None);
     }
 
     #[test]
