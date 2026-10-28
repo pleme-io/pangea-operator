@@ -272,8 +272,9 @@ fn first_present(data: &BTreeMap<String, ByteString>, candidates: &[&str]) -> Op
 ///   * aws        → `{"region"?, "access_key"?, "secret_key"?, "token"?}`
 ///                  (`token` is the AWS provider's session-token attr)
 ///   * github     → `{"token": …, "owner"?}`
-///   * porkbun    → `{"api_key": …, "secret_api_key": …}` (both required
-///                  by the `marcfrederick/porkbun` provider schema)
+///   * porkbun    → `{"api_key": …, "secret_key": …}` (both required
+///                  by the baked `cullenmcdermott/porkbun` provider schema)
+///   * google     → `{"credentials": …, "project"?, "region"?, "zone"?}`
 ///
 /// Returns `None` when no usable credential attr is present (e.g. a
 /// cloudflare secret with no recognizable token key) — the caller then
@@ -395,14 +396,39 @@ fn provider_config_object(
         }
         ProviderKind::Porkbun => {
             let api_key = first_present(data, &["api_key", "PORKBUN_API_KEY"])?;
-            let secret_api_key =
-                first_present(data, &["secret_api_key", "PORKBUN_SECRET_API_KEY"])?;
+            let secret_key = first_present(
+                data,
+                &[
+                    "secret_key",
+                    "secret_api_key",
+                    "PORKBUN_SECRET_KEY",
+                    "PORKBUN_SECRET_API_KEY",
+                ],
+            )?;
             let mut obj = serde_json::Map::new();
             obj.insert("api_key".to_string(), serde_json::Value::String(api_key));
             obj.insert(
-                "secret_api_key".to_string(),
-                serde_json::Value::String(secret_api_key),
+                "secret_key".to_string(),
+                serde_json::Value::String(secret_key),
             );
+            Some(serde_json::Value::Object(obj))
+        }
+        ProviderKind::Google => {
+            let credentials = first_present(data, &["credentials", "GOOGLE_CREDENTIALS"])?;
+            let mut obj = serde_json::Map::new();
+            obj.insert(
+                "credentials".to_string(),
+                serde_json::Value::String(credentials),
+            );
+            for (attr, keys) in [
+                ("project", ["project", "GOOGLE_PROJECT"]),
+                ("region", ["region", "GOOGLE_REGION"]),
+                ("zone", ["zone", "GOOGLE_ZONE"]),
+            ] {
+                if let Some(v) = first_present(data, &keys) {
+                    obj.insert(attr.to_string(), serde_json::Value::String(v));
+                }
+            }
             Some(serde_json::Value::Object(obj))
         }
         // Akeyless (2026-07-25): same shape as GitHub -- `operator_emits_
@@ -820,7 +846,7 @@ mod tests {
         let obj = provider_config_object(ProviderKind::Porkbun, &d, None)
             .expect("porkbun creds present → config object");
         assert_eq!(obj["api_key"], "pk1_abc");
-        assert_eq!(obj["secret_api_key"], "sk1_xyz");
+        assert_eq!(obj["secret_key"], "sk1_xyz");
         assert_eq!(obj.as_object().unwrap().len(), 2);
     }
 
@@ -833,7 +859,46 @@ mod tests {
         let obj = provider_config_object(ProviderKind::Porkbun, &d, None)
             .expect("porkbun creds present via env-var-shaped keys → config object");
         assert_eq!(obj["api_key"], "pk1_env");
-        assert_eq!(obj["secret_api_key"], "sk1_env");
+        assert_eq!(obj["secret_key"], "sk1_env");
+    }
+
+    #[test]
+    fn porkbun_emits_the_baked_providers_secret_key_attr() {
+        let d = data(&[("PORKBUN_API_KEY", "pk1"), ("PORKBUN_SECRET_KEY", "sk1")]);
+        let obj = provider_config_object(ProviderKind::Porkbun, &d, None).unwrap();
+        assert_eq!(obj, serde_json::json!({ "api_key": "pk1", "secret_key": "sk1" }));
+        assert!(obj.get("secret_api_key").is_none());
+    }
+
+    #[test]
+    fn google_resolves_credentials_and_optional_defaults() {
+        let d = data(&[
+            ("credentials", "{\"type\":\"service_account\"}"),
+            ("project", "p1"),
+            ("GOOGLE_REGION", "us-central1"),
+        ]);
+        let obj = provider_config_object(ProviderKind::Google, &d, None).unwrap();
+        assert_eq!(
+            obj,
+            serde_json::json!({
+                "credentials": "{\"type\":\"service_account\"}",
+                "project": "p1",
+                "region": "us-central1"
+            })
+        );
+    }
+
+    #[test]
+    fn google_accepts_the_env_style_credentials_key() {
+        let d = data(&[("GOOGLE_CREDENTIALS", "{}")]);
+        let obj = provider_config_object(ProviderKind::Google, &d, None).unwrap();
+        assert_eq!(obj, serde_json::json!({ "credentials": "{}" }));
+    }
+
+    #[test]
+    fn google_without_credentials_yields_none() {
+        let d = data(&[("project", "p1"), ("region", "us-central1")]);
+        assert!(provider_config_object(ProviderKind::Google, &d, None).is_none());
     }
 
     #[test]
@@ -859,7 +924,7 @@ mod tests {
     fn porkbun_config_is_with_provider_config_shaped() {
         let d = data(&[("api_key", "pk1_live"), ("secret_api_key", "sk1_live")]);
         let obj = provider_config_object(ProviderKind::Porkbun, &d, None).unwrap();
-        let expected = serde_json::json!({ "api_key": "pk1_live", "secret_api_key": "sk1_live" });
+        let expected = serde_json::json!({ "api_key": "pk1_live", "secret_key": "sk1_live" });
         assert_eq!(obj, expected);
     }
 

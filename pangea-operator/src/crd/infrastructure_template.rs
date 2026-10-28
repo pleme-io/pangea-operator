@@ -858,6 +858,13 @@ pub struct ProviderCredentials {
     /// verbatim as env vars; the Discord provider reads `DISCORD_TOKEN`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discord: Option<DiscordCredentials>,
+
+    /// Google Cloud credentials. Operator-side authority: the referenced
+    /// Secret holds a service-account key JSON under `credentials` (or
+    /// `GOOGLE_CREDENTIALS`) and optionally `project` / `region` / `zone`,
+    /// resolved into the `google` provider's configure object.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub google: Option<GoogleCredentials>,
 }
 
 /// Typed identifier for each provider known to the operator.
@@ -882,6 +889,7 @@ pub enum ProviderKind {
     Datadog,
     OnePassword,
     Discord,
+    Google,
 }
 
 impl ProviderKind {
@@ -898,6 +906,7 @@ impl ProviderKind {
             ProviderKind::Datadog => "datadog",
             ProviderKind::OnePassword => "opadmin",
             ProviderKind::Discord => "discord",
+            ProviderKind::Google => "google",
         }
     }
 
@@ -973,6 +982,7 @@ impl ProviderKind {
             ProviderKind::Datadog => false,
             ProviderKind::OnePassword => false,
             ProviderKind::Discord => false,
+            ProviderKind::Google => true,
         }
     }
 }
@@ -1002,6 +1012,7 @@ impl ProviderCredentials {
             datadog,
             opadmin,
             discord,
+            google,
         } = self;
 
         let mut out = Vec::new();
@@ -1028,6 +1039,9 @@ impl ProviderCredentials {
         }
         if let Some(c) = discord {
             out.push((ProviderKind::Discord, &c.secret_ref));
+        }
+        if let Some(c) = google {
+            out.push((ProviderKind::Google, &c.secret_ref));
         }
         out
     }
@@ -1258,6 +1272,14 @@ pub struct OnePasswordCredentials {
 #[serde(rename_all = "camelCase")]
 pub struct DiscordCredentials {
     /// Secret containing the Discord bot token.
+    pub secret_ref: SecretRef,
+}
+
+/// Google Cloud credentials configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GoogleCredentials {
+    /// Secret containing the service-account key JSON and optional defaults.
     pub secret_ref: SecretRef,
 }
 
@@ -2829,6 +2851,7 @@ mod tests {
             datadog: None,
             opadmin: None,
             discord: None,
+            google: None,
         };
         assert!(creds.iter_secret_refs().is_empty());
     }
@@ -2848,6 +2871,7 @@ mod tests {
             datadog: None,
             opadmin: None,
             discord: None,
+            google: None,
         };
         let refs = creds.iter_secret_refs();
         assert_eq!(refs.len(), 2);
@@ -3031,6 +3055,7 @@ rolesAnywhere:
             datadog: None,
             opadmin: None,
             discord: None,
+            google: None,
         };
         assert!(creds.iter_secret_refs().is_empty());
     }
@@ -3109,9 +3134,18 @@ rolesAnywhere:
             discord: Some(DiscordCredentials {
                 secret_ref: empty_secret_ref("dc"),
             }),
+            google: Some(GoogleCredentials {
+                secret_ref: empty_secret_ref("gcp"),
+            }),
         };
         let refs = creds.iter_secret_refs();
-        assert_eq!(refs.len(), 8);
+        assert_eq!(refs.len(), 9);
+        assert_eq!(
+            refs.iter()
+                .find(|(k, _)| *k == ProviderKind::Google)
+                .map(|(_, sref)| sref.name.as_str()),
+            Some("gcp")
+        );
 
         // The exhaustiveness contract: count must equal the number
         // of fields on ProviderCredentials. If a future commit adds
