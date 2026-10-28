@@ -217,6 +217,77 @@ pub fn judge(leaves: &[LeafView], cap: usize) -> LeavesRollup {
     r
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Held {
+    Failed,
+    Stalled,
+}
+
+impl Held {
+    #[must_use]
+    pub fn reason(self) -> &'static str {
+        match self {
+            Self::Failed => "LeafFailed",
+            Self::Stalled => "LeafStalled",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Transition {
+    pub leaf: String,
+    pub held: Held,
+    pub detail: String,
+}
+
+fn held_of(state: &LeafState) -> Option<(Held, String)> {
+    match state {
+        LeafState::Failed { reason, .. } => Some((Held::Failed, reason.clone())),
+        LeafState::Stalled { state, .. } => Some((Held::Stalled, state.clone())),
+        _ => None,
+    }
+}
+
+#[must_use]
+pub fn held(leaves: &[LeafView]) -> BTreeMap<String, Held> {
+    leaves
+        .iter()
+        .filter_map(|l| held_of(&l.state).map(|(h, _)| (l.name.clone(), h)))
+        .collect()
+}
+
+#[must_use]
+pub fn seed(rollup: &LeavesRollup) -> BTreeMap<String, Held> {
+    rollup
+        .failed
+        .iter()
+        .map(|f| (f.leaf.clone(), Held::Failed))
+        .chain(
+            rollup
+                .stalled
+                .iter()
+                .map(|s| (s.leaf.clone(), Held::Stalled)),
+        )
+        .collect()
+}
+
+#[must_use]
+pub fn transitions(prev: &BTreeMap<String, Held>, leaves: &[LeafView]) -> Vec<Transition> {
+    let mut out: Vec<Transition> = leaves
+        .iter()
+        .filter_map(|l| {
+            let (h, detail) = held_of(&l.state)?;
+            (prev.get(&l.name) != Some(&h)).then(|| Transition {
+                leaf: l.name.clone(),
+                held: h,
+                detail,
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| a.leaf.cmp(&b.leaf));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -234,6 +305,61 @@ mod tests {
             reason: "ImportAbsent".into(),
             since: Some("2026-10-27T18:00:00Z".into()),
         }
+    }
+
+    fn stalled() -> LeafState {
+        LeafState::Stalled {
+            state: "heartbeatLost".into(),
+            since: None,
+        }
+    }
+
+    #[test]
+    fn one_event_per_leaf_per_transition_and_none_on_a_repeat() {
+        let mut prev = BTreeMap::new();
+        let step = |prev: &mut BTreeMap<String, Held>, views: Vec<LeafView>| {
+            let t = transitions(prev, &views);
+            *prev = held(&views);
+            t.into_iter()
+                .map(|t| (t.leaf, t.held.reason()))
+                .collect::<Vec<_>>()
+        };
+        let a_failed = || leaf("a", failed(), &[]);
+        let b_ready = || leaf("b", LeafState::Ready, &[]);
+        assert_eq!(
+            step(&mut prev, vec![a_failed(), b_ready()]),
+            vec![("a".to_string(), "LeafFailed")]
+        );
+        assert!(step(&mut prev, vec![a_failed(), b_ready()]).is_empty());
+        let other_reason = leaf(
+            "a",
+            LeafState::Failed {
+                reason: "Timeout".into(),
+                since: None,
+            },
+            &[],
+        );
+        assert!(step(&mut prev, vec![other_reason, b_ready()]).is_empty());
+        assert!(step(&mut prev, vec![leaf("a", LeafState::Ready, &[]), b_ready()]).is_empty());
+        assert_eq!(
+            step(&mut prev, vec![a_failed(), b_ready()]),
+            vec![("a".to_string(), "LeafFailed")]
+        );
+        assert_eq!(
+            step(&mut prev, vec![a_failed(), leaf("b", stalled(), &[])]),
+            vec![("b".to_string(), "LeafStalled")]
+        );
+        assert_eq!(
+            step(&mut prev, vec![a_failed(), leaf("b", failed(), &[])]),
+            vec![("b".to_string(), "LeafFailed")]
+        );
+    }
+
+    #[test]
+    fn a_restart_seeded_from_the_status_emits_nothing_for_what_it_already_named() {
+        let views = vec![leaf("a", failed(), &[]), leaf("b", stalled(), &[])];
+        let rollup = judge(&views, NAME_CAP);
+        assert!(transitions(&seed(&rollup), &views).is_empty());
     }
 
     #[test]

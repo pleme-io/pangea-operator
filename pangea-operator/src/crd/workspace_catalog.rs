@@ -144,6 +144,9 @@ pub struct WorkspaceCatalogStatus {
     /// stalled, rate-limited and blocked leaves by name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub leaves: Option<pangea_leaf::rollup::LeavesRollup>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_events: Vec<super::live_status::RecordedEvent>,
 }
 
 #[cfg(test)]

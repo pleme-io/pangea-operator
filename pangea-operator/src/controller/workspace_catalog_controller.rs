@@ -55,6 +55,9 @@ pub fn run(
         operator_policy,
         metrics,
         artifact_store,
+        events: Arc::new(crate::controller::event_sink::EventSink::for_client(
+            client.clone(),
+        )),
     });
 
     crate::controller::generation_filter::filtered_controller::<WorkspaceCatalog>(client)
@@ -72,6 +75,7 @@ struct Context {
     operator_policy: Arc<crate::controller::operator_policy_cache::OperatorPolicyCache>,
     metrics: Arc<crate::observability::Metrics>,
     artifact_store: Option<Arc<crate::backend::ArtifactStore>>,
+    events: Arc<crate::controller::event_sink::EventSink>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -209,6 +213,13 @@ async fn reconcile(wsc: Arc<WorkspaceCatalog>, ctx: Arc<Context>) -> Result<Acti
         conditions.push(c);
     }
     let leaves = crate::controller::template::leaf::catalog_rollup(&templates.items);
+    let views = crate::controller::template::leaf::leaf_views(&templates.items);
+    let recent_events = record_leaf_transitions(
+        &ctx.events,
+        &wsc,
+        &crate::controller::template::leaf::leaf_transitions(&wsc, &views),
+    )
+    .await;
     let settled = leaves.as_ref().map_or(true, |l| {
         l.verdict == pangea_leaf::rollup::Verdict::Converged
     });
@@ -218,6 +229,7 @@ async fn reconcile(wsc: Arc<WorkspaceCatalog>, ctx: Arc<Context>) -> Result<Acti
         last_reconcile_time: Some(now),
         conditions,
         leaves,
+        recent_events,
     };
 
     patch_status_if_changed(&ctx.client, &name, wsc.status.as_ref(), new_status).await?;
@@ -242,6 +254,34 @@ async fn reconcile(wsc: Arc<WorkspaceCatalog>, ctx: Arc<Context>) -> Result<Acti
         return Ok(Action::requeue(Duration::from_secs(30)));
     }
     Ok(Action::requeue(Duration::from_secs(300)))
+}
+
+pub async fn record_leaf_transitions(
+    events: &crate::controller::event_sink::EventSink,
+    wsc: &WorkspaceCatalog,
+    transitions: &[pangea_leaf::rollup::Transition],
+) -> Vec<crate::crd::live_status::RecordedEvent> {
+    use kube::Resource;
+    let obj_ref = wsc.object_ref(&());
+    let key = crate::controller::event_sink::reference_key(&obj_ref);
+    let prior = wsc
+        .status
+        .as_ref()
+        .map(|s| s.recent_events.as_slice())
+        .unwrap_or(&[]);
+    events.seed_ring(&key, prior);
+    for t in transitions {
+        let note = ["leaf ", t.leaf.as_str(), ": ", t.detail.as_str()].concat();
+        let event = kube::runtime::events::Event {
+            type_: kube::runtime::events::EventType::Warning,
+            reason: t.held.reason().into(),
+            note: Some(note),
+            action: t.held.reason().into(),
+            secondary: None,
+        };
+        events.record(&obj_ref, &event).await;
+    }
+    events.ring(&key)
 }
 
 async fn request_changed_leaves(
@@ -459,7 +499,11 @@ async fn patch_status_if_changed(
 }
 
 fn status_content_equal(a: &WorkspaceCatalogStatus, b: &WorkspaceCatalogStatus) -> bool {
-    if a.template_count != b.template_count || a.verified != b.verified || a.leaves != b.leaves {
+    if a.template_count != b.template_count
+        || a.verified != b.verified
+        || a.leaves != b.leaves
+        || a.recent_events != b.recent_events
+    {
         return false;
     }
     if a.conditions.len() != b.conditions.len() {
@@ -512,6 +556,94 @@ pub async fn parent_catalog_for_template(
 mod tests {
     use super::*;
 
+    struct NoEventApi;
+
+    #[async_trait::async_trait]
+    impl crate::controller::event_sink::EventTransport for NoEventApi {
+        async fn served(&self) -> crate::controller::event_sink::Served {
+            crate::controller::event_sink::Served {
+                events_v1: Some(false),
+                core_v1: Some(false),
+            }
+        }
+
+        async fn publish(
+            &self,
+            _api: crate::controller::event_sink::EventApi,
+            _reference: &k8s_openapi::api::core::v1::ObjectReference,
+            _event: &kube::runtime::events::Event,
+        ) -> Result<(), crate::controller::event_sink::TransportError> {
+            Err(crate::controller::event_sink::TransportError::NotServed(
+                "none".into(),
+            ))
+        }
+    }
+
+    fn leaf_named(name: &str, phase: crate::crd::Phase) -> InfrastructureTemplate {
+        let mut t: InfrastructureTemplate = serde_json::from_value(serde_json::json!({
+            "apiVersion": "pangea.pleme.io/v1alpha1",
+            "kind": "InfrastructureTemplate",
+            "metadata": {
+                "name": name, "namespace": "n",
+                "labels": {"pangea.pleme.io/workspace": "events-org"},
+                "ownerReferences": [{"apiVersion": "pangea.pleme.io/v1alpha1", "kind": "WorkspaceCatalog", "name": "events-org", "uid": "u"}]
+            },
+            "spec": {"source": {}, "pangeaNamespace": "ns"}
+        }))
+        .unwrap();
+        t.status = Some(crate::crd::InfrastructureTemplateStatus {
+            phase: Some(phase),
+            last_error: Some("ImportAbsent".into()),
+            ..Default::default()
+        });
+        t
+    }
+
+    #[tokio::test]
+    async fn the_catalog_records_one_leaf_failed_event_per_transition_into_its_status_ring() {
+        use crate::crd::Phase;
+        let sink = crate::controller::event_sink::EventSink::new(Arc::new(NoEventApi));
+        let mut wsc: WorkspaceCatalog = serde_json::from_value(serde_json::json!({
+            "apiVersion": "pangea.pleme.io/v1alpha1",
+            "kind": "WorkspaceCatalog",
+            "metadata": {"name": "events-org"},
+            "spec": {"source": {}}
+        }))
+        .unwrap();
+        let failed = vec![
+            leaf_named("events-org-a", Phase::Failed),
+            leaf_named("events-org-b", Phase::Ready),
+        ];
+        for _ in 0..3 {
+            let views = crate::controller::template::leaf::leaf_views(&failed);
+            let t = crate::controller::template::leaf::leaf_transitions(&wsc, &views);
+            let ring = record_leaf_transitions(&sink, &wsc, &t).await;
+            wsc.status = Some(WorkspaceCatalogStatus {
+                recent_events: ring,
+                leaves: crate::controller::template::leaf::catalog_rollup(&failed),
+                ..Default::default()
+            });
+        }
+        let ring = &wsc.status.as_ref().unwrap().recent_events;
+        assert_eq!(ring.len(), 1);
+        assert_eq!(ring[0].reason, "LeafFailed");
+        assert!(ring[0].message.contains("events-org-a"));
+        let healed = vec![
+            leaf_named("events-org-a", Phase::Ready),
+            leaf_named("events-org-b", Phase::Ready),
+        ];
+        let t = crate::controller::template::leaf::leaf_transitions(
+            &wsc,
+            &crate::controller::template::leaf::leaf_views(&healed),
+        );
+        assert!(t.is_empty());
+        let t = crate::controller::template::leaf::leaf_transitions(
+            &wsc,
+            &crate::controller::template::leaf::leaf_views(&failed),
+        );
+        assert_eq!(t.len(), 1);
+    }
+
     fn cond(t: &str, s: &str, r: &str, m: &str, ts: chrono::DateTime<Utc>) -> Condition {
         Condition {
             condition_type: t.to_string(),
@@ -553,6 +685,7 @@ mod tests {
             last_reconcile_time: Some(Utc::now()),
             conditions: conds,
             leaves: None,
+            recent_events: Vec::new(),
         }
     }
 

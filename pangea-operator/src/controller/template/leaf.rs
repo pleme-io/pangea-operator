@@ -543,14 +543,42 @@ pub fn leaf_view(t: &InfrastructureTemplate) -> pangea_leaf::rollup::LeafView {
 }
 
 #[must_use]
-pub fn catalog_rollup(
-    templates: &[InfrastructureTemplate],
-) -> Option<pangea_leaf::rollup::LeavesRollup> {
-    let views: Vec<_> = templates
+pub fn leaf_views(templates: &[InfrastructureTemplate]) -> Vec<pangea_leaf::rollup::LeafView> {
+    templates
         .iter()
         .filter(|t| matches!(membership(t, true), Membership::Leaf { .. }))
         .map(leaf_view)
-        .collect();
+        .collect()
+}
+
+static HELD: Mutex<BTreeMap<String, BTreeMap<String, pangea_leaf::rollup::Held>>> =
+    Mutex::new(BTreeMap::new());
+
+#[must_use]
+pub fn leaf_transitions(
+    catalog: &WorkspaceCatalog,
+    views: &[pangea_leaf::rollup::LeafView],
+) -> Vec<pangea_leaf::rollup::Transition> {
+    let name = catalog.name_any();
+    let mut held = HELD.lock().expect("leaf held mutex poisoned");
+    let prev = held.remove(&name).unwrap_or_else(|| {
+        catalog
+            .status
+            .as_ref()
+            .and_then(|s| s.leaves.as_ref())
+            .map(pangea_leaf::rollup::seed)
+            .unwrap_or_default()
+    });
+    let out = pangea_leaf::rollup::transitions(&prev, views);
+    held.insert(name, pangea_leaf::rollup::held(views));
+    out
+}
+
+#[must_use]
+pub fn catalog_rollup(
+    templates: &[InfrastructureTemplate],
+) -> Option<pangea_leaf::rollup::LeavesRollup> {
+    let views = leaf_views(templates);
     if views.is_empty() {
         return None;
     }
