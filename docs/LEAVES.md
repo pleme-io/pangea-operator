@@ -292,6 +292,26 @@ New territory takes one declaration. A new workspace's leaves are one
 `leaves(...)` entry. A new leaf type is one new architecture and one entry.
 When a repo is added to org.yaml, its leaf appears on the next render.
 
+**The slice contract (O2, operator side; R2 renders it).** Each rendered leaf
+carries:
+
+| Field | Value | Example |
+|---|---|---|
+| label `pangea.pleme.io/workspace` | the catalog name | `pleme-io-github-repos` |
+| `ownerReferences[]` | `kind: WorkspaceCatalog`, `name:` the catalog | |
+| annotation `pangea.pleme.io/leaf-collection` | the input that holds the collection | `repos` |
+| annotation `pangea.pleme.io/leaf-key` | this leaf's key | `kensa` |
+| annotation `pangea.pleme.io/leaf-key-field` | the field that names an entry in a list; omit it for a map, where the map key is the leaf key | `slug` |
+| `spec.variables.<collection>` | exactly one entry, the leaf's own | `repos: [{slug: kensa, …}]` |
+
+The catalog's `spec.variables` holds the shared inputs only. Even if it holds
+the collection, the operator replaces the collection with the leaf's own one
+entry after the cascade (`pangea_leaf::slice::isolate`), so no leaf renders
+another leaf's rows. A leaf with no entry, more than one entry or an entry
+whose key differs from `leaf-key` fails alone (`LeafSliceInvalid`). A leaf
+whose catalog does not exist fails alone (`LeafCatalogMissing`). A template
+without the label and the owner reference is not a leaf, and runs as before.
+
 **Where the default lives.** One place: the `leaf.admission` entry in the
 operator's embedded `happa` declaration, read through `LeafConfig`. The
 default stays `enforce`. A never-reconciled fat template is refused, and the

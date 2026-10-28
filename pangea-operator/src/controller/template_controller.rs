@@ -547,6 +547,7 @@ async fn reconcile_template(
     // cascade in handle_planning. Treat lookup failures as "no parent"
     // (best-effort cascade); we'd rather reconcile without the
     // workspace-level overrides than refuse to reconcile.
+    let mut catalog_lookup_failed = false;
     let parent_wsc =
         match crate::controller::workspace_catalog_controller::parent_catalog_for_template(
             &state.client,
@@ -557,9 +558,37 @@ async fn reconcile_template(
             Ok(p) => p,
             Err(e) => {
                 warn!(error = %e, "WorkspaceCatalog lookup failed; reconciling without workspace cascade");
+                catalog_lookup_failed = true;
                 None
             }
         };
+
+    if let crate::controller::template::leaf::Membership::Orphan { catalog } =
+        crate::controller::template::leaf::membership(
+            &template,
+            parent_wsc.is_some() || catalog_lookup_failed,
+        )
+    {
+        let msg = format!(
+            "{}: leaf {name} names WorkspaceCatalog `{catalog}`, which does not exist",
+            crate::controller::template::leaf::LEAF_CATALOG_MISSING
+        );
+        let already = template.status.as_ref().is_some_and(|s| {
+            s.phase == Some(Phase::Failed) && s.last_error.as_deref() == Some(msg.as_str())
+        });
+        if !already {
+            update_phase_with_error(&template, Phase::Failed, &msg, &state).await?;
+            record_event(
+                &template,
+                &state,
+                EventType::Warning,
+                crate::controller::template::leaf::LEAF_CATALOG_MISSING,
+                &msg,
+            )
+            .await;
+        }
+        return Ok(Action::requeue(DEFAULT_REQUEUE_INTERVAL));
+    }
 
     // ReactivePolicy auto-suspend gate: a prior reconcile triggered a
     // Suspend escalation (e.g. 5+ consecutive failures) and patched
@@ -1393,6 +1422,11 @@ async fn handle_compiling(
                 &ws_defaults,
                 &template_vars,
             ]);
+            if let Err(e) =
+                crate::controller::template::leaf::isolate_slice(template, &mut variables)
+            {
+                return Err(Error::Config(format!("LeafSliceInvalid: {e}")));
+            }
 
             // CROSS-TEMPLATE DEPENDENCY + OUTPUTS (P2/P3, Terragrunt
             // `dependency.<x>.outputs` + `run-all`): resolve `spec.variableRefs`

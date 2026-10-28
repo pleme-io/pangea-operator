@@ -184,6 +184,63 @@ pub fn digest_of(
     inputs_digest(catalog_variables, vars.as_ref(), refs.as_ref())
 }
 
+pub const LEAF_CATALOG_MISSING: &str = "LeafCatalogMissing";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Membership {
+    Standalone,
+    Leaf { catalog: String },
+    Orphan { catalog: String },
+}
+
+#[must_use]
+pub fn membership(template: &InfrastructureTemplate, catalog_found: bool) -> Membership {
+    let Some(catalog) = template
+        .metadata
+        .labels
+        .as_ref()
+        .and_then(|l| l.get(crate::controller::workspace_catalog_controller::WORKSPACE_LABEL))
+    else {
+        return Membership::Standalone;
+    };
+    let owned = template
+        .metadata
+        .owner_references
+        .as_ref()
+        .is_some_and(|o| {
+            o.iter()
+                .any(|r| r.kind == "WorkspaceCatalog" && &r.name == catalog)
+        });
+    if !owned {
+        return Membership::Standalone;
+    }
+    if catalog_found {
+        Membership::Leaf {
+            catalog: catalog.clone(),
+        }
+    } else {
+        Membership::Orphan {
+            catalog: catalog.clone(),
+        }
+    }
+}
+
+pub fn isolate_slice(
+    template: &InfrastructureTemplate,
+    variables: &mut BTreeMap<String, serde_json::Value>,
+) -> Result<(), pangea_leaf::slice::SliceError> {
+    let Some(contract) = template
+        .metadata
+        .annotations
+        .as_ref()
+        .and_then(pangea_leaf::slice::SliceContract::from_annotations)
+    else {
+        return Ok(());
+    };
+    let own = template.spec.variables.clone().unwrap_or_default();
+    pangea_leaf::slice::isolate(variables, &own, &contract)
+}
+
 pub async fn blocked_upstreams(
     state: &ControllerState,
     template: &InfrastructureTemplate,
@@ -349,6 +406,86 @@ mod tests {
 
     fn fat() -> Vec<String> {
         vec!["a.b".into(), "c.d".into()]
+    }
+
+    fn declared_leaf(name: &str, catalog: &str, slug: &str) -> InfrastructureTemplate {
+        serde_json::from_value(serde_json::json!({
+            "apiVersion": "pangea.pleme.io/v1alpha1",
+            "kind": "InfrastructureTemplate",
+            "metadata": {
+                "name": name, "namespace": "n",
+                "labels": {"pangea.pleme.io/workspace": catalog},
+                "annotations": {
+                    "pangea.pleme.io/leaf-collection": "repos",
+                    "pangea.pleme.io/leaf-key": slug,
+                    "pangea.pleme.io/leaf-key-field": "slug"
+                },
+                "ownerReferences": [{"apiVersion": "pangea.pleme.io/v1alpha1", "kind": "WorkspaceCatalog", "name": catalog, "uid": "u"}]
+            },
+            "spec": {"source": {}, "pangeaNamespace": "ns", "variables": {"repos": [{"slug": slug}]}}
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_leaf_with_no_catalog_is_an_orphan_by_name_and_its_sibling_is_a_leaf() {
+        let orphan = declared_leaf("org-a", "gone", "a");
+        let sibling = declared_leaf("org-b", "org", "b");
+        assert_eq!(
+            membership(&orphan, false),
+            Membership::Orphan {
+                catalog: "gone".into()
+            }
+        );
+        assert_eq!(
+            membership(&sibling, true),
+            Membership::Leaf {
+                catalog: "org".into()
+            }
+        );
+    }
+
+    #[test]
+    fn a_skip_leaf_monolith_is_standalone_in_both_modes() {
+        let mono = template(Some("shared-lifecycle"), true);
+        assert_eq!(membership(&mono, false), Membership::Standalone);
+        assert_eq!(membership(&mono, true), Membership::Standalone);
+        let mut vars = BTreeMap::from([("repos".to_string(), serde_json::json!([1, 2, 3]))]);
+        isolate_slice(&mono, &mut vars).unwrap();
+        assert_eq!(vars["repos"], serde_json::json!([1, 2, 3]));
+    }
+
+    #[test]
+    fn a_label_without_an_owner_reference_is_not_a_leaf() {
+        let mut t = declared_leaf("org-a", "org", "a");
+        t.metadata.owner_references = None;
+        assert_eq!(membership(&t, false), Membership::Standalone);
+    }
+
+    #[test]
+    fn a_declared_leaf_receives_only_its_own_slice_of_the_catalog() {
+        let leaf = declared_leaf("org-b", "org", "b");
+        let mut effective = BTreeMap::from([
+            ("owner".to_string(), serde_json::json!("pleme-io")),
+            (
+                "repos".to_string(),
+                serde_json::json!([{"slug": "a"}, {"slug": "b"}, {"slug": "c"}]),
+            ),
+        ]);
+        isolate_slice(&leaf, &mut effective).unwrap();
+        assert_eq!(effective["repos"], serde_json::json!([{"slug": "b"}]));
+        assert_eq!(effective["owner"], serde_json::json!("pleme-io"));
+    }
+
+    #[test]
+    fn a_leaf_whose_slice_names_another_key_is_refused() {
+        let mut leaf = declared_leaf("org-b", "org", "b");
+        leaf.spec.variables = Some(BTreeMap::from([(
+            "repos".to_string(),
+            serde_json::json!([{"slug": "c"}]),
+        )]));
+        let mut effective = BTreeMap::new();
+        assert!(isolate_slice(&leaf, &mut effective).is_err());
     }
 
     #[test]
