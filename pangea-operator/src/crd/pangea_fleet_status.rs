@@ -118,6 +118,9 @@ pub struct PangeaFleetStatusStatus {
     /// `Updated=True` after a successful refresh.
     #[serde(default)]
     pub conditions: Vec<Condition>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leaf_work: Option<pangea_leaf::work::LeafWorkStatus>,
 }
 
 /// WorkspaceCatalog aggregation. `summary` is a printer-column-friendly

@@ -385,6 +385,7 @@ pub struct ProjectionMetrics {
     pub workspace_leaves: IntGaugeVec,
     pub workspace_leaves_unlabeled: IntGaugeVec,
     pub leaf_plan_seconds: prometheus::HistogramVec,
+    pub leaf_pending_work: IntGaugeVec,
 }
 
 fn gauge(registry: &Registry, name: &str, help: &str, labels: &[&str]) -> IntGaugeVec {
@@ -430,6 +431,7 @@ impl ProjectionMetrics {
                 registry.register(Box::new(h.clone())).expect("metric can be registered");
                 h
             },
+            leaf_pending_work: gauge(registry, "pangea_leaf_pending_work", "Pending leaf work weighted by provider calls per action, each credential capped at its rate times the horizon (the worker HPA metric); absent while workers.autoscaling.enabled is false", &[]),
             operator: gauge(registry, "pangea_operator_progress", "Operator progress gate readings: last_reconcile_timestamp_seconds, oldest_pending_age_seconds, wedged, projection_timestamp_seconds", &["reading"]),
         }
     }
@@ -561,6 +563,15 @@ impl ProjectionMetrics {
         }
     }
 
+    pub fn publish_leaf_work(&self, work: Option<&pangea_leaf::work::LeafWorkStatus>) {
+        self.leaf_pending_work.reset();
+        if let Some(w) = work {
+            self.leaf_pending_work
+                .with_label_values(&[])
+                .set(i64::try_from(w.metric).unwrap_or(i64::MAX));
+        }
+    }
+
     pub fn publish_cronjobs(&self, rows: &[CronRow]) {
         self.cronjob_last_success.reset();
         self.cronjob_last_failure.reset();
@@ -647,6 +658,9 @@ pub async fn run(client: Client, metrics: Arc<super::Metrics>, operator_namespac
                 }
                 metrics.projection.publish_templates(&rows);
                 metrics.projection.publish_workspaces(&list.items);
+                metrics
+                    .projection
+                    .publish_leaf_work(crate::leaf_work::status(&list.items).as_ref());
             }
             Err(e) => warn!(error = %e, "status projection could not list templates"),
         }

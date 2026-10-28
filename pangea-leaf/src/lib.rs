@@ -16,3 +16,4 @@ pub mod schedule;
 pub mod series;
 pub mod slice;
 pub mod sources;
+pub mod work;

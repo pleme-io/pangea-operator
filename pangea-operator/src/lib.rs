@@ -60,6 +60,7 @@ pub mod executor_migration;
 pub mod leader;
 pub mod leaf_engine;
 pub mod leaf_queue;
+pub mod leaf_work;
 pub mod network;
 pub mod observability;
 pub mod ruby;

@@ -979,11 +979,7 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
     /// and the org's release pipeline failed three times with "API rate limit
     /// exceeded". Override with `PANGEA_PACER_QUOTA_PCT`.
     fn pacer_quota_pct() -> f64 {
-        std::env::var("PANGEA_PACER_QUOTA_PCT")
-            .ok()
-            .and_then(|v| v.parse::<f64>().ok())
-            .filter(|v| *v > 0.0 && *v <= 1.0)
-            .unwrap_or(0.7)
+        crate::executor::pacer_lane::quota_pct()
     }
 
     /// The ONE pacer for this template's credential set, or `None` to keep
@@ -1028,11 +1024,7 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
         // Default stays 5000 — the safe floor for an unknown credential.
         // Set PANGEA_GITHUB_BUDGET_RPH to the measured value; it is one call:
         //   GET https://api.github.com/rate_limit -> .resources.core.limit
-        let github_budget_rph: f64 = std::env::var("PANGEA_GITHUB_BUDGET_RPH")
-            .ok()
-            .and_then(|v| v.parse::<f64>().ok())
-            .filter(|v| *v > 0.0)
-            .unwrap_or(5000.0);
+        let github_budget_rph: f64 = crate::executor::pacer_lane::github_budget_rph();
         if !configs.keys().any(|k| k.starts_with("github")) {
             return None;
         }

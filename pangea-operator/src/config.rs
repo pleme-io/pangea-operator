@@ -104,6 +104,56 @@ pub struct OperatorConfig {
     /// config file without the section reads as the enforced default.
     #[serde(default)]
     pub leaf: LeafConfig,
+    #[serde(default)]
+    pub workers: WorkersConfig,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkersConfig {
+    #[serde(default)]
+    pub autoscaling: AutoscalingConfig,
+    #[serde(default)]
+    pub weights: pangea_leaf::work::Weights,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AutoscalingConfig {
+    #[serde(default = "default_on")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub min: u32,
+    #[serde(default = "default_autoscaling_max")]
+    pub max: u32,
+    #[serde(default = "default_autoscaling_target")]
+    pub target: u64,
+    #[serde(default = "default_autoscaling_horizon_secs")]
+    pub horizon_secs: u64,
+}
+
+fn default_autoscaling_max() -> u32 {
+    4
+}
+
+fn default_autoscaling_target() -> u64 {
+    600
+}
+
+fn default_autoscaling_horizon_secs() -> u64 {
+    300
+}
+
+impl Default for AutoscalingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            min: 0,
+            max: default_autoscaling_max(),
+            target: default_autoscaling_target(),
+            horizon_secs: default_autoscaling_horizon_secs(),
+        }
+    }
 }
 
 /// Pod identity — the discovered tier.
@@ -607,6 +657,18 @@ struct EnvOverlay {
     gem: GemOverlay,
     reactive: ReactiveOverlay,
     leaf: LeafOverlay,
+    workers: WorkersOverlay,
+}
+
+#[derive(Serialize, Default)]
+struct WorkersOverlay {
+    autoscaling: AutoscalingOverlay,
+}
+
+#[derive(Serialize, Default)]
+struct AutoscalingOverlay {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    enabled: Option<bool>,
 }
 
 #[derive(Serialize, Default)]
@@ -859,6 +921,12 @@ impl EnvOverlay {
             gem: GemOverlay {
                 cache_dir: env_present("PANGEA_GEM_CACHE_DIR"),
             },
+            workers: WorkersOverlay {
+                autoscaling: AutoscalingOverlay {
+                    enabled: env_present("PANGEA_WORKERS_AUTOSCALING")
+                        .map(|v| crate::executor::backend_select::parse_truthy(Some(v.as_str()))),
+                },
+            },
             leaf: LeafOverlay {
                 admission: env_present("PANGEA_LEAF_ADMISSION")
                     .and_then(|v| pangea_leaf::admission::AdmissionMode::parse(&v)),
@@ -979,6 +1047,7 @@ impl TieredConfig for OperatorConfig {
                 adopt_orphaned_pass: false,
             },
             leaf: LeafConfig::default(),
+            workers: WorkersConfig::default(),
         }
     }
 
@@ -1657,6 +1726,28 @@ mod tests {
         assert_eq!(leaf.nats.url.as_deref(), Some("nats://nats:4222"));
         assert_eq!(leaf.nats.ack_wait_secs, 30);
         assert_eq!(leaf.nats.max_deliver, 5);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn worker_autoscaling_and_weights_are_read_from_the_file_tier() {
+        let _g = ENV_GUARD.lock().unwrap();
+        let p = OperatorConfig::prescribed_default().workers;
+        assert!(p.autoscaling.enabled);
+        assert_eq!((p.autoscaling.min, p.autoscaling.max), (0, 4));
+        assert_eq!(p.autoscaling.target, 600);
+        assert_eq!(p.autoscaling.horizon_secs, 300);
+        assert_eq!(p.weights.create, 3);
+        let path = scratch_file(
+            "workers",
+            "workers:\n  autoscaling:\n    enabled: false\n  weights:\n    create: 4\n",
+        );
+        let r = OperatorConfig::resolve_from(&path, Dict::new());
+        assert_eq!(r.file, FileTier::Loaded { path: path.clone() });
+        let w = r.resolution.into_value().workers;
+        assert!(!w.autoscaling.enabled);
+        assert_eq!(w.weights.create, 4);
+        assert_eq!(w.weights.replace, 5);
         std::fs::remove_file(path).unwrap();
     }
 

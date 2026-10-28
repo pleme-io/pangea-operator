@@ -24,3 +24,5 @@
 infrastructuretemplates.pangea.pleme.io
 # 2026-10-28: workspacecatalogs gains status.recentEvents (LEAVES.md O9); helmworks regenerates it (C1).
 workspacecatalogs.pangea.pleme.io
+# 2026-10-28: pangeafleetstatuses gains status.leafWork (LEAVES.md O12); helmworks regenerates it (C1).
+pangeafleetstatuses.pangea.pleme.io

@@ -187,6 +187,7 @@ fn fleet_status_changed(
         || p.infrastructure_flows != new.infrastructure_flows
         || p.pangea_dashboards != new.pangea_dashboards
         || p.synthesizer_formats != new.synthesizer_formats
+        || p.leaf_work != new.leaf_work
 }
 
 /// List every tracked pangea CRD class and return a populated
@@ -208,6 +209,7 @@ async fn aggregate_fleet_status(
     let it_api: Api<InfrastructureTemplate> = Api::all(client.clone());
     let templates = it_api.list(&lp).await?;
     let infrastructure_templates = aggregate_templates(&templates.items);
+    let leaf_work = crate::leaf_work::status(&templates.items);
 
     // Fleet `pangea_templates_by_phase` gauge — the ONE place the operator
     // sees every template's phase at once. Count by phase (a template with no
@@ -333,6 +335,7 @@ async fn aggregate_fleet_status(
             message: "Fleet status refreshed successfully.".into(),
             observed_generation: None,
         }],
+        leaf_work,
     })
 }
 
@@ -534,7 +537,20 @@ mod tests {
             synthesizer_formats: Default::default(),
             last_updated_at: Some(chrono::Utc::now()),
             conditions: vec![],
+            leaf_work: None,
         }
+    }
+
+    #[test]
+    fn fleet_status_leaf_work_change_must_patch() {
+        let prev = empty_status();
+        let mut new = empty_status();
+        new.leaf_work = Some(pangea_leaf::work::LeafWorkStatus {
+            metric: 12,
+            desired: 1,
+            ..Default::default()
+        });
+        assert!(fleet_status_changed(Some(&prev), &new));
     }
 
     #[test]

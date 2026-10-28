@@ -202,6 +202,7 @@ async fn main() -> Result<()> {
         op_cfg.reactive.adopt_orphaned_pass,
     );
     pangea_operator::controller::template::leaf::configure(&op_cfg.leaf);
+    pangea_operator::leaf_work::configure(&op_cfg.workers);
     pangea_operator::observability::projection::configure_series(
         op_cfg.observability.leaf_series,
         op_cfg.observability.leaf_series_max,
