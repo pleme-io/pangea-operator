@@ -256,3 +256,104 @@ fn an_address_whose_key_no_leaf_declares_refuses_the_move() {
         Err(MigrateError::DuplicateLeaf(_))
     ));
 }
+
+fn unkeyed_fat_state() -> Vec<u8> {
+    let r = |ty: &str, name: &str, id: &str| {
+        json!({"mode": "managed", "type": ty, "name": name,
+               "provider": "provider[\"registry.terraform.io/integrations/github\"]",
+               "instances": [{"schema_version": 0, "attributes": {"id": id}}]})
+    };
+    let doc = json!({
+        "version": 4, "terraform_version": "1.7.0", "serial": 181,
+        "lineage": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "outputs": {},
+        "resources": [
+            r("github_repository", "tear", "tear"),
+            r("github_actions_repository_permissions", "tear_actions", "tear"),
+            r("github_branch_protection", "tear_protection", "p-tear"),
+            r("github_repository", "kensa", "kensa"),
+            r("github_actions_repository_permissions", "kensa_actions", "kensa")
+        ]
+    });
+    serde_json::to_vec_pretty(&doc).unwrap()
+}
+
+fn claims(rows: &[(&str, &str, &[&str])]) -> Vec<pangea_leaf::migrate::LeafClaim> {
+    rows.iter()
+        .map(|(leaf, key, addrs)| pangea_leaf::migrate::LeafClaim {
+            leaf: (*leaf).to_string(),
+            key: (*key).to_string(),
+            addresses: addrs.iter().map(|a| (*a).to_string()).collect(),
+        })
+        .collect()
+}
+
+#[test]
+fn declared_addresses_place_an_unkeyed_fat_state() {
+    let fat = unkeyed_fat_state();
+    let moves = pangea_leaf::migrate::moves_by_claims(
+        FAT,
+        Some("ns"),
+        &fat,
+        &claims(&[
+            (
+                "org-tear",
+                "tear",
+                &[
+                    "github_repository.tear",
+                    "github_actions_repository_permissions.tear_actions",
+                    "github_branch_protection.tear_protection",
+                ],
+            ),
+            (
+                "org-kensa",
+                "kensa",
+                &[
+                    "github_repository.kensa",
+                    "github_actions_repository_permissions.kensa_actions",
+                ],
+            ),
+            ("org-new", "new", &["github_repository.new"]),
+        ]),
+    )
+    .unwrap();
+    assert_eq!(moves.len(), 2);
+    let tear = moves.iter().find(|m| m.to_template == "org-tear").unwrap();
+    assert_eq!(tear.addresses.len(), 3);
+    let s = split(FAT, &fat, &moves).unwrap();
+    assert_eq!(s.receipt.hash_before, s.receipt.hash_after);
+}
+
+#[test]
+fn an_unkeyed_fat_state_with_keys_only_refuses_and_a_doubled_address_refuses() {
+    let fat = unkeyed_fat_state();
+    assert!(matches!(
+        pangea_leaf::migrate::moves_by_key(
+            FAT,
+            None,
+            &fat,
+            &leaf_keys(&[("org-tear", "tear"), ("org-kensa", "kensa")])
+        ),
+        Err(MigrateError::Bijection(_))
+    ));
+    assert!(matches!(
+        pangea_leaf::migrate::moves_by_claims(
+            FAT,
+            None,
+            &fat,
+            &claims(&[
+                ("org-tear", "tear", &["github_repository.tear"]),
+                ("org-twin", "twin", &["github_repository.tear"]),
+            ])
+        ),
+        Err(MigrateError::DuplicateLeaf(_))
+    ));
+    assert!(matches!(
+        pangea_leaf::migrate::moves_by_claims(
+            FAT,
+            None,
+            &fat,
+            &claims(&[("org-tear", "tear", &["github_repository.tear"])])
+        ),
+        Err(MigrateError::Bijection(_))
+    ));
+}

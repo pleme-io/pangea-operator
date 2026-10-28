@@ -172,6 +172,19 @@ pub async fn forward_by_key(
     .await
 }
 
+pub async fn forward_by_claims(
+    pool: &PgPool,
+    schema: &str,
+    fat: &str,
+    pangea_namespace: &str,
+    leaves: &[migrate::LeafClaim],
+) -> Result<Outcome> {
+    forward_with(pool, schema, fat, |bytes| {
+        migrate::moves_by_claims(fat, Some(pangea_namespace), bytes, leaves)
+    })
+    .await
+}
+
 async fn forward_with(
     pool: &PgPool,
     schema: &str,

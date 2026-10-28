@@ -226,6 +226,7 @@ pub fn membership(template: &InfrastructureTemplate, catalog_found: bool) -> Mem
 }
 
 pub const MIGRATE_FROM_ANNOTATION: &str = "pangea.pleme.io/migrate-from";
+pub use pangea_leaf::slice::LEAF_ADDRESSES_ANNOTATION;
 pub const LEAF_MIGRATION_CONDITION: &str = "LeafMigration";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -238,7 +239,7 @@ pub enum MigrationStep {
     Run {
         fat: String,
         pangea_namespace: String,
-        leaves: Vec<(String, String)>,
+        leaves: Vec<pangea_leaf::migrate::LeafClaim>,
     },
 }
 
@@ -326,13 +327,81 @@ pub fn migration_step(
                 pangea_leaf::slice::LEAF_KEY_ANNOTATION
             ));
         };
-        out.push((l.name_any(), key.clone()));
+        let addresses = l
+            .metadata
+            .annotations
+            .as_ref()
+            .and_then(|a| a.get(LEAF_ADDRESSES_ANNOTATION))
+            .map(|raw| {
+                raw.split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        out.push(pangea_leaf::migrate::LeafClaim {
+            leaf: l.name_any(),
+            key: key.clone(),
+            addresses,
+        });
     }
     MigrationStep::Run {
         fat: fat.name_any(),
         pangea_namespace: fat.spec.pangea_namespace.clone(),
         leaves: out,
     }
+}
+
+#[must_use]
+pub fn adoption_patches(
+    catalog: &WorkspaceCatalog,
+    templates: &[InfrastructureTemplate],
+) -> Vec<(String, String, serde_json::Value)> {
+    let Some(uid) = catalog.metadata.uid.clone() else {
+        return Vec::new();
+    };
+    let name = catalog.name_any();
+    templates
+        .iter()
+        .filter(|t| {
+            t.metadata.labels.as_ref().and_then(|l| {
+                l.get(crate::controller::workspace_catalog_controller::WORKSPACE_LABEL)
+            }) == Some(&name)
+        })
+        .filter(|t| {
+            t.metadata
+                .annotations
+                .as_ref()
+                .is_some_and(|a| a.contains_key(pangea_leaf::slice::LEAF_KEY_ANNOTATION))
+        })
+        .filter(|t| matches!(membership(t, true), Membership::Standalone))
+        .map(|t| {
+            let mut owners: Vec<serde_json::Value> = t
+                .metadata
+                .owner_references
+                .iter()
+                .flatten()
+                .map(|o| serde_json::to_value(o).unwrap_or_default())
+                .collect();
+            owners.insert(
+                0,
+                serde_json::json!({
+                    "apiVersion": "pangea.pleme.io/v1alpha1",
+                    "kind": "WorkspaceCatalog",
+                    "name": name,
+                    "uid": uid,
+                    "controller": false,
+                    "blockOwnerDeletion": false
+                }),
+            );
+            (
+                t.namespace().unwrap_or_default(),
+                t.name_any(),
+                serde_json::json!({"metadata": {"ownerReferences": owners}}),
+            )
+        })
+        .collect()
 }
 
 fn first_line(s: &str) -> String {
@@ -782,7 +851,7 @@ mod tests {
             MigrationStep::Run {
                 fat: "org".into(),
                 pangea_namespace: "ns".into(),
-                leaves: vec![("org-a".into(), "a".into()), ("org-b".into(), "b".into())],
+                leaves: vec![claim("org-a", "a", &[]), claim("org-b", "b", &[])],
             }
         );
         assert!(held_for_migration(&catalog(Some("org"), false)));
@@ -939,6 +1008,7 @@ mod tests {
             ratchet_tolerance_percent: 3,
             cycle_budget_secs: Some(9),
             migrate: false,
+            adopt: false,
         };
         configure(&cfg);
         assert_eq!(settings(), cfg);
@@ -957,5 +1027,99 @@ mod tests {
         }
         assert_eq!(observe_cycle(k, 20), Some(20));
         assert_eq!(observe_cycle("ns/other", 5), None);
+    }
+    fn claim(leaf: &str, key: &str, addresses: &[&str]) -> pangea_leaf::migrate::LeafClaim {
+        pangea_leaf::migrate::LeafClaim {
+            leaf: leaf.into(),
+            key: key.into(),
+            addresses: addresses.iter().map(|a| (*a).to_string()).collect(),
+        }
+    }
+
+    fn rendered_leaf(name: &str, slug: &str, addresses: &str) -> InfrastructureTemplate {
+        let mut t = declared_leaf(name, "org", slug);
+        t.metadata.owner_references = None;
+        t.metadata
+            .annotations
+            .get_or_insert_with(BTreeMap::new)
+            .insert(LEAF_ADDRESSES_ANNOTATION.into(), addresses.into());
+        t
+    }
+
+    #[test]
+    fn the_move_carries_each_leafs_declared_addresses() {
+        let leaves = [declared_leaf("org-a", "org", "a"), {
+            let mut t = declared_leaf("org-b", "org", "b");
+            t.metadata
+                .annotations
+                .get_or_insert_with(BTreeMap::new)
+                .insert(
+                    LEAF_ADDRESSES_ANNOTATION.into(),
+                    "github_repository.b,github_branch_protection.b_protection".into(),
+                );
+            t
+        }];
+        let step = migration_step(
+            &catalog(Some("org"), false),
+            true,
+            Some(&fat_parent(true)),
+            &leaves,
+        );
+        assert_eq!(
+            step,
+            MigrationStep::Run {
+                fat: "org".into(),
+                pangea_namespace: "ns".into(),
+                leaves: vec![
+                    claim("org-a", "a", &[]),
+                    claim(
+                        "org-b",
+                        "b",
+                        &[
+                            "github_repository.b",
+                            "github_branch_protection.b_protection"
+                        ]
+                    ),
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn a_rendered_leaf_is_adopted_by_its_catalog_and_an_owned_or_foreign_one_is_not() {
+        let mut c = catalog(Some("org"), false);
+        c.metadata.uid = Some("cat-uid".into());
+        let rendered = rendered_leaf("org-a", "a", "github_repository.a");
+        let owned = declared_leaf("org-b", "org", "b");
+        let mut plain = declared_leaf("org-c", "org", "c");
+        plain.metadata.owner_references = None;
+        plain.metadata.annotations = None;
+        let mut foreign = rendered_leaf("other-d", "d", "github_repository.d");
+        foreign
+            .metadata
+            .labels
+            .get_or_insert_with(BTreeMap::new)
+            .insert(
+                crate::controller::workspace_catalog_controller::WORKSPACE_LABEL.into(),
+                "other".into(),
+            );
+        let patches = adoption_patches(&c, &[rendered, owned, plain, foreign]);
+        assert_eq!(patches.len(), 1);
+        let (ns, name, patch) = &patches[0];
+        assert_eq!((ns.as_str(), name.as_str()), ("n", "org-a"));
+        assert_eq!(
+            patch["metadata"]["ownerReferences"][0],
+            serde_json::json!({
+                "apiVersion": "pangea.pleme.io/v1alpha1",
+                "kind": "WorkspaceCatalog",
+                "name": "org",
+                "uid": "cat-uid",
+                "controller": false,
+                "blockOwnerDeletion": false
+            })
+        );
+        let mut uidless = catalog(Some("org"), false);
+        uidless.metadata.uid = None;
+        assert!(adoption_patches(&uidless, &[rendered_leaf("org-a", "a", "x")]).is_empty());
     }
 }

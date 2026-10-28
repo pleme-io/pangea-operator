@@ -24,7 +24,7 @@
 use chrono::Utc;
 use kube::ResourceExt;
 use kube::{
-    api::{Api, ListParams},
+    api::{Api, ListParams, Patch, PatchParams},
     runtime::controller::Action,
     Client,
 };
@@ -145,7 +145,23 @@ async fn reconcile(wsc: Arc<WorkspaceCatalog>, ctx: Arc<Context>) -> Result<Acti
     let tmpl_api: Api<InfrastructureTemplate> = Api::all(ctx.client.clone());
     let label_selector = format!("{}={}", WORKSPACE_LABEL, name);
     let lp = ListParams::default().labels(&label_selector);
-    let templates = tmpl_api.list(&lp).await?;
+    let mut templates = tmpl_api.list(&lp).await?;
+    if crate::controller::template::leaf::settings().adopt {
+        let patches = crate::controller::template::leaf::adoption_patches(&wsc, &templates.items);
+        if !patches.is_empty() {
+            for (ns, leaf, patch) in &patches {
+                let api: Api<InfrastructureTemplate> = Api::namespaced(ctx.client.clone(), ns);
+                if let Err(e) = api
+                    .patch(leaf, &PatchParams::default(), &Patch::Merge(patch))
+                    .await
+                {
+                    warn!(workspace = %name, leaf = %leaf, error = %e, "adopting a declared leaf failed");
+                }
+            }
+            info!(workspace = %name, adopted = patches.len(), "adopted declared leaves");
+            templates = tmpl_api.list(&lp).await?;
+        }
+    }
     let template_count = templates.items.len() as u32;
     request_changed_leaves(&ctx.client, &wsc, &templates.items).await;
 
@@ -391,7 +407,7 @@ async fn leaf_migration_condition(
                 ));
             };
             let schema = crate::crd::schema_name_for_namespace(&pangea_namespace);
-            let outcome = crate::backend::leaf_migration::forward_by_key(
+            let outcome = crate::backend::leaf_migration::forward_by_claims(
                 store.pool(),
                 &schema,
                 &fat,

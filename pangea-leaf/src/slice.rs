@@ -5,6 +5,7 @@ use serde_json::Value;
 pub const LEAF_COLLECTION_ANNOTATION: &str = "pangea.pleme.io/leaf-collection";
 pub const LEAF_KEY_ANNOTATION: &str = "pangea.pleme.io/leaf-key";
 pub const LEAF_KEY_FIELD_ANNOTATION: &str = "pangea.pleme.io/leaf-key-field";
+pub const LEAF_ADDRESSES_ANNOTATION: &str = "pangea.pleme.io/leaf-addresses";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SliceContract {

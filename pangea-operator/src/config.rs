@@ -377,6 +377,12 @@ pub struct LeafConfig {
     /// true). `false` runs nothing and leaves the fat row untouched.
     #[serde(default = "default_leaf_migrate")]
     pub migrate: bool,
+    #[serde(default = "default_leaf_adopt")]
+    pub adopt: bool,
+}
+
+fn default_leaf_adopt() -> bool {
+    true
 }
 
 fn default_leaf_migrate() -> bool {
@@ -394,6 +400,7 @@ impl Default for LeafConfig {
             ratchet_tolerance_percent: default_ratchet_tolerance_percent(),
             cycle_budget_secs: None,
             migrate: default_leaf_migrate(),
+            adopt: default_leaf_adopt(),
         }
     }
 }
@@ -651,6 +658,8 @@ struct LeafOverlay {
     cycle_budget_secs: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     migrate: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    adopt: Option<bool>,
 }
 
 #[derive(Serialize, Default)]
@@ -747,6 +756,7 @@ impl EnvOverlay {
                 ),
                 cycle_budget_secs: env_parse::<u64>("PANGEA_LEAF_CYCLE_BUDGET_SECS"),
                 migrate: env_parse::<bool>("PANGEA_LEAF_MIGRATE"),
+                adopt: env_parse::<bool>("PANGEA_LEAF_ADOPT"),
             },
         }
     }

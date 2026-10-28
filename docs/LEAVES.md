@@ -298,10 +298,11 @@ carries:
 | Field | Value | Example |
 |---|---|---|
 | label `pangea.pleme.io/workspace` | the catalog name | `pleme-io-github-repos` |
-| `ownerReferences[]` | `kind: WorkspaceCatalog`, `name:` the catalog | |
+| `ownerReferences[]` | `kind: WorkspaceCatalog`, `name:` the catalog. A rendered leaf cannot know the catalog's `uid`, so the catalog writes it: it adopts every template with its label and a `leaf-key` annotation (`leaf.adopt`, `PANGEA_LEAF_ADOPT`, default true) | |
 | annotation `pangea.pleme.io/leaf-collection` | the input that holds the collection | `repos` |
 | annotation `pangea.pleme.io/leaf-key` | this leaf's key | `kensa` |
 | annotation `pangea.pleme.io/leaf-key-field` | the field that names an entry in a list; omit it for a map, where the map key is the leaf key | `slug` |
+| annotation `pangea.pleme.io/leaf-addresses` | the resource addresses the leaf's own render emits, sorted, comma-separated; the move places a fat address by this list first, then by its `for_each` key | `github_repository.kensa,github_actions_repository_permissions.kensa_actions` |
 | `spec.variables.<collection>` | exactly one entry, the leaf's own | `repos: [{slug: kensa, …}]` |
 
 The catalog's `spec.variables` holds the shared inputs only. Even if it holds
@@ -317,8 +318,8 @@ template).** The catalog carries the annotation `pangea.pleme.io/migrate-from:
 <fat template>` (or `<namespace>/<fat template>`). While the catalog's
 `LeafMigration` condition is not `True`, every declared leaf waits and plans
 nothing. The catalog controller runs the move when the fat template has
-`spec.suspend: true`: each fat address goes to the leaf whose `leaf-key`
-equals the address's `for_each` key. An address that no leaf claims, or two
+`spec.suspend: true`: each fat address goes to the leaf whose `leaf-addresses`
+names it, else to the leaf whose `leaf-key` equals the address's `for_each` key. An address that no leaf claims, or two
 leaves on one key, refuses the move by name and writes nothing. The outcome is
 the `LeafMigration` condition: `True/Migrated` (with the bijection hash), or
 `False` with `Waiting`, `Refused`, `Off`, `NoDatabase` or `Error`. A `True`

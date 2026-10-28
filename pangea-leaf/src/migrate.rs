@@ -125,25 +125,61 @@ pub fn managed_addresses(bytes: &[u8]) -> Result<Vec<String>, MigrateError> {
     Ok(addresses_from_state(&parse(bytes)?)?)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeafClaim {
+    pub leaf: String,
+    pub key: String,
+    pub addresses: Vec<String>,
+}
+
 pub fn moves_by_key(
     fat_template: &str,
     pangea_namespace: Option<&str>,
     fat: &[u8],
     leaves: &[(String, String)],
 ) -> Result<Vec<StateMove>, MigrateError> {
+    let claims: Vec<LeafClaim> = leaves
+        .iter()
+        .map(|(leaf, key)| LeafClaim {
+            leaf: leaf.clone(),
+            key: key.clone(),
+            addresses: Vec::new(),
+        })
+        .collect();
+    moves_by_claims(fat_template, pangea_namespace, fat, &claims)
+}
+
+pub fn moves_by_claims(
+    fat_template: &str,
+    pangea_namespace: Option<&str>,
+    fat: &[u8],
+    leaves: &[LeafClaim],
+) -> Result<Vec<StateMove>, MigrateError> {
     let mut by_key: BTreeMap<&str, &str> = BTreeMap::new();
-    for (leaf, key) in leaves {
-        if by_key.insert(key.as_str(), leaf.as_str()).is_some() {
-            return Err(MigrateError::DuplicateLeaf(format!("key `{key}`")));
+    let mut by_address: BTreeMap<&str, &str> = BTreeMap::new();
+    for c in leaves {
+        if by_key.insert(c.key.as_str(), c.leaf.as_str()).is_some() {
+            return Err(MigrateError::DuplicateLeaf(format!("key `{}`", c.key)));
+        }
+        for a in &c.addresses {
+            if let Some(prev) = by_address.insert(a.as_str(), c.leaf.as_str()) {
+                return Err(MigrateError::DuplicateLeaf(format!(
+                    "address `{a}` is claimed by `{prev}` and `{}`",
+                    c.leaf
+                )));
+            }
         }
     }
     let mut placed: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     let mut unplaced = Vec::new();
     for addr in managed_addresses(fat)? {
-        let leaf = match crate::address::leaf_key(&addr) {
-            Ok(crate::address::LeafKey::Keyed(k)) => by_key.get(k.as_str()).copied(),
-            _ => None,
-        };
+        let leaf =
+            by_address.get(addr.as_str()).copied().or_else(|| {
+                match crate::address::leaf_key(&addr) {
+                    Ok(crate::address::LeafKey::Keyed(k)) => by_key.get(k.as_str()).copied(),
+                    _ => None,
+                }
+            });
         match leaf {
             Some(l) => placed.entry(l).or_default().push(addr),
             None => unplaced.push(addr),
@@ -151,7 +187,7 @@ pub fn moves_by_key(
     }
     if !unplaced.is_empty() {
         return Err(MigrateError::Bijection(format!(
-            "{} addresses match no declared leaf key, first `{}`",
+            "{} addresses match no declared leaf address or key, first `{}`",
             unplaced.len(),
             unplaced[0]
         )));
