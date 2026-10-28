@@ -206,6 +206,25 @@ jobs:
           PANGEA_REQUIRE_TEST_DATABASE: "1"
         run: cargo test -p pangea-operator --no-default-features --test leaf_migration_pg -- --test-threads=1
 
+  leaf-queue-jetstream:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start a JetStream nats-server
+        run: docker run -d --name nats -p 4222:4222 nats:2.10.22 -js
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Configure git credentials for git dependencies (cargo)
+        uses: pleme-io/actions/git-credentials@main
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: cargo test --test leaf_queue_jetstream (against the nats-server)
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+          PANGEA_TEST_NATS_URL: nats://127.0.0.1:4222
+          PANGEA_REQUIRE_TEST_NATS: "1"
+        run: cargo test -p pangea-operator --no-default-features --test leaf_queue_jetstream
+
   coverage:
     needs: cargo-test
     # ★ 2026-08-06 — MEASURED PRIVATE TODAY; PUBLIC IS THE INTENT.

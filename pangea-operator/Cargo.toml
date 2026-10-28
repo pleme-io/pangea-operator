@@ -228,6 +228,7 @@ tsunagu = "0.1.5"
 
 todoku = "0.1.9"
 handan = "0.1.2"
+async-nats = { version = "0.50", default-features = false, features = ["jetstream", "ring", "server_2_10"] }
 
 # Web framework
 axum = { workspace = true, features = ["tokio"] }

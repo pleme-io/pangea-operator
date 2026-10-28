@@ -392,6 +392,65 @@ pub struct LeafConfig {
     pub per_credential_cap: usize,
     #[serde(default)]
     pub drift_share: pangea_leaf::admit::Share,
+    #[serde(default)]
+    pub queue: LeafQueueKind,
+    #[serde(default)]
+    pub nats: LeafNatsConfig,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LeafQueueKind {
+    #[default]
+    InProcess,
+    Jetstream,
+}
+
+impl LeafQueueKind {
+    #[must_use]
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "in_process" | "inprocess" => Some(Self::InProcess),
+            "jetstream" => Some(Self::Jetstream),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LeafNatsConfig {
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default = "default_ack_wait_secs")]
+    pub ack_wait_secs: u64,
+    #[serde(default = "default_max_deliver")]
+    pub max_deliver: u64,
+    #[serde(default = "default_duplicate_window_secs")]
+    pub duplicate_window_secs: u64,
+}
+
+fn default_ack_wait_secs() -> u64 {
+    60
+}
+
+fn default_max_deliver() -> u64 {
+    5
+}
+
+fn default_duplicate_window_secs() -> u64 {
+    600
+}
+
+impl Default for LeafNatsConfig {
+    fn default() -> Self {
+        Self {
+            url: None,
+            ack_wait_secs: default_ack_wait_secs(),
+            max_deliver: default_max_deliver(),
+            duplicate_window_secs: default_duplicate_window_secs(),
+        }
+    }
 }
 
 fn default_per_credential_cap() -> usize {
@@ -421,6 +480,8 @@ impl Default for LeafConfig {
             priority: pangea_leaf::admit::PriorityMode::default(),
             per_credential_cap: default_per_credential_cap(),
             drift_share: pangea_leaf::admit::Share::default(),
+            queue: LeafQueueKind::default(),
+            nats: LeafNatsConfig::default(),
         }
     }
 }
@@ -690,6 +751,22 @@ struct LeafOverlay {
     per_credential_cap: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     drift_share: Option<pangea_leaf::admit::Share>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    queue: Option<LeafQueueKind>,
+    #[serde(skip_serializing_if = "NatsOverlay::is_empty")]
+    nats: NatsOverlay,
+}
+
+#[derive(Serialize, Default)]
+struct NatsOverlay {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+}
+
+impl NatsOverlay {
+    fn is_empty(&self) -> bool {
+        self.url.is_none()
+    }
 }
 
 #[derive(Serialize, Default)]
@@ -796,6 +873,10 @@ impl EnvOverlay {
                 per_credential_cap: env_parse::<usize>("PANGEA_LEAF_PER_CREDENTIAL_CAP"),
                 drift_share: env_present("PANGEA_LEAF_DRIFT_SHARE")
                     .and_then(|v| pangea_leaf::admit::Share::parse(&v)),
+                queue: env_present("PANGEA_LEAF_QUEUE").and_then(|v| LeafQueueKind::parse(&v)),
+                nats: NatsOverlay {
+                    url: env_nonempty("PANGEA_LEAF_NATS_URL"),
+                },
             },
         }
     }
@@ -1556,6 +1637,26 @@ mod tests {
         assert_eq!(leaf.priority, pangea_leaf::admit::PriorityMode::Off);
         assert_eq!(leaf.per_credential_cap, 0);
         assert_eq!(leaf.drift_share, pangea_leaf::admit::Share::NONE);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn leaf_queue_and_nats_are_read_from_the_file_tier() {
+        let _g = ENV_GUARD.lock().unwrap();
+        let p = OperatorConfig::prescribed_default().leaf;
+        assert_eq!(p.queue, LeafQueueKind::InProcess);
+        assert_eq!(p.nats.url, None);
+        let path = scratch_file(
+            "leaf-queue",
+            "leaf:\n  queue: jetstream\n  nats:\n    url: nats://nats:4222\n    ack_wait_secs: 30\n",
+        );
+        let r = OperatorConfig::resolve_from(&path, Dict::new());
+        assert_eq!(r.file, FileTier::Loaded { path: path.clone() });
+        let leaf = r.resolution.into_value().leaf;
+        assert_eq!(leaf.queue, LeafQueueKind::Jetstream);
+        assert_eq!(leaf.nats.url.as_deref(), Some("nats://nats:4222"));
+        assert_eq!(leaf.nats.ack_wait_secs, 30);
+        assert_eq!(leaf.nats.max_deliver, 5);
         std::fs::remove_file(path).unwrap();
     }
 

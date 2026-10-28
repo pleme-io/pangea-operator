@@ -9,6 +9,7 @@ pub mod names;
 pub mod pace;
 pub mod partition;
 pub mod plan;
+pub mod queue;
 pub mod ratchet;
 pub mod rollup;
 pub mod schedule;
