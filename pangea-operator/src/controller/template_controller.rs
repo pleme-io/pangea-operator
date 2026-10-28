@@ -1062,7 +1062,14 @@ async fn dispatch_template_phase(
             std::time::Instant::now(),
         );
         match admitted {
-            Some(_permit) => handler.handle(template, state).await,
+            Some(_permit) => {
+                crate::executor::pacer_lane::within(
+                    crate::controller::template::leaf::drift_lane(template)
+                        .map(|share| (pangea_leaf::pace::Lane::Change, share)),
+                    handler.handle(template, state),
+                )
+                .await
+            }
             None => {
                 // `Phase: Display` (strum) is the typed stringify surface — no format!().
                 let phase_label = current_phase.to_string();
@@ -5659,7 +5666,13 @@ async fn handle_ready(
     // already ran this tick. (The plan stays on the refreshInterval cadence;
     // the freshness probe does not.)
     let request_pending = reconcile_request_pending(template);
-    if let Some(last_check) = template
+    let drift_lane = crate::controller::template::leaf::drift_lane(template);
+    if drift_lane.is_some() && !request_pending {
+        let wait = crate::controller::template::leaf::drift_wait(state, template, interval).await;
+        if !wait.is_zero() {
+            return Ok(ReconcileAction::Requeue(wait.min(interval)));
+        }
+    } else if let Some(last_check) = template
         .status
         .as_ref()
         .and_then(|s| s.last_drift_check_at)
@@ -5680,7 +5693,11 @@ async fn handle_ready(
     debug!("Running drift detection");
 
     let pass = PassGuard::begin(template, state, Phase::Planning).await;
-    let plan_result = runner.plan(&workspace).await?;
+    let plan_result = crate::executor::pacer_lane::within(
+        drift_lane.map(|share| (pangea_leaf::pace::Lane::Drift, share)),
+        runner.plan(&workspace),
+    )
+    .await?;
     drop(pass);
 
     finish_settled_pass(template, state).await;

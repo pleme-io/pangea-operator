@@ -56,11 +56,14 @@ impl Share {
 
     #[must_use]
     pub fn from_fraction(f: f64) -> Option<Self> {
-        if f.is_nan() || !(0.0..=1.0).contains(&f) {
+        if f.is_nan() || !(0.0..1.0).contains(&f) {
             return None;
         }
         let permille = (f * 1000.0).round();
-        u16::try_from(permille as i64).ok().map(Self)
+        u16::try_from(permille as i64)
+            .ok()
+            .filter(|p| *p < 1000)
+            .map(Self)
     }
 
     #[must_use]
@@ -95,7 +98,7 @@ impl<'de> Deserialize<'de> for Share {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let f = f64::deserialize(d)?;
         Self::from_fraction(f)
-            .ok_or_else(|| serde::de::Error::custom("a share is a fraction in [0, 1]"))
+            .ok_or_else(|| serde::de::Error::custom("a share is a fraction in [0, 1)"))
     }
 }
 
@@ -357,10 +360,12 @@ mod tests {
     }
 
     #[test]
-    fn a_share_is_a_fraction_in_the_unit_interval() {
+    fn a_share_is_a_fraction_below_one() {
         assert_eq!(Share::parse("0.5"), Some(Share::HALF));
         assert_eq!(Share::parse("0"), Some(Share::NONE));
         assert_eq!(Share::parse("1.5"), None);
+        assert_eq!(Share::parse("1"), None);
+        assert_eq!(Share::parse("0.999").map(Share::permille), Some(999));
         assert_eq!(Share::parse("-0.1"), None);
         assert_eq!(Share::parse("NaN"), None);
         let s: Share = serde_json::from_str("0.25").unwrap();

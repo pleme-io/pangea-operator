@@ -166,6 +166,79 @@ pub async fn catalog_view(
     view
 }
 
+const SIBLINGS_TTL: Duration = Duration::from_secs(60);
+
+static SIBLINGS: Mutex<BTreeMap<String, (Instant, Vec<String>)>> = Mutex::new(BTreeMap::new());
+
+#[must_use]
+pub fn drift_lane(template: &InfrastructureTemplate) -> Option<pangea_leaf::admit::Share> {
+    if !matches!(membership(template, true), Membership::Leaf { .. }) {
+        return None;
+    }
+    Some(settings().drift_share).filter(|s| s.permille() > 0)
+}
+
+async fn sibling_names(state: &ControllerState, catalog: &str) -> Vec<String> {
+    if let Some((at, names)) = SIBLINGS
+        .lock()
+        .expect("leaf siblings mutex poisoned")
+        .get(catalog)
+    {
+        if at.elapsed() < SIBLINGS_TTL {
+            return names.clone();
+        }
+    }
+    let api: kube::Api<InfrastructureTemplate> = kube::Api::all(state.client.clone());
+    let selector = [
+        crate::controller::workspace_catalog_controller::WORKSPACE_LABEL,
+        catalog,
+    ]
+    .join("=");
+    let names: Vec<String> = match api
+        .list_metadata(&kube::api::ListParams::default().labels(&selector))
+        .await
+    {
+        Ok(list) => list.items.iter().map(ResourceExt::name_any).collect(),
+        Err(e) => {
+            warn!(error = %e, %catalog, "leaf siblings could not be listed; drift placed alone");
+            return Vec::new();
+        }
+    };
+    SIBLINGS
+        .lock()
+        .expect("leaf siblings mutex poisoned")
+        .insert(catalog.to_string(), (Instant::now(), names.clone()));
+    names
+}
+
+pub async fn drift_wait(
+    state: &ControllerState,
+    template: &InfrastructureTemplate,
+    interval: Duration,
+) -> Duration {
+    let Membership::Leaf { catalog } = membership(template, true) else {
+        return Duration::ZERO;
+    };
+    let siblings = sibling_names(state, &catalog).await;
+    let now = chrono::Utc::now();
+    let last = template
+        .status
+        .as_ref()
+        .and_then(|s| s.last_drift_check_at)
+        .and_then(|t| u64::try_from(t.timestamp()).ok());
+    let leaf = pangea_leaf::drift::DriftLeaf {
+        name: template.name_any(),
+        last_check: last,
+    };
+    let secs = crate::leaf_engine::engine().drift_wait(
+        &leaf,
+        &siblings,
+        u64::try_from(now.timestamp()).unwrap_or(0),
+        interval.as_secs().max(1),
+    );
+    Duration::from_secs(secs)
+}
+
 #[must_use]
 pub fn digest_of(
     template: &InfrastructureTemplate,

@@ -1038,7 +1038,8 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
         }
         let bytes = serde_json::to_vec(configs).ok()?;
         let key = blake3::hash(&bytes).to_hex().to_string();
-        magma_apply::engine::shared_pacer(&key, Self::pacer_quota_pct(), github_budget_rph)
+        let (key, quota) = crate::executor::pacer_lane::pacer_key(&key, Self::pacer_quota_pct());
+        magma_apply::engine::shared_pacer(&key, quota, github_budget_rph)
     }
 
     fn build_provider_configs(

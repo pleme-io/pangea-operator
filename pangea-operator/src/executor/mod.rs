@@ -8,6 +8,7 @@ pub mod iac_executor;
 // Typed, executor-agnostic, disk-free import-discovery border. Not
 // feature-gated — the `IacExecutor::planned_changes` method + the tofu
 // path reference it regardless of `executor_magma`. See module docs.
+pub mod pacer_lane;
 pub mod packer;
 mod plan;
 pub mod plan_change;
