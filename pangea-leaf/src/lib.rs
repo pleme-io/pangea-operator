@@ -12,5 +12,6 @@ pub mod plan;
 pub mod ratchet;
 pub mod rollup;
 pub mod schedule;
+pub mod series;
 pub mod slice;
 pub mod sources;

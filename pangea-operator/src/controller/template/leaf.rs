@@ -649,6 +649,14 @@ pub async fn judge(
         template.name_any()
     );
     let p95 = observe_cycle(&key, plan_ms);
+    if let Membership::Leaf { catalog } = membership(template, true) {
+        state
+            .metrics
+            .projection
+            .leaf_plan_seconds
+            .with_label_values(&[catalog.as_str()])
+            .observe(plan_ms as f64 / 1000.0);
+    }
     let budget_ms = cfg.cycle_budget_secs.map(|s| s.saturating_mul(1_000));
     let assessment = match assess(template, cfg.admission, addresses, p95, budget_ms) {
         Ok(a) => a,

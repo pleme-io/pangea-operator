@@ -21,6 +21,9 @@ pub const DEFAULT_WEDGE_SECONDS: i64 = 1200;
 pub struct TemplateRow {
     pub template: String,
     pub namespace: String,
+    pub workspace: String,
+    pub leaf: bool,
+    pub healthy: bool,
     pub phase: String,
     pub phase_age_seconds: i64,
     pub generations_behind: i64,
@@ -44,6 +47,31 @@ pub const PROJECTED_CONDITIONS: [&str; 2] = ["Ready", "Settled"];
 
 fn age(now: DateTime<Utc>, at: DateTime<Utc>) -> i64 {
     (now - at).num_seconds().max(0)
+}
+
+#[must_use]
+pub fn workspace_of(t: &InfrastructureTemplate) -> String {
+    t.metadata
+        .labels
+        .as_ref()
+        .and_then(|l| l.get(crate::controller::workspace_catalog_controller::WORKSPACE_LABEL))
+        .cloned()
+        .unwrap_or_default()
+}
+
+static SERIES: std::sync::Mutex<(pangea_leaf::series::SeriesMode, usize)> =
+    std::sync::Mutex::new((
+        pangea_leaf::series::SeriesMode::Unhealthy,
+        pangea_leaf::series::DEFAULT_SERIES_MAX,
+    ));
+
+pub fn configure_series(mode: pangea_leaf::series::SeriesMode, max: usize) {
+    *SERIES.lock().expect("series mutex poisoned") = (mode, max);
+}
+
+#[must_use]
+pub fn series_settings() -> (pangea_leaf::series::SeriesMode, usize) {
+    *SERIES.lock().expect("series mutex poisoned")
 }
 
 pub fn template_row(t: &InfrastructureTemplate, now: DateTime<Utc>) -> Option<TemplateRow> {
@@ -101,9 +129,16 @@ pub fn template_row(t: &InfrastructureTemplate, now: DateTime<Utc>) -> Option<Te
                 age(now, f.since),
             )
         });
+    let view = crate::controller::template::leaf::leaf_view(t);
     Some(TemplateRow {
         template,
         namespace,
+        workspace: workspace_of(t),
+        leaf: matches!(
+            crate::controller::template::leaf::membership(t, true),
+            crate::controller::template::leaf::Membership::Leaf { .. }
+        ),
+        healthy: view.state == pangea_leaf::rollup::LeafState::Ready,
         phase: phase.to_string(),
         phase_age_seconds: entered.map(|e| age(now, e)).unwrap_or(0),
         generations_behind,
@@ -347,6 +382,9 @@ pub struct ProjectionMetrics {
     pub container_restarts: IntGaugeVec,
     pub container_ready: IntGaugeVec,
     pub operator: IntGaugeVec,
+    pub workspace_leaves: IntGaugeVec,
+    pub workspace_leaves_unlabeled: IntGaugeVec,
+    pub leaf_plan_seconds: prometheus::HistogramVec,
 }
 
 fn gauge(registry: &Registry, name: &str, help: &str, labels: &[&str]) -> IntGaugeVec {
@@ -357,26 +395,41 @@ fn gauge(registry: &Registry, name: &str, help: &str, labels: &[&str]) -> IntGau
     g
 }
 
-const T: &[&str] = &["template", "namespace"];
+const T: &[&str] = &["template", "namespace", "workspace"];
+
+pub const LEAF_PLAN_BUCKETS: [f64; 12] = [
+    1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0, 1200.0, 1800.0, 3600.0,
+];
 
 impl ProjectionMetrics {
     pub fn register(registry: &Registry) -> Self {
         Self {
-            template_phase: gauge(registry, "pangea_template_phase", "1 for the phase status.phase names", &["template", "namespace", "phase"]),
+            template_phase: gauge(registry, "pangea_template_phase", "1 for the phase status.phase names", &["template", "namespace", "workspace", "phase"]),
             phase_age_seconds: gauge(registry, "pangea_template_phase_age_seconds", "Seconds the template has been in its current phase", T),
             generations_behind: gauge(registry, "pangea_template_generations_behind", "metadata.generation minus status.observedGeneration", T),
-            condition: gauge(registry, "pangea_template_condition", "1 for each projected condition's current status", &["template", "namespace", "type", "status"]),
-            condition_generations_behind: gauge(registry, "pangea_template_condition_generations_behind", "metadata.generation minus the generation the condition was computed for", &["template", "namespace", "type"]),
-            pass: gauge(registry, "pangea_template_pass", "1 for the kind status.pass names", &["template", "namespace", "kind"]),
-            stall: gauge(registry, "pangea_template_stall", "1 for the stall state status.pass.stall names", &["template", "namespace", "state"]),
+            condition: gauge(registry, "pangea_template_condition", "1 for each projected condition's current status", &["template", "namespace", "workspace", "type", "status"]),
+            condition_generations_behind: gauge(registry, "pangea_template_condition_generations_behind", "metadata.generation minus the generation the condition was computed for", &["template", "namespace", "workspace", "type"]),
+            pass: gauge(registry, "pangea_template_pass", "1 for the kind status.pass names", &["template", "namespace", "workspace", "kind"]),
+            stall: gauge(registry, "pangea_template_stall", "1 for the stall state status.pass.stall names", &["template", "namespace", "workspace", "state"]),
             heartbeat_age_seconds: gauge(registry, "pangea_template_pass_heartbeat_age_seconds", "Seconds since status.pass.heartbeatAt", T),
-            in_flight_rpc_age_seconds: gauge(registry, "pangea_template_in_flight_rpc_age_seconds", "Seconds the provider RPC in status.progress.inFlight has been outstanding", &["template", "namespace", "rpc"]),
-            reactions: gauge(registry, "pangea_template_reactions", "Reactions recorded in status.reactions.counts, by trigger", &["template", "namespace", "trigger"]),
+            in_flight_rpc_age_seconds: gauge(registry, "pangea_template_in_flight_rpc_age_seconds", "Seconds the provider RPC in status.progress.inFlight has been outstanding", &["template", "namespace", "workspace", "rpc"]),
+            reactions: gauge(registry, "pangea_template_reactions", "Reactions recorded in status.reactions.counts, by trigger", &["template", "namespace", "workspace", "trigger"]),
             cronjob_last_success: gauge(registry, "pangea_cronjob_last_success_timestamp_seconds", "Unix time of the newest succeeded Job a CronJob owns", &["namespace", "cronjob"]),
             cronjob_last_failure: gauge(registry, "pangea_cronjob_last_failure_timestamp_seconds", "Unix time of the newest failed Job a CronJob owns", &["namespace", "cronjob"]),
             cronjob_consecutive_failures: gauge(registry, "pangea_cronjob_consecutive_failures", "Failed Jobs since the newest succeeded Job a CronJob owns", &["namespace", "cronjob"]),
             container_restarts: gauge(registry, "pangea_stack_container_restarts", "restartCount of each container in the operator's namespace", &["namespace", "pod", "app", "container"]),
             container_ready: gauge(registry, "pangea_stack_container_ready", "1 while the container reports ready", &["namespace", "pod", "app", "container"]),
+            workspace_leaves: gauge(registry, "pangea_workspace_leaves", "Declared leaves of a workspace catalog, by state", &["workspace", "namespace", "state"]),
+            workspace_leaves_unlabeled: gauge(registry, "pangea_workspace_leaves_unlabeled", "Unhealthy leaves with no per-leaf series (past observability.leaf_series_max, or leaf_series off)", &["workspace"]),
+            leaf_plan_seconds: {
+                let h = prometheus::HistogramVec::new(
+                    prometheus::HistogramOpts::new("pangea_leaf_plan_seconds", "Plan duration of a declared leaf").buckets(LEAF_PLAN_BUCKETS.to_vec()),
+                    &["workspace"],
+                )
+                .expect("metric can be created");
+                registry.register(Box::new(h.clone())).expect("metric can be registered");
+                h
+            },
             operator: gauge(registry, "pangea_operator_progress", "Operator progress gate readings: last_reconcile_timestamp_seconds, oldest_pending_age_seconds, wedged, projection_timestamp_seconds", &["reading"]),
         }
     }
@@ -393,13 +446,41 @@ impl ProjectionMetrics {
             &self.heartbeat_age_seconds,
             &self.in_flight_rpc_age_seconds,
             &self.reactions,
+            &self.workspace_leaves_unlabeled,
         ] {
             g.reset();
         }
+        let (mode, max) = series_settings();
+        let leaves: Vec<pangea_leaf::series::SeriesRow> = rows
+            .iter()
+            .filter(|r| r.leaf)
+            .map(|r| pangea_leaf::series::SeriesRow {
+                name: [r.namespace.as_str(), r.template.as_str()].join("/"),
+                workspace: r.workspace.clone(),
+                healthy: r.healthy,
+            })
+            .collect();
+        let selection = pangea_leaf::series::select(&leaves, mode, max);
+        for (workspace, n) in &selection.unlabeled {
+            self.workspace_leaves_unlabeled
+                .with_label_values(&[workspace.as_str()])
+                .set(i64::from(*n));
+        }
         for r in rows {
-            let t = [r.template.as_str(), r.namespace.as_str()];
+            if r.leaf
+                && !selection
+                    .labelled
+                    .contains(&[r.namespace.as_str(), r.template.as_str()].join("/"))
+            {
+                continue;
+            }
+            let t = [
+                r.template.as_str(),
+                r.namespace.as_str(),
+                r.workspace.as_str(),
+            ];
             self.template_phase
-                .with_label_values(&[t[0], t[1], r.phase.as_str()])
+                .with_label_values(&[t[0], t[1], t[2], r.phase.as_str()])
                 .set(1);
             self.phase_age_seconds
                 .with_label_values(&t)
@@ -409,20 +490,20 @@ impl ProjectionMetrics {
                 .set(r.generations_behind);
             for c in &r.conditions {
                 self.condition
-                    .with_label_values(&[t[0], t[1], c.kind.as_str(), c.status.as_str()])
+                    .with_label_values(&[t[0], t[1], t[2], c.kind.as_str(), c.status.as_str()])
                     .set(1);
                 self.condition_generations_behind
-                    .with_label_values(&[t[0], t[1], c.kind.as_str()])
+                    .with_label_values(&[t[0], t[1], t[2], c.kind.as_str()])
                     .set(c.generations_behind);
             }
             if let Some(kind) = &r.pass_kind {
                 self.pass
-                    .with_label_values(&[t[0], t[1], kind.as_str()])
+                    .with_label_values(&[t[0], t[1], t[2], kind.as_str()])
                     .set(1);
             }
             if let Some(state) = &r.stall {
                 self.stall
-                    .with_label_values(&[t[0], t[1], state.as_str()])
+                    .with_label_values(&[t[0], t[1], t[2], state.as_str()])
                     .set(1);
             }
             if let Some(h) = r.heartbeat_age_seconds {
@@ -430,13 +511,52 @@ impl ProjectionMetrics {
             }
             if let Some((rpc, secs)) = &r.in_flight {
                 self.in_flight_rpc_age_seconds
-                    .with_label_values(&[t[0], t[1], rpc.as_str()])
+                    .with_label_values(&[t[0], t[1], t[2], rpc.as_str()])
                     .set(*secs);
             }
             for (trigger, count) in &r.reactions {
                 self.reactions
-                    .with_label_values(&[t[0], t[1], trigger.as_str()])
+                    .with_label_values(&[t[0], t[1], t[2], trigger.as_str()])
                     .set(i64::try_from(*count).unwrap_or(i64::MAX));
+            }
+        }
+    }
+
+    pub fn publish_workspaces(&self, templates: &[InfrastructureTemplate]) {
+        self.workspace_leaves.reset();
+        let mut groups: BTreeMap<(String, String), Vec<InfrastructureTemplate>> = BTreeMap::new();
+        for t in templates {
+            if !matches!(
+                crate::controller::template::leaf::membership(t, true),
+                crate::controller::template::leaf::Membership::Leaf { .. }
+            ) {
+                continue;
+            }
+            groups
+                .entry((
+                    workspace_of(t),
+                    t.metadata.namespace.clone().unwrap_or_default(),
+                ))
+                .or_default()
+                .push(t.clone());
+        }
+        for ((workspace, namespace), members) in groups {
+            let Some(r) = crate::controller::template::leaf::catalog_rollup(&members) else {
+                continue;
+            };
+            let c = &r.counts;
+            for (state, n) in [
+                ("ready", c.ready),
+                ("planning", c.planning),
+                ("applying", c.applying),
+                ("failed", c.failed),
+                ("stalled", c.stalled),
+                ("rate_limited", c.rate_limited),
+                ("blocked", c.blocked),
+            ] {
+                self.workspace_leaves
+                    .with_label_values(&[workspace.as_str(), namespace.as_str(), state])
+                    .set(i64::from(n));
             }
         }
     }
@@ -526,6 +646,7 @@ pub async fn run(client: Client, metrics: Arc<super::Metrics>, operator_namespac
                     metrics.progress_gate.reconciled(beat);
                 }
                 metrics.projection.publish_templates(&rows);
+                metrics.projection.publish_workspaces(&list.items);
             }
             Err(e) => warn!(error = %e, "status projection could not list templates"),
         }
@@ -761,6 +882,9 @@ mod tests {
         let row = |kind: &str, beat: i64| TemplateRow {
             template: "t".into(),
             namespace: "ns".into(),
+            workspace: String::new(),
+            leaf: false,
+            healthy: false,
             phase: "Applying".into(),
             phase_age_seconds: 0,
             generations_behind: 1,
@@ -780,6 +904,65 @@ mod tests {
         );
     }
 
+    fn declared_leaf(i: usize, phase: Phase) -> InfrastructureTemplate {
+        let name = format!("org-repo-{i:04}");
+        let mut t: InfrastructureTemplate = serde_json::from_value(serde_json::json!({
+            "apiVersion": "pangea.pleme.io/v1alpha1",
+            "kind": "InfrastructureTemplate",
+            "metadata": {
+                "name": name, "namespace": "ns", "generation": 1,
+                "labels": {"pangea.pleme.io/workspace": "org"},
+                "ownerReferences": [{"apiVersion": "pangea.pleme.io/v1alpha1", "kind": "WorkspaceCatalog", "name": "org", "uid": "u"}]
+            },
+            "spec": {"source": {"inline": "ignored"}, "pangeaNamespace": "ns"}
+        }))
+        .unwrap();
+        t.status = Some(InfrastructureTemplateStatus {
+            phase: Some(phase),
+            observed_generation: 1,
+            ..Default::default()
+        });
+        t
+    }
+
+    fn exposition(registry: &Registry) -> String {
+        use prometheus::Encoder;
+        let mut buf = Vec::new();
+        prometheus::TextEncoder::new()
+            .encode(&registry.gather(), &mut buf)
+            .unwrap();
+        String::from_utf8(buf).unwrap()
+    }
+
+    #[test]
+    fn three_hundred_unhealthy_leaves_emit_256_labelled_series_and_unlabeled_44() {
+        let registry = Registry::new();
+        let m = ProjectionMetrics::register(&registry);
+        let mut templates: Vec<InfrastructureTemplate> = (0..300)
+            .map(|i| declared_leaf(i, Phase::Planning))
+            .collect();
+        templates.extend((300..310).map(|i| declared_leaf(i, Phase::Ready)));
+        let rows: Vec<TemplateRow> = templates
+            .iter()
+            .filter_map(|t| template_row(t, at(1_000)))
+            .collect();
+        m.publish_templates(&rows);
+        m.publish_workspaces(&templates);
+        let text = exposition(&registry);
+        let labelled = text
+            .lines()
+            .filter(|l| l.starts_with("pangea_template_phase{") && l.contains("workspace=\"org\""))
+            .count();
+        assert_eq!(labelled, 256);
+        assert!(text.contains("pangea_workspace_leaves_unlabeled{workspace=\"org\"} 44"));
+        assert!(text.contains(
+            "pangea_workspace_leaves{namespace=\"ns\",state=\"planning\",workspace=\"org\"} 300"
+        ));
+        assert!(text.contains(
+            "pangea_workspace_leaves{namespace=\"ns\",state=\"ready\",workspace=\"org\"} 10"
+        ));
+    }
+
     #[test]
     fn every_projection_reaches_the_registry() {
         let registry = Registry::new();
@@ -787,6 +970,9 @@ mod tests {
         m.publish_templates(&[TemplateRow {
             template: "t".into(),
             namespace: "ns".into(),
+            workspace: "org".into(),
+            leaf: false,
+            healthy: false,
             phase: "Planning".into(),
             phase_age_seconds: 60,
             generations_behind: 1,
@@ -819,10 +1005,10 @@ mod tests {
             String::from_utf8(buf).unwrap()
         };
         for needle in [
-            "pangea_template_generations_behind{namespace=\"ns\",template=\"t\"} 1",
-            "pangea_template_condition_generations_behind{namespace=\"ns\",template=\"t\",type=\"Ready\"} 1",
-            "pangea_template_stall{namespace=\"ns\",state=\"heartbeatLost\",template=\"t\"} 1",
-            "pangea_template_in_flight_rpc_age_seconds{namespace=\"ns\",rpc=\"ApplyResourceChange\",template=\"t\"} 120",
+            "pangea_template_generations_behind{namespace=\"ns\",template=\"t\",workspace=\"org\"} 1",
+            "pangea_template_condition_generations_behind{namespace=\"ns\",template=\"t\",type=\"Ready\",workspace=\"org\"} 1",
+            "pangea_template_stall{namespace=\"ns\",state=\"heartbeatLost\",template=\"t\",workspace=\"org\"} 1",
+            "pangea_template_in_flight_rpc_age_seconds{namespace=\"ns\",rpc=\"ApplyResourceChange\",template=\"t\",workspace=\"org\"} 120",
             "pangea_stack_container_restarts{app=\"pangea-postgres\",container=\"postgres\",namespace=\"pangea-system\",pod=\"p\"} 34",
         ] {
             assert!(text.contains(needle), "missing {needle}");

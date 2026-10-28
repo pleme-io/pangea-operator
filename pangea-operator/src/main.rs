@@ -202,6 +202,10 @@ async fn main() -> Result<()> {
         op_cfg.reactive.adopt_orphaned_pass,
     );
     pangea_operator::controller::template::leaf::configure(&op_cfg.leaf);
+    pangea_operator::observability::projection::configure_series(
+        op_cfg.observability.leaf_series,
+        op_cfg.observability.leaf_series_max,
+    );
 
     // ── EARLY DETECTION: refuse an incompatible (build, run) pair ──────────
     //

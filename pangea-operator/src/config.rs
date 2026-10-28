@@ -285,6 +285,14 @@ pub struct ObservabilityConfig {
     pub otel_endpoint: Option<String>,
     /// OTLP service.name resource attribute (`OTEL_SERVICE_NAME`).
     pub otel_service_name: String,
+    #[serde(default)]
+    pub leaf_series: pangea_leaf::series::SeriesMode,
+    #[serde(default = "default_leaf_series_max")]
+    pub leaf_series_max: usize,
+}
+
+fn default_leaf_series_max() -> usize {
+    pangea_leaf::series::DEFAULT_SERIES_MAX
 }
 
 /// Escalation routing (ntfy).
@@ -635,6 +643,10 @@ struct ObservabilityOverlay {
     otel_endpoint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     otel_service_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    leaf_series: Option<pangea_leaf::series::SeriesMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    leaf_series_max: Option<usize>,
 }
 
 #[derive(Serialize, Default)]
@@ -746,6 +758,9 @@ impl EnvOverlay {
                 log_format: env_present("LOG_FORMAT"),
                 otel_endpoint: env_present("OTEL_EXPORTER_OTLP_ENDPOINT"),
                 otel_service_name: env_present("OTEL_SERVICE_NAME"),
+                leaf_series: env_present("PANGEA_LEAF_SERIES")
+                    .and_then(|v| pangea_leaf::series::SeriesMode::parse(&v)),
+                leaf_series_max: env_parse::<usize>("PANGEA_LEAF_SERIES_MAX"),
             },
             routing: RoutingOverlay {
                 ntfy_base_url: env_present("PANGEA_NTFY_BASE_URL"),
@@ -863,6 +878,8 @@ impl TieredConfig for OperatorConfig {
                 log_format: String::new(),
                 otel_endpoint: None,
                 otel_service_name: String::new(),
+                leaf_series: pangea_leaf::series::SeriesMode::default(),
+                leaf_series_max: default_leaf_series_max(),
             },
             routing: RoutingConfig {
                 ntfy_base_url: String::new(),
@@ -964,6 +981,8 @@ impl TieredConfig for OperatorConfig {
             log_format: "pretty".to_string(),
             otel_endpoint: None,
             otel_service_name: "pangea-operator".to_string(),
+            leaf_series: pangea_leaf::series::SeriesMode::default(),
+            leaf_series_max: default_leaf_series_max(),
         };
         c.routing = RoutingConfig {
             ntfy_base_url: "https://ntfy.sh".to_string(),
@@ -1524,6 +1543,24 @@ mod tests {
         assert_eq!(leaf.priority, pangea_leaf::admit::PriorityMode::Off);
         assert_eq!(leaf.per_credential_cap, 0);
         assert_eq!(leaf.drift_share, pangea_leaf::admit::Share::NONE);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn leaf_series_and_its_cap_are_read_from_the_file_tier() {
+        let _g = ENV_GUARD.lock().unwrap();
+        let p = OperatorConfig::prescribed_default().observability;
+        assert_eq!(p.leaf_series, pangea_leaf::series::SeriesMode::Unhealthy);
+        assert_eq!(p.leaf_series_max, 256);
+        let path = scratch_file(
+            "leaf-series",
+            "observability:\n  leaf_series: off\n  leaf_series_max: 10\n",
+        );
+        let r = OperatorConfig::resolve_from(&path, Dict::new());
+        assert_eq!(r.file, FileTier::Loaded { path: path.clone() });
+        let o = r.resolution.into_value().observability;
+        assert_eq!(o.leaf_series, pangea_leaf::series::SeriesMode::Off);
+        assert_eq!(o.leaf_series_max, 10);
         std::fs::remove_file(path).unwrap();
     }
 
