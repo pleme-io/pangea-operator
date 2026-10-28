@@ -65,9 +65,21 @@ pub struct ChartValues {
 
     #[serde(default)]
     #[schemars(
-        description = "Leaf work queue, leaf workers and their autoscaling (pangea-operator docs/LEAVES.md §17). queue: in_process renders no worker, no HPA and no stream."
+        description = "Leaf work queue and its JetStream stream (pangea-operator docs/LEAVES.md §17). queue: in_process renders no worker, no HPA and no stream."
     )]
     pub leaf: LeafValues,
+
+    #[serde(default)]
+    #[schemars(
+        description = "Leaf workers and their autoscaling, the operator's own workers.* settings one to one (LEAVES.md §17). Rendered only with leaf.queue: jetstream and leaf.nats.url."
+    )]
+    pub workers: LeafWorkers,
+
+    #[serde(default)]
+    #[schemars(
+        description = "The legacy KEDA tofu worker pools (one Deployment, ScaledObject and PangeaWorkClass per class). Off by default: tofu is configured-off legacy (BACIA §9.1)."
+    )]
+    pub tofu_workers: TofuWorkers,
 
     /// OperatorPolicy/default singleton CR config.
     #[serde(default)]
@@ -125,8 +137,6 @@ pub struct LeafValues {
     pub credentials: Vec<LeafCredential>,
     #[serde(default)]
     pub jetstream: LeafJetStream,
-    #[serde(default)]
-    pub workers: LeafWorkers,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -239,7 +249,7 @@ fn default_max_deliver() -> u32 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LeafWorkers {
     #[serde(default)]
     #[schemars(description = "Fixed replicas when autoscaling.enabled is false.")]
@@ -272,7 +282,7 @@ fn default_worker_memory() -> String {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MemoryDerivation {
     #[serde(default = "default_base_mi")]
     pub base_mi: u32,
@@ -323,7 +333,7 @@ fn default_provider_mi() -> u32 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LeafAutoscaling {
     #[serde(default = "default_true")]
     #[schemars(description = "false renders no HPA and fixed workers.replicas.")]
@@ -360,6 +370,54 @@ impl Default for LeafAutoscaling {
             scale_down_stabilization_secs: default_horizon_secs(),
         }
     }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TofuWorkers {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub keda: TofuKeda,
+    #[serde(default)]
+    pub scaling: TofuScaling,
+    #[serde(default)]
+    pub provider_plugin_cache: TofuPluginCache,
+    #[serde(default)]
+    pub classes: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TofuKeda {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub prometheus_url: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TofuScaling {
+    #[serde(default)]
+    pub polling_interval: u32,
+    #[serde(default)]
+    pub cooldown_period: u32,
+    #[serde(default)]
+    pub target_pending_per_replica: u32,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TofuPluginCache {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub storage_class_name: String,
+    #[serde(default)]
+    pub size: String,
+    #[serde(default)]
+    pub access_mode: String,
 }
 
 fn default_autoscaling_max() -> u32 {
@@ -622,7 +680,7 @@ mod tests {
         assert_eq!(v.leaf.jetstream.duplicate_window, "10m");
         assert_eq!(v.leaf.jetstream.ack_wait, "60s");
         assert_eq!(v.leaf.jetstream.max_deliver, 5);
-        let w = &v.leaf.workers;
+        let w = &v.workers;
         assert_eq!(w.replicas, 0);
         assert_eq!(w.memory, "derived");
         assert_eq!(
@@ -652,10 +710,10 @@ mod tests {
     #[test]
     fn leaf_values_refuse_an_unknown_queue_and_a_negative_bound() {
         assert!(serde_json::from_str::<ChartValues>(r#"{"leaf":{"queue":"kafka"}}"#).is_err());
-        assert!(serde_json::from_str::<ChartValues>(
-            r#"{"leaf":{"workers":{"autoscaling":{"max":-1}}}}"#
-        )
-        .is_err());
+        assert!(
+            serde_json::from_str::<ChartValues>(r#"{"workers":{"autoscaling":{"max":-1}}}"#)
+                .is_err()
+        );
         assert!(
             serde_json::from_str::<ChartValues>(r#"{"leaf":{"credentials":[{"name":"gh"}]}}"#)
                 .is_err()
@@ -686,6 +744,34 @@ mod tests {
         }
         assert!(s.contains(r#"^(derived|[1-9][0-9]*(Mi|Gi))$"#));
         assert!(s.contains(r#"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"#));
+    }
+
+    #[test]
+    fn the_leaf_workers_are_the_charts_workers_and_the_keda_pools_are_tofu_workers() {
+        let v: serde_json::Value = serde_json::from_str(&generate_values_schema_json()).unwrap();
+        let top = &v["properties"];
+        assert!(top.get("workers").is_some());
+        assert!(top.get("tofuWorkers").is_some());
+        assert!(
+            v["definitions"]["LeafValues"]["properties"]
+                .get("workers")
+                .is_none()
+        );
+        assert_eq!(
+            v["definitions"]["LeafWorkers"]["additionalProperties"],
+            false
+        );
+        assert_eq!(
+            v["definitions"]["TofuWorkers"]["additionalProperties"],
+            false
+        );
+        assert!(serde_json::from_str::<ChartValues>(r#"{"workers":{"enabled":true}}"#).is_err());
+        let t: ChartValues = serde_json::from_str(
+            r#"{"tofuWorkers":{"enabled":true,"classes":{"small":{"enabled":true}}}}"#,
+        )
+        .unwrap();
+        assert!(t.tofu_workers.enabled);
+        assert!(!ChartValues::default().tofu_workers.enabled);
     }
 
     #[test]
