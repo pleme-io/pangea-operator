@@ -73,6 +73,10 @@ spec:
             - name: PANGEA_LAVA_RUBY_LOAD_PATH
               value: {{ . | quote }}
             {{- end }}
+            - name: PANGEA_EXECUTOR
+              value: {{ (.Values.executor).backend | default "magma" | quote }}
+            - name: PANGEA_FORBID_TOFU
+              value: {{ printf "%v" (dig "forbidTofu" true (.Values.executor | default dict)) | quote }}
             - name: RUST_LOG
               value: {{ .Values.config.logLevel | quote }}
             - name: LOG_FORMAT

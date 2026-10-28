@@ -17,8 +17,8 @@
 pub enum ExecutorBackend {
     /// OpenTofu subprocess (`TofuExecutor`). NOT the default and never the
     /// implicit one — reachable only by an explicit `executor: tofu` on a CR
-    /// or `PANGEA_EXECUTOR=tofu`, and refused outright when
-    /// `PANGEA_FORBID_TOFU` is set. Retained, not deleted, per ★★ MODULARIZE,
+    /// or `PANGEA_EXECUTOR=tofu`, and refused unless
+    /// `PANGEA_FORBID_TOFU=false` (forbidden by default since 2026-10-28). Retained, not deleted, per ★★ MODULARIZE,
     /// DON'T DELETE: retirement is a typed flag, so reviving it is a config
     /// change rather than a rebuild from memory.
     Tofu,
@@ -75,16 +75,20 @@ impl ExecutorBackend {
     }
 }
 
-/// Is `PANGEA_FORBID_TOFU` truthy? Reads the env var and parses it as
-/// a boolean flag (`1` / `true` / `yes` / `on`, case-insensitive).
-///
-/// Per the org ★★ MAGMA-NATIVE directive this is the explicit config
-/// gate that bans tofu from running as a silent fallback: when set,
-/// any resolution that would select tofu must fail loud rather than
-/// shell out to tofu. Unset / empty / any other value ⇒ tofu remains
-/// a permitted (config-selectable) executor.
+/// Is tofu forbidden? Reads `PANGEA_FORBID_TOFU` through
+/// [`forbid_tofu_posture`]: forbidden unless the value says false.
 pub fn forbid_tofu_from_env() -> bool {
-    parse_truthy(std::env::var("PANGEA_FORBID_TOFU").ok().as_deref())
+    forbid_tofu_posture(std::env::var("PANGEA_FORBID_TOFU").ok().as_deref())
+}
+
+/// The embedded engine is the posture: tofu is forbidden by default.
+/// Only an explicit `0` / `false` / `no` / `off` allows it. Unset, empty,
+/// truthy and unreadable values all forbid it, so a typo fails closed.
+pub fn forbid_tofu_posture(v: Option<&str>) -> bool {
+    !matches!(
+        v.map(|s| s.trim().to_lowercase()).as_deref(),
+        Some("0" | "false" | "no" | "off")
+    )
 }
 
 /// Parse a boolean-flavored env value. `1` / `true` / `yes` / `on`
@@ -106,6 +110,30 @@ mod tests {
     fn cr_wins_over_env() {
         let r = ExecutorBackend::resolve(Some("magma"), Some("tofu"));
         assert_eq!(r, ExecutorBackend::Magma);
+    }
+
+    #[test]
+    fn an_unset_forbid_forbids_tofu() {
+        assert!(forbid_tofu_posture(None));
+        assert!(forbid_tofu_posture(Some("")));
+        assert!(forbid_tofu_posture(Some("   ")));
+    }
+
+    #[test]
+    fn only_an_explicit_false_allows_tofu() {
+        for v in ["0", "false", "FALSE", " no ", "off"] {
+            assert!(!forbid_tofu_posture(Some(v)), "{v:?} should allow tofu");
+        }
+        for v in ["1", "true", "yes", "on"] {
+            assert!(forbid_tofu_posture(Some(v)), "{v:?} should forbid tofu");
+        }
+    }
+
+    #[test]
+    fn an_unreadable_forbid_fails_closed() {
+        for v in ["flase", "maybe", "2"] {
+            assert!(forbid_tofu_posture(Some(v)), "{v:?} should forbid tofu");
+        }
     }
 
     #[test]

@@ -75,9 +75,9 @@ pub enum Error {
     /// tofu selection fails loud with the offending template named
     /// rather than quietly shelling out to tofu.
     #[error(
-        "executor=tofu selected for template '{template}' but PANGEA_FORBID_TOFU is set \
-         ({reason}); refusing to run tofu — set spec.executor=magma (or unset \
-         PANGEA_FORBID_TOFU to allow tofu)"
+        "executor=tofu selected for template '{template}' but tofu is forbidden \
+         ({reason}); refusing to run tofu — set spec.executor=magma (or set \
+         PANGEA_FORBID_TOFU=false to allow tofu)"
     )]
     TofuForbidden { template: String, reason: String },
 

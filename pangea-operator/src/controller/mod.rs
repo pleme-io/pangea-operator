@@ -639,7 +639,8 @@ impl ControllerState {
         .map_err(
             |TofuForbiddenSelection| crate::error::Error::TofuForbidden {
                 template: template.name_any(),
-                reason: "PANGEA_FORBID_TOFU is set".to_string(),
+                reason: "PANGEA_FORBID_TOFU is unset or true; tofu is forbidden by default"
+                    .to_string(),
             },
         )?;
 
@@ -824,7 +825,8 @@ impl ControllerState {
         {
             return Err(crate::error::Error::TofuForbidden {
                 template: template.name_any(),
-                reason: "PANGEA_FORBID_TOFU is set".to_string(),
+                reason: "PANGEA_FORBID_TOFU is unset or true; tofu is forbidden by default"
+                    .to_string(),
             });
         }
 

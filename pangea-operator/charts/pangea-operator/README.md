@@ -9,7 +9,7 @@ Pangea is a Rust Kubernetes operator that reconciles four CRDs end-to-end:
 - **`InfrastructureTemplate`** — one Pangea Ruby template to reconcile (source, variables, per-resource policies, reactive policy, import hints).
 - **`PangeaNamespace`** — state-storage isolation boundary (PostgreSQL schema or S3 prefix).
 
-The operator compiles each template in-process through lava (tatara-lisp, and Ruby through a contained interpreter with no CRuby; the embedded magnus backend stays selectable by `compilerBackend: embedded`), synthesizes Terraform JSON, runs `tofu plan`/`tofu apply`, and emits typed cycle receipts. Declarative reactive policies escalate when things don't reach a good state.
+The operator compiles each template in-process through lava (tatara-lisp, and Ruby through a contained interpreter with no CRuby; the embedded magnus backend stays selectable by `compilerBackend: embedded`), synthesizes Terraform JSON, plans and applies it in the embedded magma engine (tofu is forbidden unless `executor.forbidTofu: false`), and emits typed cycle receipts. Declarative reactive policies escalate when things don't reach a good state.
 
 ## Install
 

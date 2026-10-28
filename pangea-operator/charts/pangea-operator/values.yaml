@@ -123,6 +123,10 @@ leaderElection:
 # and Ruby templates evaluated in-process with no CRuby and no subprocess.
 # embedded and process need an image built with the embedded_ruby feature;
 # http needs compilerSidecar.enabled.
+executor:
+  backend: magma
+  forbidTofu: true
+
 compilerBackend: ""
 
 # Ruby templates compiled by the lava backend's contained interpreter

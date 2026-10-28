@@ -5,10 +5,10 @@ description: |
   ArchitectureGem, WorkspaceCatalog and PangeaNamespace CRs end-to-end:
   compiles Pangea templates in-process through lava (tatara-lisp, and Ruby
   through a contained interpreter with no CRuby), synthesizes Terraform
-  JSON, runs tofu plan/apply, and emits typed cycle receipts with declarative
+  JSON, plans and applies it in the embedded magma engine, and emits typed cycle receipts with declarative
   reactive escalation policies.
 type: application
-version: 0.1.4
+version: 0.1.5
 appVersion: "0.1.1"
 kubeVersion: ">=1.27.0-0"
 home: https://github.com/pleme-io/pangea-operator

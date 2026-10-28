@@ -479,8 +479,13 @@ world fact). A pool in the operator reuses them across leaves (§18 item M1).
 
 **Configured-off legacy, not designed on:**
 
-- `TofuExecutor` and `executor: tofu`; ryn still sets `TOFU_BINARY` and does
-  not set `PANGEA_FORBID_TOFU`.
+- `TofuExecutor` and `executor: tofu`. Since 2026-10-28 the operator forbids
+  tofu by default (`forbid_tofu_posture`): unset, empty, true and unreadable
+  values all forbid it, and only `PANGEA_FORBID_TOFU=false` allows it. Every
+  deployment also sets it explicitly: ryn (`engenho-pangea-stack.nix`
+  `executor.forbidTofu = true`), plo (`nodes/plo/pangea-operator.nix`), rio
+  (`clusters/rio/infrastructure/pangea/pangea-operator.yaml`), the helmworks
+  chart (`executor.forbidTofu: true`) and this repo's chart (0.1.5).
 - The `PangeaNamespace` `secretRef` probe route, which the operator names "the
   tofu path" (`namespace_controller.rs`).
 - `pangea-cli import`, which prints `tofu init` and `tofu state push`.

@@ -158,10 +158,9 @@ pub struct ExecutorSurface {
     /// `ExecutorBackend::resolve` (`pending-shikumi`: live gate unchanged).
     #[serde(default)]
     pub backend: Option<String>,
-    /// Ban tofu as a silent fallback (`PANGEA_FORBID_TOFU`). The magma-native
-    /// prescribed default is `true`; the legacy env-absent default is `false`
-    /// and the live gate (`forbid_tofu_from_env`) is unchanged
-    /// (`pending-shikumi`), so no runtime behavior change.
+    /// Ban tofu (`PANGEA_FORBID_TOFU`). The prescribed default is `true`, and
+    /// the live gate (`forbid_tofu_posture`) agrees: unset forbids, and only an
+    /// explicit false allows tofu.
     pub forbid_tofu: bool,
     /// OpenTofu binary path (`TOFU_BINARY`).
     pub tofu_binary: String,
@@ -723,8 +722,9 @@ impl EnvOverlay {
             },
             executor: ExecutorOverlay {
                 backend: env_present("PANGEA_EXECUTOR"),
-                forbid_tofu: env_present("PANGEA_FORBID_TOFU")
-                    .map(|v| crate::executor::backend_select::parse_truthy(Some(v.as_str()))),
+                forbid_tofu: env_present("PANGEA_FORBID_TOFU").map(|v| {
+                    crate::executor::backend_select::forbid_tofu_posture(Some(v.as_str()))
+                }),
                 tofu_binary: env_present("TOFU_BINARY"),
                 packer_binary: env_present("PACKER_BINARY"),
                 workspace_base: env_present("PANGEA_WORKSPACE_BASE"),
