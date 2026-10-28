@@ -7,6 +7,7 @@ pub mod names;
 pub mod partition;
 pub mod plan;
 pub mod ratchet;
+pub mod rollup;
 pub mod schedule;
 pub mod slice;
 pub mod sources;
