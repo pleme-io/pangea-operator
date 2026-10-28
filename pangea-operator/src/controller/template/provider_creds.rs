@@ -866,7 +866,10 @@ mod tests {
     fn porkbun_emits_the_baked_providers_secret_key_attr() {
         let d = data(&[("PORKBUN_API_KEY", "pk1"), ("PORKBUN_SECRET_KEY", "sk1")]);
         let obj = provider_config_object(ProviderKind::Porkbun, &d, None).unwrap();
-        assert_eq!(obj, serde_json::json!({ "api_key": "pk1", "secret_key": "sk1" }));
+        assert_eq!(
+            obj,
+            serde_json::json!({ "api_key": "pk1", "secret_key": "sk1" })
+        );
         assert!(obj.get("secret_api_key").is_none());
     }
 

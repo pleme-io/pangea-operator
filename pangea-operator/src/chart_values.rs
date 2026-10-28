@@ -752,11 +752,9 @@ mod tests {
         let top = &v["properties"];
         assert!(top.get("workers").is_some());
         assert!(top.get("tofuWorkers").is_some());
-        assert!(
-            v["definitions"]["LeafValues"]["properties"]
-                .get("workers")
-                .is_none()
-        );
+        assert!(v["definitions"]["LeafValues"]["properties"]
+            .get("workers")
+            .is_none());
         assert_eq!(
             v["definitions"]["LeafWorkers"]["additionalProperties"],
             false
