@@ -1509,6 +1509,19 @@ mod tests {
     }
 
     #[test]
+    fn leaf_admission_generate_is_read_from_the_file_tier() {
+        let _g = ENV_GUARD.lock().unwrap();
+        let path = scratch_file("leaf-generate", "leaf:\n  admission: generate\n");
+        let r = OperatorConfig::resolve_from(&path, Dict::new());
+        assert_eq!(r.file, FileTier::Loaded { path: path.clone() });
+        assert_eq!(
+            r.resolution.into_value().leaf.admission,
+            pangea_leaf::admission::AdmissionMode::Generate
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn leaf_ratchet_and_budget_are_read_from_the_file_tier() {
         let _g = ENV_GUARD.lock().unwrap();
         let path = scratch_file(

@@ -6,7 +6,7 @@ use kube::runtime::events::EventType;
 use kube::ResourceExt;
 use pangea_leaf::address::AddressError;
 use pangea_leaf::admission::{
-    decide, skip_declaration, Admission, AdmissionMode, SKIP_LEAF_ANNOTATION,
+    decide_with, skip_declaration, Admission, AdmissionMode, Fix, SKIP_LEAF_ANNOTATION,
 };
 use pangea_leaf::classify::{classify, Classification};
 use pangea_leaf::ratchet::{next_status, CycleWindow, LeafStatus};
@@ -100,16 +100,110 @@ pub fn assess(
         .as_ref()
         .and_then(|a| a.get(SKIP_LEAF_ANNOTATION))
         .map(String::as_str);
-    let admission = decide(
+    let fix = Fix {
+        workspace: Some(
+            template
+                .metadata
+                .labels
+                .as_ref()
+                .and_then(|l| {
+                    l.get(crate::controller::workspace_catalog_controller::WORKSPACE_LABEL)
+                })
+                .cloned()
+                .unwrap_or_else(|| template.name_any()),
+        ),
+        draft: (mode == AdmissionMode::Generate).then(|| draft_entry(template)),
+    };
+    let admission = decide_with(
         mode,
         never_reconciled(template.status.as_ref()),
         &classification,
         &skip_declaration(annotation),
+        &fix,
     );
     Ok(Assessment {
         classification,
         admission,
     })
+}
+
+fn collection_guess(template: &InfrastructureTemplate) -> Option<(String, String)> {
+    let vars = template.spec.variables.as_ref()?;
+    let (name, rows) = vars
+        .iter()
+        .filter_map(|(k, v)| v.as_array().map(|a| (k, a)))
+        .max_by_key(|(_, a)| a.len())?;
+    let first = rows.first()?.as_object()?;
+    let field = ["slug", "name", "key", "id"]
+        .into_iter()
+        .find(|f| first.get(*f).is_some_and(serde_json::Value::is_string))
+        .or_else(|| {
+            first
+                .iter()
+                .find(|(_, v)| v.is_string())
+                .map(|(k, _)| k.as_str())
+        })?;
+    Some((name.clone(), field.to_string()))
+}
+
+#[must_use]
+pub fn draft_entry(template: &InfrastructureTemplate) -> String {
+    let name = template.name_any();
+    let (collection, key) =
+        collection_guess(template).unwrap_or_else(|| ("<collection>".into(), "<key>".into()));
+    let dialect = serde_json::to_value(&template.spec.dialect)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_else(|| "auto".into());
+    let architecture = template
+        .spec
+        .template_name
+        .clone()
+        .unwrap_or_else(|| name.clone());
+    let credentials: Vec<String> = template
+        .spec
+        .provider_credentials
+        .as_ref()
+        .and_then(|c| serde_json::to_value(c).ok())
+        .and_then(|v| v.as_object().cloned())
+        .map(|m| {
+            m.iter()
+                .map(|(provider, v)| {
+                    let secret = v
+                        .pointer("/secretRef/name")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("<secret>");
+                    [provider.as_str(), "(\"", secret, "\")"].concat()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut out = String::new();
+    out.push_str("leaves(\"");
+    out.push_str(&name);
+    out.push_str("\",\n  from: data(\"<source>\", :");
+    out.push_str(&collection);
+    out.push_str("), key: :");
+    out.push_str(&key);
+    out.push_str(",\n  architecture: ");
+    out.push_str(&dialect);
+    out.push_str("(\"");
+    out.push_str(&architecture);
+    out.push_str("\"),\n  namespace: \"");
+    out.push_str(&template.spec.pangea_namespace);
+    out.push('"');
+    if !credentials.is_empty() {
+        out.push_str(", credentials: ");
+        out.push_str(&credentials.join(", "));
+    }
+    out.push_str(",\n  policy: {destroyProtection: ");
+    out.push_str(if template.spec.destroy_protection {
+        "true"
+    } else {
+        "false"
+    });
+    out.push_str("})");
+    out
 }
 
 const CATALOG_TTL: Duration = Duration::from_secs(30);
@@ -1054,6 +1148,37 @@ mod tests {
     #[test]
     fn a_catalog_with_no_declared_leaves_has_no_rollup() {
         assert_eq!(catalog_rollup(&[template(None, true)]), None);
+    }
+
+    #[test]
+    fn generate_refuses_with_a_leaves_entry_drafted_from_the_template() {
+        let mut t = template(None, false);
+        t.metadata.name = Some("pleme-io-github-repos".into());
+        t.spec.variables = Some(BTreeMap::from([
+            ("owner".to_string(), serde_json::json!("pleme-io")),
+            (
+                "repos".to_string(),
+                serde_json::json!([{"slug": "kensa", "visibility": "public"}, {"slug": "tear"}]),
+            ),
+        ]));
+        t.spec.provider_credentials = serde_json::from_value(serde_json::json!({
+            "github": {"secretRef": {"name": "github-api-token", "key": "token"}}
+        }))
+        .ok();
+        let a = assess(&t, AdmissionMode::Generate, &fat(), None, None).unwrap();
+        let Admission::Refuse(msg) = a.admission else {
+            panic!("generate refuses a new fat template")
+        };
+        assert!(msg.contains("workspaces/pleme-io-github-repos/leaves.b"));
+        assert!(msg.contains("leaves(\"pleme-io-github-repos\""));
+        assert!(msg.contains("from: data(\"<source>\", :repos), key: :slug"));
+        assert!(msg.contains("credentials: github(\"github-api-token\")"));
+        let e = assess(&t, AdmissionMode::Enforce, &fat(), None, None).unwrap();
+        let Admission::Refuse(msg) = e.admission else {
+            panic!("enforce refuses")
+        };
+        assert!(msg.contains("workspaces/pleme-io-github-repos/leaves.b"));
+        assert!(!msg.contains("leaves(\""));
     }
 
     #[test]

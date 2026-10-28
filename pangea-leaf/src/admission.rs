@@ -8,6 +8,7 @@ pub const SKIP_LEAF_ANNOTATION: &str = "pangea.pleme.io/skip-leaf";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum AdmissionMode {
+    Generate,
     #[default]
     Enforce,
     Off,
@@ -17,6 +18,7 @@ impl AdmissionMode {
     #[must_use]
     pub fn parse(raw: &str) -> Option<Self> {
         match raw.trim().to_ascii_lowercase().as_str() {
+            "generate" => Some(Self::Generate),
             "enforce" | "true" | "1" | "on" => Some(Self::Enforce),
             "off" | "false" | "0" => Some(Self::Off),
             _ => None,
@@ -94,12 +96,40 @@ impl Admission {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Fix {
+    pub workspace: Option<String>,
+    pub draft: Option<String>,
+}
+
+#[must_use]
+pub fn leaves_path(workspace: &str) -> String {
+    ["workspaces/", workspace, "/leaves.b"].concat()
+}
+
 #[must_use]
 pub fn decide(
     mode: AdmissionMode,
     never_reconciled: bool,
     classification: &Classification,
     skip: &SkipDeclaration,
+) -> Admission {
+    decide_with(
+        mode,
+        never_reconciled,
+        classification,
+        skip,
+        &Fix::default(),
+    )
+}
+
+#[must_use]
+pub fn decide_with(
+    mode: AdmissionMode,
+    never_reconciled: bool,
+    classification: &Classification,
+    skip: &SkipDeclaration,
+    fix: &Fix,
 ) -> Admission {
     if !classification.fat {
         return Admission::Admit;
@@ -120,14 +150,24 @@ pub fn decide(
         }
         _ => format!("no {SKIP_LEAF_ANNOTATION} annotation"),
     };
-    Admission::Refuse(format!(
+    let path = leaves_path(fix.workspace.as_deref().unwrap_or("<workspace>"));
+    let mut msg = format!(
         "fat template refused at admission: {} leaf key sets in one state ({}). \
-         Split it with `pangea leaf plan`, or declare {SKIP_LEAF_ANNOTATION}=<{}> \
-         (a world-fact, never time pressure), or set leaf.admission=off in the operator config",
+         Declare its leaves in pangea-architectures `{path}` (one `leaves(...)` entry, \
+         rendered by `nix run .#render-leaves`; `pangea leaf plan` shows the split), \
+         or declare {SKIP_LEAF_ANNOTATION}=<{}> (a world-fact, never time pressure), \
+         or set leaf.admission=off in the operator config",
         classification.leaf_keys,
         skip_note,
         valid.join("|")
-    ))
+    );
+    if let (AdmissionMode::Generate, Some(draft)) = (mode, fix.draft.as_deref()) {
+        msg.push_str("\nentry for ");
+        msg.push_str(&path);
+        msg.push_str(":\n");
+        msg.push_str(draft);
+    }
+    Admission::Refuse(msg)
 }
 
 #[cfg(test)]
@@ -171,6 +211,47 @@ mod tests {
         assert!(msg.contains(SKIP_LEAF_ANNOTATION));
         assert!(msg.contains("leaf.admission=off"));
         assert!(msg.contains("3 leaf key sets"));
+    }
+
+    #[test]
+    fn the_refusal_names_the_workspaces_leaves_declaration() {
+        let fix = Fix {
+            workspace: Some("pleme-io-github".into()),
+            draft: Some("leaves(\"org\")".into()),
+        };
+        let a = decide_with(
+            AdmissionMode::Enforce,
+            true,
+            &fat(),
+            &SkipDeclaration::Absent,
+            &fix,
+        );
+        let Admission::Refuse(msg) = a else {
+            panic!("expected refusal")
+        };
+        assert!(msg.contains("workspaces/pleme-io-github/leaves.b"));
+        assert!(!msg.contains("entry for"));
+        let g = decide_with(
+            AdmissionMode::Generate,
+            true,
+            &fat(),
+            &SkipDeclaration::Absent,
+            &fix,
+        );
+        let Admission::Refuse(msg) = g else {
+            panic!("generate refuses too")
+        };
+        assert!(msg.contains("entry for workspaces/pleme-io-github/leaves.b:\nleaves(\"org\")"));
+        assert_eq!(
+            decide_with(
+                AdmissionMode::Generate,
+                false,
+                &fat(),
+                &SkipDeclaration::Absent,
+                &fix
+            ),
+            Admission::AdmitGrandfathered
+        );
     }
 
     #[test]
@@ -241,5 +322,9 @@ mod tests {
             Some(AdmissionMode::Enforce)
         );
         assert_eq!(AdmissionMode::parse("maybe"), None);
+        assert_eq!(
+            AdmissionMode::parse("generate"),
+            Some(AdmissionMode::Generate)
+        );
     }
 }
