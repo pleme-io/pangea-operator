@@ -20,6 +20,7 @@ pub mod pass;
 pub mod pass_driver;
 pub mod pass_registry;
 pub mod provider_creds;
+pub mod rate_limit;
 pub mod reactive_policy;
 pub mod secret_files;
 pub mod secret_value;

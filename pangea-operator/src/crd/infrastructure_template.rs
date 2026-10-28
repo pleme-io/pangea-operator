@@ -1853,6 +1853,8 @@ pub struct InfrastructureTemplateStatus {
     /// only fall from. `regressions` names every number that rose past it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub leaf: Option<pangea_leaf::ratchet::LeafStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limited_until: Option<DateTime<Utc>>,
 }
 
 /// Receipt for one reconcile cycle. Surfaces the answer to "what did

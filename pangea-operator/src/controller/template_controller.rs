@@ -1034,6 +1034,15 @@ async fn dispatch_template_phase(
             );
             return Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL));
         }
+        if let Some(wait) = crate::controller::template::rate_limit::hold(template, state).await {
+            tracing::info!(
+                scope = %scope,
+                phase = %current_phase,
+                wait_secs = wait.as_secs(),
+                "rate limited; no budget slot taken until status.rateLimitedUntil"
+            );
+            return Ok(ReconcileAction::Requeue(wait));
+        }
         let leaf_cap = crate::controller::template::leaf::catalog_view(state, template)
             .await
             .max_concurrent_leaves
@@ -1062,13 +1071,39 @@ async fn dispatch_template_phase(
             std::time::Instant::now(),
         );
         match admitted {
-            Some(_permit) => {
-                crate::executor::pacer_lane::within(
+            Some(permit) => {
+                let outcome = crate::executor::pacer_lane::within(
                     crate::controller::template::leaf::drift_lane(template)
                         .map(|share| (pangea_leaf::pace::Lane::Change, share)),
                     handler.handle(template, state),
                 )
-                .await
+                .await;
+                drop(permit);
+                match outcome {
+                    Err(e) => {
+                        let message = e.to_string();
+                        match crate::controller::template::rate_limit::rate_limited_until(
+                            &message,
+                            Utc::now(),
+                        ) {
+                            Some(until) => {
+                                crate::controller::template::rate_limit::record(
+                                    template, state, until, &message,
+                                )
+                                .await;
+                                Ok(ReconcileAction::Requeue(
+                                    crate::controller::template::rate_limit::wait_for(
+                                        Some(until),
+                                        Utc::now(),
+                                    )
+                                    .unwrap_or(SHORT_REQUEUE_INTERVAL),
+                                ))
+                            }
+                            None => Err(e),
+                        }
+                    }
+                    ok => ok,
+                }
             }
             None => {
                 // `Phase: Display` (strum) is the typed stringify surface — no format!().

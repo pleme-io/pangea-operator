@@ -504,13 +504,20 @@ pub fn leaf_view(t: &InfrastructureTemplate) -> pangea_leaf::rollup::LeafView {
                 .unwrap_or_else(|| format!("{st:?}"))
         });
     let phase = status.and_then(|s| s.phase).unwrap_or(Phase::Pending);
+    let limited = status
+        .and_then(|s| s.rate_limited_until)
+        .filter(|until| *until > chrono::Utc::now())
+        .map(|until| until.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
     let state = match (phase, stall) {
-        (Phase::Failed | Phase::CompileBlocked, _) => LeafState::Failed {
+        (Phase::Failed | Phase::CompileBlocked, _) if limited.is_none() => LeafState::Failed {
             reason: status
                 .and_then(|s| s.last_error.as_deref())
                 .map(first_line)
                 .unwrap_or_else(|| phase.to_string()),
             since,
+        },
+        _ if limited.is_some() => LeafState::RateLimited {
+            until: limited.clone().unwrap_or_default(),
         },
         (_, Some(state)) => LeafState::Stalled { state, since },
         (Phase::Ready, None) => LeafState::Ready,
@@ -869,6 +876,24 @@ mod tests {
         assert_eq!(r.blocked.len(), 1);
         assert_eq!(r.blocked[0].leaf, "org-dep");
         assert_eq!(r.blocked[0].by, vec!["org-estudio".to_string()]);
+    }
+
+    #[test]
+    fn a_rate_limited_leaf_is_named_by_its_catalog_and_an_expired_limit_is_not() {
+        use crate::crd::Phase;
+        let mut limited = with_phase(declared_leaf("org-a", "org", "a"), Phase::Planning, None);
+        let until = chrono::Utc::now() + chrono::Duration::seconds(60);
+        if let Some(s) = limited.status.as_mut() {
+            s.rate_limited_until = Some(until);
+        }
+        let mut expired = with_phase(declared_leaf("org-b", "org", "b"), Phase::Ready, None);
+        if let Some(s) = expired.status.as_mut() {
+            s.rate_limited_until = Some(chrono::Utc::now() - chrono::Duration::seconds(5));
+        }
+        let r = catalog_rollup(&[limited, expired]).unwrap();
+        assert_eq!(r.counts.rate_limited, 1);
+        assert_eq!(r.rate_limited[0].leaf, "org-a");
+        assert_eq!(r.counts.ready, 1);
     }
 
     fn catalog(migrate_from: Option<&str>, done: bool) -> WorkspaceCatalog {
