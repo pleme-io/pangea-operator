@@ -2217,11 +2217,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1792886072,
-        "narHash": "sha256-PnoSWBS9eeOm2YWSf6pGKjiJhvZI2Vq+jfyJGtoH+nY=",
+        "lastModified": 1793194255,
+        "narHash": "sha256-nqJLSQTizXk3blP6R30zuUS5ygYIlXXG322piKK88BU=",
         "owner": "pleme-io",
         "repo": "openwrt-uci",
-        "rev": "8eafe737feb917c1314d84777eead93db47cf820",
+        "rev": "fa4501aaaabe0b2a35ad960ae77ed58cc72a7a7c",
         "type": "github"
       },
       "original": {
@@ -2776,11 +2776,11 @@
         "tatara-lisp": "tatara-lisp"
       },
       "locked": {
-        "lastModified": 1792608371,
-        "narHash": "sha256-im8u1zM1ZwXxYC1HQ9Kr6eU3bDX3fEKIDz5dRaNMlWk=",
+        "lastModified": 1793195435,
+        "narHash": "sha256-pbBn8PjJM7N/CdbKsimBy8YPMxAlT5Qme0YrDBrZ8SM=",
         "owner": "pleme-io",
         "repo": "substrate",
-        "rev": "67cf8e559e80004e48e0f3e471b776e130b775fc",
+        "rev": "91b0ddc0d004480010ee233211023606d99432c5",
         "type": "github"
       },
       "original": {
