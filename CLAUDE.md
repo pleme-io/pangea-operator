@@ -2,6 +2,7 @@
 
 pending-cycle-receipt-capped-view: `build_reconcile_cycle` counts outcomes over `status.driftDetails`, a view capped at 50, then books `total - len(view)` as matched. roteador-buzios 2026-09-18 read imported 50 / matched 40 for 90 imports. Count from the full change set, not the view.
 pending-state-erosion-guard: a refresh that drops resources the last converged cycle recorded, at an unchanged source revision, is evidence the provider cannot see rather than that the resources are gone. Today only a truthful provider read prevents that (openwrt-uci 6384fda). Refuse auto-create for such addresses.
+pending-happa-embed: every leaf decision goes through `leaf_engine::LeafEngine` (`RustEngine`); `leaf.engine: blue` is refused until the `happa` bidama is on blue main, then embedded like kensa (`include_str!`, blue-lang-host `Embedded`, `posture(&[])`) as a second impl (docs/LEAVES.md O1).
 
 > **★★★ CSE / Knowable Construction.** This repo operates under **Constructive
 > Substrate Engineering** — canonical specification at

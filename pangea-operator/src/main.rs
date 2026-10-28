@@ -203,6 +203,9 @@ async fn main() -> Result<()> {
     );
     pangea_operator::controller::template::leaf::configure(&op_cfg.leaf);
     pangea_operator::leaf_work::configure(&op_cfg.workers);
+    if let Some(refusal) = pangea_operator::leaf_engine::configure(op_cfg.leaf.engine) {
+        tracing::warn!(%refusal, "leaf.engine refused");
+    }
     pangea_operator::observability::projection::configure_series(
         op_cfg.observability.leaf_series,
         op_cfg.observability.leaf_series_max,

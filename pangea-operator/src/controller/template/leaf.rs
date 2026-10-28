@@ -663,7 +663,7 @@ pub fn leaf_transitions(
             .map(pangea_leaf::rollup::seed)
             .unwrap_or_default()
     });
-    let out = pangea_leaf::rollup::transitions(&prev, views);
+    let out = crate::leaf_engine::engine().transitions(&prev, views);
     held.insert(name, pangea_leaf::rollup::held(views));
     out
 }
@@ -676,10 +676,7 @@ pub fn catalog_rollup(
     if views.is_empty() {
         return None;
     }
-    Some(pangea_leaf::rollup::judge(
-        &views,
-        pangea_leaf::rollup::NAME_CAP,
-    ))
+    Some(crate::leaf_engine::engine().judge(&views, pangea_leaf::rollup::NAME_CAP))
 }
 
 pub fn isolate_slice(

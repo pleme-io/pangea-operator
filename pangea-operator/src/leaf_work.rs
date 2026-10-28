@@ -98,13 +98,12 @@ pub fn status_with(
         })
         .collect();
     let a = &cfg.autoscaling;
-    Some(pangea_leaf::work::status(
+    Some(crate::leaf_engine::engine().work(
         &pending,
         &rates,
         a.horizon_secs,
         a.target,
-        a.min,
-        a.max,
+        (a.min, a.max),
     ))
 }
 
@@ -126,7 +125,7 @@ pub fn memory_with(
         providers: 1,
         provider_rss: pangea_leaf::memory::GITHUB_PROVIDER_RSS_BYTES,
     };
-    pangea_leaf::memory::derive(setting, &inputs)
+    crate::leaf_engine::engine().memory(setting, &inputs)
 }
 
 #[must_use]

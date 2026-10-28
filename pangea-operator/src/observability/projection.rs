@@ -462,7 +462,7 @@ impl ProjectionMetrics {
                 healthy: r.healthy,
             })
             .collect();
-        let selection = pangea_leaf::series::select(&leaves, mode, max);
+        let selection = crate::leaf_engine::engine().series(&leaves, mode, max);
         for (workspace, n) in &selection.unlabeled {
             self.workspace_leaves_unlabeled
                 .with_label_values(&[workspace.as_str()])

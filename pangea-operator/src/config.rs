@@ -450,6 +450,8 @@ pub struct LeafConfig {
     pub nats: LeafNatsConfig,
     #[serde(default)]
     pub calibrate: bool,
+    #[serde(default)]
+    pub engine: crate::leaf_engine::EngineKind,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -537,6 +539,7 @@ impl Default for LeafConfig {
             queue: LeafQueueKind::default(),
             nats: LeafNatsConfig::default(),
             calibrate: false,
+            engine: crate::leaf_engine::EngineKind::default(),
         }
     }
 }
@@ -826,6 +829,8 @@ struct LeafOverlay {
     nats: NatsOverlay,
     #[serde(skip_serializing_if = "Option::is_none")]
     calibrate: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    engine: Option<crate::leaf_engine::EngineKind>,
 }
 
 #[derive(Serialize, Default)]
@@ -957,6 +962,8 @@ impl EnvOverlay {
                     url: env_nonempty("PANGEA_LEAF_NATS_URL"),
                 },
                 calibrate: env_parse::<bool>("PANGEA_LEAF_CALIBRATE"),
+                engine: env_present("PANGEA_LEAF_ENGINE")
+                    .and_then(|v| crate::leaf_engine::EngineKind::parse(&v)),
             },
         }
     }
@@ -1718,6 +1725,23 @@ mod tests {
         assert_eq!(leaf.priority, pangea_leaf::admit::PriorityMode::Off);
         assert_eq!(leaf.per_credential_cap, 0);
         assert_eq!(leaf.drift_share, pangea_leaf::admit::Share::NONE);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn leaf_engine_is_read_from_the_file_tier() {
+        let _g = ENV_GUARD.lock().unwrap();
+        assert_eq!(
+            OperatorConfig::prescribed_default().leaf.engine,
+            crate::leaf_engine::EngineKind::Rust
+        );
+        let path = scratch_file("leaf-engine", "leaf:\n  engine: blue\n");
+        let r = OperatorConfig::resolve_from(&path, Dict::new());
+        assert_eq!(r.file, FileTier::Loaded { path: path.clone() });
+        assert_eq!(
+            r.resolution.into_value().leaf.engine,
+            crate::leaf_engine::EngineKind::Blue
+        );
         std::fs::remove_file(path).unwrap();
     }
 
