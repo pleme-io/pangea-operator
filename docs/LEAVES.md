@@ -312,6 +312,20 @@ whose key differs from `leaf-key` fails alone (`LeafSliceInvalid`). A leaf
 whose catalog does not exist fails alone (`LeafCatalogMissing`). A template
 without the label and the owner reference is not a leaf, and runs as before.
 
+**The cutover contract (O10 trigger; R2 renders it for a grandfathered fat
+template).** The catalog carries the annotation `pangea.pleme.io/migrate-from:
+<fat template>` (or `<namespace>/<fat template>`). While the catalog's
+`LeafMigration` condition is not `True`, every declared leaf waits and plans
+nothing. The catalog controller runs the move when the fat template has
+`spec.suspend: true`: each fat address goes to the leaf whose `leaf-key`
+equals the address's `for_each` key. An address that no leaf claims, or two
+leaves on one key, refuses the move by name and writes nothing. The outcome is
+the `LeafMigration` condition: `True/Migrated` (with the bijection hash), or
+`False` with `Waiting`, `Refused`, `Off`, `NoDatabase` or `Error`. A `True`
+condition never runs the move again. Off: `leaf.migrate: false`
+(`PANGEA_LEAF_MIGRATE=false`) runs nothing, and the leaves stay held. Remove
+the annotation to release the leaves without a move.
+
 **Where the default lives.** One place: the `leaf.admission` entry in the
 operator's embedded `happa` declaration, read through `LeafConfig`. The
 default stays `enforce`. A never-reconciled fat template is refused, and the
@@ -684,15 +698,15 @@ switch. Items in one row group are independent.
 |---|---|---|---|
 | H1 | `blue/happa/happa.b` with the §11 words | `blue test`; differential: each word equals its `pangea-leaf` source on the 2026-10-23 address set (1,023 leaves) | `leaf.engine: rust` |
 | O1 | Embed `happa` (`include_str!`, `Loader`, `posture(&[])`) in `src/leaf_engine.rs` | one refused host call per capability (kensa `event_tests.rs` form) | `leaf.engine: rust` |
-| O2 | Leaf-set contract: a leaf names its catalog by label and owner; a leaf whose catalog is missing is refused alone; no runtime generation path exists | a leaf with no catalog is `Failed` by name and its siblings reach `Ready`; both modes (a leaf set and a `skip-leaf` monolith) in the suite | `skip-leaf` per template |
-| O3 | Catalog rollup `WorkspaceCatalog.status.leaves` and its verdict `Partial`, aggregated over the declared leaves | one leaf `Failed`: the catalog reads `Partial` and names it, its siblings reach `Ready`, its dependent is `blocked` | none (§9.1 row 6) |
+| O2 | Leaf-set contract: a leaf names its catalog by label and owner; a leaf whose catalog is missing is refused alone; no runtime generation path exists **BUILT + TESTED, not live** (2026-10-27, dfde4d1): `pangea_leaf::slice::isolate` after the cascade, `LeafSliceInvalid` and `LeafCatalogMissing` per leaf; tests `a_declared_leaf_receives_only_its_own_slice_of_the_catalog`, `a_leaf_with_no_catalog_is_an_orphan_by_name_and_its_sibling_is_a_leaf`, `a_skip_leaf_monolith_is_standalone_in_both_modes`. | a leaf with no catalog is `Failed` by name and its siblings reach `Ready`; both modes (a leaf set and a `skip-leaf` monolith) in the suite | `skip-leaf` per template |
+| O3 | Catalog rollup `WorkspaceCatalog.status.leaves` and its verdict `Partial`, aggregated over the declared leaves **BUILT + TESTED, not live** (2026-10-27, 8cf2ea7, 71b0463): `pangea_leaf::rollup::judge`, written by the catalog controller every 30 s while not converged (no watch on the leaves yet); test `one_failed_leaf_makes_its_catalog_partial_and_names_it_while_siblings_are_ready`. The CRD field waits on helmworks (C1; `workspacecatalogs` is in the crd-drift baseline). | one leaf `Failed`: the catalog reads `Partial` and names it, its siblings reach `Ready`, its dependent is `blocked` | none (§9.1 row 6) |
 | O4 | The admission refusal names `workspaces/<ws>/leaves.b` | the refusal message carries the path | `leaf.admission: off` |
 | O5 | Priority and caps in the dispatch gate: `happa::admit`, `leaf.per_credential_cap`, drift reserve; workers default 16. **After** the stalled-pass work in `pass_driver` and the budget code lands | 20 drift-due leaves and 1 changed leaf with 4 slots: the changed leaf is admitted first | `leaf.priority: off`, caps at monolithic values |
 | O6 | Drift lane: `happa::drift_due`, the `:drift` shared pacer, `leaf.drift_share` | over a fake hour, 1,023 leaves are each due once, no minute holds more than ⌈1,023/60⌉ + 1 | `leaf.drift_share: 0` |
 | O7 | Rate-limited leaf: `status.rateLimitedUntil`, permit release, requeue | a mocked 403 with `retry-after`: the leaf waits, its siblings apply | none |
 | O8 | Metrics: `workspace` label, `pangea_workspace_leaves`, `pangea_leaf_plan_seconds`, the label cap | 300 unhealthy leaves emit 256 labelled and `unlabeled 44` | `observability.leaf_series: all \| off` |
 | O9 | Parent `LeafFailed` and `LeafStalled` events | one event per leaf per transition, none on a repeat | none |
-| O10 | `StateMove` executor (`pangea leaf migrate`) in one Postgres transaction, with archive and `leaf-migration` artifact. **BUILT + TESTED, not run live** (2026-10-27): pure split and merge in `pangea-leaf/src/migrate.rs` (1996d30), the one-transaction executor `backend::leaf_migration::{forward, reverse}` (c1a3e2f), the offline file form `pangea leaf migrate` (1ed2e40). Nothing calls `forward` in the operator yet: engenho serves no port-forward, so the live run needs an in-operator trigger (with O2) | a forged bijection writes nothing; a good one writes N rows that read back to the same multiset; reverse merge restores the fat row byte-equal. `pangea-leaf/tests/migrate.rs` (9), `pangea-operator/tests/leaf_migration_pg.rs` (3, Postgres 17.10; CI has no `PANGEA_TEST_DATABASE_URL`, so they pass there without a database: only-mitigated), `pangea-cli/tests/leaf_migrate.rs` (2) | run nothing; the fat row is untouched |
+| O10 | `StateMove` executor (`pangea leaf migrate`) in one Postgres transaction, with archive and `leaf-migration` artifact. **BUILT + TESTED, not run live** (2026-10-27): pure split and merge in `pangea-leaf/src/migrate.rs` (1996d30), the one-transaction executor `backend::leaf_migration::{forward, reverse}` (c1a3e2f), the offline file form `pangea leaf migrate` (1ed2e40). In-operator trigger (3c05145): `pangea.pleme.io/migrate-from` on the catalog, `forward_by_key` when the fat parent is suspended, `LeafMigration` condition, off by `leaf.migrate: false`. CI runs the Postgres tests against a `postgres:17` service since 48af3ee (red probe run 40584530016, green 40592434942) | a forged bijection writes nothing; a good one writes N rows that read back to the same multiset; reverse merge restores the fat row byte-equal. `pangea-leaf/tests/migrate.rs` (9), `pangea-operator/tests/leaf_migration_pg.rs` (3, Postgres 17.10; now 4, required in CI by `PANGEA_REQUIRE_TEST_DATABASE=1`), `pangea-cli/tests/leaf_migrate.rs` (2) | run nothing; the fat row is untouched |
 | O11 | Leaf queue on JetStream: one message per leaf action, `Nats-Msg-Id` = leaf, action and input digest, a durable consumer per credential with `MaxAckPending` = cap, `+WIP` per heartbeat, `MaxDeliver` advisory to `Failed`, `happa::shares` splits each credential's rate | against a test `nats-server`: a republished action is dropped; a killed worker's message reaches the other worker after `AckWait`; the summed pacer quota stays at `r_c` | `leaf.queue: in_process` |
 | O12 | `pangea_leaf_pending_work` gauge and `PangeaFleetStatus.status.leafWork`, by the §17 formula; weights calibrated from `pangea_provider_rpc_seconds_count` | a fixed queue gives the hand-computed value; a starved credential caps at `r_c · H` | `workers.autoscaling.enabled: false` |
 | O13 | `status.leaf.peakRssBytes` from a calibration pass, and `workers.memory: derived` | the derived request equals the formula on fixture leaves | `workers.memory: <quantity>` |
