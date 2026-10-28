@@ -225,6 +225,82 @@ pub fn membership(template: &InfrastructureTemplate, catalog_found: bool) -> Mem
     }
 }
 
+fn first_line(s: &str) -> String {
+    s.lines()
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .take(200)
+        .collect()
+}
+
+#[must_use]
+pub fn leaf_view(t: &InfrastructureTemplate) -> pangea_leaf::rollup::LeafView {
+    use crate::crd::Phase;
+    use pangea_leaf::rollup::{LeafState, LeafView};
+    let status = t.status.as_ref();
+    let since = status
+        .and_then(|s| s.phase_entered_at)
+        .map(|at| at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+    let stall = status
+        .and_then(|s| s.pass.as_ref())
+        .and_then(|p| p.stall.as_ref())
+        .map(|st| {
+            serde_json::to_value(st)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_string))
+                .unwrap_or_else(|| format!("{st:?}"))
+        });
+    let phase = status.and_then(|s| s.phase).unwrap_or(Phase::Pending);
+    let state = match (phase, stall) {
+        (Phase::Failed | Phase::CompileBlocked, _) => LeafState::Failed {
+            reason: status
+                .and_then(|s| s.last_error.as_deref())
+                .map(first_line)
+                .unwrap_or_else(|| phase.to_string()),
+            since,
+        },
+        (_, Some(state)) => LeafState::Stalled { state, since },
+        (Phase::Ready, None) => LeafState::Ready,
+        (Phase::Applying | Phase::Destroying, None) => LeafState::Applying,
+        _ => LeafState::Planning,
+    };
+    let upstreams = t
+        .spec
+        .variable_refs
+        .as_ref()
+        .map(|r| {
+            let mut v: Vec<String> = r.values().map(|x| x.template_ref.name.clone()).collect();
+            v.sort();
+            v.dedup();
+            v
+        })
+        .unwrap_or_default();
+    LeafView {
+        name: t.name_any(),
+        state,
+        upstreams,
+    }
+}
+
+#[must_use]
+pub fn catalog_rollup(
+    templates: &[InfrastructureTemplate],
+) -> Option<pangea_leaf::rollup::LeavesRollup> {
+    let views: Vec<_> = templates
+        .iter()
+        .filter(|t| matches!(membership(t, true), Membership::Leaf { .. }))
+        .map(leaf_view)
+        .collect();
+    if views.is_empty() {
+        return None;
+    }
+    Some(pangea_leaf::rollup::judge(
+        &views,
+        pangea_leaf::rollup::NAME_CAP,
+    ))
+}
+
 pub fn isolate_slice(
     template: &InfrastructureTemplate,
     variables: &mut BTreeMap<String, serde_json::Value>,
@@ -486,6 +562,66 @@ mod tests {
         )]));
         let mut effective = BTreeMap::new();
         assert!(isolate_slice(&leaf, &mut effective).is_err());
+    }
+
+    fn with_phase(
+        mut t: InfrastructureTemplate,
+        phase: crate::crd::Phase,
+        err: Option<&str>,
+    ) -> InfrastructureTemplate {
+        t.status = Some(InfrastructureTemplateStatus {
+            phase: Some(phase),
+            last_error: err.map(str::to_string),
+            ..Default::default()
+        });
+        t
+    }
+
+    #[test]
+    fn one_failed_leaf_makes_its_catalog_partial_and_names_it_while_siblings_are_ready() {
+        use crate::crd::Phase;
+        use pangea_leaf::rollup::Verdict;
+        let failed = with_phase(
+            declared_leaf("org-estudio", "org", "estudio"),
+            Phase::Failed,
+            Some("ImportAbsent: github_repository.repos[\"estudio\"]\nmore"),
+        );
+        let ready = with_phase(
+            declared_leaf("org-kensa", "org", "kensa"),
+            Phase::Ready,
+            None,
+        );
+        let mut dep = with_phase(
+            declared_leaf("org-dep", "org", "dep"),
+            Phase::Planning,
+            None,
+        );
+        dep.spec.variable_refs = Some(BTreeMap::from([(
+            "x".to_string(),
+            serde_json::from_value(serde_json::json!({
+                "templateRef": {"name": "org-estudio"}, "outputKey": "id"
+            }))
+            .unwrap(),
+        )]));
+        let stranger = with_phase(template(None, true), Phase::Failed, Some("not a leaf"));
+        let r = catalog_rollup(&[failed, ready, dep, stranger]).unwrap();
+        assert_eq!(r.verdict, Verdict::Partial);
+        assert_eq!(r.total, 3);
+        assert_eq!(r.failed.len(), 1);
+        assert_eq!(r.failed[0].leaf, "org-estudio");
+        assert_eq!(
+            r.failed[0].reason,
+            "ImportAbsent: github_repository.repos[\"estudio\"]"
+        );
+        assert_eq!(r.counts.ready, 1);
+        assert_eq!(r.blocked.len(), 1);
+        assert_eq!(r.blocked[0].leaf, "org-dep");
+        assert_eq!(r.blocked[0].by, vec!["org-estudio".to_string()]);
+    }
+
+    #[test]
+    fn a_catalog_with_no_declared_leaves_has_no_rollup() {
+        assert_eq!(catalog_rollup(&[template(None, true)]), None);
     }
 
     #[test]

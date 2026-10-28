@@ -138,6 +138,12 @@ pub struct WorkspaceCatalogStatus {
     /// Conditions: `Reachable`, `GemsLoaded`, `Verified`.
     #[serde(default)]
     pub conditions: Vec<super::architecture_gem::Condition>,
+
+    /// Rollup of the declared leaves this catalog owns: verdict
+    /// `Converged | Progressing | Partial`, counts per state, and the failed,
+    /// stalled, rate-limited and blocked leaves by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leaves: Option<pangea_leaf::rollup::LeavesRollup>,
 }
 
 #[cfg(test)]

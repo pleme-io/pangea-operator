@@ -19,3 +19,5 @@
 # Adding a name here means "I could not regenerate this now". Say why, and date it.
 # 2026-10-27: EMPTY again. helmworks f45f477 (chart 0.9.21) regenerated infrastructuretemplates
 # (status.leaf) and workspacecatalogs (spec.maxConcurrentLeaves) from --generate-crds.
+# 2026-10-27: workspacecatalogs gains status.leaves (LEAVES.md O3); helmworks regenerates it (C1).
+workspacecatalogs.pangea.pleme.io

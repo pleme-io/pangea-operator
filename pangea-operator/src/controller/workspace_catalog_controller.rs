@@ -185,11 +185,16 @@ async fn reconcile(wsc: Arc<WorkspaceCatalog>, ctx: Arc<Context>) -> Result<Acti
         },
     ];
 
+    let leaves = crate::controller::template::leaf::catalog_rollup(&templates.items);
+    let settled = leaves.as_ref().map_or(true, |l| {
+        l.verdict == pangea_leaf::rollup::Verdict::Converged
+    });
     let new_status = WorkspaceCatalogStatus {
         template_count,
         verified: gems_loaded,
         last_reconcile_time: Some(now),
         conditions,
+        leaves,
     };
 
     patch_status_if_changed(&ctx.client, &name, wsc.status.as_ref(), new_status).await?;
@@ -210,6 +215,9 @@ async fn reconcile(wsc: Arc<WorkspaceCatalog>, ctx: Arc<Context>) -> Result<Acti
     }
 
     // 5-min default cadence — same shape as ArchitectureGem reconciler.
+    if !settled {
+        return Ok(Action::requeue(Duration::from_secs(30)));
+    }
     Ok(Action::requeue(Duration::from_secs(300)))
 }
 
@@ -340,7 +348,7 @@ async fn patch_status_if_changed(
 }
 
 fn status_content_equal(a: &WorkspaceCatalogStatus, b: &WorkspaceCatalogStatus) -> bool {
-    if a.template_count != b.template_count || a.verified != b.verified {
+    if a.template_count != b.template_count || a.verified != b.verified || a.leaves != b.leaves {
         return false;
     }
     if a.conditions.len() != b.conditions.len() {
@@ -433,7 +441,16 @@ mod tests {
             verified,
             last_reconcile_time: Some(Utc::now()),
             conditions: conds,
+            leaves: None,
         }
+    }
+
+    #[test]
+    fn unequal_when_the_leaf_rollup_moves() {
+        let a = mk_status(2, true, vec![]);
+        let mut b = mk_status(2, true, vec![]);
+        b.leaves = Some(pangea_leaf::rollup::LeavesRollup::default());
+        assert!(!status_content_equal(&a, &b));
     }
 
     #[test]
