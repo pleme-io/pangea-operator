@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "91206b0fd7ad928e8f480262c11e771c79bf2228751f7297c09eec4993413ef8",
+  "cargo_lock_sha256": "8bc54cb1972771876c7fbb580929f47637d9c8218f82ae748ca2b5973dd2de3b",
   "manifest_sha256": {
     "Cargo.toml": "aac7092cc210c7759a20858712fba79144f06955761eb499d89148e0c03ea9d2",
     "lava-ruby/Cargo.toml": "a2d172e3cffd2088bd2c849c579de254aec964cbe53b992a5b381a42c1f80933",
@@ -12429,7 +12429,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.45",
+            "package_key": "rustls-0.23.46",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -13784,7 +13784,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.45",
+            "package_key": "rustls-0.23.46",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -16731,7 +16731,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.45",
+            "package_key": "rustls-0.23.46",
             "kind": "normal",
             "features": [
               "ring"
@@ -19733,7 +19733,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.45",
+            "package_key": "rustls-0.23.46",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -22001,7 +22001,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.45",
+            "package_key": "rustls-0.23.46",
             "kind": "normal",
             "features": [
               "std"
@@ -22153,7 +22153,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.45",
+            "package_key": "rustls-0.23.46",
             "kind": "normal",
             "features": [
               "std"
@@ -23086,7 +23086,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.45",
+            "package_key": "rustls-0.23.46",
             "kind": "normal",
             "features": [
               "std",
@@ -23448,7 +23448,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.45",
+            "package_key": "rustls-0.23.46",
             "kind": "normal",
             "features": [
               "std",
@@ -24303,7 +24303,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "rustls-0.23.45": {
+      "rustls-0.23.46": {
         "runtime_dependencies": [
           {
             "name": "aws_lc_rs",
@@ -26558,7 +26558,7 @@
           },
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.45",
+            "package_key": "rustls-0.23.46",
             "kind": "normal",
             "features": [
               "std",
@@ -29115,7 +29115,7 @@
         "runtime_dependencies": [
           {
             "name": "rustls",
-            "package_key": "rustls-0.23.45",
+            "package_key": "rustls-0.23.46",
             "kind": "normal",
             "features": [
               "std"
@@ -33165,7 +33165,7 @@
               },
               {
                 "name": "rustls",
-                "package_key": "rustls-0.23.45",
+                "package_key": "rustls-0.23.46",
                 "kind": "normal",
                 "features": [
                   "std"
@@ -34442,7 +34442,7 @@
               },
               {
                 "name": "rustls",
-                "package_key": "rustls-0.23.45",
+                "package_key": "rustls-0.23.46",
                 "kind": "normal",
                 "features": [
                   "std"
@@ -35521,7 +35521,7 @@
               },
               {
                 "name": "rustls",
-                "package_key": "rustls-0.23.45",
+                "package_key": "rustls-0.23.46",
                 "kind": "normal",
                 "features": [
                   "std"
@@ -36422,7 +36422,7 @@
               },
               {
                 "name": "rustls",
-                "package_key": "rustls-0.23.45",
+                "package_key": "rustls-0.23.46",
                 "kind": "normal",
                 "features": [
                   "std"
@@ -37663,7 +37663,7 @@
               },
               {
                 "name": "rustls",
-                "package_key": "rustls-0.23.45",
+                "package_key": "rustls-0.23.46",
                 "kind": "normal",
                 "features": [
                   "std"
@@ -38706,7 +38706,7 @@
               },
               {
                 "name": "rustls",
-                "package_key": "rustls-0.23.45",
+                "package_key": "rustls-0.23.46",
                 "kind": "normal",
                 "features": [
                   "std"
@@ -40490,7 +40490,7 @@
       "edition": "2021",
       "build_script": "build.rs"
     },
-    "rustls-0.23.45": {
+    "rustls-0.23.46": {
       "edition": "2021",
       "build_script": "build.rs"
     },
