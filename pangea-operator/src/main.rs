@@ -772,11 +772,13 @@ async fn main() -> Result<()> {
     let wsc_client = state.client.clone();
     let wsc_policy = state.operator_policy.clone();
     let wsc_metrics = state.metrics.clone();
+    let wsc_artifacts = state.artifact_store.clone();
     let workspace_catalog_controller = tokio::spawn(async move {
         pangea_operator::controller::workspace_catalog_controller::run(
             wsc_client,
             wsc_policy,
             wsc_metrics,
+            wsc_artifacts,
         )
         .await;
         error!("WorkspaceCatalog controller exited");

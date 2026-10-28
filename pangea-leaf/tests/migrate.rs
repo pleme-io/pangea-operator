@@ -212,3 +212,47 @@ fn reverse_merge_refuses_a_missing_leaf() {
         Err(MigrateError::MissingLeaf("org-beta".into()))
     );
 }
+
+fn leaf_keys(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+    pairs
+        .iter()
+        .map(|(l, k)| ((*l).to_string(), (*k).to_string()))
+        .collect()
+}
+
+#[test]
+fn declared_leaf_keys_place_every_address_and_the_moves_split_cleanly() {
+    let fat = fat_state();
+    let moves = pangea_leaf::migrate::moves_by_key(
+        FAT,
+        Some("ns"),
+        &fat,
+        &leaf_keys(&[
+            ("org-alpha", "alpha"),
+            ("org-beta", "beta"),
+            ("org-new", "gamma"),
+        ]),
+    )
+    .unwrap();
+    assert_eq!(moves.len(), 2);
+    let s = split(FAT, &fat, &moves).unwrap();
+    assert_eq!(s.receipt.hash_before, s.receipt.hash_after);
+}
+
+#[test]
+fn an_address_whose_key_no_leaf_declares_refuses_the_move() {
+    let fat = fat_state();
+    assert!(matches!(
+        pangea_leaf::migrate::moves_by_key(FAT, None, &fat, &leaf_keys(&[("org-alpha", "alpha")])),
+        Err(MigrateError::Bijection(_))
+    ));
+    assert!(matches!(
+        pangea_leaf::migrate::moves_by_key(
+            FAT,
+            None,
+            &fat,
+            &leaf_keys(&[("org-alpha", "alpha"), ("org-twin", "alpha")])
+        ),
+        Err(MigrateError::DuplicateLeaf(_))
+    ));
+}

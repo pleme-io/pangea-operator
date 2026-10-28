@@ -48,11 +48,13 @@ pub fn run(
     client: Client,
     operator_policy: Arc<crate::controller::operator_policy_cache::OperatorPolicyCache>,
     metrics: Arc<crate::observability::Metrics>,
+    artifact_store: Option<Arc<crate::backend::ArtifactStore>>,
 ) -> impl std::future::Future<Output = ()> {
     let context = Arc::new(Context {
         client: client.clone(),
         operator_policy,
         metrics,
+        artifact_store,
     });
 
     crate::controller::generation_filter::filtered_controller::<WorkspaceCatalog>(client)
@@ -69,6 +71,7 @@ struct Context {
     client: Client,
     operator_policy: Arc<crate::controller::operator_policy_cache::OperatorPolicyCache>,
     metrics: Arc<crate::observability::Metrics>,
+    artifact_store: Option<Arc<crate::backend::ArtifactStore>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -185,6 +188,10 @@ async fn reconcile(wsc: Arc<WorkspaceCatalog>, ctx: Arc<Context>) -> Result<Acti
         },
     ];
 
+    let mut conditions = conditions;
+    if let Some(c) = leaf_migration_condition(&ctx, &wsc, &templates.items, now).await {
+        conditions.push(c);
+    }
     let leaves = crate::controller::template::leaf::catalog_rollup(&templates.items);
     let settled = leaves.as_ref().map_or(true, |l| {
         l.verdict == pangea_leaf::rollup::Verdict::Converged
@@ -326,6 +333,94 @@ fn gems_loaded_message(required: &[String], missing: &[String], not_loaded: &[St
 /// WorkspaceCatalog reconcile would otherwise bump
 /// `lastReconcileTime` + every condition's `lastTransitionTime`,
 /// trigger our own watch, and tighten into a hot loop.
+async fn leaf_migration_condition(
+    ctx: &Context,
+    wsc: &WorkspaceCatalog,
+    templates: &[InfrastructureTemplate],
+    now: chrono::DateTime<Utc>,
+) -> Option<Condition> {
+    use crate::controller::template::leaf::{
+        migrate_from, migration_step, MigrationStep, LEAF_MIGRATION_CONDITION,
+    };
+    let (fat_ns, fat_name) = migrate_from(wsc)?;
+    let fat_ns = fat_ns.or_else(|| templates.iter().find_map(ResourceExt::namespace));
+    let fat = match fat_ns.as_deref() {
+        Some(ns) => Api::<InfrastructureTemplate>::namespaced(ctx.client.clone(), ns)
+            .get_opt(&fat_name)
+            .await
+            .ok()
+            .flatten(),
+        None => None,
+    };
+    let switch = crate::controller::template::leaf::settings().migrate;
+    let cond = |status: &str, reason: &str, message: String| Condition {
+        condition_type: LEAF_MIGRATION_CONDITION.to_string(),
+        status: status.to_string(),
+        reason: reason.to_string(),
+        message,
+        last_transition_time: now,
+    };
+    match migration_step(wsc, switch, fat.as_ref(), templates) {
+        MigrationStep::NotDeclared => None,
+        MigrationStep::Done => wsc
+            .status
+            .as_ref()
+            .and_then(|s| {
+                s.conditions
+                    .iter()
+                    .find(|c| c.condition_type == LEAF_MIGRATION_CONDITION)
+            })
+            .cloned(),
+        MigrationStep::Off => Some(cond(
+            "False",
+            "Off",
+            "leaf.migrate is false: the fat row is untouched and the leaves wait".into(),
+        )),
+        MigrationStep::Wait(m) => Some(cond("False", "Waiting", m)),
+        MigrationStep::Refuse(m) => Some(cond("False", "Refused", m)),
+        MigrationStep::Run {
+            fat,
+            pangea_namespace,
+            leaves,
+        } => {
+            let Some(store) = ctx.artifact_store.as_ref() else {
+                return Some(cond(
+                    "False",
+                    "NoDatabase",
+                    "no Postgres pool is wired; the move cannot run".into(),
+                ));
+            };
+            let schema = crate::crd::schema_name_for_namespace(&pangea_namespace);
+            let outcome = crate::backend::leaf_migration::forward_by_key(
+                store.pool(),
+                &schema,
+                &fat,
+                &pangea_namespace,
+                &leaves,
+            )
+            .await;
+            use crate::backend::leaf_migration::Outcome;
+            Some(match outcome {
+                Ok(Outcome::Migrated(r)) | Ok(Outcome::AlreadyMigrated(r)) => cond(
+                    "True",
+                    "Migrated",
+                    format!(
+                        "{} addresses moved into {} leaves; bijection {}",
+                        r.count_after,
+                        r.leaves.len(),
+                        r.hash_after
+                    ),
+                ),
+                Ok(Outcome::Refused(m)) => cond("False", "Refused", m),
+                Ok(Outcome::Reversed(_)) => {
+                    cond("False", "Reversed", "the move was reversed".into())
+                }
+                Err(e) => cond("False", "Error", e.to_string()),
+            })
+        }
+    }
+}
+
 async fn patch_status_if_changed(
     client: &Client,
     name: &str,

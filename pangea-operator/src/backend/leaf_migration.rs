@@ -156,6 +156,28 @@ pub async fn forward(
     fat: &str,
     moves: &[StateMove],
 ) -> Result<Outcome> {
+    forward_with(pool, schema, fat, |_| Ok(moves.to_vec())).await
+}
+
+pub async fn forward_by_key(
+    pool: &PgPool,
+    schema: &str,
+    fat: &str,
+    pangea_namespace: &str,
+    leaves: &[(String, String)],
+) -> Result<Outcome> {
+    forward_with(pool, schema, fat, |bytes| {
+        migrate::moves_by_key(fat, Some(pangea_namespace), bytes, leaves)
+    })
+    .await
+}
+
+async fn forward_with(
+    pool: &PgPool,
+    schema: &str,
+    fat: &str,
+    make_moves: impl FnOnce(&[u8]) -> std::result::Result<Vec<StateMove>, MigrateError>,
+) -> Result<Outcome> {
     let mut tx = pool.begin().await.map_err(Error::Database)?;
     ensure_artifacts(&mut tx).await?;
     if let Some(r) = read_receipt(&mut tx, schema, fat).await? {
@@ -169,7 +191,11 @@ pub async fn forward(
             "`{fat}` has no `{LIVE_ROW}` state row"
         )));
     };
-    let split = match migrate::split(fat, &fat_bytes, moves) {
+    let moves = match make_moves(&fat_bytes) {
+        Ok(m) => m,
+        Err(e) => return Ok(refused(e)),
+    };
+    let split = match migrate::split(fat, &fat_bytes, &moves) {
         Ok(s) => s,
         Err(e) => return Ok(refused(e)),
     };

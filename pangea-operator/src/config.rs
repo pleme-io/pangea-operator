@@ -371,6 +371,16 @@ pub struct LeafConfig {
     /// with one leaf key set (`PANGEA_LEAF_CYCLE_BUDGET_SECS`; default unset).
     #[serde(default)]
     pub cycle_budget_secs: Option<u64>,
+    /// When a catalog names its fat parent (`pangea.pleme.io/migrate-from`),
+    /// move the parent's state into the declared leaves in one Postgres
+    /// transaction, gated by the bijection (`PANGEA_LEAF_MIGRATE`; default
+    /// true). `false` runs nothing and leaves the fat row untouched.
+    #[serde(default = "default_leaf_migrate")]
+    pub migrate: bool,
+}
+
+fn default_leaf_migrate() -> bool {
+    true
 }
 
 fn default_ratchet_tolerance_percent() -> u32 {
@@ -383,6 +393,7 @@ impl Default for LeafConfig {
             admission: pangea_leaf::admission::AdmissionMode::default(),
             ratchet_tolerance_percent: default_ratchet_tolerance_percent(),
             cycle_budget_secs: None,
+            migrate: default_leaf_migrate(),
         }
     }
 }
@@ -638,6 +649,8 @@ struct LeafOverlay {
     ratchet_tolerance_percent: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     cycle_budget_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    migrate: Option<bool>,
 }
 
 #[derive(Serialize, Default)]
@@ -733,6 +746,7 @@ impl EnvOverlay {
                     "PANGEA_LEAF_RATCHET_TOLERANCE_PERCENT",
                 ),
                 cycle_budget_secs: env_parse::<u64>("PANGEA_LEAF_CYCLE_BUDGET_SECS"),
+                migrate: env_parse::<bool>("PANGEA_LEAF_MIGRATE"),
             },
         }
     }

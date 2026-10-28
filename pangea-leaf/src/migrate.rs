@@ -125,6 +125,48 @@ pub fn managed_addresses(bytes: &[u8]) -> Result<Vec<String>, MigrateError> {
     Ok(addresses_from_state(&parse(bytes)?)?)
 }
 
+pub fn moves_by_key(
+    fat_template: &str,
+    pangea_namespace: Option<&str>,
+    fat: &[u8],
+    leaves: &[(String, String)],
+) -> Result<Vec<StateMove>, MigrateError> {
+    let mut by_key: BTreeMap<&str, &str> = BTreeMap::new();
+    for (leaf, key) in leaves {
+        if by_key.insert(key.as_str(), leaf.as_str()).is_some() {
+            return Err(MigrateError::DuplicateLeaf(format!("key `{key}`")));
+        }
+    }
+    let mut placed: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    let mut unplaced = Vec::new();
+    for addr in managed_addresses(fat)? {
+        let leaf = match crate::address::leaf_key(&addr) {
+            Ok(crate::address::LeafKey::Keyed(k)) => by_key.get(k.as_str()).copied(),
+            _ => None,
+        };
+        match leaf {
+            Some(l) => placed.entry(l).or_default().push(addr),
+            None => unplaced.push(addr),
+        }
+    }
+    if !unplaced.is_empty() {
+        return Err(MigrateError::Bijection(format!(
+            "{} addresses match no declared leaf key, first `{}`",
+            unplaced.len(),
+            unplaced[0]
+        )));
+    }
+    Ok(placed
+        .into_iter()
+        .map(|(leaf, addresses)| StateMove {
+            from_template: fat_template.to_string(),
+            to_template: leaf.to_string(),
+            pangea_namespace: pangea_namespace.map(str::to_string),
+            addresses,
+        })
+        .collect())
+}
+
 fn check_moves(fat_template: &str, moves: &[StateMove]) -> Result<(), MigrateError> {
     if moves.is_empty() {
         return Err(MigrateError::NoMoves);

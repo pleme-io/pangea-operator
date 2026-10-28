@@ -118,6 +118,11 @@ impl ArtifactStore {
         }
     }
 
+    #[must_use]
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+
     /// Self-heal the durable-artifact table on the first op that needs
     /// it (and on every op until it succeeds). Cheap no-op once the
     /// `ensured` flag is set — a single relaxed atomic load. Called at

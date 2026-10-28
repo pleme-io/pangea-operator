@@ -590,6 +590,20 @@ async fn reconcile_template(
         return Ok(Action::requeue(DEFAULT_REQUEUE_INTERVAL));
     }
 
+    if let Some(wsc) = parent_wsc.as_ref() {
+        if matches!(
+            crate::controller::template::leaf::membership(&template, true),
+            crate::controller::template::leaf::Membership::Leaf { .. }
+        ) && crate::controller::template::leaf::held_for_migration(wsc)
+        {
+            info!(
+                catalog = %wsc.name_any(),
+                "leaf waits: its catalog names a fat parent whose state has not moved yet"
+            );
+            return Ok(Action::requeue(DEFAULT_REQUEUE_INTERVAL));
+        }
+    }
+
     // ReactivePolicy auto-suspend gate: a prior reconcile triggered a
     // Suspend escalation (e.g. 5+ consecutive failures) and patched
     // status.autoSuspended=true. Halt every reconcile until the

@@ -225,6 +225,116 @@ pub fn membership(template: &InfrastructureTemplate, catalog_found: bool) -> Mem
     }
 }
 
+pub const MIGRATE_FROM_ANNOTATION: &str = "pangea.pleme.io/migrate-from";
+pub const LEAF_MIGRATION_CONDITION: &str = "LeafMigration";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MigrationStep {
+    NotDeclared,
+    Off,
+    Done,
+    Wait(String),
+    Refuse(String),
+    Run {
+        fat: String,
+        pangea_namespace: String,
+        leaves: Vec<(String, String)>,
+    },
+}
+
+#[must_use]
+pub fn migrate_from(catalog: &WorkspaceCatalog) -> Option<(Option<String>, String)> {
+    let raw = catalog
+        .metadata
+        .annotations
+        .as_ref()?
+        .get(MIGRATE_FROM_ANNOTATION)?
+        .trim();
+    if raw.is_empty() {
+        return None;
+    }
+    Some(match raw.split_once('/') {
+        Some((ns, name)) => (Some(ns.to_string()), name.to_string()),
+        None => (None, raw.to_string()),
+    })
+}
+
+#[must_use]
+pub fn migration_done(catalog: &WorkspaceCatalog) -> bool {
+    catalog.status.as_ref().is_some_and(|s| {
+        s.conditions
+            .iter()
+            .any(|c| c.condition_type == LEAF_MIGRATION_CONDITION && c.status == "True")
+    })
+}
+
+#[must_use]
+pub fn held_for_migration(catalog: &WorkspaceCatalog) -> bool {
+    migrate_from(catalog).is_some() && !migration_done(catalog)
+}
+
+#[must_use]
+pub fn migration_step(
+    catalog: &WorkspaceCatalog,
+    switch: bool,
+    fat: Option<&InfrastructureTemplate>,
+    templates: &[InfrastructureTemplate],
+) -> MigrationStep {
+    let Some((_, fat_name)) = migrate_from(catalog) else {
+        return MigrationStep::NotDeclared;
+    };
+    if migration_done(catalog) {
+        return MigrationStep::Done;
+    }
+    if !switch {
+        return MigrationStep::Off;
+    }
+    let Some(fat) = fat else {
+        return MigrationStep::Refuse(format!("fat template `{fat_name}` does not exist"));
+    };
+    if !fat.spec.suspend {
+        return MigrationStep::Wait(format!(
+            "fat template `{fat_name}` is not suspended; suspend it so it stops applying before its state moves"
+        ));
+    }
+    let leaves: Vec<&InfrastructureTemplate> = templates
+        .iter()
+        .filter(|t| matches!(membership(t, true), Membership::Leaf { .. }))
+        .collect();
+    if leaves.is_empty() {
+        return MigrationStep::Wait("no declared leaf exists yet".into());
+    }
+    let mut out = Vec::with_capacity(leaves.len());
+    for l in leaves {
+        if l.spec.pangea_namespace != fat.spec.pangea_namespace {
+            return MigrationStep::Refuse(format!(
+                "leaf `{}` is in pangeaNamespace `{}`, the fat template in `{}`",
+                l.name_any(),
+                l.spec.pangea_namespace,
+                fat.spec.pangea_namespace
+            ));
+        }
+        let Some(key) = l
+            .metadata
+            .annotations
+            .as_ref()
+            .and_then(|a| a.get(pangea_leaf::slice::LEAF_KEY_ANNOTATION))
+        else {
+            return MigrationStep::Refuse(format!(
+                "leaf `{}` has no {} annotation",
+                l.name_any(),
+                pangea_leaf::slice::LEAF_KEY_ANNOTATION
+            ));
+        };
+        out.push((l.name_any(), key.clone()));
+    }
+    MigrationStep::Run {
+        fat: fat.name_any(),
+        pangea_namespace: fat.spec.pangea_namespace.clone(),
+        leaves: out,
+    }
+}
+
 fn first_line(s: &str) -> String {
     s.lines()
         .next()
@@ -619,6 +729,125 @@ mod tests {
         assert_eq!(r.blocked[0].by, vec!["org-estudio".to_string()]);
     }
 
+    fn catalog(migrate_from: Option<&str>, done: bool) -> WorkspaceCatalog {
+        let mut c: WorkspaceCatalog = serde_json::from_value(serde_json::json!({
+            "apiVersion": "pangea.pleme.io/v1alpha1",
+            "kind": "WorkspaceCatalog",
+            "metadata": {"name": "org"},
+            "spec": {"source": {}}
+        }))
+        .unwrap();
+        if let Some(m) = migrate_from {
+            c.metadata.annotations = Some(BTreeMap::from([(
+                MIGRATE_FROM_ANNOTATION.to_string(),
+                m.to_string(),
+            )]));
+        }
+        if done {
+            c.status = Some(crate::crd::workspace_catalog::WorkspaceCatalogStatus {
+                conditions: vec![crate::crd::architecture_gem::Condition {
+                    condition_type: LEAF_MIGRATION_CONDITION.into(),
+                    status: "True".into(),
+                    reason: "Migrated".into(),
+                    message: String::new(),
+                    last_transition_time: chrono::Utc::now(),
+                }],
+                ..Default::default()
+            });
+        }
+        c
+    }
+
+    fn fat_parent(suspended: bool) -> InfrastructureTemplate {
+        let mut t = template(None, true);
+        t.metadata.name = Some("org".into());
+        t.spec.suspend = suspended;
+        t
+    }
+
+    #[test]
+    fn a_declared_leaf_set_meeting_its_suspended_fat_parent_runs_the_move_by_key() {
+        let leaves = [
+            declared_leaf("org-a", "org", "a"),
+            declared_leaf("org-b", "org", "b"),
+        ];
+        let step = migration_step(
+            &catalog(Some("org"), false),
+            true,
+            Some(&fat_parent(true)),
+            &leaves,
+        );
+        assert_eq!(
+            step,
+            MigrationStep::Run {
+                fat: "org".into(),
+                pangea_namespace: "ns".into(),
+                leaves: vec![("org-a".into(), "a".into()), ("org-b".into(), "b".into())],
+            }
+        );
+        assert!(held_for_migration(&catalog(Some("org"), false)));
+    }
+
+    #[test]
+    fn the_move_waits_for_a_suspended_parent_and_refuses_a_missing_one() {
+        let leaves = [declared_leaf("org-a", "org", "a")];
+        let c = catalog(Some("org"), false);
+        assert!(matches!(
+            migration_step(&c, true, Some(&fat_parent(false)), &leaves),
+            MigrationStep::Wait(_)
+        ));
+        assert!(matches!(
+            migration_step(&c, true, None, &leaves),
+            MigrationStep::Refuse(_)
+        ));
+        assert!(matches!(
+            migration_step(&c, true, Some(&fat_parent(true)), &[]),
+            MigrationStep::Wait(_)
+        ));
+    }
+
+    #[test]
+    fn the_switch_off_runs_nothing_and_still_holds_the_leaves() {
+        let leaves = [declared_leaf("org-a", "org", "a")];
+        let c = catalog(Some("org"), false);
+        assert_eq!(
+            migration_step(&c, false, Some(&fat_parent(true)), &leaves),
+            MigrationStep::Off
+        );
+        assert!(held_for_migration(&c));
+    }
+
+    #[test]
+    fn a_done_move_never_runs_twice_and_releases_the_leaves() {
+        let leaves = [declared_leaf("org-a", "org", "a")];
+        let c = catalog(Some("org"), true);
+        assert_eq!(
+            migration_step(&c, true, Some(&fat_parent(true)), &leaves),
+            MigrationStep::Done
+        );
+        assert!(!held_for_migration(&c));
+        assert_eq!(
+            migration_step(&catalog(None, false), true, None, &leaves),
+            MigrationStep::NotDeclared
+        );
+        assert!(!held_for_migration(&catalog(None, false)));
+    }
+
+    #[test]
+    fn a_leaf_in_another_pangea_namespace_refuses_the_move() {
+        let mut stray = declared_leaf("org-a", "org", "a");
+        stray.spec.pangea_namespace = "elsewhere".into();
+        assert!(matches!(
+            migration_step(
+                &catalog(Some("org"), false),
+                true,
+                Some(&fat_parent(true)),
+                &[stray]
+            ),
+            MigrationStep::Refuse(_)
+        ));
+    }
+
     #[test]
     fn a_catalog_with_no_declared_leaves_has_no_rollup() {
         assert_eq!(catalog_rollup(&[template(None, true)]), None);
@@ -709,6 +938,7 @@ mod tests {
             admission: AdmissionMode::Off,
             ratchet_tolerance_percent: 3,
             cycle_budget_secs: Some(9),
+            migrate: false,
         };
         configure(&cfg);
         assert_eq!(settings(), cfg);

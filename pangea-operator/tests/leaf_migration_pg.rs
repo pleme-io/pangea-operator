@@ -201,3 +201,35 @@ async fn a_leaf_that_already_has_state_aborts_the_whole_move() {
     assert_eq!(row(&pool, &format!("{fat}-alpha"), "default").await, None);
     assert!(!artifact(&pool, fat).await);
 }
+
+#[tokio::test]
+async fn forward_by_key_moves_the_fat_state_into_the_declared_leaves() {
+    let Some(pool) = pool().await else { return };
+    let fat = "lm-bykey";
+    seed(&pool, fat).await;
+    let leaves = vec![
+        (format!("{fat}-alpha"), "alpha".to_string()),
+        (format!("{fat}-beta"), "beta".to_string()),
+    ];
+    let out = pangea_operator::backend::leaf_migration::forward_by_key(
+        &pool,
+        SCHEMA,
+        fat,
+        "lmtest",
+        &leaves[..1],
+    )
+    .await
+    .unwrap();
+    assert!(matches!(out, Outcome::Refused(_)), "{out:?}");
+    assert!(!artifact(&pool, fat).await);
+    let out = pangea_operator::backend::leaf_migration::forward_by_key(
+        &pool, SCHEMA, fat, "lmtest", &leaves,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(out, Outcome::Migrated(_)), "{out:?}");
+    assert!(row(&pool, &format!("{fat}-beta"), "default")
+        .await
+        .is_some());
+    assert_eq!(row(&pool, fat, "default").await, Some(fat_state()));
+}
