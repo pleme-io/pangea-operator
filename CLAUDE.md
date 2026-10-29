@@ -12,7 +12,7 @@ pending-happa-embed: every leaf decision goes through `leaf_engine::LeafEngine` 
 > is in the org-level pleme-io/CLAUDE.md ★★★ section. Read both before
 > non-trivial changes.
 
-**Authoring for the operator: one path, blue → tatara-lisp (its AST) → Rust.** blue holds every decision (resources, policy values, conditions), a `lava-architectures` `.tlisp` holds only the resource shape, the leaf is an `InfrastructureTemplate` with `dialect: lava`, and this process executes it in memory. The embedded Ruby path serves templates that already use it; new work does not start there. An account's access root is a leaf too, first applied with a short-lived session Secret. Rule: pleme-io `docs/platform-mediated.md` (default path).
+**Authoring for the operator: one path, blue bidamas → magma in memory.** Reusable capabilities are blue bidamas of `kousei` entries (decisions and resources), a workspace declaration composes them, `happa` renders `dialect: json` leaves, and this process plans and applies them with zero disk. Destination: `dialect: blue`. The embedded Ruby and lava paths serve templates that already use them. An account's access root is a leaf too, first applied with a short-lived session Secret. Rule: pleme-io `docs/platform-mediated.md` (default path).
 
 **Configuring the operator: one way.** The non-secret surface is the shikumi
 `OperatorConfig` (`pangea-operator/src/config.rs`), folded bare → discovered →
