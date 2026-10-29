@@ -12,6 +12,8 @@ pending-happa-embed: every leaf decision goes through `leaf_engine::LeafEngine` 
 > is in the org-level pleme-io/CLAUDE.md ★★★ section. Read both before
 > non-trivial changes.
 
+**Authoring for the operator: one path.** blue declares the leaf set and its policy values, a `lava-architectures` `.tlisp` architecture renders the resources, and the leaf is an `InfrastructureTemplate` with `dialect: lava`. The embedded Ruby path serves templates that already use it; new work does not start there. An account's access root is a leaf too, first applied with a short-lived session Secret. Rule: pleme-io `docs/platform-mediated.md` (default path).
+
 **Configuring the operator: one way.** The non-secret surface is the shikumi
 `OperatorConfig` (`pangea-operator/src/config.rs`), folded bare → discovered →
 prescribed → FILE → env. Deliver it as Helm: set `config.file.enabled: true` and
