@@ -93,7 +93,9 @@ impl StateStore {
                 "invalid schema identifier for state table: {schema_name}"
             )));
         }
-        let table = format!("{template_name}_states");
+        let table = pangea_leaf::pg_ident::state_table(template_name)
+            .as_str()
+            .to_owned();
         if !is_valid_identifier(&sanitize(&table)) {
             return Err(Error::Config(format!(
                 "invalid template identifier for state table: {template_name}"

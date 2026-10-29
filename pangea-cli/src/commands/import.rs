@@ -72,8 +72,11 @@ pub async fn import_state(
         println!("  tofu init \\");
         println!("    -backend-config='conn_str=<pangea_pg_url>' \\");
         println!(
-            "    -backend-config='schema_name=pangea_{}_{}_states'",
-            pangea_namespace, template_name
+            "    -backend-config='schema_name={}'",
+            pangea_leaf::pg_ident::tofu_state_schema(
+                &format!("pangea_{pangea_namespace}"),
+                template_name
+            )
         );
         println!("  tofu state push terraform.tfstate");
     } else {

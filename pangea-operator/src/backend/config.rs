@@ -39,7 +39,7 @@ impl BackendConfigGenerator {
                 "backend": {
                     "pg": {
                         "conn_str": conn_str,
-                        "schema_name": format!("{}_{}_states", schema_name, template_name)
+                        "schema_name": pangea_leaf::pg_ident::tofu_state_schema(&schema_name, template_name).as_str()
                     }
                 }
             }
@@ -570,5 +570,62 @@ mod github_app_provider_tests {
         .expect("both present");
         assert_eq!(config["provider"]["aws"]["region"], "us-east-2");
         assert!(config["provider"]["github"]["app_auth"].is_array());
+    }
+
+    fn pg_namespace(name: &str) -> PangeaNamespace {
+        let spec: crate::crd::PangeaNamespaceSpec = serde_json::from_value(serde_json::json!({
+            "backend": {
+                "type": "pg",
+                "pg": {
+                    "host": "pangea-state-rw.pangea-system.svc",
+                    "database": "pangea_state",
+                    "schemaPrefix": "pangea_",
+                    "secretRef": { "name": "pangea-state-app" },
+                },
+            },
+        }))
+        .expect("minimal PangeaNamespaceSpec must deserialize");
+        PangeaNamespace::new(name, spec)
+    }
+
+    #[test]
+    fn tofu_backend_config_and_operator_sql_name_the_same_state_schema() {
+        let ns = pg_namespace("pleme-io-github");
+        let credentials = Credentials::new("user", "pass");
+        let mut seen = std::collections::BTreeSet::new();
+        for template in [
+            "pleme-io-github-repos",
+            "pleme-io-github-repos-akeyless-java-cloud-id",
+            "pleme-io-github-repos-akeyless-java-cloud-id-lightweight",
+            "pleme-io-github-repos-terraform-provider-akeyless",
+            "pleme-io-github-repos-terraform-provider-akeyless-gen",
+            "pleme-io-github-repos-akeyless-k8s-auth-examples",
+            "pleme-io-github-repos-akeyless-k8s-auth-terraform",
+            "pleme-io-github-repos-crossplane-akeyless",
+            "pleme-io-github-repos-crossplane-akeyless-gen",
+            "pleme-io-github-repos-akeyless-custom-server-ui-rotate",
+        ] {
+            let config =
+                BackendConfigGenerator::generate_backend_config(&ns, template, &credentials)
+                    .unwrap();
+            let tofu = config["terraform"]["backend"]["pg"]["schema_name"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            let sql = crate::backend::ArtifactStore::live_state_schema(
+                &crate::crd::schema_name_for_namespace("pleme-io-github"),
+                template,
+            )
+            .unwrap();
+            assert_eq!(sql, format!("\"{tofu}\""), "{template}");
+            assert_eq!(
+                crate::backend::ArtifactStore::live_state_table(&ns.schema_name(), template)
+                    .unwrap(),
+                format!("\"{tofu}\".states")
+            );
+            assert!(tofu.len() <= 63, "{tofu}");
+            assert!(seen.insert(tofu), "{template} shares a state schema");
+        }
+        assert!(seen.contains("pangea_pleme-io-github_pleme-io-github-repos_states"));
     }
 }

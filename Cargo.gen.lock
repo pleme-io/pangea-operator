@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "8bc54cb1972771876c7fbb580929f47637d9c8218f82ae748ca2b5973dd2de3b",
+  "cargo_lock_sha256": "ee710f5ea623f56f3a167e2a78c3354b1b2aaf35d47337cc483eb921b241e235",
   "manifest_sha256": {
     "Cargo.toml": "aac7092cc210c7759a20858712fba79144f06955761eb499d89148e0c03ea9d2",
     "lava-ruby/Cargo.toml": "a2d172e3cffd2088bd2c849c579de254aec964cbe53b992a5b381a42c1f80933",
     "pangea-cli/Cargo.toml": "e70a319c53857fbf9dcce678bffd0247ed194eebde2db08c7770cec532d3f148",
-    "pangea-leaf/Cargo.toml": "fc458280a33e86f8d12834e60deb109fe59e1d8d596b714524484356586ce4af",
+    "pangea-leaf/Cargo.toml": "e4c5c73a42a7edf1385bade0468962bb183da63e04e16d94ff255cef28a16643",
     "pangea-operator-mcp/Cargo.toml": "72a01f5815a03b1c418697a985ede13816d4f5aec385332ec436e2155713dea8",
     "pangea-operator/Cargo.toml": "7da43c94344c0ce663d3b44aa974186e710ecc76fdc2bfc5eb5dce5752ae3bdf",
     "pangea-ruby-eval/Cargo.toml": "a65712c95619fda84a8cebaa9f887919acf4e71f4125f085797dfaf478eb380a",
@@ -2439,6 +2439,25 @@
           "runtime"
         ]
       },
+      "bit-set-0.11.1": {
+        "runtime_dependencies": [
+          {
+            "name": "bit_vec",
+            "package_key": "bit-vec-0.10.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default",
+          "std"
+        ]
+      },
       "bit-set-0.8.0": {
         "runtime_dependencies": [
           {
@@ -2454,6 +2473,14 @@
         ],
         "build_dependencies": [],
         "features": [
+          "std"
+        ]
+      },
+      "bit-vec-0.10.1": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": [
+          "default",
           "std"
         ]
       },
@@ -2506,6 +2533,98 @@
         ],
         "build_dependencies": [],
         "features": []
+      },
+      "borsh-1.8.1": {
+        "runtime_dependencies": [
+          {
+            "name": "borsh_derive",
+            "package_key": "borsh-derive-1.8.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "host"
+          }
+        ],
+        "build_dependencies": [
+          {
+            "name": "cfg_aliases",
+            "package_key": "cfg_aliases-0.2.1",
+            "kind": "build",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "host"
+          }
+        ],
+        "features": [
+          "borsh-derive",
+          "derive",
+          "std"
+        ]
+      },
+      "borsh-derive-1.8.1": {
+        "runtime_dependencies": [
+          {
+            "name": "once_cell",
+            "package_key": "once_cell-1.21.4",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "proc_macro_crate",
+            "package_key": "proc-macro-crate-3.5.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "proc_macro2",
+            "package_key": "proc-macro2-1.0.106",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "quote",
+            "package_key": "quote-1.0.45",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "syn",
+            "package_key": "syn-3.0.3",
+            "kind": "normal",
+            "features": [
+              "fold",
+              "full"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default"
+        ]
       },
       "brotli-9.0.0": {
         "runtime_dependencies": [
@@ -3328,6 +3447,13 @@
           "public_suffix",
           "serde",
           "serde_json"
+        ]
+      },
+      "core_detect-1.0.0": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": [
+          "default"
         ]
       },
       "crc-3.4.0": {
@@ -21429,6 +21555,145 @@
           "progress-tree"
         ]
       },
+      "proptest-1.12.0": {
+        "runtime_dependencies": [
+          {
+            "name": "bit_set",
+            "package_key": "bit-set-0.11.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "bit_vec",
+            "package_key": "bit-vec-0.10.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "bitflags",
+            "package_key": "bitflags-2.11.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "chacha20",
+            "package_key": "chacha20-0.10.2",
+            "kind": "normal",
+            "features": [
+              "rng"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "core_detect",
+            "package_key": "core_detect-1.0.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "num_traits",
+            "package_key": "num-traits-0.2.19",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "rand",
+            "package_key": "rand-0.10.3",
+            "kind": "normal",
+            "features": [
+              "alloc"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "rand_xorshift",
+            "package_key": "rand_xorshift-0.5.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "regex_syntax",
+            "package_key": "regex-syntax-0.8.11",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "rusty_fork",
+            "package_key": "rusty-fork-0.3.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "tempfile",
+            "package_key": "tempfile-3.27.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "unarray",
+            "package_key": "unarray-0.1.4",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "bit-set",
+          "default",
+          "fork",
+          "regex-syntax",
+          "rusty-fork",
+          "std",
+          "tempfile",
+          "timeout"
+        ]
+      },
       "prost-0.13.5": {
         "runtime_dependencies": [
           {
@@ -21944,6 +22209,11 @@
           "idna",
           "punycode"
         ]
+      },
+      "quick-error-1.2.3": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
       },
       "quinn-0.11.9": {
         "runtime_dependencies": [
@@ -22513,6 +22783,22 @@
           "os_rng",
           "std"
         ]
+      },
+      "rand_xorshift-0.5.0": {
+        "runtime_dependencies": [
+          {
+            "name": "rand_core",
+            "package_key": "rand_core-0.10.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
       },
       "rb-sys-0.9.130": {
         "runtime_dependencies": [],
@@ -24502,6 +24788,55 @@
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": []
+      },
+      "rusty-fork-0.3.1": {
+        "runtime_dependencies": [
+          {
+            "name": "fnv",
+            "package_key": "fnv-1.0.7",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "quick_error",
+            "package_key": "quick-error-1.2.3",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "tempfile",
+            "package_key": "tempfile-3.27.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "wait_timeout",
+            "package_key": "wait-timeout-0.2.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "timeout",
+          "wait-timeout"
+        ]
       },
       "ryu-1.0.23": {
         "runtime_dependencies": [],
@@ -28279,6 +28614,7 @@
           "default",
           "derive",
           "extra-traits",
+          "fold",
           "full",
           "parsing",
           "printing",
@@ -31385,6 +31721,11 @@
         "features": [
           "std"
         ]
+      },
+      "unarray-0.1.4": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
       },
       "uncased-0.9.10": {
         "runtime_dependencies": [],
@@ -38945,8 +39286,14 @@
         "path": "lib.rs"
       }
     },
+    "bit-set-0.11.1": {
+      "edition": "2021"
+    },
     "bit-set-0.8.0": {
       "edition": "2015"
+    },
+    "bit-vec-0.10.1": {
+      "edition": "2021"
     },
     "bit-vec-0.8.0": {
       "edition": "2015"
@@ -38963,6 +39310,20 @@
     },
     "block-buffer-0.10.4": {
       "edition": "2018"
+    },
+    "borsh-1.8.1": {
+      "edition": "2018",
+      "build_script": "build.rs",
+      "binaries": [
+        {
+          "name": "generate_schema_schema",
+          "path": "src/generate_schema_schema.rs"
+        }
+      ]
+    },
+    "borsh-derive-1.8.1": {
+      "edition": "2018",
+      "proc_macro": true
     },
     "brotli-9.0.0": {
       "edition": "2015",
@@ -39096,6 +39457,9 @@
       "edition": "2018"
     },
     "core-foundation-sys-0.8.7": {
+      "edition": "2018"
+    },
+    "core_detect-1.0.0": {
       "edition": "2018"
     },
     "cpufeatures-0.2.17": {
@@ -40293,6 +40657,9 @@
       "edition": "2018",
       "build_script": "build.rs"
     },
+    "proptest-1.12.0": {
+      "edition": "2021"
+    },
     "prost-0.13.5": {
       "edition": "2021"
     },
@@ -40359,6 +40726,9 @@
     "publicsuffix-2.3.0": {
       "edition": "2018"
     },
+    "quick-error-1.2.3": {
+      "edition": "2015"
+    },
     "quinn-0.11.9": {
       "edition": "2021",
       "build_script": "build.rs"
@@ -40397,6 +40767,9 @@
     },
     "rand_core-0.9.5": {
       "edition": "2021"
+    },
+    "rand_xorshift-0.5.0": {
+      "edition": "2024"
     },
     "rb-sys-0.9.130": {
       "edition": "2018",
@@ -40520,6 +40893,9 @@
       "edition": "2018",
       "proc_macro": true,
       "build_script": "build/build.rs"
+    },
+    "rusty-fork-0.3.1": {
+      "edition": "2018"
     },
     "ryu-1.0.23": {
       "edition": "2021"
@@ -40945,6 +41321,9 @@
     },
     "ucd-trie-0.1.7": {
       "edition": "2021"
+    },
+    "unarray-0.1.4": {
+      "edition": "2018"
     },
     "uncased-0.9.10": {
       "edition": "2018",

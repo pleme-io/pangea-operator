@@ -43,7 +43,8 @@ impl SchemaManager {
         // joined string would ask for one table literally named
         // `schema.table_states`.
         let quoted_schema = checked_quoted_ident(schema_name)?;
-        let quoted_table = checked_quoted_ident(&format!("{template_name}_states"))?;
+        let quoted_table =
+            checked_quoted_ident(pangea_leaf::pg_ident::state_table(template_name).as_str())?;
         let table_name = format!("{quoted_schema}.{quoted_table}");
 
         debug!(table_name, "Ensuring state table exists");
@@ -69,7 +70,10 @@ impl SchemaManager {
         // Create unique index on name
         let create_index = format!(
             "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} (name)",
-            checked_quoted_ident(&format!("{template_name}_name_idx"))?,
+            checked_quoted_ident(
+                pangea_leaf::pg_ident::PgIdent::bounded(&format!("{template_name}_name_idx"))
+                    .as_str(),
+            )?,
             table_name
         );
 
@@ -232,6 +236,13 @@ pub(crate) fn checked_quoted_ident(name: &str) -> Result<String> {
 /// `(namespace-schema, template)` pair — the quoted
 /// `"{schema}_{template}_states"` form.
 ///
+/// The name comes from `pangea_leaf::pg_ident::tofu_state_schema`, which
+/// keeps it unchanged up to Postgres's 63-byte identifier limit and
+/// otherwise renders a 52-byte prefix, `_` and 10 hex of its blake3. Before
+/// that, Postgres truncated long names: 1,026 `pleme-io-github-repos-*`
+/// leaves folded to 1,017 schemas (measured 2026-10-29), so two leaves
+/// would have shared one tofu state.
+///
 /// # Why it lives here and not in either of its two callers
 ///
 /// It had TWO independent implementations that both addressed the same
@@ -276,8 +287,8 @@ pub(crate) fn tofu_state_schema_ident(schema_name: &str, template_name: &str) ->
             "invalid schema/template identifier for state table: {schema_name}/{template_name}"
         )));
     }
-    let schema = format!("{schema_name}_{template_name}_states");
-    let quoted = schema.replace('"', "\"\"");
+    let schema = pangea_leaf::pg_ident::tofu_state_schema(schema_name, template_name);
+    let quoted = schema.as_str().replace('"', "\"\"");
     Ok(format!("\"{quoted}\""))
 }
 

@@ -15,3 +15,6 @@ blake3 = "1"
 shigoto-types = { workspace = true }
 shigoto-dag = { workspace = true }
 schemars.workspace = true
+
+[dev-dependencies]
+proptest = "1"
