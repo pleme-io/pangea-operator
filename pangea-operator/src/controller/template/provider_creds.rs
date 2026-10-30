@@ -635,6 +635,20 @@ async fn issue_roles_anywhere_session(
         })?;
     let data = secret.data.unwrap_or_default();
     let (crt, key) = roles_anywhere_material(&data)?;
+    match roles_anywhere::CertificateChain::from_pem(crt).and_then(|c| c.not_after_unix()) {
+        Ok(not_after) => state
+            .metrics
+            .projection
+            .roles_anywhere_cert_not_after
+            .with_label_values(&[ns, &sref.name])
+            .set(not_after),
+        Err(e) => tracing::warn!(
+            namespace = %ns,
+            secret = %sref.name,
+            error = %e,
+            "rolesAnywhere certificate expiry unreadable; the session is still attempted"
+        ),
+    }
     crate::backend::roles_anywhere::issue_session(ra, crt, key).await
 }
 

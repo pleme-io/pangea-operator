@@ -154,6 +154,12 @@ impl CertificateChain {
             .map(|bytes| big_endian_to_decimal(&bytes))
             .ok_or_else(|| Error::Material("tls.crt leaf certificate DER is malformed".into()))
     }
+
+    pub fn not_after_unix(&self) -> Result<i64> {
+        certificate_not_after(&self.leaf).ok_or_else(|| {
+            Error::Material("tls.crt leaf certificate has no readable notAfter".into())
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -378,6 +384,45 @@ fn certificate_serial(der: &[u8]) -> Option<Vec<u8>> {
     (tag == 0x02).then(|| value.to_vec())
 }
 
+fn certificate_not_after(der: &[u8]) -> Option<i64> {
+    let (tag, cert, _) = der_tlv(der)?;
+    if tag != 0x30 {
+        return None;
+    }
+    let (tag, tbs, _) = der_tlv(cert)?;
+    if tag != 0x30 {
+        return None;
+    }
+    let (tag, _, mut rest) = der_tlv(tbs)?;
+    if tag == 0xa0 {
+        rest = der_tlv(rest)?.2;
+    }
+    let (_, _, rest) = der_tlv(rest)?;
+    let (_, _, rest) = der_tlv(rest)?;
+    let (tag, validity, _) = der_tlv(rest)?;
+    if tag != 0x30 {
+        return None;
+    }
+    let (_, _, after) = der_tlv(validity)?;
+    let (tag, value, _) = der_tlv(after)?;
+    der_time_unix(tag, value)
+}
+
+fn der_time_unix(tag: u8, value: &[u8]) -> Option<i64> {
+    let text = std::str::from_utf8(value).ok()?;
+    let full = match tag {
+        0x17 => {
+            let yy: u32 = text.get(0..2)?.parse().ok()?;
+            format!("{}{text}", if yy >= 50 { "19" } else { "20" })
+        }
+        0x18 => text.to_string(),
+        _ => return None,
+    };
+    chrono::NaiveDateTime::parse_from_str(&full, "%Y%m%d%H%M%SZ")
+        .ok()
+        .map(|t| t.and_utc().timestamp())
+}
+
 fn big_endian_to_decimal(bytes: &[u8]) -> String {
     let mut digits: Vec<u8> = vec![0];
     for &byte in bytes {
@@ -432,6 +477,67 @@ mod tests {
         let mut cert = vec![0x30, tbs.len() as u8];
         cert.extend(tbs);
         cert
+    }
+
+    fn cert_with_validity(after_tag: u8, after: &str) -> Vec<u8> {
+        let mut validity_body = vec![0x17, 13];
+        validity_body.extend_from_slice(b"261029231548Z");
+        validity_body.extend([after_tag, after.len() as u8]);
+        validity_body.extend_from_slice(after.as_bytes());
+        let mut tbs_body = vec![0xa0, 0x03, 0x02, 0x01, 0x02, 0x02, 0x01, 0x07];
+        tbs_body.extend([0x30, 0x00, 0x30, 0x00]);
+        tbs_body.extend([0x30, validity_body.len() as u8]);
+        tbs_body.extend(validity_body);
+        let mut tbs = vec![0x30, tbs_body.len() as u8];
+        tbs.extend(tbs_body);
+        let mut cert = vec![0x30, tbs.len() as u8];
+        cert.extend(tbs);
+        cert
+    }
+
+    fn chain_of(leaf: Vec<u8>) -> CertificateChain {
+        CertificateChain {
+            leaf,
+            intermediates: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn not_after_reads_utc_time() {
+        let chain = chain_of(cert_with_validity(0x17, "270127231548Z"));
+        let want = chrono::Utc
+            .with_ymd_and_hms(2027, 1, 27, 23, 15, 48)
+            .unwrap()
+            .timestamp();
+        assert_eq!(chain.not_after_unix().unwrap(), want);
+    }
+
+    #[test]
+    fn not_after_reads_generalized_time() {
+        let chain = chain_of(cert_with_validity(0x18, "20510101000000Z"));
+        let want = chrono::Utc
+            .with_ymd_and_hms(2051, 1, 1, 0, 0, 0)
+            .unwrap()
+            .timestamp();
+        assert_eq!(chain.not_after_unix().unwrap(), want);
+    }
+
+    #[test]
+    fn utc_time_at_or_after_fifty_is_the_twentieth_century() {
+        let chain = chain_of(cert_with_validity(0x17, "500101000000Z"));
+        let want = chrono::Utc
+            .with_ymd_and_hms(1950, 1, 1, 0, 0, 0)
+            .unwrap()
+            .timestamp();
+        assert_eq!(chain.not_after_unix().unwrap(), want);
+    }
+
+    #[test]
+    fn a_certificate_without_validity_is_refused_not_guessed() {
+        assert!(chain_of(fake_cert(&[7])).not_after_unix().is_err());
+        assert!(chain_of(cert_with_validity(0x13, "270127231548Z"))
+            .not_after_unix()
+            .is_err());
     }
 
     fn pem(label: &str, der: &[u8]) -> String {

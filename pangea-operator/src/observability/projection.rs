@@ -390,6 +390,7 @@ pub struct ProjectionMetrics {
     pub workspace_leaves_unlabeled: IntGaugeVec,
     pub leaf_plan_seconds: prometheus::HistogramVec,
     pub leaf_pending_work: IntGaugeVec,
+    pub roles_anywhere_cert_not_after: IntGaugeVec,
 }
 
 fn gauge(registry: &Registry, name: &str, help: &str, labels: &[&str]) -> IntGaugeVec {
@@ -436,6 +437,7 @@ impl ProjectionMetrics {
                 h
             },
             leaf_pending_work: gauge(registry, "pangea_leaf_pending_work", "Pending leaf work weighted by provider calls per action, each credential capped at its rate times the horizon (the worker HPA metric); absent while workers.autoscaling.enabled is false", &[]),
+            roles_anywhere_cert_not_after: gauge(registry, "pangea_roles_anywhere_cert_not_after_seconds", "Unix time the leaf certificate in a rolesAnywhere certSecretRef expires, read each time a session is issued", &["namespace", "cert"]),
             operator: gauge(registry, "pangea_operator_progress", "Operator progress gate readings: last_reconcile_timestamp_seconds, oldest_pending_age_seconds, wedged, projection_timestamp_seconds", &["reading"]),
         }
     }
@@ -1010,6 +1012,19 @@ mod tests {
         ));
         assert!(text.contains(
             "pangea_workspace_leaves{namespace=\"ns\",state=\"ready\",workspace=\"org\"} 10"
+        ));
+    }
+
+    #[test]
+    fn the_roles_anywhere_cert_expiry_survives_a_template_publish() {
+        let registry = Registry::new();
+        let m = ProjectionMetrics::register(&registry);
+        m.roles_anywhere_cert_not_after
+            .with_label_values(&["pangea-system", "pangea-operator-aws-rolesanywhere"])
+            .set(1_801_092_948);
+        m.publish_templates(&[]);
+        assert!(exposition(&registry).contains(
+            "pangea_roles_anywhere_cert_not_after_seconds{cert=\"pangea-operator-aws-rolesanywhere\",namespace=\"pangea-system\"} 1801092948"
         ));
     }
 
