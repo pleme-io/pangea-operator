@@ -463,6 +463,10 @@ pub struct LeafConfig {
     pub hold_refusals: bool,
     #[serde(default = "default_on")]
     pub reuse_render: bool,
+    #[serde(default = "default_on")]
+    pub park_queued: bool,
+    #[serde(default = "default_on")]
+    pub catalog_addresses: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -553,6 +557,8 @@ impl Default for LeafConfig {
             engine: crate::leaf_engine::EngineKind::default(),
             hold_refusals: true,
             reuse_render: true,
+            park_queued: true,
+            catalog_addresses: true,
         }
     }
 }
@@ -857,6 +863,10 @@ struct LeafOverlay {
     hold_refusals: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reuse_render: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    park_queued: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    catalog_addresses: Option<bool>,
 }
 
 #[derive(Serialize, Default)]
@@ -993,6 +1003,8 @@ impl EnvOverlay {
                     .and_then(|v| crate::leaf_engine::EngineKind::parse(&v)),
                 hold_refusals: env_parse::<bool>("PANGEA_LEAF_HOLD_REFUSALS"),
                 reuse_render: env_parse::<bool>("PANGEA_LEAF_REUSE_RENDER"),
+                park_queued: env_parse::<bool>("PANGEA_LEAF_PARK_QUEUED"),
+                catalog_addresses: env_parse::<bool>("PANGEA_LEAF_CATALOG_ADDRESSES"),
             },
             inputs: InputsOverlay {
                 stale_after_secs: env_present(crate::controller::template::inputs::STALE_AFTER_ENV)
@@ -1830,6 +1842,28 @@ mod tests {
         let v = OperatorConfig::resolve().into_value();
         std::env::remove_var("PANGEA_BIND_RETRY");
         assert!(!v.servers.bind_retry);
+    }
+
+    #[test]
+    fn leaf_park_and_catalog_addresses_default_on_and_turn_off_by_file_and_env() {
+        let _g = ENV_GUARD.lock().unwrap();
+        let p = OperatorConfig::prescribed_default().leaf;
+        assert!(p.park_queued && p.catalog_addresses);
+        let path = scratch_file(
+            "leaf-park",
+            "leaf:\n  park_queued: false\n  catalog_addresses: false\n",
+        );
+        let r = OperatorConfig::resolve_from(&path, Dict::new());
+        assert_eq!(r.file, FileTier::Loaded { path: path.clone() });
+        let leaf = r.resolution.into_value().leaf;
+        assert!(!leaf.park_queued && !leaf.catalog_addresses);
+        std::fs::remove_file(path).unwrap();
+        std::env::set_var("PANGEA_LEAF_PARK_QUEUED", "false");
+        std::env::set_var("PANGEA_LEAF_CATALOG_ADDRESSES", "false");
+        let v = OperatorConfig::resolve().into_value();
+        std::env::remove_var("PANGEA_LEAF_PARK_QUEUED");
+        std::env::remove_var("PANGEA_LEAF_CATALOG_ADDRESSES");
+        assert!(!v.leaf.park_queued && !v.leaf.catalog_addresses);
     }
 
     #[test]

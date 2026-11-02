@@ -1168,7 +1168,9 @@ async fn dispatch_template_phase(
                      best-ranked waiter on release; the requeue is only a fallback)"
                 );
                 Ok(ReconcileAction::Requeue(
-                    crate::controller::template::leaf_gate::FALLBACK_REQUEUE,
+                    crate::controller::template::leaf_gate::queued_requeue(
+                        &crate::controller::template::leaf::settings(),
+                    ),
                 ))
             }
         }

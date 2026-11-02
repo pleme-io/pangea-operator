@@ -12,6 +12,8 @@ use crate::crd::{InfrastructureTemplate, Phase};
 pub const QUEUE_TTL: Duration = Duration::from_secs(360);
 pub const WOKEN_TTL: Duration = Duration::from_secs(60);
 pub const FALLBACK_REQUEUE: Duration = Duration::from_secs(300);
+pub const POLL_TTL: Duration = Duration::from_secs(30);
+pub const POLL_REQUEUE: Duration = Duration::from_secs(30);
 const WAKE_PER_RELEASE: usize = 2;
 
 type Queue = Arc<Mutex<BTreeMap<String, Waiting>>>;
@@ -21,12 +23,26 @@ struct Waiting {
     candidate: Candidate,
     scope_cap: Option<usize>,
     woken: bool,
+    parked: bool,
 }
 
 impl Waiting {
     fn live(&self, now: Instant) -> bool {
-        let ttl = if self.woken { WOKEN_TTL } else { QUEUE_TTL };
+        let ttl = match (self.parked, self.woken) {
+            (false, _) => POLL_TTL,
+            (true, true) => WOKEN_TTL,
+            (true, false) => QUEUE_TTL,
+        };
         now.saturating_duration_since(self.seen) < ttl
+    }
+}
+
+#[must_use]
+pub fn queued_requeue(cfg: &LeafConfig) -> Duration {
+    if cfg.park_queued {
+        FALLBACK_REQUEUE
+    } else {
+        POLL_REQUEUE
     }
 }
 
@@ -78,10 +94,14 @@ struct WakeOnRelease {
     wake_tx: tokio::sync::mpsc::UnboundedSender<String>,
     scope: String,
     priority: PriorityMode,
+    park: bool,
 }
 
 impl Drop for WakeOnRelease {
     fn drop(&mut self) {
+        if !self.park {
+            return;
+        }
         let now = Instant::now();
         let mut waiting = self.waiting.lock().expect("leaf gate mutex poisoned");
         waiting.retain(|_, w| w.live(now));
@@ -227,7 +247,7 @@ impl LeafGate {
             .lock()
             .expect("leaf gate mutex poisoned")
             .get(key)
-            .is_some_and(|w| w.live(now))
+            .is_some_and(|w| w.parked && w.live(now))
     }
 
     #[must_use]
@@ -257,7 +277,8 @@ impl LeafGate {
         let mut waiting = self.waiting.lock().expect("leaf gate mutex poisoned");
         waiting.retain(|_, w| w.live(now));
         let key = candidate.name.clone();
-        let waited = waiting.contains_key(&key);
+        let park = cfg.park_queued;
+        let waited = park && waiting.contains_key(&key);
         candidate.since = waiting.get(&key).map_or_else(
             || {
                 u64::try_from(now.saturating_duration_since(self.epoch).as_millis())
@@ -272,6 +293,7 @@ impl LeafGate {
                 candidate: candidate.clone(),
                 scope_cap,
                 woken: false,
+                parked: park,
             },
         );
         let budget_caps = budgets.caps();
@@ -343,6 +365,7 @@ impl LeafGate {
                 wake_tx: self.wake_tx.clone(),
                 scope: candidate.scope.clone(),
                 priority: cfg.priority,
+                park,
             },
         })
     }
@@ -449,6 +472,36 @@ mod tests {
             wakes.try_recv().is_err(),
             "a release wakes a bounded number"
         );
+    }
+
+    #[test]
+    fn park_queued_off_polls_as_before_with_no_queue_no_wake_and_no_clock_restart() {
+        let gate = LeafGate::default();
+        let mut wakes = gate.take_wakes().unwrap();
+        let b = budgets(1);
+        let cfg = LeafConfig {
+            park_queued: false,
+            ..LeafConfig::default()
+        };
+        assert_eq!(queued_requeue(&cfg), Duration::from_secs(30));
+        assert_eq!(queued_requeue(&LeafConfig::default()), FALLBACK_REQUEUE);
+        let now = Instant::now();
+        let held = gate
+            .try_admit(&b, cand("held", WorkClass::Change), None, &cfg, now)
+            .unwrap();
+        assert!(gate
+            .try_admit(&b, cand("w", WorkClass::Change), None, &cfg, now)
+            .is_none());
+        assert!(
+            !gate.is_queued("w", now),
+            "an unparked denial is not exempt from PhaseTimeout"
+        );
+        drop(held);
+        assert!(wakes.try_recv().is_err(), "a release wakes no one");
+        let p = gate
+            .try_admit(&b, cand("w", WorkClass::Change), None, &cfg, now)
+            .unwrap();
+        assert!(!p.waited(), "no phaseEnteredAt restart");
     }
 
     #[test]

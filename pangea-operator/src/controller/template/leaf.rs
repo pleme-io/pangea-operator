@@ -89,6 +89,17 @@ pub fn assess(
     cycle_p95_ms: Option<u64>,
     budget_ms: Option<u64>,
 ) -> Result<Assessment, AddressError> {
+    assess_with(template, mode, true, addresses, cycle_p95_ms, budget_ms)
+}
+
+pub fn assess_with(
+    template: &InfrastructureTemplate,
+    mode: AdmissionMode,
+    catalog_addresses: bool,
+    addresses: &[String],
+    cycle_p95_ms: Option<u64>,
+    budget_ms: Option<u64>,
+) -> Result<Assessment, AddressError> {
     let classification = classify(
         addresses.iter().map(String::as_str),
         cycle_p95_ms,
@@ -114,7 +125,10 @@ pub fn assess(
         ),
         draft: (mode == AdmissionMode::Generate).then(|| draft_entry(template)),
     };
-    let admission = match catalog_leaf_admission(template, addresses) {
+    let declared = catalog_addresses
+        .then(|| catalog_leaf_admission(template, addresses))
+        .flatten();
+    let admission = match declared {
         Some(declared) => declared,
         None => decide_with(
             mode,
@@ -845,7 +859,14 @@ pub async fn judge(
             .observe(plan_ms as f64 / 1000.0);
     }
     let budget_ms = cfg.cycle_budget_secs.map(|s| s.saturating_mul(1_000));
-    let assessment = match assess(template, cfg.admission, addresses, p95, budget_ms) {
+    let assessment = match assess_with(
+        template,
+        cfg.admission,
+        cfg.catalog_addresses,
+        addresses,
+        p95,
+        budget_ms,
+    ) {
         Ok(a) => a,
         Err(e) => {
             warn!(error = %e, "leaf classification skipped: a plan address did not parse");
@@ -1071,6 +1092,26 @@ mod tests {
             }
             other => panic!("expected a refusal, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn catalog_addresses_off_judges_a_catalog_leaf_by_its_keys_as_before() {
+        let declared =
+            "github_actions_repository_permissions.bm_guard_actions,github_repository.bm_guard";
+        let plan = plan_of(&[
+            "github_repository.bm_guard",
+            "github_actions_repository_permissions.bm_guard_actions",
+        ]);
+        let a = assess_with(
+            &catalog_leaf_with(declared),
+            AdmissionMode::Enforce,
+            false,
+            &plan,
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(a.admission.refused(), "{:?}", a.admission);
     }
 
     #[test]
