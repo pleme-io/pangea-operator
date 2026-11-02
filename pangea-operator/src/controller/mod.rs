@@ -463,6 +463,7 @@ impl ControllerState {
         metrics: Arc<crate::observability::Metrics>,
         executor_config: ExecutorConfig,
         compiler_backend: Arc<dyn crate::ruby::CompilerBackend>,
+        budget_cfg: workspace_budget::BudgetConfig,
     ) -> Result<Self> {
         // Default backend selection: env var → magma default. The
         // CR-level override happens in `executor_for(template)`.
@@ -491,19 +492,6 @@ impl ControllerState {
             anomaly_emitter::CompositeEmitter::pangea_default(metrics.clone()),
         );
 
-        // Live-dispatch admission budget (the no-crash bound). Env-tunable
-        // defaults: per-workspace DEFAULT_LEAVES_PER_WORKSPACE (10), global
-        // 16. Parse failures fall back to the default, never panic.
-        let budget_cfg = workspace_budget::BudgetConfig {
-            per_scope: std::env::var("PANGEA_BUDGET_PER_WORKSPACE")
-                .ok()
-                .and_then(|v| v.parse::<usize>().ok())
-                .unwrap_or(workspace_budget::DEFAULT_LEAVES_PER_WORKSPACE),
-            global: std::env::var("PANGEA_BUDGET_GLOBAL")
-                .ok()
-                .and_then(|v| v.parse::<usize>().ok())
-                .unwrap_or(16),
-        };
         let workspace_budgets = workspace_budget::WorkspaceBudgets::new(budget_cfg);
 
         let events = Arc::new(event_sink::EventSink::for_client(client.clone()));

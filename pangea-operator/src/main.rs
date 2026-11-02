@@ -401,6 +401,10 @@ async fn main() -> Result<()> {
         metrics.clone(),
         executor_config,
         compiler_backend.clone(),
+        pangea_operator::controller::workspace_budget::BudgetConfig {
+            per_scope: op_cfg.reconcile.budget_per_workspace,
+            global: op_cfg.reconcile.budget_global,
+        },
     )
     .await?;
 

@@ -1205,7 +1205,7 @@ impl TieredConfig for OperatorConfig {
         };
         c.reconcile = ReconcileConfig {
             workers: 16,
-            budget_per_workspace: 4,
+            budget_per_workspace: crate::controller::workspace_budget::DEFAULT_LEAVES_PER_WORKSPACE,
             budget_global: 16,
             // Safe under the Kubernetes default terminationGracePeriodSeconds
             // of 30s, leaving 10s for the pool close and final status write.
@@ -1398,7 +1398,7 @@ mod tests {
         assert_eq!(p.database.user, "postgres");
         assert_eq!(p.database.database, "pangea_state");
         assert_eq!(p.reconcile.workers, 16);
-        assert_eq!(p.reconcile.budget_per_workspace, 4);
+        assert_eq!(p.reconcile.budget_per_workspace, 10);
         assert_eq!(p.reconcile.budget_global, 16);
         assert_eq!(p.observability.log_format, "pretty");
         assert_eq!(p.observability.otel_service_name, "pangea-operator");
