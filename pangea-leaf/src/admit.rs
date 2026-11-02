@@ -259,8 +259,10 @@ mod tests {
             .map(|i| cand(&format!("d{i:02}"), WorkClass::Drift, i))
             .collect();
         assert_eq!(admit(&drift, &caps(4), &InFlight::default()).len(), 2);
-        let mut busy = InFlight::default();
-        busy.total = 2;
+        let mut busy = InFlight {
+            total: 2,
+            ..InFlight::default()
+        };
         busy.by_scope.insert("org".into(), 2);
         busy.drift_by_scope.insert("org".into(), 2);
         assert!(admit(&drift, &caps(4), &busy).is_empty());

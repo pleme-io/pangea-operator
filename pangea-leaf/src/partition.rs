@@ -123,7 +123,6 @@ impl Partition {
         self.leaves = merged;
     }
 
-    #[must_use]
     pub fn leaves(&self) -> impl Iterator<Item = &Leaf> {
         self.leaves.values()
     }

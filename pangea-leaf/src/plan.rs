@@ -272,7 +272,7 @@ pub fn plan_migration(input: &PlannerInput<'_>) -> Result<MigrationPlan, PlanErr
         },
     });
 
-    let projected = input.plan.map(|view| project(view));
+    let projected = input.plan.map(project);
     checks.push(Check {
         name: "no-change".into(),
         status: match (&projected, input.plan) {
