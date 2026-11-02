@@ -114,16 +114,64 @@ pub fn assess(
         ),
         draft: (mode == AdmissionMode::Generate).then(|| draft_entry(template)),
     };
-    let admission = decide_with(
-        mode,
-        never_reconciled(template.status.as_ref()),
-        &classification,
-        &skip_declaration(annotation),
-        &fix,
-    );
+    let admission = match catalog_leaf_admission(template, addresses) {
+        Some(declared) => declared,
+        None => decide_with(
+            mode,
+            never_reconciled(template.status.as_ref()),
+            &classification,
+            &skip_declaration(annotation),
+            &fix,
+        ),
+    };
     Ok(Assessment {
         classification,
         admission,
+    })
+}
+
+#[must_use]
+pub fn declared_leaf_addresses(template: &InfrastructureTemplate) -> Vec<String> {
+    template
+        .metadata
+        .annotations
+        .as_ref()
+        .and_then(|a| a.get(LEAF_ADDRESSES_ANNOTATION))
+        .map(|raw| {
+            raw.split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn catalog_leaf_admission(
+    template: &InfrastructureTemplate,
+    addresses: &[String],
+) -> Option<Admission> {
+    if !matches!(membership(template, true), Membership::Leaf { .. }) {
+        return None;
+    }
+    let declared = declared_leaf_addresses(template);
+    if declared.is_empty() {
+        return None;
+    }
+    let undeclared: Vec<&str> = addresses
+        .iter()
+        .filter(|a| !declared.iter().any(|d| d == *a))
+        .map(String::as_str)
+        .collect();
+    Some(if undeclared.is_empty() {
+        Admission::Admit
+    } else {
+        Admission::Refuse(format!(
+            "catalog leaf `{}` plans addresses its catalog does not declare in {}: {}",
+            template.name_any(),
+            LEAF_ADDRESSES_ANNOTATION,
+            undeclared.join(", ")
+        ))
     })
 }
 
@@ -494,19 +542,7 @@ pub fn migration_step(
                 pangea_leaf::slice::LEAF_KEY_ANNOTATION
             ));
         };
-        let addresses = l
-            .metadata
-            .annotations
-            .as_ref()
-            .and_then(|a| a.get(LEAF_ADDRESSES_ANNOTATION))
-            .map(|raw| {
-                raw.split(',')
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_default();
+        let addresses = declared_leaf_addresses(l);
         out.push(pangea_leaf::migrate::LeafClaim {
             leaf: l.name_any(),
             key: key.clone(),
@@ -922,6 +958,69 @@ mod tests {
             "spec": {"source": {}, "pangeaNamespace": "ns", "variables": {"repos": [{"slug": slug}]}}
         }))
         .unwrap()
+    }
+
+    fn catalog_leaf_with(addresses: &str) -> InfrastructureTemplate {
+        let mut t = declared_leaf("org-bm-guard", "org", "bm_guard");
+        t.metadata
+            .annotations
+            .get_or_insert_with(BTreeMap::new)
+            .insert(LEAF_ADDRESSES_ANNOTATION.into(), addresses.into());
+        t
+    }
+
+    fn plan_of(addresses: &[&str]) -> Vec<String> {
+        addresses.iter().map(|a| (*a).to_string()).collect()
+    }
+
+    #[test]
+    fn a_catalog_leaf_planning_its_declared_addresses_is_admitted_whatever_their_names() {
+        let declared =
+            "github_actions_repository_permissions.bm_guard_actions,github_repository.bm_guard";
+        let plan = plan_of(&[
+            "github_repository.bm_guard",
+            "github_actions_repository_permissions.bm_guard_actions",
+        ]);
+        let a = assess(
+            &catalog_leaf_with(declared),
+            AdmissionMode::Enforce,
+            &plan,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(a.admission, Admission::Admit);
+    }
+
+    #[test]
+    fn a_catalog_leaf_planning_an_undeclared_address_is_refused_by_that_address() {
+        let plan = plan_of(&["github_repository.bm_guard", "github_team.intruder"]);
+        let a = assess(
+            &catalog_leaf_with("github_repository.bm_guard"),
+            AdmissionMode::Enforce,
+            &plan,
+            None,
+            None,
+        )
+        .unwrap();
+        match a.admission {
+            Admission::Refuse(msg) => {
+                assert!(msg.contains("github_team.intruder"), "{msg}");
+                assert!(!msg.contains("github_repository.bm_guard,"), "{msg}");
+            }
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_same_plan_outside_a_catalog_is_still_judged_by_its_keys() {
+        let plan = plan_of(&[
+            "github_repository.bm_guard",
+            "github_actions_repository_permissions.bm_guard_actions",
+        ]);
+        let standalone = template(None, false);
+        let a = assess(&standalone, AdmissionMode::Enforce, &plan, None, None).unwrap();
+        assert!(a.admission.refused(), "{:?}", a.admission);
     }
 
     #[test]
