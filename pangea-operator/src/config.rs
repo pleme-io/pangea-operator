@@ -469,6 +469,8 @@ pub struct LeafConfig {
     pub park_queued: bool,
     #[serde(default = "default_on")]
     pub catalog_addresses: bool,
+    #[serde(default = "default_on")]
+    pub drift_admitted: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -561,6 +563,7 @@ impl Default for LeafConfig {
             reuse_render: true,
             park_queued: true,
             catalog_addresses: true,
+            drift_admitted: true,
         }
     }
 }
@@ -871,6 +874,8 @@ struct LeafOverlay {
     park_queued: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     catalog_addresses: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    drift_admitted: Option<bool>,
 }
 
 #[derive(Serialize, Default)]
@@ -1010,6 +1015,7 @@ impl EnvOverlay {
                 reuse_render: env_parse::<bool>("PANGEA_LEAF_REUSE_RENDER"),
                 park_queued: env_parse::<bool>("PANGEA_LEAF_PARK_QUEUED"),
                 catalog_addresses: env_parse::<bool>("PANGEA_LEAF_CATALOG_ADDRESSES"),
+                drift_admitted: env_parse::<bool>("PANGEA_LEAF_DRIFT_ADMITTED"),
             },
             inputs: InputsOverlay {
                 stale_after_secs: env_present(crate::controller::template::inputs::STALE_AFTER_ENV)
@@ -1886,6 +1892,21 @@ mod tests {
         std::env::remove_var("PANGEA_LEAF_PARK_QUEUED");
         std::env::remove_var("PANGEA_LEAF_CATALOG_ADDRESSES");
         assert!(!v.leaf.park_queued && !v.leaf.catalog_addresses);
+    }
+
+    #[test]
+    fn leaf_drift_admitted_defaults_on_and_turns_off_by_file_and_env() {
+        let _g = ENV_GUARD.lock().unwrap();
+        assert!(OperatorConfig::prescribed_default().leaf.drift_admitted);
+        let path = scratch_file("leaf-drift-admitted", "leaf:\n  drift_admitted: false\n");
+        let r = OperatorConfig::resolve_from(&path, Dict::new());
+        assert_eq!(r.file, FileTier::Loaded { path: path.clone() });
+        assert!(!r.resolution.into_value().leaf.drift_admitted);
+        std::fs::remove_file(path).unwrap();
+        std::env::set_var("PANGEA_LEAF_DRIFT_ADMITTED", "false");
+        let v = OperatorConfig::resolve().into_value();
+        std::env::remove_var("PANGEA_LEAF_DRIFT_ADMITTED");
+        assert!(!v.leaf.drift_admitted);
     }
 
     #[test]

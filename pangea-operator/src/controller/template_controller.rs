@@ -5852,6 +5852,20 @@ async fn handle_ready(
         }
     }
 
+    let _drift_permit = match admit_drift_check(template, state) {
+        DriftAdmission::Ungated => None,
+        DriftAdmission::Admitted(permit) => Some(permit),
+        DriftAdmission::Queued(denial) => {
+            debug!(
+                denied_by = denial.as_str(),
+                "drift check parked until a leaf slot frees"
+            );
+            return Ok(ReconcileAction::Requeue(
+                crate::controller::template::leaf_gate::FALLBACK_REQUEUE.min(interval),
+            ));
+        }
+    };
+
     debug!("Running drift detection");
 
     let pass = PassGuard::begin(template, state, Phase::Planning).await;
@@ -6050,6 +6064,37 @@ async fn handle_ready(
 /// Prometheus client doesn't expose a per-label-set delete that's
 /// safe across versions, so we just zero the bounded action×risk
 /// matrix (4×4 = 16 series per template).
+enum DriftAdmission {
+    Ungated,
+    Admitted(crate::controller::template::leaf_gate::LeafPermit),
+    Queued(crate::controller::template::leaf_gate::Denial),
+}
+
+fn admit_drift_check(template: &InfrastructureTemplate, state: &ControllerState) -> DriftAdmission {
+    let cfg = crate::controller::template::leaf::settings();
+    if !cfg.drift_admitted {
+        return DriftAdmission::Ungated;
+    }
+    let candidate = pangea_leaf::admit::Candidate {
+        name: crate::controller::template::leaf_gate::key_of(template),
+        scope: workspace_scope(template),
+        credential: crate::controller::template::leaf_gate::credential_of(template),
+        class: pangea_leaf::admit::WorkClass::Drift,
+        depth: crate::controller::template::leaf_gate::depth_of(template),
+        since: 0,
+    };
+    match state.leaf_gate.admit(
+        &state.workspace_budgets,
+        candidate,
+        None,
+        &cfg,
+        std::time::Instant::now(),
+    ) {
+        crate::controller::template::leaf_gate::Verdict::Admitted(p) => DriftAdmission::Admitted(p),
+        crate::controller::template::leaf_gate::Verdict::Queued(d) => DriftAdmission::Queued(d),
+    }
+}
+
 fn update_drift_detail_gauges(
     metrics: &crate::observability::Metrics,
     template: &str,

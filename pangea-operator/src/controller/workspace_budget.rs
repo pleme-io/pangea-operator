@@ -14,3 +14,5 @@
 //! with the generic primitive in [`super::scheduling`].
 
 pub use super::scheduling::{BudgetConfig, BudgetPermit, FairBudget as WorkspaceBudgets};
+
+pub const DEFAULT_LEAVES_PER_WORKSPACE: usize = 10;

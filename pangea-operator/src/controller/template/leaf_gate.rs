@@ -559,6 +559,36 @@ mod tests {
     }
 
     #[test]
+    fn at_the_default_ten_leaves_a_burst_of_drift_checks_runs_at_most_five_at_once() {
+        let gate = LeafGate::default();
+        let b = budgets(crate::controller::workspace_budget::DEFAULT_LEAVES_PER_WORKSPACE);
+        let cfg = LeafConfig::default();
+        let now = Instant::now();
+        let mut held = Vec::new();
+        for i in 0..1019 {
+            if let Some(p) = gate.try_admit(
+                &b,
+                cand(&format!("repo-{i:04}"), WorkClass::Drift),
+                None,
+                &cfg,
+                now,
+            ) {
+                held.push(p);
+            }
+        }
+        assert_eq!(
+            crate::controller::workspace_budget::DEFAULT_LEAVES_PER_WORKSPACE,
+            10
+        );
+        assert_eq!(held.len(), 5);
+        let change = gate.try_admit(&b, cand("changed", WorkClass::Change), None, &cfg, now);
+        assert!(
+            change.is_some(),
+            "a change still finds a slot beside the drift burst"
+        );
+    }
+
+    #[test]
     fn a_waiting_change_outranks_drift_that_polls_first_at_the_live_gate() {
         let gate = LeafGate::default();
         let b = budgets(4);
