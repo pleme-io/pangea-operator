@@ -138,11 +138,72 @@ async fn metrics_handler(metrics: axum::Extension<std::sync::Arc<Metrics>>) -> S
 /// callers share ONE `Arc` across every `run_health_server` call and
 /// their own shutdown sequence, so every health server this process
 /// runs agrees about whether it's draining.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BindRetry {
+    pub attempts: u32,
+    pub first_delay: Duration,
+    pub max_delay: Duration,
+}
+
+impl BindRetry {
+    pub const ON: Self = Self {
+        attempts: 30,
+        first_delay: Duration::from_millis(100),
+        max_delay: Duration::from_secs(2),
+    };
+    pub const OFF: Self = Self {
+        attempts: 1,
+        first_delay: Duration::ZERO,
+        max_delay: Duration::ZERO,
+    };
+
+    #[must_use]
+    pub fn from_setting(enabled: bool) -> Self {
+        if enabled {
+            Self::ON
+        } else {
+            Self::OFF
+        }
+    }
+}
+
+pub async fn bind_with_retry(addr: SocketAddr, retry: BindRetry) -> std::io::Result<TcpListener> {
+    let mut delay = retry.first_delay;
+    let mut attempt = 1;
+    loop {
+        match TcpListener::bind(addr).await {
+            Ok(listener) => {
+                if attempt > 1 {
+                    info!(%addr, attempt, "bound after the address was released");
+                }
+                return Ok(listener);
+            }
+            Err(e)
+                if e.kind() == std::io::ErrorKind::AddrInUse && attempt < retry.attempts =>
+            {
+                warn!(
+                    %addr,
+                    attempt,
+                    attempts = retry.attempts,
+                    retry_in_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
+                    error = %e,
+                    "address in use; retrying bind"
+                );
+                tokio::time::sleep(delay).await;
+                delay = (delay * 2).min(retry.max_delay);
+                attempt += 1;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
 pub async fn run_health_server(
     addr: SocketAddr,
     metrics: std::sync::Arc<Metrics>,
     ready_pool: ReadyPool,
     shutting_down: ShuttingDown,
+    bind_retry: BindRetry,
 ) -> crate::error::Result<()> {
     let app = Router::new()
         .route("/health", get(health))
@@ -156,10 +217,56 @@ pub async fn run_health_server(
 
     info!(%addr, "Starting health/metrics server");
 
-    let listener = TcpListener::bind(addr).await?;
+    let listener = bind_with_retry(addr, bind_retry).await?;
     axum::serve(listener, app)
         .await
         .map_err(|e| crate::error::Error::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod bind_retry_tests {
+    use super::*;
+
+    fn held_port() -> (std::net::TcpListener, SocketAddr) {
+        let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = held.local_addr().unwrap();
+        (held, addr)
+    }
+
+    #[tokio::test]
+    async fn a_port_released_after_a_short_delay_is_bound_by_the_retry() {
+        let (held, addr) = held_port();
+        let release = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            drop(held);
+        });
+        let listener = bind_with_retry(addr, BindRetry::ON).await.unwrap();
+        assert_eq!(listener.local_addr().unwrap(), addr);
+        release.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn bind_retry_off_fails_on_the_first_address_in_use() {
+        let (_held, addr) = held_port();
+        let err = bind_with_retry(addr, BindRetry::from_setting(false))
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
+    }
+
+    #[tokio::test]
+    async fn the_retry_is_bounded_and_returns_the_bind_error() {
+        let (_held, addr) = held_port();
+        let quick = BindRetry {
+            attempts: 3,
+            first_delay: Duration::from_millis(10),
+            max_delay: Duration::from_millis(20),
+        };
+        let started = std::time::Instant::now();
+        let err = bind_with_retry(addr, quick).await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
 }

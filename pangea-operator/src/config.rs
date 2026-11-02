@@ -204,6 +204,8 @@ pub struct ServersConfig {
     pub graphql_addr: String,
     /// gRPC server (`GRPC_ADDR`).
     pub grpc_addr: String,
+    #[serde(default = "default_on")]
+    pub bind_retry: bool,
 }
 
 /// Executor selection, binaries, timeouts.
@@ -723,6 +725,8 @@ struct ServersOverlay {
     graphql_addr: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     grpc_addr: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bind_retry: Option<bool>,
 }
 
 #[derive(Serialize, Default)]
@@ -894,6 +898,7 @@ impl EnvOverlay {
                 metrics_addr: env_present("METRICS_ADDR"),
                 graphql_addr: env_present("GRAPHQL_ADDR"),
                 grpc_addr: env_present("GRPC_ADDR"),
+                bind_retry: env_parse::<bool>("PANGEA_BIND_RETRY"),
             },
             executor: ExecutorOverlay {
                 backend: env_present("PANGEA_EXECUTOR"),
@@ -1042,6 +1047,7 @@ impl TieredConfig for OperatorConfig {
                 metrics_addr: String::new(),
                 graphql_addr: String::new(),
                 grpc_addr: String::new(),
+                bind_retry: false,
             },
             executor: ExecutorSurface {
                 backend: None,
@@ -1130,6 +1136,7 @@ impl TieredConfig for OperatorConfig {
             metrics_addr: "0.0.0.0:9090".to_string(),
             graphql_addr: "0.0.0.0:8081".to_string(),
             grpc_addr: "0.0.0.0:50051".to_string(),
+            bind_retry: true,
         };
         c.executor = ExecutorSurface {
             backend: Some("magma".to_string()),
@@ -1808,6 +1815,21 @@ mod tests {
         let v = OperatorConfig::resolve().into_value();
         std::env::remove_var("PANGEA_LEAF_REUSE_RENDER");
         assert!(!v.leaf.reuse_render);
+    }
+
+    #[test]
+    fn bind_retry_defaults_on_and_turns_off_by_file_and_env() {
+        let _g = ENV_GUARD.lock().unwrap();
+        assert!(OperatorConfig::prescribed_default().servers.bind_retry);
+        let path = scratch_file("bind-retry", "servers:\n  bind_retry: false\n");
+        let r = OperatorConfig::resolve_from(&path, Dict::new());
+        assert_eq!(r.file, FileTier::Loaded { path: path.clone() });
+        assert!(!r.resolution.into_value().servers.bind_retry);
+        std::fs::remove_file(path).unwrap();
+        std::env::set_var("PANGEA_BIND_RETRY", "false");
+        let v = OperatorConfig::resolve().into_value();
+        std::env::remove_var("PANGEA_BIND_RETRY");
+        assert!(!v.servers.bind_retry);
     }
 
     #[test]

@@ -578,12 +578,15 @@ async fn main() -> Result<()> {
     let health_ready_pool = probe_pool.clone().or_else(|| state.db_pool.clone());
     let health_addr = config.health_addr;
     let health_shutting_down = shutting_down.clone();
+    let bind_retry =
+        pangea_operator::observability::BindRetry::from_setting(op_cfg.servers.bind_retry);
     tokio::spawn(async move {
         if let Err(e) = run_health_server(
             health_addr,
             health_metrics,
             health_ready_pool,
             health_shutting_down,
+            bind_retry,
         )
         .await
         {
@@ -601,8 +604,14 @@ async fn main() -> Result<()> {
     let metrics_addr = config.metrics_addr;
     let metrics_shutting_down = shutting_down.clone();
     tokio::spawn(async move {
-        if let Err(e) =
-            run_health_server(metrics_addr, metrics_only, None, metrics_shutting_down).await
+        if let Err(e) = run_health_server(
+            metrics_addr,
+            metrics_only,
+            None,
+            metrics_shutting_down,
+            bind_retry,
+        )
+        .await
         {
             error!(error = %e, "Metrics server error");
         }
