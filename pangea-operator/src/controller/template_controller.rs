@@ -116,7 +116,21 @@ impl TemplateController {
             move |cm: ConfigMap| templates_referencing_configmap(&cm, &template_store),
         );
 
+        let wakes = state.leaf_gate.take_wakes();
+        let wake_stream = futures::stream::unfold(wakes, |rx| async move {
+            let mut rx = rx?;
+            let key = rx.recv().await?;
+            Some((key, Some(rx)))
+        })
+        .filter_map(|key| async move {
+            let (namespace, name) = key.split_once('/')?;
+            Some(
+                kube::runtime::reflector::ObjectRef::<InfrastructureTemplate>::new(name)
+                    .within(namespace),
+            )
+        });
         controller
+            .reconcile_on(wake_stream)
             .run(
                 move |template, ctx| {
                     let state = Arc::clone(&ctx);
@@ -1075,15 +1089,32 @@ async fn dispatch_template_phase(
             depth: crate::controller::template::leaf_gate::depth_of(template),
             since: 0,
         };
-        let admitted = state.leaf_gate.try_admit(
+        let verdict = state.leaf_gate.admit(
             &state.workspace_budgets,
             candidate,
             leaf_cap,
             &crate::controller::template::leaf::settings(),
             std::time::Instant::now(),
         );
-        match admitted {
-            Some(permit) => {
+        match verdict {
+            crate::controller::template::leaf_gate::Verdict::Admitted(permit) => {
+                if permit.waited() {
+                    let restart = serde_json::json!({
+                        "status": { "phaseEnteredAt": chrono::Utc::now() }
+                    });
+                    if let Err(e) = crate::controller::status_patch::patch_status(
+                        template,
+                        &state.client,
+                        restart,
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            error = %e,
+                            "admitted after a wait; phaseEnteredAt restart failed (non-fatal)"
+                        );
+                    }
+                }
                 let outcome = crate::executor::pacer_lane::within(
                     crate::controller::template::leaf::drift_lane(template)
                         .map(|share| (pangea_leaf::pace::Lane::Change, share)),
@@ -1117,46 +1148,28 @@ async fn dispatch_template_phase(
                     ok => ok,
                 }
             }
-            None => {
+            crate::controller::template::leaf_gate::Verdict::Queued(denial) => {
                 // `Phase: Display` (strum) is the typed stringify surface — no format!().
                 let phase_label = current_phase.to_string();
                 state
                     .metrics
                     .record_admission_deferred(&scope, &phase_label);
-                // WARN, not DEBUG.
-                //
-                // This was `debug!` while the operator ships `RUST_LOG=
-                // pangea_operator=info`, so a deferred template produced
-                // ZERO output: its phase froze, no controller lines appeared,
-                // and the pod sat idle. That is indistinguishable from a dead
-                // controller, and on 2026-08-01 it cost about an hour of
-                // misdiagnosis — reading a frozen `pleme-io-opensource` as a
-                // wedge, when the operator was working exactly as designed and
-                // simply could not say so.
-                //
-                // Deferral is rare BY DESIGN (only when ready work exceeds the
-                // pool), so warn-level is not noise. If it becomes noisy, that
-                // is the signal, not the problem.
-                //
-                // The two denials need different fixes, so they are named
-                // apart: a full GLOBAL pool means some other scope is holding
-                // slots — go find it; a full PER-SCOPE slice means this scope
-                // already has all the work it is allowed.
-                let caps = state.workspace_budgets.caps();
-                let global_full = state.workspace_budgets.global_saturated();
+                // WARN, not DEBUG: a deferred template with no output reads as a
+                // dead controller (2026-08-01, an hour of misdiagnosis). The
+                // denial is the gate's own verdict, never inferred here: the
+                // caps and in-flight counts it reports are the ones it judged by.
                 tracing::warn!(
                     scope = %scope,
                     phase = %current_phase,
-                    scope_in_flight = state.workspace_budgets.in_flight(&scope),
-                    scope_cap = caps.per_scope,
-                    global_in_flight = state.workspace_budgets.total_in_flight(),
-                    global_cap = caps.global,
-                    denied_by = if global_full { "global pool" } else { "per-scope slice" },
-                    "admission denied; deferring expensive phase (will retry next tick). \
-                     A template deferred repeatedly looks identical to a stalled one — \
-                     if this repeats, find which scopes hold the slots."
+                    denied_by = denial.as_str(),
+                    denial = ?denial,
+                    queued = state.leaf_gate.waiting(),
+                    "admission denied; parked until a slot frees (the gate wakes the \
+                     best-ranked waiter on release; the requeue is only a fallback)"
                 );
-                Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
+                Ok(ReconcileAction::Requeue(
+                    crate::controller::template::leaf_gate::FALLBACK_REQUEUE,
+                ))
             }
         }
     } else {

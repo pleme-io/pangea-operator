@@ -3,32 +3,129 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use kube::ResourceExt;
-use pangea_leaf::admit::{drift_slots, Candidate, Caps, InFlight, WorkClass};
+use pangea_leaf::admit::{drift_slots, order, Candidate, Caps, InFlight, PriorityMode, WorkClass};
 
 use crate::config::LeafConfig;
 use crate::controller::scheduling::{BudgetConfig, BudgetPermit, FairBudget};
 use crate::crd::{InfrastructureTemplate, Phase};
 
-pub const WAIT_TTL: Duration = Duration::from_secs(30);
+pub const QUEUE_TTL: Duration = Duration::from_secs(360);
+pub const WOKEN_TTL: Duration = Duration::from_secs(60);
+pub const FALLBACK_REQUEUE: Duration = Duration::from_secs(300);
+const WAKE_PER_RELEASE: usize = 2;
+
+type Queue = Arc<Mutex<BTreeMap<String, Waiting>>>;
 
 struct Waiting {
     seen: Instant,
     candidate: Candidate,
     scope_cap: Option<usize>,
+    woken: bool,
+}
+
+impl Waiting {
+    fn live(&self, now: Instant) -> bool {
+        let ttl = if self.woken { WOKEN_TTL } else { QUEUE_TTL };
+        now.saturating_duration_since(self.seen) < ttl
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Denial {
+    GlobalFull { in_flight: usize, cap: usize },
+    ScopeFull { in_flight: usize, cap: usize },
+    Outranked,
+}
+
+impl Denial {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::GlobalFull { .. } => "global pool",
+            Self::ScopeFull { .. } => "scope slice",
+            Self::Outranked => "outranked by a waiting leaf",
+        }
+    }
+}
+
+pub enum Verdict {
+    Admitted(LeafPermit),
+    Queued(Denial),
+}
+
+impl Verdict {
+    #[must_use]
+    pub fn permit(self) -> Option<LeafPermit> {
+        match self {
+            Self::Admitted(p) => Some(p),
+            Self::Queued(_) => None,
+        }
+    }
 }
 
 pub struct LeafGate {
-    waiting: Mutex<BTreeMap<String, Waiting>>,
+    waiting: Queue,
     blocked: Mutex<BTreeSet<String>>,
     credentials: Arc<FairBudget>,
     drift: Arc<FairBudget>,
     epoch: Instant,
+    wake_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    wake_rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<String>>>,
+}
+
+struct WakeOnRelease {
+    waiting: Queue,
+    wake_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    scope: String,
+    priority: PriorityMode,
+}
+
+impl Drop for WakeOnRelease {
+    fn drop(&mut self) {
+        let now = Instant::now();
+        let mut waiting = self.waiting.lock().expect("leaf gate mutex poisoned");
+        waiting.retain(|_, w| w.live(now));
+        let parked: Vec<Candidate> = waiting
+            .values()
+            .filter(|w| !w.woken)
+            .map(|w| w.candidate.clone())
+            .collect();
+        let ranked = order(&parked, self.priority);
+        let mut chosen: Vec<String> = Vec::new();
+        if let Some(c) = ranked.iter().find(|c| c.scope == self.scope) {
+            chosen.push(c.name.clone());
+        }
+        for c in &ranked {
+            if chosen.len() >= WAKE_PER_RELEASE {
+                break;
+            }
+            if !chosen.contains(&c.name) {
+                chosen.push(c.name.clone());
+            }
+        }
+        for name in chosen {
+            if let Some(w) = waiting.get_mut(&name) {
+                w.woken = true;
+                w.seen = now;
+            }
+            let _ = self.wake_tx.send(name);
+        }
+    }
 }
 
 pub struct LeafPermit {
+    waited: bool,
     _scope: BudgetPermit,
     _credential: Option<BudgetPermit>,
     _drift: Option<BudgetPermit>,
+    _wake: WakeOnRelease,
+}
+
+impl LeafPermit {
+    #[must_use]
+    pub fn waited(&self) -> bool {
+        self.waited
+    }
 }
 
 impl Default for LeafGate {
@@ -37,12 +134,15 @@ impl Default for LeafGate {
             per_scope: usize::MAX,
             global: usize::MAX,
         };
+        let (wake_tx, wake_rx) = tokio::sync::mpsc::unbounded_channel();
         Self {
-            waiting: Mutex::new(BTreeMap::new()),
+            waiting: Arc::new(Mutex::new(BTreeMap::new())),
             blocked: Mutex::new(BTreeSet::new()),
             credentials: FairBudget::new(unbounded),
             drift: FairBudget::new(unbounded),
             epoch: Instant::now(),
+            wake_tx,
+            wake_rx: Mutex::new(Some(wake_rx)),
         }
     }
 }
@@ -114,6 +214,23 @@ impl LeafGate {
     }
 
     #[must_use]
+    pub fn take_wakes(&self) -> Option<tokio::sync::mpsc::UnboundedReceiver<String>> {
+        self.wake_rx
+            .lock()
+            .expect("leaf gate mutex poisoned")
+            .take()
+    }
+
+    #[must_use]
+    pub fn is_queued(&self, key: &str, now: Instant) -> bool {
+        self.waiting
+            .lock()
+            .expect("leaf gate mutex poisoned")
+            .get(key)
+            .is_some_and(|w| w.live(now))
+    }
+
+    #[must_use]
     pub fn waiting(&self) -> usize {
         self.waiting.lock().expect("leaf gate mutex poisoned").len()
     }
@@ -121,14 +238,26 @@ impl LeafGate {
     pub fn try_admit(
         &self,
         budgets: &Arc<FairBudget>,
-        mut candidate: Candidate,
+        candidate: Candidate,
         scope_cap: Option<usize>,
         cfg: &LeafConfig,
         now: Instant,
     ) -> Option<LeafPermit> {
+        self.admit(budgets, candidate, scope_cap, cfg, now).permit()
+    }
+
+    pub fn admit(
+        &self,
+        budgets: &Arc<FairBudget>,
+        mut candidate: Candidate,
+        scope_cap: Option<usize>,
+        cfg: &LeafConfig,
+        now: Instant,
+    ) -> Verdict {
         let mut waiting = self.waiting.lock().expect("leaf gate mutex poisoned");
-        waiting.retain(|_, w| now.saturating_duration_since(w.seen) < WAIT_TTL);
+        waiting.retain(|_, w| w.live(now));
         let key = candidate.name.clone();
+        let waited = waiting.contains_key(&key);
         candidate.since = waiting.get(&key).map_or_else(
             || {
                 u64::try_from(now.saturating_duration_since(self.epoch).as_millis())
@@ -142,6 +271,7 @@ impl LeafGate {
                 seen: now,
                 candidate: candidate.clone(),
                 scope_cap,
+                woken: false,
             },
         );
         let budget_caps = budgets.caps();
@@ -181,28 +311,62 @@ impl LeafGate {
         }
         let admitted = crate::leaf_engine::engine().admit(&candidates, &caps, &in_flight);
         if !admitted.contains(&key) {
-            return None;
+            return Verdict::Queued(Self::denial(&caps, &in_flight, &candidate));
         }
-        let scope = budgets.try_acquire_capped(&candidate.scope, scope_cap)?;
+        let Some(scope) = budgets.try_acquire_capped(&candidate.scope, scope_cap) else {
+            return Verdict::Queued(Self::denial(&caps, &in_flight, &candidate));
+        };
         let credential = match (&candidate.credential, cfg.per_credential_cap) {
-            (Some(cred), n) if n > 0 => Some(self.credentials.try_acquire_capped(cred, Some(n))?),
+            (Some(cred), n) if n > 0 => match self.credentials.try_acquire_capped(cred, Some(n)) {
+                Some(p) => Some(p),
+                None => return Verdict::Queued(Denial::Outranked),
+            },
             _ => None,
         };
         let drift = if candidate.class == WorkClass::Drift && caps.drift_share_permille > 0 {
             let slots = drift_slots(caps.scope_cap(&candidate.scope), caps.drift_share_permille);
-            Some(
-                self.drift
-                    .try_acquire_capped(&candidate.scope, Some(slots))?,
-            )
+            match self.drift.try_acquire_capped(&candidate.scope, Some(slots)) {
+                Some(p) => Some(p),
+                None => return Verdict::Queued(Denial::Outranked),
+            }
         } else {
             None
         };
         waiting.remove(&key);
-        Some(LeafPermit {
+        Verdict::Admitted(LeafPermit {
+            waited,
             _scope: scope,
             _credential: credential,
             _drift: drift,
+            _wake: WakeOnRelease {
+                waiting: Arc::clone(&self.waiting),
+                wake_tx: self.wake_tx.clone(),
+                scope: candidate.scope.clone(),
+                priority: cfg.priority,
+            },
         })
+    }
+
+    fn denial(caps: &Caps, in_flight: &InFlight, candidate: &Candidate) -> Denial {
+        if in_flight.total >= caps.global {
+            return Denial::GlobalFull {
+                in_flight: in_flight.total,
+                cap: caps.global,
+            };
+        }
+        let scope_in = in_flight
+            .by_scope
+            .get(&candidate.scope)
+            .copied()
+            .unwrap_or(0);
+        let scope_cap = caps.scope_cap(&candidate.scope);
+        if scope_in >= scope_cap {
+            return Denial::ScopeFull {
+                in_flight: scope_in,
+                cap: scope_cap,
+            };
+        }
+        Denial::Outranked
     }
 }
 
@@ -227,6 +391,118 @@ mod tests {
             per_scope,
             global: 16,
         })
+    }
+
+    #[test]
+    fn a_denied_leaf_reads_as_queued_and_its_permit_says_it_waited() {
+        let gate = LeafGate::default();
+        let b = budgets(1);
+        let cfg = LeafConfig::default();
+        let now = Instant::now();
+        let first = gate
+            .try_admit(&b, cand("a", WorkClass::Change), None, &cfg, now)
+            .expect("the first leaf takes the only slot");
+        assert!(!first.waited(), "no wait, no clock restart");
+        assert!(gate
+            .try_admit(&b, cand("b", WorkClass::Change), None, &cfg, now)
+            .is_none());
+        assert!(gate.is_queued("b", now), "a denied leaf is queued");
+        assert!(!gate.is_queued("a", now), "an admitted leaf is not");
+        drop(first);
+        let second = gate
+            .try_admit(&b, cand("b", WorkClass::Change), None, &cfg, now)
+            .expect("the freed slot goes to the queued leaf");
+        assert!(
+            second.waited(),
+            "a leaf admitted after a wait restarts its clock"
+        );
+        assert!(!gate.is_queued("b", now));
+    }
+
+    #[test]
+    fn a_released_slot_wakes_the_best_ranked_waiter_without_any_poll() {
+        let gate = LeafGate::default();
+        let mut wakes = gate.take_wakes().expect("the receiver is taken once");
+        assert!(gate.take_wakes().is_none());
+        let b = budgets(1);
+        let cfg = LeafConfig::default();
+        let now = Instant::now();
+        let held = gate
+            .try_admit(&b, cand("held", WorkClass::Change), None, &cfg, now)
+            .expect("takes the slot");
+        for name in ["drift-b", "drift-a"] {
+            assert!(gate
+                .try_admit(&b, cand(name, WorkClass::Drift), None, &cfg, now)
+                .is_none());
+        }
+        assert!(gate
+            .try_admit(&b, cand("change-z", WorkClass::Change), None, &cfg, now)
+            .is_none());
+        assert!(
+            wakes.try_recv().is_err(),
+            "nothing wakes while the slot is held"
+        );
+        drop(held);
+        assert_eq!(wakes.try_recv().ok().as_deref(), Some("change-z"));
+        assert_eq!(wakes.try_recv().ok().as_deref(), Some("drift-a"));
+        assert!(
+            wakes.try_recv().is_err(),
+            "a release wakes a bounded number"
+        );
+    }
+
+    #[test]
+    fn a_woken_waiter_is_not_woken_twice_and_keeps_its_place() {
+        let gate = LeafGate::default();
+        let mut wakes = gate.take_wakes().unwrap();
+        let b = budgets(1);
+        let cfg = LeafConfig::default();
+        let now = Instant::now();
+        let held = gate
+            .try_admit(&b, cand("held", WorkClass::Change), None, &cfg, now)
+            .unwrap();
+        assert!(gate
+            .try_admit(&b, cand("w", WorkClass::Change), None, &cfg, now)
+            .is_none());
+        drop(held);
+        assert_eq!(wakes.try_recv().ok().as_deref(), Some("w"));
+        let p = gate
+            .try_admit(&b, cand("w", WorkClass::Change), None, &cfg, now)
+            .expect("the woken leaf takes the freed slot");
+        assert!(p.waited());
+        drop(p);
+        assert!(wakes.try_recv().is_err(), "no one else is waiting");
+    }
+
+    #[test]
+    fn a_denial_names_what_blocked_it() {
+        let gate = LeafGate::default();
+        let b = budgets(1);
+        let cfg = LeafConfig::default();
+        let now = Instant::now();
+        let _held = gate
+            .try_admit(&b, cand("a", WorkClass::Change), None, &cfg, now)
+            .unwrap();
+        match gate.admit(&b, cand("b", WorkClass::Change), None, &cfg, now) {
+            Verdict::Queued(Denial::ScopeFull {
+                in_flight: 1,
+                cap: 1,
+            }) => {}
+            other => panic!("expected a full scope, got {:?}", other.permit().is_some()),
+        }
+    }
+
+    #[test]
+    fn a_leaf_not_seen_within_the_ttl_is_not_queued() {
+        let gate = LeafGate::default();
+        let b = budgets(0);
+        let cfg = LeafConfig::default();
+        let now = Instant::now();
+        assert!(gate
+            .try_admit(&b, cand("a", WorkClass::Change), None, &cfg, now)
+            .is_none());
+        assert!(gate.is_queued("a", now));
+        assert!(!gate.is_queued("a", now + QUEUE_TTL + Duration::from_secs(1)));
     }
 
     #[test]
@@ -308,7 +584,7 @@ mod tests {
             .try_admit(&b, cand("gone", WorkClass::Change), None, &cfg, now)
             .is_none());
         drop(busy);
-        let later = now + WAIT_TTL + Duration::from_secs(1);
+        let later = now + QUEUE_TTL + Duration::from_secs(1);
         assert!(gate
             .try_admit(&b, cand("drift", WorkClass::Drift), None, &cfg, later)
             .is_some());

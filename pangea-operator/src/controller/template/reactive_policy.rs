@@ -335,7 +335,19 @@ async fn apply_reactive_policy(
         if is_new_phase_timeout {
             if let Some(current_phase) = template.status.as_ref().and_then(|s| s.phase) {
                 if phase_is_force_resettable(current_phase) {
-                    if is_awaiting_plan_approval(template, current_phase) {
+                    if state.leaf_gate.is_queued(
+                        &crate::controller::template::leaf_gate::key_of(template),
+                        std::time::Instant::now(),
+                    ) {
+                        tracing::info!(
+                            %reason,
+                            current_phase = %current_phase,
+                            "PhaseTimeout escalation: NOT forcing phase reset -- template is \
+                             queued at the admission gate, so its phase has not started. \
+                             Resetting it would only send it to the back of the queue; the \
+                             clock restarts when it is admitted."
+                        );
+                    } else if is_awaiting_plan_approval(template, current_phase) {
                         tracing::info!(
                             %reason,
                             current_phase = %current_phase,
