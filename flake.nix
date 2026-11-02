@@ -291,8 +291,13 @@
             rev = "db6d4b4b96018b3cc8ed289aa6221f1b27501e9c";
             hash = "sha256-ugxxVATYBpqbwnrbWUCxxLBxrVZpjUj27FO/Ioxzpw8=";
           };
-          patches = [ ./patches/terraform-provider-purelymail-keep-password.patch ];
-          vendorHash = "sha256-bnQwen+H13HWAIyy1NTPnarJ/pnRLsp9F4FdKA9StQ4=";
+          patches = [
+            ./patches/terraform-provider-purelymail-keep-password.patch
+            # Upstream's pinned modules carry a CRITICAL grpc CVE; the image scan
+            # holds a release on any finding.
+            ./patches/terraform-provider-purelymail-go-modules.patch
+          ];
+          vendorHash = "sha256-HomDeORvYPlA0rYqAMSGzR7CHQ667lk77kgr8ufnj58=";
           ldflags = [
             "-s"
             "-w"
