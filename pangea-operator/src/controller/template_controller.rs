@@ -6073,13 +6073,19 @@ fn update_drift_detail_gauges(
             .unwrap_or("low");
         *buckets.entry((action, risk)).or_default() += 1;
     }
+    let sparse = crate::observability::sparse_series();
     for &a in &actions {
         for &r in &risks {
             let v = buckets.get(&(a, r)).copied().unwrap_or(0) as i64;
-            metrics
-                .template_drift_detail
-                .with_label_values(&[template, namespace, a, r])
-                .set(v);
+            let labels = [template, namespace, a, r];
+            if sparse && v == 0 {
+                let _ = metrics.template_drift_detail.remove_label_values(&labels);
+            } else {
+                metrics
+                    .template_drift_detail
+                    .with_label_values(&labels)
+                    .set(v);
+            }
         }
     }
 }
@@ -6291,10 +6297,7 @@ enum FailedStep {
     Retry,
 }
 
-fn failed_step(
-    template: &InfrastructureTemplate,
-    cfg: &crate::config::LeafConfig,
-) -> FailedStep {
+fn failed_step(template: &InfrastructureTemplate, cfg: &crate::config::LeafConfig) -> FailedStep {
     match crate::controller::template::leaf::after_failure(template, cfg) {
         pangea_leaf::ratchet::AfterFailure::Held(refusal) => FailedStep::HoldRefusal {
             reason: refusal.reason.clone(),
@@ -6539,7 +6542,10 @@ mod render_reuse_tests {
             base,
             render_revision_of("", Some("github-org-repos"), Some("d"), "build-b")
         );
-        assert_ne!(base, render_revision_of("", Some("other"), Some("d"), "build-a"));
+        assert_ne!(
+            base,
+            render_revision_of("", Some("other"), Some("d"), "build-a")
+        );
         assert_ne!(
             base,
             render_revision_of("", Some("github-org-repos"), Some("e"), "build-a")
@@ -6559,10 +6565,22 @@ mod render_reuse_tests {
 
     #[test]
     fn reuse_needs_the_db_backed_magma_path_where_init_is_a_no_op() {
-        assert_eq!(pending_route(true, false, true, true), PendingRoute::Compile);
-        assert_eq!(pending_route(true, true, true, false), PendingRoute::Compile);
-        assert_eq!(pending_route(true, true, false, true), PendingRoute::Compile);
-        assert_eq!(pending_route(true, true, true, true), PendingRoute::ReuseRender);
+        assert_eq!(
+            pending_route(true, false, true, true),
+            PendingRoute::Compile
+        );
+        assert_eq!(
+            pending_route(true, true, true, false),
+            PendingRoute::Compile
+        );
+        assert_eq!(
+            pending_route(true, true, false, true),
+            PendingRoute::Compile
+        );
+        assert_eq!(
+            pending_route(true, true, true, true),
+            PendingRoute::ReuseRender
+        );
     }
 }
 
@@ -10701,5 +10719,54 @@ mod moved_rename_tests {
             gate(false),
             DestroyProtectionGate::BlockedByProtectedDestruction { .. }
         ));
+    }
+}
+
+#[cfg(test)]
+mod drift_detail_series_tests {
+    use super::update_drift_detail_gauges;
+
+    fn drift(action: &str, risk: &str) -> crate::crd::DriftDetail {
+        serde_json::from_value(
+            serde_json::json!({"address": "a.b", "action": action, "risk": risk}),
+        )
+        .expect("drift detail")
+    }
+
+    fn series(m: &crate::observability::Metrics, template: &str) -> usize {
+        m.gather()
+            .lines()
+            .filter(|l| {
+                l.starts_with("pangea_template_drift_detail{")
+                    && l.contains(&format!("template=\"{template}\""))
+            })
+            .count()
+    }
+
+    #[test]
+    fn a_template_with_no_drift_exports_no_drift_detail_series() {
+        let _g = crate::observability::SPARSE_TEST_GUARD.lock().unwrap();
+        crate::observability::set_sparse_series(true);
+        let m = crate::observability::Metrics::new();
+        update_drift_detail_gauges(
+            &m,
+            "t",
+            "ns",
+            &[drift("update", "low"), drift("update", "low")],
+        );
+        assert_eq!(series(&m, "t"), 1);
+        update_drift_detail_gauges(&m, "t", "ns", &[]);
+        assert_eq!(series(&m, "t"), 0);
+    }
+
+    #[test]
+    fn sparse_off_keeps_the_full_zeroed_matrix_as_before() {
+        let _g = crate::observability::SPARSE_TEST_GUARD.lock().unwrap();
+        crate::observability::set_sparse_series(false);
+        let m = crate::observability::Metrics::new();
+        update_drift_detail_gauges(&m, "t", "ns", &[]);
+        let n = series(&m, "t");
+        crate::observability::set_sparse_series(true);
+        assert_eq!(n, 16);
     }
 }

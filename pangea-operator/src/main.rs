@@ -578,6 +578,7 @@ async fn main() -> Result<()> {
     let health_ready_pool = probe_pool.clone().or_else(|| state.db_pool.clone());
     let health_addr = config.health_addr;
     let health_shutting_down = shutting_down.clone();
+    pangea_operator::observability::set_sparse_series(op_cfg.servers.metrics_sparse);
     let bind_retry =
         pangea_operator::observability::BindRetry::from_setting(op_cfg.servers.bind_retry);
     tokio::spawn(async move {

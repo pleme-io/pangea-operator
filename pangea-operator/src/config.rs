@@ -206,6 +206,8 @@ pub struct ServersConfig {
     pub grpc_addr: String,
     #[serde(default = "default_on")]
     pub bind_retry: bool,
+    #[serde(default = "default_on")]
+    pub metrics_sparse: bool,
 }
 
 /// Executor selection, binaries, timeouts.
@@ -733,6 +735,8 @@ struct ServersOverlay {
     grpc_addr: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     bind_retry: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metrics_sparse: Option<bool>,
 }
 
 #[derive(Serialize, Default)]
@@ -909,6 +913,7 @@ impl EnvOverlay {
                 graphql_addr: env_present("GRAPHQL_ADDR"),
                 grpc_addr: env_present("GRPC_ADDR"),
                 bind_retry: env_parse::<bool>("PANGEA_BIND_RETRY"),
+                metrics_sparse: env_parse::<bool>("PANGEA_METRICS_SPARSE"),
             },
             executor: ExecutorOverlay {
                 backend: env_present("PANGEA_EXECUTOR"),
@@ -1060,6 +1065,7 @@ impl TieredConfig for OperatorConfig {
                 graphql_addr: String::new(),
                 grpc_addr: String::new(),
                 bind_retry: false,
+                metrics_sparse: false,
             },
             executor: ExecutorSurface {
                 backend: None,
@@ -1149,6 +1155,7 @@ impl TieredConfig for OperatorConfig {
             graphql_addr: "0.0.0.0:8081".to_string(),
             grpc_addr: "0.0.0.0:50051".to_string(),
             bind_retry: true,
+            metrics_sparse: true,
         };
         c.executor = ExecutorSurface {
             backend: Some("magma".to_string()),
@@ -1827,6 +1834,21 @@ mod tests {
         let v = OperatorConfig::resolve().into_value();
         std::env::remove_var("PANGEA_LEAF_REUSE_RENDER");
         assert!(!v.leaf.reuse_render);
+    }
+
+    #[test]
+    fn metrics_sparse_defaults_on_and_turns_off_by_file_and_env() {
+        let _g = ENV_GUARD.lock().unwrap();
+        assert!(OperatorConfig::prescribed_default().servers.metrics_sparse);
+        let path = scratch_file("metrics-sparse", "servers:\n  metrics_sparse: false\n");
+        let r = OperatorConfig::resolve_from(&path, Dict::new());
+        assert_eq!(r.file, FileTier::Loaded { path: path.clone() });
+        assert!(!r.resolution.into_value().servers.metrics_sparse);
+        std::fs::remove_file(path).unwrap();
+        std::env::set_var("PANGEA_METRICS_SPARSE", "false");
+        let v = OperatorConfig::resolve().into_value();
+        std::env::remove_var("PANGEA_METRICS_SPARSE");
+        assert!(!v.servers.metrics_sparse);
     }
 
     #[test]

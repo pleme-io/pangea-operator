@@ -9,7 +9,9 @@ pub mod projection;
 mod tracing_setup;
 
 pub use bounded_writer::{Bound, BoundedMakeWriter, ClipStats};
-pub use metrics::{ActiveReconcileGuard, Metrics};
+#[cfg(test)]
+pub(crate) use metrics::SPARSE_TEST_GUARD;
+pub use metrics::{set_sparse_series, sparse_series, ActiveReconcileGuard, Metrics};
 pub use tracing_setup::init_tracing;
 
 use axum::{http::StatusCode, routing::get, Router};
@@ -178,9 +180,7 @@ pub async fn bind_with_retry(addr: SocketAddr, retry: BindRetry) -> std::io::Res
                 }
                 return Ok(listener);
             }
-            Err(e)
-                if e.kind() == std::io::ErrorKind::AddrInUse && attempt < retry.attempts =>
-            {
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse && attempt < retry.attempts => {
                 warn!(
                     %addr,
                     attempt,

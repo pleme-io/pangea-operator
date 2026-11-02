@@ -1,5 +1,19 @@
 //! Prometheus metrics for the Pangea Operator.
 
+static SPARSE_SERIES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+pub fn set_sparse_series(on: bool) {
+    SPARSE_SERIES.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[cfg(test)]
+pub(crate) static SPARSE_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[must_use]
+pub fn sparse_series() -> bool {
+    SPARSE_SERIES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 use prometheus::{
     Histogram, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge, IntGaugeVec, Opts,
     Registry,
