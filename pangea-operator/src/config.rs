@@ -349,10 +349,16 @@ pub struct ObservabilityConfig {
     pub leaf_series: pangea_leaf::series::SeriesMode,
     #[serde(default = "default_leaf_series_max")]
     pub leaf_series_max: usize,
+    #[serde(default = "default_catalog_suspended_series")]
+    pub catalog_suspended_series: bool,
 }
 
 fn default_leaf_series_max() -> usize {
     pangea_leaf::series::DEFAULT_SERIES_MAX
+}
+
+fn default_catalog_suspended_series() -> bool {
+    true
 }
 
 /// Escalation routing (ntfy).
@@ -814,6 +820,8 @@ struct ObservabilityOverlay {
     leaf_series: Option<pangea_leaf::series::SeriesMode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     leaf_series_max: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    catalog_suspended_series: Option<bool>,
 }
 
 #[derive(Serialize, Default)]
@@ -961,6 +969,8 @@ impl EnvOverlay {
                 leaf_series: env_present("PANGEA_LEAF_SERIES")
                     .and_then(|v| pangea_leaf::series::SeriesMode::parse(&v)),
                 leaf_series_max: env_parse::<usize>("PANGEA_LEAF_SERIES_MAX"),
+                catalog_suspended_series: env_present("PANGEA_CATALOG_SUSPENDED_SERIES")
+                    .map(|v| v == "true" || v == "1"),
             },
             routing: RoutingOverlay {
                 ntfy_base_url: env_present("PANGEA_NTFY_BASE_URL"),
@@ -1109,6 +1119,7 @@ impl TieredConfig for OperatorConfig {
                 otel_service_name: String::new(),
                 leaf_series: pangea_leaf::series::SeriesMode::default(),
                 leaf_series_max: default_leaf_series_max(),
+                catalog_suspended_series: default_catalog_suspended_series(),
             },
             routing: RoutingConfig {
                 ntfy_base_url: String::new(),
@@ -1218,6 +1229,7 @@ impl TieredConfig for OperatorConfig {
             otel_service_name: "pangea-operator".to_string(),
             leaf_series: pangea_leaf::series::SeriesMode::default(),
             leaf_series_max: default_leaf_series_max(),
+            catalog_suspended_series: default_catalog_suspended_series(),
         };
         c.routing = RoutingConfig {
             ntfy_base_url: "https://ntfy.sh".to_string(),
@@ -1980,6 +1992,29 @@ mod tests {
         let o = r.resolution.into_value().observability;
         assert_eq!(o.leaf_series, pangea_leaf::series::SeriesMode::Off);
         assert_eq!(o.leaf_series_max, 10);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn catalog_suspension_series_is_on_by_default_and_the_file_tier_turns_it_off() {
+        let _g = ENV_GUARD.lock().unwrap();
+        assert!(
+            OperatorConfig::prescribed_default()
+                .observability
+                .catalog_suspended_series
+        );
+        let path = scratch_file(
+            "catalog-series",
+            "observability:\n  catalog_suspended_series: false\n",
+        );
+        let r = OperatorConfig::resolve_from(&path, Dict::new());
+        assert_eq!(r.file, FileTier::Loaded { path: path.clone() });
+        assert!(
+            !r.resolution
+                .into_value()
+                .observability
+                .catalog_suspended_series
+        );
         std::fs::remove_file(path).unwrap();
     }
 

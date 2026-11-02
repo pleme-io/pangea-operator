@@ -449,12 +449,24 @@ parent). `template` names the leaf. New:
 | `pangea_workspace_leaves` | `workspace, namespace, state` | leaves per state |
 | `pangea_leaf_plan_seconds` | `workspace` (histogram) | leaf plan duration |
 | `pangea_workspace_leaves_unlabeled` | `workspace` | leaves past the label cap |
+| `pangea_workspace_catalog_suspended` | `workspace` | 1 while the catalog's `spec.suspend` holds; off: `observability.catalog_suspended_series: false` (`PANGEA_CATALOG_SUSPENDED_SERIES`) |
 
 **Cardinality bound.** `observability.leaf_series: unhealthy` (default) emits
 per-leaf series only for leaves not `Ready`, at most
 `observability.leaf_series_max: 256` leaves. About 6 per-leaf families gives
 ≤ 1,536 series, plus 8 states per workspace. `all` emits every leaf (1,023 ×
 6 ≈ 6,100 series for this org); `off` emits aggregates only.
+
+The same selection governs every other family keyed by a template
+(`template`, or `name` in `projection::TEMPLATE_BY_NAME_FAMILIES`): a declared
+leaf with no per-leaf series is dropped from the exposition at gather time
+(`projection::without_quiet_leaves`), so `pangea_settled`,
+`pangea_policy_decisions_total`, `pangea_template_events_total`, the magma and
+escalation gauges and the rest scale with unhealthy leaves too. The values stay
+in the registry, so a leaf that turns unhealthy reappears with its counters
+intact. 1,035 Ready leaves: 15,595 lines / 1,363,534 bytes before, 46 lines /
+2,669 bytes after
+(`projection::tests::a_thousand_ready_declared_leaves_emit_no_per_leaf_series_in_any_family`).
 
 **Alerts and events.** The stall and alert work keys on these:
 

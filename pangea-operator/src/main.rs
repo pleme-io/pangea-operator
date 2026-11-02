@@ -211,6 +211,9 @@ async fn main() -> Result<()> {
         op_cfg.observability.leaf_series,
         op_cfg.observability.leaf_series_max,
     );
+    pangea_operator::observability::projection::configure_catalog_series(
+        op_cfg.observability.catalog_suspended_series,
+    );
 
     // ── EARLY DETECTION: refuse an incompatible (build, run) pair ──────────
     //

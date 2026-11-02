@@ -78,6 +78,72 @@ pub fn series_settings() -> (pangea_leaf::series::SeriesMode, usize) {
     *SERIES.lock().expect("series mutex poisoned")
 }
 
+static CATALOG_SERIES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+pub fn configure_catalog_series(on: bool) {
+    CATALOG_SERIES.store(on, Ordering::Relaxed);
+}
+
+#[must_use]
+pub fn catalog_series() -> bool {
+    CATALOG_SERIES.load(Ordering::Relaxed)
+}
+
+pub type QuietLeaves = Arc<std::sync::RwLock<std::collections::BTreeSet<(String, String)>>>;
+
+pub const TEMPLATE_BY_NAME_FAMILIES: [&str; 4] = [
+    "pangea_template_consecutive_compile_failures",
+    "pangea_compile_failures_total",
+    "pangea_escalation_recommended_depth",
+    "pangea_escalation_actions_total",
+];
+
+fn series_template(family: &str, metric: &prometheus::proto::Metric) -> Option<(String, String)> {
+    let label = |key: &str| {
+        metric
+            .get_label()
+            .iter()
+            .find(|l| l.get_name() == key)
+            .map(|l| l.get_value())
+    };
+    let name = label("template").or_else(|| {
+        TEMPLATE_BY_NAME_FAMILIES
+            .contains(&family)
+            .then(|| label("name"))
+            .flatten()
+    })?;
+    let namespace = label("namespace")
+        .or_else(|| label("target_namespace"))
+        .unwrap_or_default();
+    Some((namespace.to_string(), name.to_string()))
+}
+
+#[must_use]
+pub fn without_quiet_leaves(
+    families: Vec<prometheus::proto::MetricFamily>,
+    quiet: &std::collections::BTreeSet<(String, String)>,
+) -> Vec<prometheus::proto::MetricFamily> {
+    if quiet.is_empty() {
+        return families;
+    }
+    families
+        .into_iter()
+        .filter_map(|mut family| {
+            let name = family.get_name().to_string();
+            let kept: Vec<prometheus::proto::Metric> = family
+                .take_metric()
+                .into_iter()
+                .filter(|m| series_template(&name, m).is_none_or(|t| !quiet.contains(&t)))
+                .collect();
+            if kept.is_empty() {
+                return None;
+            }
+            family.set_metric(kept);
+            Some(family)
+        })
+        .collect()
+}
+
 pub fn template_row(t: &InfrastructureTemplate, now: DateTime<Utc>) -> Option<TemplateRow> {
     if t.spec.suspend || t.metadata.deletion_timestamp.is_some() {
         return None;
@@ -391,6 +457,8 @@ pub struct ProjectionMetrics {
     pub leaf_plan_seconds: prometheus::HistogramVec,
     pub leaf_pending_work: IntGaugeVec,
     pub roles_anywhere_cert_not_after: IntGaugeVec,
+    pub workspace_catalog_suspended: IntGaugeVec,
+    pub quiet_leaves: QuietLeaves,
 }
 
 fn gauge(registry: &Registry, name: &str, help: &str, labels: &[&str]) -> IntGaugeVec {
@@ -438,11 +506,23 @@ impl ProjectionMetrics {
             },
             leaf_pending_work: gauge(registry, "pangea_leaf_pending_work", "Pending leaf work weighted by provider calls per action, each credential capped at its rate times the horizon (the worker HPA metric); absent while workers.autoscaling.enabled is false", &[]),
             roles_anywhere_cert_not_after: gauge(registry, "pangea_roles_anywhere_cert_not_after_seconds", "Unix time the leaf certificate in a rolesAnywhere certSecretRef expires, read each time a session is issued", &["namespace", "cert"]),
+            workspace_catalog_suspended: gauge(registry, "pangea_workspace_catalog_suspended", "1 while a WorkspaceCatalog's spec.suspend holds every template under it; absent while observability.catalog_suspended_series is false", &["workspace"]),
+            quiet_leaves: QuietLeaves::default(),
             operator: gauge(registry, "pangea_operator_progress", "Operator progress gate readings: last_reconcile_timestamp_seconds, oldest_pending_age_seconds, wedged, projection_timestamp_seconds", &["reading"]),
         }
     }
 
     pub fn publish_templates(&self, rows: &[TemplateRow]) {
+        let (mode, max) = series_settings();
+        self.publish_templates_under(rows, mode, max);
+    }
+
+    pub fn publish_templates_under(
+        &self,
+        rows: &[TemplateRow],
+        mode: pangea_leaf::series::SeriesMode,
+        max: usize,
+    ) {
         for g in [
             &self.template_phase,
             &self.phase_age_seconds,
@@ -458,7 +538,6 @@ impl ProjectionMetrics {
         ] {
             g.reset();
         }
-        let (mode, max) = series_settings();
         let leaves: Vec<pangea_leaf::series::SeriesRow> = rows
             .iter()
             .filter(|r| r.leaf)
@@ -469,6 +548,19 @@ impl ProjectionMetrics {
             })
             .collect();
         let selection = crate::leaf_engine::engine().series(&leaves, mode, max);
+        *self
+            .quiet_leaves
+            .write()
+            .expect("quiet leaves lock poisoned") = rows
+            .iter()
+            .filter(|r| r.leaf)
+            .filter(|r| {
+                !selection
+                    .labelled
+                    .contains(&[r.namespace.as_str(), r.template.as_str()].join("/"))
+            })
+            .map(|r| (r.namespace.clone(), r.template.clone()))
+            .collect();
         for (workspace, n) in &selection.unlabeled {
             self.workspace_leaves_unlabeled
                 .with_label_values(&[workspace.as_str()])
@@ -569,6 +661,18 @@ impl ProjectionMetrics {
         }
     }
 
+    pub fn publish_catalogs(&self, catalogs: &[crate::crd::WorkspaceCatalog]) {
+        self.workspace_catalog_suspended.reset();
+        for c in catalogs {
+            let Some(name) = c.metadata.name.as_deref() else {
+                continue;
+            };
+            self.workspace_catalog_suspended
+                .with_label_values(&[name])
+                .set(i64::from(c.spec.suspend));
+        }
+    }
+
     pub fn publish_leaf_work(&self, work: Option<&pangea_leaf::work::LeafWorkStatus>) {
         self.leaf_pending_work.reset();
         if let Some(w) = work {
@@ -643,6 +747,7 @@ pub async fn run(client: Client, metrics: Arc<super::Metrics>, operator_namespac
     let templates: Api<InfrastructureTemplate> = Api::all(client.clone());
     let cronjobs: Api<CronJob> = Api::all(client.clone());
     let jobs: Api<Job> = Api::all(client.clone());
+    let catalogs: Api<crate::crd::WorkspaceCatalog> = Api::all(client.clone());
     let pods: Api<Pod> = Api::namespaced(client, &operator_namespace);
     let owned = ListParams::default().labels(CRONJOB_OWNER_LABEL);
     let mut tick = tokio::time::interval(TICK);
@@ -669,6 +774,14 @@ pub async fn run(client: Client, metrics: Arc<super::Metrics>, operator_namespac
                     .publish_leaf_work(crate::leaf_work::status(&list.items).as_ref());
             }
             Err(e) => warn!(error = %e, "status projection could not list templates"),
+        }
+        if catalog_series() {
+            match catalogs.list(&ListParams::default()).await {
+                Ok(list) => metrics.projection.publish_catalogs(&list.items),
+                Err(e) => warn!(error = %e, "status projection could not list workspace catalogs"),
+            }
+        } else {
+            metrics.projection.workspace_catalog_suspended.reset();
         }
         match (
             cronjobs.list(&owned).await,
@@ -1078,5 +1191,142 @@ mod tests {
         ] {
             assert!(text.contains(needle), "missing {needle}");
         }
+    }
+
+    fn seed_every_template_family(m: &crate::observability::Metrics, template: &str, ns: &str) {
+        m.seed_template(template, ns);
+        for decision in ["autoApply", "refuse", "requireApproval"] {
+            m.policy_decisions_total
+                .with_label_values(&[template, ns, decision])
+                .inc_by(0);
+        }
+        m.settled.with_label_values(&[template, ns]).set(1);
+        m.consecutive_drift_cycles
+            .with_label_values(&[template, ns])
+            .set(0);
+        m.stuck_resources.with_label_values(&[template, ns]).set(0);
+        m.live
+            .record_template_event(template, ns, "Normal", "Initialized");
+        m.live
+            .record_template_event(template, ns, "Normal", "Compiled");
+        m.live
+            .generation_lag_seconds
+            .with_label_values(&[template, ns])
+            .set(0);
+        m.live.stalled.with_label_values(&[template, ns]).set(0);
+    }
+
+    fn standalone(name: &str) -> InfrastructureTemplate {
+        let mut t: InfrastructureTemplate = serde_json::from_value(serde_json::json!({
+            "apiVersion": "pangea.pleme.io/v1alpha1",
+            "kind": "InfrastructureTemplate",
+            "metadata": {"name": name, "namespace": "ns", "generation": 1},
+            "spec": {"source": {"inline": "ignored"}, "pangeaNamespace": "ns"}
+        }))
+        .unwrap();
+        t.status = Some(InfrastructureTemplateStatus {
+            phase: Some(Phase::Ready),
+            observed_generation: 1,
+            ..Default::default()
+        });
+        t
+    }
+
+    fn registry_over(
+        templates: &[InfrastructureTemplate],
+        mode: pangea_leaf::series::SeriesMode,
+    ) -> String {
+        let m = crate::observability::Metrics::new();
+        for t in templates {
+            seed_every_template_family(&m, t.metadata.name.as_deref().unwrap(), "ns");
+        }
+        let rows: Vec<TemplateRow> = templates
+            .iter()
+            .filter_map(|t| template_row(t, at(1_000)))
+            .collect();
+        m.projection
+            .publish_templates_under(&rows, mode, pangea_leaf::series::DEFAULT_SERIES_MAX);
+        m.gather()
+    }
+
+    #[test]
+    fn a_thousand_ready_declared_leaves_emit_no_per_leaf_series_in_any_family() {
+        let leaves: Vec<InfrastructureTemplate> =
+            (0..1035).map(|i| declared_leaf(i, Phase::Ready)).collect();
+        let body = registry_over(&leaves, pangea_leaf::series::SeriesMode::Unhealthy);
+        let per_leaf = body.lines().filter(|l| l.contains("org-repo-")).count();
+        assert_eq!(
+            per_leaf,
+            0,
+            "{per_leaf} per-leaf lines of {} in a {}-byte body",
+            body.lines().count(),
+            body.len()
+        );
+        assert!(body.len() < 16 * 1024, "body is {} bytes", body.len());
+    }
+
+    #[test]
+    fn an_unhealthy_leaf_and_a_standalone_template_keep_every_family() {
+        let mut templates: Vec<InfrastructureTemplate> =
+            (0..10).map(|i| declared_leaf(i, Phase::Ready)).collect();
+        templates.push(declared_leaf(10, Phase::Failed));
+        templates.push(standalone("solo"));
+        let body = registry_over(&templates, pangea_leaf::series::SeriesMode::Unhealthy);
+        for template in ["org-repo-0010", "solo"] {
+            for family in [
+                "pangea_settled{",
+                "pangea_consecutive_drift_cycles{",
+                "pangea_policy_decisions_total{",
+                "pangea_template_events_total{",
+                "pangea_template_consecutive_compile_failures{",
+                "pangea_escalation_recommended_depth{",
+                "pangea_magma_resources_failed{",
+                "pangea_template_stalled{",
+                "pangea_template_phase{",
+            ] {
+                assert!(
+                    body.lines().any(|l| l.starts_with(family)
+                        && (l.contains(&format!("template=\"{template}\""))
+                            || l.contains(&format!("name=\"{template}\"")))),
+                    "{template} lost {family}"
+                );
+            }
+        }
+        assert!(!body.contains("org-repo-0003"));
+    }
+
+    #[test]
+    fn leaf_series_all_keeps_every_ready_leaf_in_every_family() {
+        let leaves: Vec<InfrastructureTemplate> =
+            (0..3).map(|i| declared_leaf(i, Phase::Ready)).collect();
+        let body = registry_over(&leaves, pangea_leaf::series::SeriesMode::All);
+        assert!(
+            body.contains("pangea_settled{target_namespace=\"ns\",template=\"org-repo-0002\"} 1")
+        );
+        assert!(body.contains(
+            "pangea_template_consecutive_compile_failures{name=\"org-repo-0002\",target_namespace=\"ns\"} 0"
+        ));
+    }
+
+    fn catalog(name: &str, suspend: bool) -> crate::crd::WorkspaceCatalog {
+        serde_json::from_value(serde_json::json!({
+            "apiVersion": "pangea.pleme.io/v1alpha1",
+            "kind": "WorkspaceCatalog",
+            "metadata": {"name": name},
+            "spec": {"source": {}, "suspend": suspend}
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_suspended_catalog_reads_one_and_a_running_catalog_zero() {
+        let registry = Registry::new();
+        let m = ProjectionMetrics::register(&registry);
+        m.publish_catalogs(&[catalog("org", true), catalog("other", false)]);
+        let text = exposition(&registry);
+        assert!(text.contains("pangea_workspace_catalog_suspended{workspace=\"org\"} 1"));
+        assert!(text.contains("pangea_workspace_catalog_suspended{workspace=\"other\"} 0"));
+        m.publish_catalogs(&[catalog("other", false)]);
+        assert!(!exposition(&registry).contains("workspace=\"org\""));
     }
 }

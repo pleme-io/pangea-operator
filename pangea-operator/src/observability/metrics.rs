@@ -1148,7 +1148,14 @@ impl Metrics {
     pub fn gather(&self) -> String {
         use prometheus::Encoder;
         let encoder = prometheus::TextEncoder::new();
-        let metric_families = self.registry.gather();
+        let metric_families = super::projection::without_quiet_leaves(
+            self.registry.gather(),
+            &self
+                .projection
+                .quiet_leaves
+                .read()
+                .expect("quiet leaves lock poisoned"),
+        );
         let mut buffer = Vec::new();
         encoder.encode(&metric_families, &mut buffer).unwrap();
         String::from_utf8(buffer).unwrap()
