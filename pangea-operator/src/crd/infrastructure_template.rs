@@ -865,6 +865,13 @@ pub struct ProviderCredentials {
     /// resolved into the `google` provider's configure object.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub google: Option<GoogleCredentials>,
+
+    /// Purelymail credentials. Operator-side authority: the referenced
+    /// Secret holds the account API token under `api_token` (or
+    /// `PURELYMAIL_API_TOKEN`), resolved into the `purelymail` provider's
+    /// configure object.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purelymail: Option<PurelymailCredentials>,
 }
 
 /// Typed identifier for each provider known to the operator.
@@ -890,6 +897,7 @@ pub enum ProviderKind {
     OnePassword,
     Discord,
     Google,
+    Purelymail,
 }
 
 impl ProviderKind {
@@ -907,6 +915,7 @@ impl ProviderKind {
             ProviderKind::OnePassword => "opadmin",
             ProviderKind::Discord => "discord",
             ProviderKind::Google => "google",
+            ProviderKind::Purelymail => "purelymail",
         }
     }
 
@@ -983,6 +992,7 @@ impl ProviderKind {
             ProviderKind::OnePassword => false,
             ProviderKind::Discord => false,
             ProviderKind::Google => true,
+            ProviderKind::Purelymail => true,
         }
     }
 }
@@ -1013,6 +1023,7 @@ impl ProviderCredentials {
             opadmin,
             discord,
             google,
+            purelymail,
         } = self;
 
         let mut out = Vec::new();
@@ -1042,6 +1053,9 @@ impl ProviderCredentials {
         }
         if let Some(c) = google {
             out.push((ProviderKind::Google, &c.secret_ref));
+        }
+        if let Some(c) = purelymail {
+            out.push((ProviderKind::Purelymail, &c.secret_ref));
         }
         out
     }
@@ -1280,6 +1294,14 @@ pub struct DiscordCredentials {
 #[serde(rename_all = "camelCase")]
 pub struct GoogleCredentials {
     /// Secret containing the service-account key JSON and optional defaults.
+    pub secret_ref: SecretRef,
+}
+
+/// Purelymail credentials configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PurelymailCredentials {
+    /// Secret containing the Purelymail account API token.
     pub secret_ref: SecretRef,
 }
 
@@ -2852,6 +2874,7 @@ mod tests {
             opadmin: None,
             discord: None,
             google: None,
+            purelymail: None,
         };
         assert!(creds.iter_secret_refs().is_empty());
     }
@@ -2872,6 +2895,7 @@ mod tests {
             opadmin: None,
             discord: None,
             google: None,
+            purelymail: None,
         };
         let refs = creds.iter_secret_refs();
         assert_eq!(refs.len(), 2);
@@ -3056,6 +3080,7 @@ rolesAnywhere:
             opadmin: None,
             discord: None,
             google: None,
+            purelymail: None,
         };
         assert!(creds.iter_secret_refs().is_empty());
     }
@@ -3137,14 +3162,23 @@ rolesAnywhere:
             google: Some(GoogleCredentials {
                 secret_ref: empty_secret_ref("gcp"),
             }),
+            purelymail: Some(PurelymailCredentials {
+                secret_ref: empty_secret_ref("pm"),
+            }),
         };
         let refs = creds.iter_secret_refs();
-        assert_eq!(refs.len(), 9);
+        assert_eq!(refs.len(), 10);
         assert_eq!(
             refs.iter()
                 .find(|(k, _)| *k == ProviderKind::Google)
                 .map(|(_, sref)| sref.name.as_str()),
             Some("gcp")
+        );
+        assert_eq!(
+            refs.iter()
+                .find(|(k, _)| *k == ProviderKind::Purelymail)
+                .map(|(_, sref)| sref.name.as_str()),
+            Some("pm")
         );
 
         // The exhaustiveness contract: count must equal the number

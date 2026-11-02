@@ -275,6 +275,7 @@ fn first_present(data: &BTreeMap<String, ByteString>, candidates: &[&str]) -> Op
 ///   * porkbun    → `{"api_key": …, "secret_key": …}` (both required
 ///                  by the baked `cullenmcdermott/porkbun` provider schema)
 ///   * google     → `{"credentials": …, "project"?, "region"?, "zone"?}`
+///   * purelymail → `{"api_token": …}`
 ///
 /// Returns `None` when no usable credential attr is present (e.g. a
 /// cloudflare secret with no recognizable token key) — the caller then
@@ -410,6 +411,15 @@ fn provider_config_object(
             obj.insert(
                 "secret_key".to_string(),
                 serde_json::Value::String(secret_key),
+            );
+            Some(serde_json::Value::Object(obj))
+        }
+        ProviderKind::Purelymail => {
+            let api_token = first_present(data, &["api_token", "PURELYMAIL_API_TOKEN"])?;
+            let mut obj = serde_json::Map::new();
+            obj.insert(
+                "api_token".to_string(),
+                serde_json::Value::String(api_token),
             );
             Some(serde_json::Value::Object(obj))
         }
@@ -916,6 +926,21 @@ mod tests {
     fn google_without_credentials_yields_none() {
         let d = data(&[("project", "p1"), ("region", "us-central1")]);
         assert!(provider_config_object(ProviderKind::Google, &d, None).is_none());
+    }
+
+    #[test]
+    fn purelymail_resolves_the_api_token_under_either_key() {
+        for key in ["api_token", "PURELYMAIL_API_TOKEN"] {
+            let d = data(&[(key, "pm1")]);
+            let obj = provider_config_object(ProviderKind::Purelymail, &d, None).unwrap();
+            assert_eq!(obj, serde_json::json!({ "api_token": "pm1" }));
+        }
+    }
+
+    #[test]
+    fn purelymail_without_a_token_yields_none() {
+        let d = data(&[("token", "pm1")]);
+        assert!(provider_config_object(ProviderKind::Purelymail, &d, None).is_none());
     }
 
     #[test]

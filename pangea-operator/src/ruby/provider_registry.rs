@@ -49,6 +49,7 @@ const SOURCES: &[(&str, &str)] = &[
     ("hcloud", "hetznercloud/hcloud"),
     ("splunk", "splunk/splunk"),
     ("porkbun", "marcfrederick/porkbun"),
+    ("purelymail", "continugit/purelymail"),
 ];
 
 /// The provider local name a resource type belongs to — everything before the
