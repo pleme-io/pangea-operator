@@ -1260,8 +1260,38 @@ async fn handle_pending(
     // Validate template source
     validate_source(template)?;
 
-    // Update status to Compiling
-    update_phase(template, Phase::Compiling, state).await?;
+    let reuse_render = crate::controller::template::leaf::settings().reuse_render;
+    let magma_db_backed =
+        state.executor_for(template).name() == "magma" && state.artifact_store.is_some();
+    let current = if reuse_render && magma_db_backed {
+        non_git_source_revision(template, state).await?
+    } else {
+        None
+    };
+    let compiled_at_current_revision = current.is_some()
+        && current.as_deref()
+            == template
+                .status
+                .as_ref()
+                .and_then(|s| s.compiled_revision.as_deref());
+    let render_available =
+        compiled_at_current_revision && compiled_config_available(template, state, false).await?;
+    match pending_route(
+        reuse_render,
+        magma_db_backed,
+        compiled_at_current_revision,
+        render_available,
+    ) {
+        PendingRoute::ReuseRender => {
+            info!(
+                revision = ?current,
+                "render current for this revision, leaf digest and operator build; \
+                 reusing it and skipping Compiling and Initializing"
+            );
+            update_phase(template, Phase::Planning, state).await?;
+        }
+        PendingRoute::Compile => update_phase(template, Phase::Compiling, state).await?,
+    }
 
     Ok(ReconcileAction::Requeue(SHORT_REQUEUE_INTERVAL))
 }
@@ -1461,7 +1491,11 @@ async fn handle_compiling(
     // already set compiled_revision to its HEAD SHA above; this fills only the
     // non-git case. (For git, `content` is the \0PATH\0 sentinel, never hashed.)
     if compiled_revision.is_none() {
-        compiled_revision = Some(content_revision(&content));
+        compiled_revision = Some(render_revision(
+            template,
+            &content,
+            crate::controller::template::leaf::settings().reuse_render,
+        ));
     }
 
     // Which front end gets this body. Until 2026-08-01 this was a byte
@@ -2404,6 +2438,63 @@ pub(crate) fn content_revision(content: &str) -> String {
     format!("cm:{}", &h[..16])
 }
 
+const LEAF_DIGEST_ANNOTATION: &str = "pangea.pleme.io/leaf-digest";
+
+fn render_revision_of(
+    content: &str,
+    template_name: Option<&str>,
+    leaf_digest: Option<&str>,
+    build: &str,
+) -> String {
+    let parts = [
+        content,
+        template_name.unwrap_or("~"),
+        leaf_digest.unwrap_or("~"),
+        build,
+    ];
+    content_revision(&parts.join("\u{1f}"))
+}
+
+pub(crate) fn render_revision(
+    template: &InfrastructureTemplate,
+    content: &str,
+    reuse_render: bool,
+) -> String {
+    if !reuse_render {
+        return content_revision(content);
+    }
+    render_revision_of(
+        content,
+        template.spec.template_name.as_deref(),
+        template
+            .metadata
+            .annotations
+            .as_ref()
+            .and_then(|a| a.get(LEAF_DIGEST_ANNOTATION))
+            .map(String::as_str),
+        crate::build_identity::current(),
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingRoute {
+    Compile,
+    ReuseRender,
+}
+
+fn pending_route(
+    reuse_render: bool,
+    magma_db_backed: bool,
+    compiled_at_current_revision: bool,
+    render_available: bool,
+) -> PendingRoute {
+    if reuse_render && magma_db_backed && compiled_at_current_revision && render_available {
+        PendingRoute::ReuseRender
+    } else {
+        PendingRoute::Compile
+    }
+}
+
 /// Current content-revision of a NON-GIT (inline / configMap) source, or
 /// `None` for a git source (which tracks freshness via its HEAD SHA) or a
 /// source whose content can't be read right now. This is what lets a
@@ -2414,6 +2505,7 @@ async fn non_git_source_revision(
     template: &InfrastructureTemplate,
     state: &ControllerState,
 ) -> Result<Option<String>> {
+    let reuse_render = crate::controller::template::leaf::settings().reuse_render;
     let source = &template.spec.source;
     let content = if let Some(inline) = &source.inline {
         inline.clone()
@@ -2433,10 +2525,15 @@ async fn non_git_source_revision(
             },
             None => return Ok(None), // ConfigMap gone — same.
         }
+    } else if reuse_render
+        && source.git_repository.is_none()
+        && template.spec.template_name.is_some()
+    {
+        String::new()
     } else {
         return Ok(None); // git source (or none): not a non-git revision.
     };
-    Ok(Some(content_revision(&content)))
+    Ok(Some(render_revision(template, &content, reuse_render)))
 }
 
 /// Pure reuse decision: is a cached `rendered_config` still current?
@@ -6248,6 +6345,16 @@ async fn handle_failed(
     info!("Cleaning workspace and retrying from Pending");
     let workspace = state.workspace_manager.get_workspace(template).await?;
     workspace.clean().await?;
+    if crate::controller::template::leaf::settings().reuse_render
+        && template.spec.source.git_repository.is_none()
+    {
+        crate::controller::status_patch::patch_status(
+            template,
+            &state.client,
+            serde_json::json!({ "status": { "compiledRevision": null } }),
+        )
+        .await?;
+    }
     update_phase(template, Phase::Pending, state).await?;
     record_event(
         template,
@@ -6346,6 +6453,114 @@ mod refusal_hold_tests {
             ..LeafConfig::default()
         };
         assert_eq!(failed_step(&refused(&off), &off), FailedStep::Retry);
+    }
+}
+
+#[cfg(test)]
+mod render_reuse_tests {
+    use super::*;
+
+    fn leaf(digest: &str) -> InfrastructureTemplate {
+        serde_json::from_value(serde_json::json!({
+            "apiVersion": "pangea.pleme.io/v1alpha1",
+            "kind": "InfrastructureTemplate",
+            "metadata": {
+                "name": "org-bm-guard",
+                "namespace": "n",
+                "generation": 1,
+                "annotations": { "pangea.pleme.io/leaf-digest": digest }
+            },
+            "spec": {
+                "source": {},
+                "pangeaNamespace": "ns",
+                "templateName": "github-org-repos",
+                "dialect": "lava"
+            }
+        }))
+        .unwrap()
+    }
+
+    struct Seams {
+        compiles: u32,
+        inits: u32,
+        compiled_revision: Option<String>,
+    }
+
+    impl Seams {
+        fn cycle(&mut self, template: &InfrastructureTemplate, reuse: bool) {
+            let current = render_revision(template, "", reuse);
+            let at_current = self.compiled_revision.as_deref() == Some(current.as_str());
+            match pending_route(reuse, true, at_current, at_current) {
+                PendingRoute::ReuseRender => {}
+                PendingRoute::Compile => {
+                    self.compiles += 1;
+                    self.inits += 1;
+                    self.compiled_revision = Some(current);
+                }
+            }
+        }
+    }
+
+    fn seams() -> Seams {
+        Seams {
+            compiles: 0,
+            inits: 0,
+            compiled_revision: None,
+        }
+    }
+
+    #[test]
+    fn a_second_cycle_with_identical_inputs_does_not_compile_or_init() {
+        let mut s = seams();
+        let t = leaf("2898a581");
+        s.cycle(&t, true);
+        s.cycle(&t, true);
+        assert_eq!((s.compiles, s.inits), (1, 1));
+    }
+
+    #[test]
+    fn a_changed_leaf_digest_compiles_and_inits_again() {
+        let mut s = seams();
+        s.cycle(&leaf("2898a581"), true);
+        s.cycle(&leaf("77aa0c1e"), true);
+        assert_eq!((s.compiles, s.inits), (2, 2));
+    }
+
+    #[test]
+    fn the_render_revision_moves_with_the_architecture_and_the_operator_build() {
+        let base = render_revision_of("", Some("github-org-repos"), Some("d"), "build-a");
+        assert_eq!(
+            base,
+            render_revision_of("", Some("github-org-repos"), Some("d"), "build-a")
+        );
+        assert_ne!(
+            base,
+            render_revision_of("", Some("github-org-repos"), Some("d"), "build-b")
+        );
+        assert_ne!(base, render_revision_of("", Some("other"), Some("d"), "build-a"));
+        assert_ne!(
+            base,
+            render_revision_of("", Some("github-org-repos"), Some("e"), "build-a")
+        );
+        assert!(base.starts_with("cm:"));
+    }
+
+    #[test]
+    fn reuse_render_off_compiles_every_cycle_by_content_alone() {
+        let mut s = seams();
+        let t = leaf("2898a581");
+        s.cycle(&t, false);
+        s.cycle(&t, false);
+        assert_eq!((s.compiles, s.inits), (2, 2));
+        assert_eq!(render_revision(&t, "", false), content_revision(""));
+    }
+
+    #[test]
+    fn reuse_needs_the_db_backed_magma_path_where_init_is_a_no_op() {
+        assert_eq!(pending_route(true, false, true, true), PendingRoute::Compile);
+        assert_eq!(pending_route(true, true, true, false), PendingRoute::Compile);
+        assert_eq!(pending_route(true, true, false, true), PendingRoute::Compile);
+        assert_eq!(pending_route(true, true, true, true), PendingRoute::ReuseRender);
     }
 }
 

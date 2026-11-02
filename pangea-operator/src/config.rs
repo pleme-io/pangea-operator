@@ -459,6 +459,8 @@ pub struct LeafConfig {
     pub engine: crate::leaf_engine::EngineKind,
     #[serde(default = "default_on")]
     pub hold_refusals: bool,
+    #[serde(default = "default_on")]
+    pub reuse_render: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -548,6 +550,7 @@ impl Default for LeafConfig {
             calibrate: false,
             engine: crate::leaf_engine::EngineKind::default(),
             hold_refusals: true,
+            reuse_render: true,
         }
     }
 }
@@ -848,6 +851,8 @@ struct LeafOverlay {
     engine: Option<crate::leaf_engine::EngineKind>,
     #[serde(skip_serializing_if = "Option::is_none")]
     hold_refusals: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reuse_render: Option<bool>,
 }
 
 #[derive(Serialize, Default)]
@@ -982,6 +987,7 @@ impl EnvOverlay {
                 engine: env_present("PANGEA_LEAF_ENGINE")
                     .and_then(|v| crate::leaf_engine::EngineKind::parse(&v)),
                 hold_refusals: env_parse::<bool>("PANGEA_LEAF_HOLD_REFUSALS"),
+                reuse_render: env_parse::<bool>("PANGEA_LEAF_REUSE_RENDER"),
             },
             inputs: InputsOverlay {
                 stale_after_secs: env_present(crate::controller::template::inputs::STALE_AFTER_ENV)
@@ -1787,6 +1793,21 @@ mod tests {
         let v = OperatorConfig::resolve().into_value();
         std::env::remove_var("PANGEA_LEAF_HOLD_REFUSALS");
         assert!(!v.leaf.hold_refusals);
+    }
+
+    #[test]
+    fn leaf_reuse_render_defaults_on_and_turns_off_by_file_and_env() {
+        let _g = ENV_GUARD.lock().unwrap();
+        assert!(OperatorConfig::prescribed_default().leaf.reuse_render);
+        let path = scratch_file("leaf-reuse", "leaf:\n  reuse_render: false\n");
+        let r = OperatorConfig::resolve_from(&path, Dict::new());
+        assert_eq!(r.file, FileTier::Loaded { path: path.clone() });
+        assert!(!r.resolution.into_value().leaf.reuse_render);
+        std::fs::remove_file(path).unwrap();
+        std::env::set_var("PANGEA_LEAF_REUSE_RENDER", "false");
+        let v = OperatorConfig::resolve().into_value();
+        std::env::remove_var("PANGEA_LEAF_REUSE_RENDER");
+        assert!(!v.leaf.reuse_render);
     }
 
     #[test]
