@@ -457,6 +457,8 @@ pub struct LeafConfig {
     pub calibrate: bool,
     #[serde(default)]
     pub engine: crate::leaf_engine::EngineKind,
+    #[serde(default = "default_on")]
+    pub hold_refusals: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -545,6 +547,7 @@ impl Default for LeafConfig {
             nats: LeafNatsConfig::default(),
             calibrate: false,
             engine: crate::leaf_engine::EngineKind::default(),
+            hold_refusals: true,
         }
     }
 }
@@ -843,6 +846,8 @@ struct LeafOverlay {
     calibrate: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     engine: Option<crate::leaf_engine::EngineKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hold_refusals: Option<bool>,
 }
 
 #[derive(Serialize, Default)]
@@ -976,6 +981,7 @@ impl EnvOverlay {
                 calibrate: env_parse::<bool>("PANGEA_LEAF_CALIBRATE"),
                 engine: env_present("PANGEA_LEAF_ENGINE")
                     .and_then(|v| crate::leaf_engine::EngineKind::parse(&v)),
+                hold_refusals: env_parse::<bool>("PANGEA_LEAF_HOLD_REFUSALS"),
             },
             inputs: InputsOverlay {
                 stale_after_secs: env_present(crate::controller::template::inputs::STALE_AFTER_ENV)
@@ -1766,6 +1772,21 @@ mod tests {
             crate::leaf_engine::EngineKind::Blue
         );
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn leaf_hold_refusals_defaults_on_and_turns_off_by_file_and_env() {
+        let _g = ENV_GUARD.lock().unwrap();
+        assert!(OperatorConfig::prescribed_default().leaf.hold_refusals);
+        let path = scratch_file("leaf-hold", "leaf:\n  hold_refusals: false\n");
+        let r = OperatorConfig::resolve_from(&path, Dict::new());
+        assert_eq!(r.file, FileTier::Loaded { path: path.clone() });
+        assert!(!r.resolution.into_value().leaf.hold_refusals);
+        std::fs::remove_file(path).unwrap();
+        std::env::set_var("PANGEA_LEAF_HOLD_REFUSALS", "false");
+        let v = OperatorConfig::resolve().into_value();
+        std::env::remove_var("PANGEA_LEAF_HOLD_REFUSALS");
+        assert!(!v.leaf.hold_refusals);
     }
 
     #[test]

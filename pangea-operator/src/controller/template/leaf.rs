@@ -852,10 +852,16 @@ pub async fn judge(
             return Judgement::Admitted;
         }
     };
+    let prev = template.status.as_ref().and_then(|s| s.leaf.as_ref());
     if let Admission::Refuse(msg) = &assessment.admission {
+        if cfg.hold_refusals {
+            let next = refused_status(template, &cfg, prev, &assessment.classification, msg);
+            if prev != Some(&next) {
+                write_status(template, state, &next, prev).await;
+            }
+        }
         return Judgement::Refused(msg.clone());
     }
-    let prev = template.status.as_ref().and_then(|s| s.leaf.as_ref());
     let mut next = next_status(
         prev,
         u32::try_from(assessment.classification.leaf_keys).unwrap_or(u32::MAX),
@@ -875,6 +881,61 @@ pub async fn judge(
         write_status(template, state, &next, prev).await;
     }
     Judgement::Admitted
+}
+
+#[must_use]
+pub fn refusal_inputs(template: &InfrastructureTemplate, cfg: &LeafConfig) -> String {
+    let annotation = |key: &str| {
+        template
+            .metadata
+            .annotations
+            .as_ref()
+            .and_then(|a| a.get(key))
+            .map_or("~", String::as_str)
+    };
+    let generation = template.metadata.generation.unwrap_or(0).to_string();
+    let settings = serde_json::to_string(cfg).unwrap_or_default();
+    let parts = [
+        generation.as_str(),
+        annotation(SKIP_LEAF_ANNOTATION),
+        annotation(LEAF_ADDRESSES_ANNOTATION),
+        settings.as_str(),
+        crate::build_identity::current(),
+    ];
+    blake3::hash(parts.join("\u{1f}").as_bytes()).to_hex()[..32].to_string()
+}
+
+fn refused_status(
+    template: &InfrastructureTemplate,
+    cfg: &LeafConfig,
+    prev: Option<&LeafStatus>,
+    classification: &Classification,
+    reason: &str,
+) -> LeafStatus {
+    let base = prev.cloned().unwrap_or_else(|| LeafStatus {
+        leaf_keys: u32::try_from(classification.leaf_keys).unwrap_or(u32::MAX),
+        fat: classification.fat,
+        ..LeafStatus::default()
+    });
+    LeafStatus {
+        refusal: Some(pangea_leaf::ratchet::Refusal {
+            inputs: refusal_inputs(template, cfg),
+            reason: reason.to_string(),
+        }),
+        ..base
+    }
+}
+
+#[must_use]
+pub fn after_failure<'a>(
+    template: &'a InfrastructureTemplate,
+    cfg: &LeafConfig,
+) -> pangea_leaf::ratchet::AfterFailure<'a> {
+    pangea_leaf::ratchet::after_failure(
+        cfg.hold_refusals,
+        template.status.as_ref().and_then(|s| s.leaf.as_ref()),
+        &refusal_inputs(template, cfg),
+    )
 }
 
 async fn write_status(

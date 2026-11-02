@@ -6184,11 +6184,42 @@ fn failed_retry_decision(
     }
 }
 
+const REFUSAL_HOLD_RECHECK: Duration = DEFAULT_REQUEUE_INTERVAL;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FailedStep {
+    HoldRefusal { reason: String },
+    Retry,
+}
+
+fn failed_step(
+    template: &InfrastructureTemplate,
+    cfg: &crate::config::LeafConfig,
+) -> FailedStep {
+    match crate::controller::template::leaf::after_failure(template, cfg) {
+        pangea_leaf::ratchet::AfterFailure::Held(refusal) => FailedStep::HoldRefusal {
+            reason: refusal.reason.clone(),
+        },
+        pangea_leaf::ratchet::AfterFailure::Retry => FailedStep::Retry,
+    }
+}
+
 #[tracing::instrument(skip_all, name = "handle_failed")]
 async fn handle_failed(
     template: &InfrastructureTemplate,
     state: &ControllerState,
 ) -> Result<ReconcileAction> {
+    if let FailedStep::HoldRefusal { reason } =
+        failed_step(template, &crate::controller::template::leaf::settings())
+    {
+        debug!(
+            %reason,
+            "admission refusal held: its generation, skip-leaf and leaf-addresses \
+             annotations, leaf settings and operator build are unchanged, so a retry \
+             would be refused again"
+        );
+        return Ok(ReconcileAction::Requeue(REFUSAL_HOLD_RECHECK));
+    }
     let failure_count = template.retry_count();
     let retries_exhausted = template.retries_exhausted();
     warn!(failure_count, retries_exhausted, "Template in Failed phase");
@@ -6228,6 +6259,94 @@ async fn handle_failed(
     .await;
 
     Ok(ReconcileAction::Requeue(decision.requeue_after()))
+}
+
+#[cfg(test)]
+mod refusal_hold_tests {
+    use super::*;
+    use crate::config::LeafConfig;
+    use crate::controller::template::leaf::refusal_inputs;
+
+    fn refused(cfg: &LeafConfig) -> InfrastructureTemplate {
+        let mut t: InfrastructureTemplate = serde_json::from_value(serde_json::json!({
+            "apiVersion": "pangea.pleme.io/v1alpha1",
+            "kind": "InfrastructureTemplate",
+            "metadata": {
+                "name": "org-bm-guard",
+                "namespace": "n",
+                "generation": 1,
+                "annotations": {
+                    "pangea.pleme.io/leaf-addresses": "github_repository.bm_guard"
+                }
+            },
+            "spec": {"source": {}, "pangeaNamespace": "ns"}
+        }))
+        .unwrap();
+        let inputs = refusal_inputs(&t, cfg);
+        t.status = Some(crate::crd::InfrastructureTemplateStatus {
+            phase: Some(Phase::Failed),
+            leaf: Some(pangea_leaf::ratchet::LeafStatus {
+                refusal: Some(pangea_leaf::ratchet::Refusal {
+                    inputs,
+                    reason: "plans github_team.intruder".into(),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        t
+    }
+
+    #[test]
+    fn a_refused_template_is_held_in_failed_instead_of_reset_to_pending() {
+        let cfg = LeafConfig::default();
+        assert_eq!(
+            failed_step(&refused(&cfg), &cfg),
+            FailedStep::HoldRefusal {
+                reason: "plans github_team.intruder".into()
+            }
+        );
+    }
+
+    #[test]
+    fn a_generation_bump_releases_a_held_refusal() {
+        let cfg = LeafConfig::default();
+        let mut t = refused(&cfg);
+        t.metadata.generation = Some(2);
+        assert_eq!(failed_step(&t, &cfg), FailedStep::Retry);
+    }
+
+    #[test]
+    fn an_annotation_or_settings_change_releases_a_held_refusal() {
+        let cfg = LeafConfig::default();
+        let mut t = refused(&cfg);
+        t.metadata.annotations.as_mut().unwrap().insert(
+            "pangea.pleme.io/leaf-addresses".into(),
+            "github_repository.bm_guard,github_team.intruder".into(),
+        );
+        assert_eq!(failed_step(&t, &cfg), FailedStep::Retry);
+        let t = refused(&cfg);
+        let mut skipped = t.clone();
+        skipped.metadata.annotations.as_mut().unwrap().insert(
+            pangea_leaf::admission::SKIP_LEAF_ANNOTATION.into(),
+            "parent kept fat on purpose".into(),
+        );
+        assert_eq!(failed_step(&skipped, &cfg), FailedStep::Retry);
+        let widened = LeafConfig {
+            cycle_budget_secs: Some(600),
+            ..LeafConfig::default()
+        };
+        assert_eq!(failed_step(&t, &widened), FailedStep::Retry);
+    }
+
+    #[test]
+    fn hold_refusals_off_restores_the_retry_from_pending() {
+        let off = LeafConfig {
+            hold_refusals: false,
+            ..LeafConfig::default()
+        };
+        assert_eq!(failed_step(&refused(&off), &off), FailedStep::Retry);
+    }
 }
 
 /// Handle CompileBlocked phase — HEAD observed, compile of it cannot

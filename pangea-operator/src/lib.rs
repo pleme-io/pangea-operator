@@ -38,6 +38,7 @@
 //! ```
 
 pub mod backend;
+pub mod build_identity;
 pub mod capabilities;
 pub mod chart_values;
 pub mod github_credential;

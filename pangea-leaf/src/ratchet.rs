@@ -147,6 +147,33 @@ pub struct LeafStatus {
     pub inputs_digest: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peak_rss_bytes: Option<u64>,
+    #[serde(default)]
+    pub refusal: Option<Refusal>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct Refusal {
+    pub inputs: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AfterFailure<'a> {
+    Held(&'a Refusal),
+    Retry,
+}
+
+#[must_use]
+pub fn after_failure<'a>(
+    hold: bool,
+    status: Option<&'a LeafStatus>,
+    current_inputs: &str,
+) -> AfterFailure<'a> {
+    match status.and_then(|s| s.refusal.as_ref()) {
+        Some(refusal) if hold && refusal.inputs == current_inputs => AfterFailure::Held(refusal),
+        _ => AfterFailure::Retry,
+    }
 }
 
 pub const P95_BUCKET_MS: u64 = 1_000;
@@ -182,12 +209,54 @@ pub fn next_status(
         skip_reason,
         inputs_digest,
         peak_rss_bytes: prev.and_then(|p| p.peak_rss_bytes),
+        refusal: None,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn refused_with(inputs: &str) -> LeafStatus {
+        LeafStatus {
+            refusal: Some(Refusal {
+                inputs: inputs.into(),
+                reason: "plans an undeclared address".into(),
+            }),
+            ..LeafStatus::default()
+        }
+    }
+
+    #[test]
+    fn a_refusal_holds_while_its_inputs_are_unchanged_and_releases_when_they_move() {
+        let s = refused_with("a");
+        assert!(matches!(
+            after_failure(true, Some(&s), "a"),
+            AfterFailure::Held(r) if r.inputs == "a"
+        ));
+        assert_eq!(after_failure(true, Some(&s), "b"), AfterFailure::Retry);
+        assert_eq!(after_failure(false, Some(&s), "a"), AfterFailure::Retry);
+        assert_eq!(after_failure(true, None, "a"), AfterFailure::Retry);
+        assert_eq!(
+            after_failure(true, Some(&LeafStatus::default()), "a"),
+            AfterFailure::Retry
+        );
+    }
+
+    #[test]
+    fn an_admitted_status_serializes_a_null_refusal_so_a_merge_patch_clears_it() {
+        let v = serde_json::to_value(next_status(
+            Some(&refused_with("a")),
+            1,
+            false,
+            None,
+            10,
+            None,
+            None,
+        ))
+        .unwrap();
+        assert_eq!(v.get("refusal"), Some(&serde_json::Value::Null));
+    }
 
     #[test]
     fn p95_is_nearest_rank() {
