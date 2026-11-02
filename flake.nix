@@ -258,6 +258,51 @@
       #
       # The provider LIST must exist once. Two copies would diverge silently,
       # and the failure mode is a hard ProviderUnavailable months later.
+      hardenedMirrorPkgsFor =
+        imageSystem:
+        (import "${substrate}/lib/security/mk-hardened-pkgs.nix" { inherit lib; }) {
+          pkgs = import nixpkgs-security {
+            system = imageSystem;
+            config.allowUnfree = true;
+          };
+          mitigations = [
+            "terraform-provider-aws-grpc-bump"
+            "terraform-provider-kubernetes-kin-openapi-port"
+            "fleet-go-toolchain"
+            "terraform-providers-go-module-floor"
+          ];
+        };
+
+      # Not in nixpkgs. The rev is pinned and its source was read before
+      # packaging: it talks only to its configured base URL, and its request
+      # bodies match Purelymail's OpenAPI spec. stargrid-systems' provider was
+      # rejected: its createUser omits the required domainName and password.
+      # Upstream's Update sends newPassword whenever one is configured, so requiring
+      # 2FA would reset what the person chose. The patch sends it only when it
+      # changed, and carries the test that fails without that.
+      terraformProviderPurelymailFor =
+        imageSystem:
+        (hardenedMirrorPkgsFor imageSystem).buildGoModule {
+          pname = "terraform-provider-purelymail";
+          version = "0.1.1";
+          src = (hardenedMirrorPkgsFor imageSystem).fetchFromGitHub {
+            owner = "continugit";
+            repo = "terraform-provider-purelymail";
+            rev = "db6d4b4b96018b3cc8ed289aa6221f1b27501e9c";
+            hash = "sha256-ugxxVATYBpqbwnrbWUCxxLBxrVZpjUj27FO/Ioxzpw8=";
+          };
+          patches = [ ./patches/terraform-provider-purelymail-keep-password.patch ];
+          vendorHash = "sha256-bnQwen+H13HWAIyy1NTPnarJ/pnRLsp9F4FdKA9StQ4=";
+          ldflags = [
+            "-s"
+            "-w"
+          ];
+          postInstall = ''
+            mv $out/bin/purelymail $out/bin/terraform-provider-purelymail
+          '';
+          meta.mainProgram = "terraform-provider-purelymail";
+        };
+
       magmaProviderMirrorFor =
         imageSystem:
         let
@@ -265,19 +310,7 @@
             system = imageSystem;
             config.allowUnfree = true;
           };
-          securityPkgs = import nixpkgs-security {
-            system = imageSystem;
-            config.allowUnfree = true;
-          };
-          hardenedSecurityPkgs = (import "${substrate}/lib/security/mk-hardened-pkgs.nix" { inherit lib; }) {
-            pkgs = securityPkgs;
-            mitigations = [
-              "terraform-provider-aws-grpc-bump"
-              "terraform-provider-kubernetes-kin-openapi-port"
-              "fleet-go-toolchain"
-              "terraform-providers-go-module-floor"
-            ];
-          };
+          hardenedSecurityPkgs = hardenedMirrorPkgsFor imageSystem;
           inherit (import "${substrate}/lib/build/go/overlay.nix") assertGoFloor;
           atGoFloor = drv: assertGoFloor {
             inherit drv;
@@ -298,7 +331,10 @@
                   cyrilgdn_rabbitmq
                   datadog_datadog
                 ]
-                ++ [ openwrt-uci.packages.${imageSystem}.terraform-provider-openwrt ]
+                ++ [
+                  openwrt-uci.packages.${imageSystem}.terraform-provider-openwrt
+                  (terraformProviderPurelymailFor imageSystem)
+                ]
               );
           };
         in
@@ -788,7 +824,7 @@
               }).mkGoBinaryFloorCheck {
                 name = "magma-provider-mirror";
                 tree = magmaProviderMirrorFor system;
-                expectBinaries = 8;
+                expectBinaries = 9;
               };
           } // (
             lib.mapAttrs' (
@@ -893,7 +929,7 @@
           };
         };
 
-      extended = lib.foldl' (acc: sys: lib.recursiveUpdate acc (rubyEvalShell sys // { packages.${sys}."lava-ruby-gems" = lavaRubyGemsFor sys; })) withEmbedded [
+      extended = lib.foldl' (acc: sys: lib.recursiveUpdate acc (rubyEvalShell sys // { packages.${sys} = { "lava-ruby-gems" = lavaRubyGemsFor sys; "terraform-provider-purelymail" = terraformProviderPurelymailFor sys; }; })) withEmbedded [
         "x86_64-linux"
         "aarch64-linux"
         "x86_64-darwin"
