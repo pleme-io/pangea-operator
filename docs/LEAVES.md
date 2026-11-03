@@ -398,8 +398,10 @@ apply, Postgres I/O, the clock, the tokio runtime, the permit counters in
 **The Rust stays.** `pangea-leaf` is not deleted. It becomes the oracle of a
 differential test (the `docs/RESOLVER-DIFFERENTIAL.md` precedent): every word
 above returns the same value as its Rust source on the 2026-10-23 dry-run
-address set. `leaf.engine: blue | rust` selects the judge; `blue` is the
-default once the differential is green.
+address set. `pangea-leaf/examples/happa_oracle` prints those values for blue's
+`bidamas/happa/differential/inputs.json`; its output is blue's `oracle.json`.
+`leaf.engine: blue | rust` selects the judge; `blue` is the default once the
+differential is green.
 
 ## 12. Failure isolation and the parent's partial state
 

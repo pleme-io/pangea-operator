@@ -18,3 +18,7 @@ schemars.workspace = true
 
 [dev-dependencies]
 proptest = "1"
+
+[[example]]
+name = "happa_oracle"
+test = true

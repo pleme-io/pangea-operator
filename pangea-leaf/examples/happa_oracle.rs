@@ -89,10 +89,18 @@ fn state_of(v: &Value) -> LeafState {
 }
 
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: happa_oracle INPUTS.json");
+    let path = std::env::args()
+        .nth(1)
+        .expect("usage: happa_oracle INPUTS.json");
     let input: Value = serde_json::from_str(&std::fs::read_to_string(path).expect("read inputs"))
         .expect("inputs are JSON");
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&answer(&input)).expect("json")
+    );
+}
 
+fn answer(input: &Value) -> Value {
     let addresses = strs(&input["addresses"]);
     let keys: Vec<Value> = addresses
         .iter()
@@ -150,7 +158,12 @@ fn main() {
         .expect("names")
         .iter()
         .map(|n| {
-            let ks: Vec<LeafKey> = n["keys"].as_array().expect("keys").iter().map(key_of).collect();
+            let ks: Vec<LeafKey> = n["keys"]
+                .as_array()
+                .expect("keys")
+                .iter()
+                .map(key_of)
+                .collect();
             let m = leaf_names(&s(&n["base"]), &ks);
             json!(ks.iter().map(|k| m[k].clone()).collect::<Vec<_>>())
         })
@@ -177,9 +190,11 @@ fn main() {
                 .iter()
                 .map(|r| (s(&r[0]), r[1].as_str().map(str::to_string), s(&r[2])))
                 .collect();
-            json!(stale_leaves(
-                rows.iter().map(|(n, rec, cur)| (n.as_str(), rec.as_deref(), cur.as_str()))
-            ))
+            json!(stale_leaves(rows.iter().map(|(n, rec, cur)| (
+                n.as_str(),
+                rec.as_deref(),
+                cur.as_str()
+            ))))
         })
         .collect();
 
@@ -366,7 +381,7 @@ fn main() {
         })
         .collect();
 
-    let out = json!({
+    json!({
         "keys": keys,
         "bad_addresses": bad,
         "leaves": leaves,
@@ -384,6 +399,140 @@ fn main() {
         "admit": admitted,
         "judge": judged,
         "drift": drifted,
-    });
-    println!("{}", serde_json::to_string_pretty(&out).expect("json"));
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn inputs() -> Value {
+        json!({
+            "base": "repos",
+            "addresses": [
+                "github_repository.repos[\"acude\"]",
+                "github_branch_protection.main[\"acude\"]",
+            ],
+            "bad_addresses": ["", "a.b[\"x"],
+            "refs": [],
+            "classify": [{"addresses": ["a.b[\"x\"]", "c.d[\"x\"]"], "p95": null, "budget": null}],
+            "names": [{
+                "base": "repos",
+                "keys": [
+                    {"kind": "keyed", "value": "Akeyless_Cursor"},
+                    {"kind": "module", "value": "module.vpc"},
+                ],
+            }],
+            "digests": [[{"x": 1, "y": {"b": 2, "a": 3}}, null, null]],
+            "changed": [[["new", null, "d1"], ["same", "d1", "d1"], ["moved", "d0", "d1"]]],
+            "blocked": [{
+                "leaf": "a",
+                "upstreams": [
+                    {"template": "u1", "has_mock": false},
+                    {"template": "u2", "has_mock": false},
+                ],
+                "ready": ["u1"],
+                "applying": false,
+            }],
+            "admission": [{"mode": "enforce", "never_reconciled": true, "leaf_keys": 1, "skip": null}],
+            "ratchet": [{"prev": null, "leaf_keys": 5, "fat": true, "p95": 1000, "tolerance": 10}],
+            "p95": [[7]],
+            "dags": [[["app", ["db"]], ["db", ["vpc"]]]],
+            "admit": [{
+                "candidates": [
+                    {"name": "drift-00", "scope": "ws", "class": "drift", "since": 0},
+                    {"name": "drift-01", "scope": "ws", "class": "drift", "since": 1},
+                    {"name": "drift-02", "scope": "ws", "class": "drift", "since": 2},
+                    {"name": "changed", "scope": "ws", "class": "change", "since": 100},
+                ],
+                "caps": {"global": 4, "per_scope": 4},
+                "in_flight": {},
+            }],
+            "judge": [{
+                "leaves": [
+                    {"name": "a", "state": {"kind": "ready"}, "upstreams": []},
+                    {
+                        "name": "b",
+                        "state": {"kind": "failed", "reason": "ImportAbsent", "since": "t1"},
+                        "upstreams": [],
+                    },
+                    {"name": "c", "state": {"kind": "ready"}, "upstreams": ["b"]},
+                    {"name": "d", "state": {"kind": "planning"}, "upstreams": ["c"]},
+                    {"name": "e", "state": {"kind": "ready"}, "upstreams": []},
+                ],
+                "cap": 50,
+            }],
+            "drift": [{"leaves": [{"name": "a", "last_check": null}], "now": 3600, "interval": 3600}],
+        })
+    }
+
+    #[test]
+    fn each_section_answers_what_happas_differential_recorded_for_that_row() {
+        let out = answer(&inputs());
+        let acude = json!({"kind": "keyed", "value": "acude"});
+        assert_eq!(out["keys"], json!([acude, acude]));
+        assert_eq!(
+            out["bad_addresses"],
+            json!(["empty address", "unterminated string in `a.b[\"x`"])
+        );
+        assert_eq!(
+            out["leaves"],
+            json!([{
+                "key": acude,
+                "merged_from": [],
+                "addresses": [
+                    "github_branch_protection.main[\"acude\"]",
+                    "github_repository.repos[\"acude\"]",
+                ],
+            }])
+        );
+        assert_eq!(out["bijection"]["ok"], json!(true));
+        assert_eq!(out["bijection"]["countAfter"], json!(2));
+        assert_eq!(out["names_of_leaves"], json!([[acude, "repos-acude"]]));
+        assert_eq!(
+            out["classify"],
+            json!([{"budgetMs": null, "cycleP95Ms": null, "fat": false, "leafKeys": 1, "reasons": []}])
+        );
+        assert_eq!(
+            out["names"],
+            json!([["repos-akeyless-cursor", "repos-module-vpc"]])
+        );
+        assert_eq!(out["digests"], json!(["bae585be24c22004c5dee0ee975a5313"]));
+        assert_eq!(out["changed"], json!([["moved"]]));
+        assert_eq!(out["blocked"], json!([["u2"]]));
+        assert_eq!(out["admission"], json!([{"verdict": "admit"}]));
+        assert_eq!(
+            out["ratchet"],
+            json!([{
+                "cycleP95Ms": 1000,
+                "fat": true,
+                "floor": {"cycleP95Ms": 1000, "leafKeys": 5},
+                "leafKeys": 5,
+                "refusal": null,
+            }])
+        );
+        assert_eq!(out["p95"], json!([7]));
+        assert_eq!(out["dags"], json!([{"order": ["vpc", "db", "app"]}]));
+        assert_eq!(out["admit"], json!([["changed", "drift-00", "drift-01"]]));
+        assert_eq!(
+            out["judge"],
+            json!([{
+                "blocked": [{"by": ["b"], "leaf": "c"}, {"by": ["b"], "leaf": "d"}],
+                "counts": {
+                    "applying": 0,
+                    "blocked": 2,
+                    "failed": 1,
+                    "planning": 0,
+                    "rateLimited": 0,
+                    "ready": 2,
+                    "stalled": 0,
+                },
+                "failed": [{"leaf": "b", "reason": "ImportAbsent", "since": "t1"}],
+                "total": 5,
+                "truncated": 0,
+                "verdict": "Partial",
+            }])
+        );
+        assert_eq!(out["drift"], json!([["a"]]));
+    }
 }
