@@ -205,6 +205,25 @@ Same static 30m number, a predicate that can now tell the two apart.
    "wedged" force-resets real work (see `template/reactive_policy.rs`'s
    force-reset, and its `is_awaiting_plan_approval` sibling guard).
 
+**A plan's refresh has its own guard, off by default.** Measured 2026-10-19
+on ryn: a plan sat 35 minutes on one `ReadResource` whose provider held a dead
+connection. `provider_guard.enabled` (`PANGEA_PROVIDER_GUARD`, default false)
+wraps the refresh in magma's `guard`: a read past `read_secs` (120) abandons
+that provider process and keeps the row, the registry replaces the process at
+most 3 times per pass, and the refresh carries on. `idle_secs` (300) is the
+watchdog: no RPC answered for that long ends the pass with the typed, retryable
+`Error::ProviderStalled` and writes no state. It covers `plan()` only;
+`apply`, `destroy` and `import` are not guarded, because a mutation's deadline
+is a separate decision. A bound the guard cannot honour (a zero, `idle_secs` at
+or under `read_secs`) is refused alone and the guard stays off.
+
+`github_app.token_mint` (`PANGEA_GITHUB_APP_TOKEN_MINT`, default `provider`)
+keeps the provider's own `app_auth`. `operator` swaps it for a token from
+`github_app::TokenBroker`, and is refused back to `provider` when the guard is
+off, because a plan's 401 reaches the broker only through the guard's beacon.
+The pacer key follows the App identity, not the token, so a re-mint keeps one
+bucket.
+
 **Actions** (worst-action-wins on multi-trigger: Suspend > Page > Alert):
 - `Alert` — Warning event + `Healthy=False` condition + ntfy at
   default priority + structured log line. Reconcile loop continues.

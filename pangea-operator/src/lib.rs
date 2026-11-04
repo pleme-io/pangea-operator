@@ -41,6 +41,7 @@ pub mod backend;
 pub mod build_identity;
 pub mod capabilities;
 pub mod chart_values;
+pub mod github_app;
 pub mod github_credential;
 pub mod github_read;
 pub mod org_resolve;

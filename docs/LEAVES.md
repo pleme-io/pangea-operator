@@ -68,6 +68,8 @@ resources.
 | Per-credential rate budget | `magma_apply::engine::shared_pacer` (samba `LeakyBucket`), keyed by a BLAKE3 of the provider config | live |
 | Per-template state row | `"{schema}".states`, `name` unique; locks in `pangea_meta.state_locks` keyed `(schema, template)` | live |
 | Pass, heartbeat, stall, preempt | `status.pass`, `pass_driver`, `pass_registry::preempt` (a1e6e3b) | live; another session owns it |
+| Per-RPC guard on a plan's refresh | `executor/magma.rs` (`refresh_ctx_for`, `supervised_refresh_then_plan`) over magma `guard` | built, off (`provider_guard.enabled: false`) |
+| Operator-minted GitHub App token | `github_app.rs` (`TokenBroker`), `provider_creds.rs` | built, off (`github_app.token_mint: provider`); `operator` needs the guard |
 | Status projection metrics | `observability/projection.rs` (`pangea_template_stall`, `pangea_template_pass_heartbeat_age_seconds`, …) | live, `template` label |
 | Embedded blue with no host I/O | kensa `src/attestation.rs`: `include_str!`, a `Loader`, `posture(&[])` | the precedent |
 | Graph verbs | `blue/bidamas/mokuroku/graph/gurafu-provisional.b` (34 verbs: `graph`, `topo`, `reachable`, `cycle`, `reverse`, `subgraph`, …) | provisional, unbuilt |

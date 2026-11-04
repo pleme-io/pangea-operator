@@ -325,12 +325,16 @@ fn provider_config_object(
         ProviderKind::GitHub => {
             let mut obj = serde_json::Map::new();
 
-            // ── ★ GITHUB APP AUTH IS PREFERRED, AND THE OPERATOR MINTS NOTHING ──
-            // The `github` Terraform provider carries a native `app_auth` block
-            // and does the JWT signing + installation-token exchange itself. So
-            // App support here is a PASS-THROUGH of three fields, not a token
-            // minting loop in the operator — no expiry to track, no refresh, and
-            // no bearer at rest in this process.
+            // ── ★ GITHUB APP AUTH IS PREFERRED ──────────────────────────────
+            // This renders the provider's native `app_auth` block, and by
+            // default that pass-through is the whole of it: the operator mints
+            // nothing. `github_app.token_mint: operator` makes
+            // `resolve_provider_configs` swap the block for an installation
+            // token from `crate::github_app::TokenBroker` (tracked expiry,
+            // re-mint before it, re-mint on 401/403, typed permission report),
+            // because a token minted inside the provider at Configure is fixed
+            // for that process's life and its permissions are fixed at mint
+            // time.
             //
             // Why it is preferred over a PAT, measured 2026-08-22:
             //   * A PAT is a PERSON. The credential this replaces was one
@@ -347,34 +351,17 @@ fn provider_config_object(
             // `pem_file` is the provider's attribute name and takes the KEY
             // MATERIAL, not a path — the name is upstream's, and it is a trap
             // worth naming rather than rediscovering.
-            let app = (
-                first_present(data, &["app_id", "APP_ID", "GITHUB_APP_ID"]),
-                first_present(
-                    data,
-                    &[
-                        "installation_id",
-                        "INSTALLATION_ID",
-                        "GITHUB_APP_INSTALLATION_ID",
-                    ],
-                ),
-                first_present(
-                    data,
-                    &[
-                        "private_key",
-                        "pem_file",
-                        "PRIVATE_KEY",
-                        "GITHUB_APP_PEM_FILE",
-                    ],
-                ),
-            );
-            if let (Some(id), Some(installation_id), Some(pem)) = app {
+            if let Some(app) = github_app_credentials(data) {
                 let mut auth = serde_json::Map::new();
-                auth.insert("id".to_string(), serde_json::Value::String(id));
+                auth.insert("id".to_string(), serde_json::Value::String(app.app_id));
                 auth.insert(
                     "installation_id".to_string(),
-                    serde_json::Value::String(installation_id),
+                    serde_json::Value::String(app.installation_id),
                 );
-                auth.insert("pem_file".to_string(), serde_json::Value::String(pem));
+                auth.insert(
+                    "pem_file".to_string(),
+                    serde_json::Value::String(app.private_key_pem),
+                );
                 // A provider BLOCK renders as an array of objects in provider
                 // JSON, even when the schema permits exactly one.
                 obj.insert(
@@ -579,6 +566,15 @@ pub async fn resolve_provider_configs(
         };
 
         if let Some(obj) = provider_config_object(kind, data, aws_region) {
+            let obj = match (kind, crate::github_app::settings().token_mint) {
+                (ProviderKind::GitHub, crate::github_app::MintMode::Operator) => {
+                    match crate::github_app::TokenBroker::global() {
+                        Some(broker) => with_operator_minted_token(obj, data, broker).await?,
+                        None => obj,
+                    }
+                }
+                _ => obj,
+            };
             out.insert(kind.name().to_string(), obj);
         }
     }
@@ -597,6 +593,64 @@ pub async fn resolve_provider_configs(
     }
 
     Ok(out)
+}
+
+pub(crate) fn github_app_credentials(
+    data: &BTreeMap<String, ByteString>,
+) -> Option<crate::github_app::AppCredentials> {
+    Some(crate::github_app::AppCredentials {
+        app_id: first_present(data, &["app_id", "APP_ID", "GITHUB_APP_ID"])?
+            .trim()
+            .to_string(),
+        installation_id: first_present(
+            data,
+            &[
+                "installation_id",
+                "INSTALLATION_ID",
+                "GITHUB_APP_INSTALLATION_ID",
+            ],
+        )?
+        .trim()
+        .to_string(),
+        private_key_pem: first_present(
+            data,
+            &[
+                "private_key",
+                "pem_file",
+                "PRIVATE_KEY",
+                "GITHUB_APP_PEM_FILE",
+            ],
+        )?,
+    })
+}
+
+pub(crate) fn swap_app_auth_for_token(
+    mut obj: serde_json::Value,
+    token: &str,
+) -> serde_json::Value {
+    if let Some(map) = obj.as_object_mut() {
+        map.remove("app_auth");
+        map.insert(
+            "token".to_string(),
+            serde_json::Value::String(token.to_string()),
+        );
+    }
+    obj
+}
+
+async fn with_operator_minted_token(
+    obj: serde_json::Value,
+    data: &BTreeMap<String, ByteString>,
+    broker: &crate::github_app::TokenBroker,
+) -> Result<serde_json::Value> {
+    if obj.get("app_auth").is_none() {
+        return Ok(obj);
+    }
+    let Some(creds) = github_app_credentials(data) else {
+        return Ok(obj);
+    };
+    let minted = broker.token(&creds).await?;
+    Ok(swap_app_auth_for_token(obj, &minted.token))
 }
 
 fn session_data(c: &crate::backend::AwsCredentialsConfig) -> BTreeMap<String, ByteString> {
@@ -703,6 +757,44 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.to_string(), ByteString(v.as_bytes().to_vec())))
             .collect()
+    }
+
+    #[tokio::test]
+    async fn operator_mint_swaps_app_auth_for_a_minted_token_and_drops_the_key() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/app/installations/7/access_tokens"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+                "token": "ghs_minted",
+                "expires_at": (chrono::Utc::now() + chrono::Duration::minutes(60)).to_rfc3339(),
+                "permissions": {},
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let broker = crate::github_app::TokenBroker::new(
+            crate::github_app::GitHubAppClient::new(&server.uri()).unwrap(),
+            crate::github_app::REFRESH_MARGIN,
+            crate::github_app::REFUSAL_COOLDOWN,
+        );
+        let d = data(&[
+            ("app_id", "1"),
+            ("installation_id", "7"),
+            ("private_key", crate::github_app::test_keys::pkcs1()),
+        ]);
+        let rendered = provider_config_object(ProviderKind::GitHub, &d, None).unwrap();
+        assert!(
+            rendered.get("app_auth").is_some(),
+            "the default passes through"
+        );
+        let swapped = with_operator_minted_token(rendered, &d, &broker)
+            .await
+            .unwrap();
+        assert_eq!(swapped["token"], "ghs_minted");
+        assert!(swapped.get("app_auth").is_none());
+        assert!(!swapped.to_string().contains("PRIVATE"));
     }
 
     #[test]

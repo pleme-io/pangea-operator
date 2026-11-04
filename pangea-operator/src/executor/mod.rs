@@ -13,6 +13,7 @@ pub mod packer;
 mod plan;
 pub mod plan_change;
 pub mod policy;
+pub mod provider_guard;
 pub mod recording;
 mod tofu;
 pub mod variable_resolver;

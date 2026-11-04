@@ -111,6 +111,10 @@ pub struct OperatorConfig {
     /// default 7200, 0 is off).
     #[serde(default)]
     pub inputs: crate::controller::template::inputs::InputsConfig,
+    #[serde(default)]
+    pub provider_guard: crate::executor::provider_guard::ProviderGuardConfig,
+    #[serde(default)]
+    pub github_app: crate::github_app::GitHubAppConfig,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -697,6 +701,28 @@ struct EnvOverlay {
     leaf: LeafOverlay,
     workers: WorkersOverlay,
     inputs: InputsOverlay,
+    provider_guard: ProviderGuardOverlay,
+    github_app: GitHubAppOverlay,
+}
+
+#[derive(Serialize, Default)]
+struct ProviderGuardOverlay {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dial_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    read_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    idle_secs: Option<u64>,
+}
+
+#[derive(Serialize, Default)]
+struct GitHubAppOverlay {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    token_mint: Option<crate::github_app::MintMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    api_url: Option<String>,
 }
 
 #[derive(Serialize, Default)]
@@ -1034,6 +1060,17 @@ impl EnvOverlay {
                             .secs()
                     }),
             },
+            provider_guard: ProviderGuardOverlay {
+                enabled: env_parse::<bool>("PANGEA_PROVIDER_GUARD"),
+                dial_secs: env_parse::<u64>("PANGEA_PROVIDER_GUARD_DIAL_SECS"),
+                read_secs: env_parse::<u64>("PANGEA_PROVIDER_GUARD_READ_SECS"),
+                idle_secs: env_parse::<u64>("PANGEA_PROVIDER_GUARD_IDLE_SECS"),
+            },
+            github_app: GitHubAppOverlay {
+                token_mint: env_present(crate::github_app::MINT_MODE_ENV)
+                    .and_then(|v| crate::github_app::MintMode::parse(&v)),
+                api_url: env_nonempty(crate::github_app::API_URL_ENV),
+            },
         }
     }
 }
@@ -1142,6 +1179,8 @@ impl TieredConfig for OperatorConfig {
             inputs: crate::controller::template::inputs::InputsConfig {
                 stale_after_secs: 0,
             },
+            provider_guard: crate::executor::provider_guard::ProviderGuardConfig::default(),
+            github_app: crate::github_app::GitHubAppConfig::default(),
         }
     }
 
@@ -2029,6 +2068,32 @@ mod tests {
             pangea_leaf::admit::Share::HALF
         );
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn provider_guard_and_token_mint_default_off_and_are_read_from_the_file_tier() {
+        use crate::executor::provider_guard::ProviderGuardConfig;
+        use crate::github_app::{GitHubAppConfig, MintMode};
+        let defaults = OperatorConfig::prescribed_default();
+        assert_eq!(defaults.provider_guard, ProviderGuardConfig::default());
+        assert!(!defaults.provider_guard.enabled);
+        assert_eq!(defaults.github_app, GitHubAppConfig::default());
+        assert_eq!(defaults.github_app.token_mint, MintMode::Provider);
+        let path = scratch_file(
+            "provider-guard",
+            "provider_guard:\n  enabled: true\n  read_secs: 60\n  idle_secs: 180\ngithub_app:\n  token_mint: operator\n",
+        );
+        let v = OperatorConfig::resolve_from(&path, Dict::new())
+            .resolution
+            .into_value();
+        assert!(v.provider_guard.enabled);
+        assert_eq!(v.provider_guard.read_secs, 60);
+        assert_eq!(v.provider_guard.idle_secs, 180);
+        assert_eq!(
+            v.provider_guard.dial_secs,
+            defaults.provider_guard.dial_secs
+        );
+        assert_eq!(v.github_app.token_mint, MintMode::Operator);
     }
 
     #[test]

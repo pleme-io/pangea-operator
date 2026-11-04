@@ -97,6 +97,13 @@ pub enum Error {
     #[error(transparent)]
     IncompatibleBuild(#[from] crate::capabilities::IncompatibleBuild),
 
+    #[error(transparent)]
+    GitHubAppToken(#[from] crate::github_app::TokenError),
+
+    #[cfg(feature = "executor_magma")]
+    #[error(transparent)]
+    ProviderStalled(#[from] magma_apply::guard::Stalled),
+
     /// `ComplianceSchedule.spec.schedule` failed to parse as a cron
     /// expression, or the parsed expression has no future occurrences.
     /// Surfaces as `status.phase = Error` with this message rather than
@@ -188,6 +195,9 @@ impl Error {
             | Error::AmiTestFailed(_)
             | Error::Compilation(_) => FailureKind::Transient,
             Error::WithContext { source, .. } => source.failure_kind(),
+            Error::GitHubAppToken(e) if e.is_transient() => FailureKind::Transient,
+            #[cfg(feature = "executor_magma")]
+            Error::ProviderStalled(_) => FailureKind::Transient,
             _ => FailureKind::Declarative,
         }
     }

@@ -739,6 +739,8 @@ impl ControllerState {
             // renders no provider block) reach the provider with real
             // credentials instead of a null config.
             provider_configs,
+            provider_guard: crate::executor::provider_guard::settings(),
+            provider_factory: None,
         };
 
         Arc::new(MagmaExecutor::new(cfg)) as Arc<dyn IacExecutor>

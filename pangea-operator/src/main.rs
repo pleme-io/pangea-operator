@@ -204,6 +204,17 @@ async fn main() -> Result<()> {
     pangea_operator::controller::template::leaf::configure(&op_cfg.leaf);
     pangea_operator::leaf_work::configure(&op_cfg.workers);
     pangea_operator::controller::template::inputs::configure(&op_cfg.inputs);
+    if let Some(refusal) =
+        pangea_operator::executor::provider_guard::configure(&op_cfg.provider_guard)
+    {
+        tracing::warn!(%refusal, "provider_guard refused");
+    }
+    if let Some(refusal) = pangea_operator::github_app::configure(
+        &op_cfg.github_app,
+        pangea_operator::executor::provider_guard::settings().enabled,
+    ) {
+        tracing::warn!(%refusal, "github_app.token_mint refused");
+    }
     if let Some(refusal) = pangea_operator::leaf_engine::configure(op_cfg.leaf.engine) {
         tracing::warn!(%refusal, "leaf.engine refused");
     }

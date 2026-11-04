@@ -108,6 +108,47 @@ fn native_provider_router() -> Arc<dyn magma_apply::engine::ProviderFactory> {
     )
 }
 
+struct DialErrorWitness {
+    inner: Arc<dyn magma_apply::engine::ProviderFactory>,
+    beacon: Arc<magma_apply::guard::ProgressBeacon>,
+}
+
+#[async_trait::async_trait]
+impl magma_apply::engine::ProviderFactory for DialErrorWitness {
+    async fn dial(
+        &self,
+        req: magma_apply::engine::DialRequest<'_>,
+    ) -> std::result::Result<magma_apply::engine::LiveProvider, magma_apply::engine::EngineError>
+    {
+        self.inner.dial(req).await.inspect_err(|e| {
+            self.beacon.record_error(e.to_string());
+        })
+    }
+}
+
+fn rpc_guard_from(
+    cfg: &crate::executor::provider_guard::ProviderGuardConfig,
+) -> magma_apply::guard::RpcGuard {
+    magma_apply::guard::RpcGuard::new(
+        magma_apply::guard::RpcDeadlines {
+            dial: std::time::Duration::from_secs(cfg.dial_secs),
+            read: std::time::Duration::from_secs(cfg.read_secs),
+            ..magma_apply::guard::RpcDeadlines::default()
+        },
+        Arc::new(magma_apply::guard::ProgressBeacon::new()),
+    )
+}
+
+fn stall_policy_from(
+    cfg: &crate::executor::provider_guard::ProviderGuardConfig,
+) -> magma_apply::guard::StallPolicy {
+    let idle = std::time::Duration::from_secs(cfg.idle_secs);
+    magma_apply::guard::StallPolicy {
+        idle,
+        tick: (idle / 4).min(magma_apply::guard::StallPolicy::default().tick),
+    }
+}
+
 // ── Import concurrency guard ──────────────────────────────────────
 //
 // `template_controller::run_import_prepass` dispatches every resolved
@@ -418,6 +459,8 @@ pub struct MagmaExecutorConfig<S: StateBackend + ?Sized> {
     /// plumbing + lifecycle FSM are exercised without spawning a real
     /// provider (which CI has none of — that path is integration-tested).
     pub structural_apply: bool,
+    pub provider_guard: crate::executor::provider_guard::ProviderGuardConfig,
+    pub provider_factory: Option<Arc<dyn magma_apply::engine::ProviderFactory>>,
 }
 
 impl<S: StateBackend + ?Sized> Default for MagmaExecutorConfig<S>
@@ -439,6 +482,8 @@ where
             artifact_store: None,
             provider_configs: std::collections::BTreeMap::new(),
             structural_apply: false,
+            provider_guard: crate::executor::provider_guard::ProviderGuardConfig::default(),
+            provider_factory: None,
         }
     }
 }
@@ -459,6 +504,8 @@ impl<S: StateBackend + ?Sized> Clone for MagmaExecutorConfig<S> {
             artifact_store: self.artifact_store.clone(),
             provider_configs: self.provider_configs.clone(),
             structural_apply: self.structural_apply,
+            provider_guard: self.provider_guard,
+            provider_factory: self.provider_factory.clone(),
         }
     }
 }
@@ -1028,8 +1075,10 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
         if !configs.keys().any(|k| k.starts_with("github")) {
             return None;
         }
-        let bytes = serde_json::to_vec(configs).ok()?;
-        let key = blake3::hash(&bytes).to_hex().to_string();
+        let key = crate::github_app::credential_digest(
+            configs,
+            crate::github_app::TokenBroker::existing(),
+        )?;
         let (key, quota) = crate::executor::pacer_lane::pacer_key(&key, Self::pacer_quota_pct());
         magma_apply::engine::shared_pacer(&key, quota, github_budget_rph)
     }
@@ -1144,8 +1193,13 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
         if self.cfg.structural_apply {
             return None;
         }
+        let guard = self
+            .cfg
+            .provider_guard
+            .enabled
+            .then(|| Arc::new(rpc_guard_from(&self.cfg.provider_guard)));
         let mut ctx = magma_apply::engine::ApplyContext::new(work_dir.to_path_buf())
-            .with_provider_factory(native_provider_router());
+            .with_provider_factory(self.provider_factory_for(guard.as_deref()));
         for (name, value) in self.build_provider_configs(cfg) {
             ctx = ctx.with_provider_config(name, value);
         }
@@ -1156,7 +1210,63 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
         if let Some(p) = Self::shared_pacer_for(&self.build_provider_configs(cfg)) {
             ctx = ctx.with_shared_pacer(p);
         }
+        if let Some(guard) = guard {
+            ctx = ctx.with_rpc_guard(guard);
+        }
         Some(ctx)
+    }
+
+    fn provider_factory_for(
+        &self,
+        guard: Option<&magma_apply::guard::RpcGuard>,
+    ) -> Arc<dyn magma_apply::engine::ProviderFactory> {
+        let inner = self
+            .cfg
+            .provider_factory
+            .clone()
+            .unwrap_or_else(native_provider_router);
+        match guard {
+            Some(g) => Arc::new(DialErrorWitness {
+                inner,
+                beacon: Arc::clone(&g.beacon),
+            }),
+            None => inner,
+        }
+    }
+
+    async fn supervised_refresh_then_plan(
+        &self,
+        cfg: &magma_config::Config,
+        state: &mut magma_types::State,
+        ctx: Option<&magma_apply::engine::ApplyContext>,
+    ) -> Result<(
+        magma_types::Plan,
+        Option<magma_apply::engine::RefreshReport>,
+    )> {
+        let refresh = magma_apply::engine::refresh_then_plan(cfg, state, ctx);
+        let planned = match ctx.and_then(magma_apply::engine::ApplyContext::progress) {
+            Some(beacon) => {
+                magma_apply::guard::supervise(
+                    beacon,
+                    stall_policy_from(&self.cfg.provider_guard),
+                    || None,
+                    refresh,
+                )
+                .await?
+            }
+            None => refresh.await,
+        };
+        let (plan, report) =
+            planned.map_err(|e| Error::MagmaExecution(format!("magma_plan: {e}")))?;
+        if let Some(beacon) = ctx.and_then(magma_apply::engine::ApplyContext::progress) {
+            let errors = beacon.recent_errors();
+            crate::github_app::observe_cycle(
+                &self.cfg.provider_configs,
+                errors.iter().map(String::as_str),
+                report.as_ref().is_some_and(|r| r.refreshed > 0),
+            );
+        }
+        Ok((plan, report))
     }
 }
 
@@ -1711,10 +1821,9 @@ where
         // RPC).
         let moved = apply_config_moves(&cfg, &mut state)?;
         let refresh_ctx = self.refresh_ctx_for(work_dir, &cfg);
-        let (plan, refresh_report) =
-            magma_apply::engine::refresh_then_plan(&cfg, &mut state, refresh_ctx.as_ref())
-                .await
-                .map_err(|e| Error::MagmaExecution(format!("magma_plan: {e}")))?;
+        let (plan, refresh_report) = self
+            .supervised_refresh_then_plan(&cfg, &mut state, refresh_ctx.as_ref())
+            .await?;
 
         // Terraform parity (mirrors magma-cli's `cmd_plan`/`cmd_apply` —
         // see `report_refresh`'s call sites there): persist the
@@ -1972,7 +2081,7 @@ where
         // apply can't burst past a provider's secondary rate limit.
         // Per the MAGMA-NATIVE EXECUTION directive.
         let mut ctx = magma_apply::engine::ApplyContext::new(work_dir.to_path_buf())
-            .with_provider_factory(native_provider_router());
+            .with_provider_factory(self.provider_factory_for(None));
         // Forward each provider's ConfigureProvider value. Two sources,
         // merged per `build_provider_configs`:
         //   * rendered `provider "<name>" { .. }` blocks (the Ruby DSL's
@@ -2188,6 +2297,11 @@ where
             },
         }))
         .unwrap_or_default();
+        crate::github_app::observe_cycle(
+            &self.cfg.provider_configs,
+            outcome.failed.iter().map(|f| f.reason.as_str()),
+            !outcome.applied.is_empty(),
+        );
         Ok(if outcome.failed.is_empty() {
             ok_tofu_result(stdout, started)
         } else {
@@ -3039,6 +3153,8 @@ mod tests {
             audit_log_path: None,
             artifact_store: None,
             provider_configs: std::collections::BTreeMap::new(),
+            provider_guard: crate::executor::provider_guard::ProviderGuardConfig::default(),
+            provider_factory: None,
         }
     }
 
@@ -4082,6 +4198,8 @@ mod tests {
                 audit_log_path: None,
                 artifact_store: None,
                 provider_configs: std::collections::BTreeMap::new(),
+                provider_guard: crate::executor::provider_guard::ProviderGuardConfig::default(),
+                provider_factory: None,
             })
         };
 
@@ -4152,6 +4270,8 @@ mod tests {
                 audit_log_path: None,
                 artifact_store: None,
                 provider_configs: std::collections::BTreeMap::new(),
+                provider_guard: crate::executor::provider_guard::ProviderGuardConfig::default(),
+                provider_factory: None,
             })
         };
 
@@ -4266,6 +4386,8 @@ mod tests {
             audit_log_path: None,
             artifact_store: None,
             provider_configs: std::collections::BTreeMap::new(),
+            provider_guard: crate::executor::provider_guard::ProviderGuardConfig::default(),
+            provider_factory: None,
         };
         let exec = MagmaExecutor::new(cfg.clone());
         let tmp = tempfile::tempdir().unwrap();
@@ -4325,6 +4447,8 @@ mod tests {
             audit_log_path: None,
             artifact_store: None,
             provider_configs: std::collections::BTreeMap::new(),
+            provider_guard: crate::executor::provider_guard::ProviderGuardConfig::default(),
+            provider_factory: None,
         };
         let exec = MagmaExecutor::new(cfg);
         let tmp = tempfile::tempdir().unwrap();
@@ -4819,5 +4943,452 @@ mod stall_diagnosis_tests {
             msg.contains("not covered by the known stall shapes"),
             "got: {msg}"
         );
+    }
+}
+
+#[cfg(test)]
+mod provider_guard_tests {
+    use super::*;
+    use crate::backend::state_backend::InMemoryStateBackend;
+    use crate::executor::provider_guard::ProviderGuardConfig;
+    use magma_apply::engine::RoutingProviderFactory;
+    use magma_cty::{CtyType, DynamicValue};
+    use magma_plugin::provider::{
+        PlannedChange as ProviderChange, Provider, ProviderError, ProviderSchema,
+    };
+    use magma_types::{
+        InstanceStatus, ModulePath, ProviderReference, ResourceAddress, ResourceKind,
+        ResourceTypeId, State, StateInstance, StateResource,
+    };
+    use serde_json::json;
+    use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    #[derive(Clone, Copy)]
+    enum Behaviour {
+        Hang,
+        Answer,
+        RejectReads,
+        RejectConfigure,
+        RejectMutations,
+    }
+
+    fn object_type() -> CtyType {
+        CtyType::Object(BTreeMap::from([
+            ("id".to_string(), CtyType::String),
+            ("name".to_string(), CtyType::String),
+        ]))
+    }
+
+    fn schema() -> ProviderSchema {
+        ProviderSchema {
+            provider_config: CtyType::Object(BTreeMap::from([(
+                "token".to_string(),
+                CtyType::String,
+            )])),
+            resources: BTreeMap::from([("github_repository".to_string(), object_type())]),
+            data_sources: BTreeMap::new(),
+            resource_versions: BTreeMap::new(),
+        }
+    }
+
+    struct Scripted(Behaviour);
+
+    #[async_trait::async_trait]
+    impl Provider for Scripted {
+        async fn get_schema(&mut self) -> std::result::Result<ProviderSchema, ProviderError> {
+            Ok(schema())
+        }
+        async fn configure(
+            &mut self,
+            _: &DynamicValue,
+            _: &str,
+        ) -> std::result::Result<(), ProviderError> {
+            match self.0 {
+                Behaviour::RejectConfigure => Err(ProviderError::Transport(
+                    "GET https://api.github.com/orgs/pleme-io: 401 Bad credentials []".to_string(),
+                )),
+                _ => Ok(()),
+            }
+        }
+        async fn plan_resource_change(
+            &mut self,
+            _: &str,
+            _: &DynamicValue,
+            _: &DynamicValue,
+            _: &DynamicValue,
+        ) -> std::result::Result<ProviderChange, ProviderError> {
+            match self.0 {
+                Behaviour::RejectMutations => Err(ProviderError::Transport(
+                    "POST https://api.github.com/orgs/pleme-io/repos: 401 Bad credentials []"
+                        .to_string(),
+                )),
+                _ => Err(ProviderError::NoNewState),
+            }
+        }
+        async fn apply_resource_change(
+            &mut self,
+            _: &str,
+            _: &DynamicValue,
+            _: &DynamicValue,
+            _: &DynamicValue,
+        ) -> std::result::Result<DynamicValue, ProviderError> {
+            Err(ProviderError::NoNewState)
+        }
+        async fn read_resource(
+            &mut self,
+            _: &str,
+            current: &DynamicValue,
+        ) -> std::result::Result<Option<DynamicValue>, ProviderError> {
+            match self.0 {
+                Behaviour::Hang => std::future::pending().await,
+                Behaviour::RejectReads => Err(ProviderError::Transport(
+                    "GET https://api.github.com/repos/x: 401 Bad credentials []".to_string(),
+                )),
+                _ => {
+                    let mut seen = current.to_json(&object_type()).unwrap();
+                    seen["name"] = json!("refreshed");
+                    Ok(Some(
+                        DynamicValue::from_json(&seen, &object_type()).unwrap(),
+                    ))
+                }
+            }
+        }
+        async fn read_data_source(
+            &mut self,
+            _: &str,
+            _: &DynamicValue,
+        ) -> std::result::Result<Option<DynamicValue>, ProviderError> {
+            Ok(None)
+        }
+        async fn import_resource_state(
+            &mut self,
+            _: &str,
+            _: &str,
+        ) -> std::result::Result<Option<DynamicValue>, ProviderError> {
+            Ok(None)
+        }
+        async fn upgrade_resource_state(
+            &mut self,
+            _: &str,
+            _: i64,
+            _: &[u8],
+        ) -> std::result::Result<DynamicValue, ProviderError> {
+            Err(ProviderError::NoNewState)
+        }
+    }
+
+    fn scripted_factory(
+        script: impl Fn(usize) -> Behaviour + Send + Sync + 'static,
+    ) -> (
+        Arc<dyn magma_apply::engine::ProviderFactory>,
+        Arc<AtomicUsize>,
+    ) {
+        let dials = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&dials);
+        let factory = RoutingProviderFactory::new().with_native("github", move || {
+            let n = counted.fetch_add(1, Ordering::SeqCst);
+            Box::new(Scripted(script(n))) as Box<dyn Provider>
+        });
+        (Arc::new(factory), dials)
+    }
+
+    fn row(name: &str) -> StateResource {
+        StateResource {
+            address: ResourceAddress {
+                module: ModulePath::root(),
+                kind: ResourceKind::Managed,
+                type_id: ResourceTypeId("github_repository".into()),
+                name: name.into(),
+                key: None,
+            },
+            provider: ProviderReference {
+                source: "integrations/github".into(),
+                name: "github".into(),
+                alias: None,
+            },
+            instances: vec![StateInstance {
+                index_key: None,
+                schema_version: 0,
+                attributes: json!({ "id": name, "name": name }),
+                sensitive_attribute_paths: Vec::new(),
+                private: vec![],
+                dependencies: vec![],
+                status: InstanceStatus::Ready,
+            }],
+        }
+    }
+
+    fn guard(read_secs: u64, idle_secs: u64) -> ProviderGuardConfig {
+        ProviderGuardConfig {
+            enabled: true,
+            dial_secs: 5,
+            read_secs,
+            idle_secs,
+        }
+    }
+
+    async fn seeded(
+        names: &[&str],
+        provider_guard: ProviderGuardConfig,
+        factory: Arc<dyn magma_apply::engine::ProviderFactory>,
+    ) -> (MagmaExecutor<InMemoryStateBackend>, tempfile::TempDir) {
+        let exec = MagmaExecutor::new(MagmaExecutorConfig {
+            structural_apply: false,
+            state_backend: Arc::new(InMemoryStateBackend::new()),
+            schema_name: "guard_schema".into(),
+            template_name: "guard_template".into(),
+            state_name: "default".into(),
+            backend_shape: BackendShape::Magma,
+            plan_checkpoint: true,
+            apply_quantum_secs: None,
+            preflight_laws: false,
+            drift_policy: magma_drift::DriftPolicy::conservative_default(),
+            audit_log_path: None,
+            artifact_store: None,
+            provider_configs: BTreeMap::new(),
+            provider_guard,
+            provider_factory: Some(factory),
+        });
+        seed_state(&exec, names).await;
+        let dir = tempfile::tempdir().unwrap();
+        static BUCKETS: AtomicUsize = AtomicUsize::new(0);
+        let bucket = BUCKETS.fetch_add(1, Ordering::SeqCst);
+        let mut resources = serde_json::Map::new();
+        for n in names {
+            resources.insert((*n).to_string(), json!({ "name": n }));
+        }
+        tokio::fs::write(
+            dir.path().join("main.tf.json"),
+            json!({
+                "provider": { "github": { "token": format!("own-bucket-{bucket}") } },
+                "resource": { "github_repository": resources },
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+        (exec, dir)
+    }
+
+    async fn seed_state(exec: &MagmaExecutor<InMemoryStateBackend>, names: &[&str]) {
+        let state = State {
+            version: 4,
+            terraform_version: "1.9.0".into(),
+            serial: 1,
+            lineage: uuid::Uuid::nil(),
+            outputs: Default::default(),
+            resources: names.iter().map(|n| row(n)).collect(),
+        };
+        exec.ensure_state_table().await.unwrap();
+        magma_backend::Backend::write_state(&exec.make_backend(), &state)
+            .await
+            .unwrap();
+    }
+
+    async fn names_in_state(
+        exec: &MagmaExecutor<InMemoryStateBackend>,
+    ) -> BTreeMap<String, String> {
+        let state = magma_backend::Backend::read_state(&exec.make_backend())
+            .await
+            .unwrap();
+        state
+            .resources
+            .iter()
+            .map(|r| {
+                (
+                    r.address.name.clone(),
+                    r.instances[0].attributes["name"]
+                        .as_str()
+                        .unwrap()
+                        .to_string(),
+                )
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn with_the_guard_off_a_hung_read_holds_the_plan_as_it_always_did() {
+        let (factory, _) = scripted_factory(|_| Behaviour::Hang);
+        let (exec, dir) = seeded(&["a"], ProviderGuardConfig::default(), factory).await;
+        let held =
+            tokio::time::timeout(Duration::from_secs(2), exec.plan(dir.path(), None, &[])).await;
+        assert!(held.is_err(), "the default keeps today's behaviour");
+    }
+
+    #[tokio::test]
+    async fn a_hung_provider_no_longer_stalls_a_plan_pass() {
+        let (factory, dials) = scripted_factory(|n| {
+            if n == 0 {
+                Behaviour::Hang
+            } else {
+                Behaviour::Answer
+            }
+        });
+        let (exec, dir) = seeded(&["a", "b", "c"], guard(1, 30), factory).await;
+        tokio::time::timeout(Duration::from_secs(15), exec.plan(dir.path(), None, &[]))
+            .await
+            .expect("the guarded plan returns instead of waiting on the hung read")
+            .unwrap();
+        assert_eq!(
+            dials.load(Ordering::SeqCst),
+            2,
+            "the hung process is replaced"
+        );
+        assert_eq!(
+            names_in_state(&exec).await,
+            BTreeMap::from([
+                ("a".to_string(), "a".to_string()),
+                ("b".to_string(), "refreshed".to_string()),
+                ("c".to_string(), "refreshed".to_string()),
+            ]),
+            "the row that never answered is kept and the rest are read"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_provider_that_always_hangs_ends_the_pass_within_its_replacement_bound() {
+        let (factory, dials) = scripted_factory(|_| Behaviour::Hang);
+        let (exec, dir) = seeded(&["a", "b", "c", "d", "e", "f"], guard(1, 30), factory).await;
+        tokio::time::timeout(Duration::from_secs(15), exec.plan(dir.path(), None, &[]))
+            .await
+            .expect("the pass ends after the bounded replacements")
+            .unwrap();
+        assert_eq!(
+            dials.load(Ordering::SeqCst),
+            4,
+            "one dial and 3 replacements"
+        );
+        assert_eq!(
+            names_in_state(&exec).await.len(),
+            6,
+            "a hung read drops nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_watchdog_ends_a_pass_with_no_progress_and_writes_no_state() {
+        let (factory, _) = scripted_factory(|_| Behaviour::Hang);
+        let (exec, dir) = seeded(&["a", "b"], guard(3600, 1), factory).await;
+        let err = tokio::time::timeout(Duration::from_secs(15), exec.plan(dir.path(), None, &[]))
+            .await
+            .expect("the watchdog fires")
+            .unwrap_err();
+        let Error::ProviderStalled(stalled) = &err else {
+            panic!("expected a typed stall, got {err:?}");
+        };
+        assert_eq!(stalled.subject.as_deref(), Some("github_repository.a"));
+        assert_eq!(stalled.in_flight.len(), 1);
+        assert!(err.is_retryable());
+        assert_eq!(names_in_state(&exec).await.len(), 2);
+    }
+
+    #[test]
+    fn a_stall_policy_never_ticks_slower_than_its_default_nor_past_its_idle_bound() {
+        let policy = stall_policy_from(&guard(1, 1));
+        assert_eq!(policy.idle, Duration::from_secs(1));
+        assert_eq!(policy.tick, Duration::from_millis(250));
+        let long = stall_policy_from(&guard(120, 300));
+        assert_eq!(long.tick, Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn the_refresh_context_carries_a_guard_only_when_configured() {
+        let (factory, _) = scripted_factory(|_| Behaviour::Answer);
+        let cfg = magma_config::Config::from_json(json!({
+            "provider": { "github": {} },
+        }))
+        .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let (off, _) = seeded(&[], ProviderGuardConfig::default(), Arc::clone(&factory)).await;
+        assert!(off
+            .refresh_ctx_for(dir.path(), &cfg)
+            .unwrap()
+            .progress()
+            .is_none());
+        let (on, _) = seeded(&[], guard(120, 300), factory).await;
+        assert!(on
+            .refresh_ctx_for(dir.path(), &cfg)
+            .unwrap()
+            .progress()
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn a_plans_credential_failures_reach_the_broker_from_a_read_and_from_a_dial() {
+        use crate::github_app::{self, AppCredentials, GitHubAppConfig, MintMode, TokenBroker};
+        use wiremock::matchers::{method, path_regex};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let minted = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&minted);
+        Mock::given(method("POST"))
+            .and(path_regex(r"^/app/installations/\d+/access_tokens$"))
+            .respond_with(move |_: &wiremock::Request| {
+                let n = counted.fetch_add(1, Ordering::SeqCst);
+                ResponseTemplate::new(201).set_body_json(json!({
+                    "token": format!("ghs_{n}"),
+                    "expires_at": (chrono::Utc::now() + chrono::Duration::minutes(60)).to_rfc3339(),
+                    "permissions": {},
+                }))
+            })
+            .mount(&server)
+            .await;
+        github_app::configure(
+            &GitHubAppConfig {
+                token_mint: MintMode::Provider,
+                api_url: server.uri(),
+            },
+            true,
+        );
+        let broker = TokenBroker::global().unwrap();
+        let creds = |installation_id: &str| AppCredentials {
+            app_id: "4242".into(),
+            installation_id: installation_id.into(),
+            private_key_pem: github_app::test_keys::pkcs1().into(),
+        };
+
+        for (installation, behaviour) in [
+            ("1", Behaviour::RejectReads),
+            ("2", Behaviour::RejectConfigure),
+        ] {
+            let first = broker.token(&creds(installation)).await.unwrap().token;
+            let (factory, _) = scripted_factory(move |_| behaviour);
+            let (mut exec, dir) = seeded(&["a"], guard(5, 30), factory).await;
+            exec.cfg.provider_configs =
+                BTreeMap::from([("github".to_string(), json!({ "token": first.clone() }))]);
+            exec.plan(dir.path(), None, &[]).await.unwrap();
+            let next = broker.token(&creds(installation)).await.unwrap().token;
+            assert_ne!(
+                next, first,
+                "the observed 401 makes the next token a re-mint"
+            );
+        }
+
+        let first = broker.token(&creds("3")).await.unwrap().token;
+        let (factory, _) = scripted_factory(|_| Behaviour::RejectMutations);
+        let (mut exec, dir) = seeded(&[], guard(5, 30), factory).await;
+        exec.cfg.provider_configs =
+            BTreeMap::from([("github".to_string(), json!({ "token": first.clone() }))]);
+        tokio::fs::write(
+            dir.path().join("main.tf.json"),
+            json!({
+                "provider": { "github": { "token": "own-bucket-apply" } },
+                "resource": { "github_repository": { "a": { "name": "a" } } },
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+        exec.plan(dir.path(), None, &[]).await.unwrap();
+        let applied = exec.apply(dir.path(), None, true).await.unwrap();
+        assert!(
+            !applied.failed_changes.is_empty(),
+            "the apply reached the provider"
+        );
+        let next = broker.token(&creds("3")).await.unwrap().token;
+        assert_ne!(next, first, "an apply's 401 makes the next token a re-mint");
     }
 }
