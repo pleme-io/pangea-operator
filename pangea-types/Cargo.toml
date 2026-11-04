@@ -38,5 +38,5 @@ cynic = { version = "3", optional = true }
 # traits, with the derive here impl'ing the 0.98 one while the operator consumes
 # it through 0.99. Keep this number equal to the workspace's.
 kube = { version = "0.99", features = ["derive"], default-features = false }
-k8s-openapi = { version = "0.24", features = ["v1_31"] }
+k8s-openapi = { version = "0.27", features = ["v1_31"] }
 schemars = "0.8"
