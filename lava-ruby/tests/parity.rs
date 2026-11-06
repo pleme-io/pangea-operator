@@ -55,6 +55,7 @@ fn pinned_goldens_are_byte_identical() {
     };
     let arch = root.join("pangea-architectures");
     let goldens = arch.join("spec/parity/goldens");
+    let fixtures = arch.join("spec/fixtures/parity");
     let cases: Vec<(String, PathBuf)> = std::fs::read_dir(&goldens)
         .expect("goldens dir")
         .flatten()
@@ -64,11 +65,7 @@ fn pinned_goldens_are_byte_identical() {
                 .to_string_lossy()
                 .strip_suffix(".tf.json")?
                 .to_string();
-            let tpl = if name == "pleme_io_opensource" {
-                arch.join("workspaces/pleme-io-opensource/pleme_io_opensource.rb")
-            } else {
-                arch.join("spec/fixtures/parity").join(format!("{name}.rb"))
-            };
+            let tpl = fixtures.join(format!("{name}.rb"));
             Some((name, tpl))
         })
         .filter(|(n, _)| {
@@ -79,6 +76,21 @@ fn pinned_goldens_are_byte_identical() {
         !cases.is_empty(),
         "no goldens found under {}",
         goldens.display()
+    );
+    let unpinned: Vec<&str> = cases
+        .iter()
+        .filter(|(name, tpl)| {
+            let input = fixtures.join(format!("{name}.org.yaml"));
+            let reads_pinned = std::fs::read_to_string(tpl)
+                .map(|src| src.contains(&format!("File.expand_path('{name}.org.yaml', __dir__)")))
+                .unwrap_or(false);
+            !(input.is_file() && reads_pinned)
+        })
+        .map(|(name, _)| name.as_str())
+        .collect();
+    assert!(
+        unpinned.is_empty(),
+        "goldens whose input is not a pinned spec/fixtures/parity/<name>.org.yaml read by spec/fixtures/parity/<name>.rb: {unpinned:?}"
     );
     let cfg = corpus_config(&root);
     let mut failures = vec![];
