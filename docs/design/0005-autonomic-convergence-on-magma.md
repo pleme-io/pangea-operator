@@ -133,7 +133,7 @@ cargo workspace + one release.
 
 ## pangea-api — the in-memory product layer (the pangea-service)
 
-§II.10 anchors **pangea-api** as the product layer on magma: it consumes magma's
+**pangea-api** is the product layer on magma: it consumes magma's
 Rust library (interface 4), holds the **full fleet state in memory** (the
 in-memory chain is *non-negotiable* for its responsiveness), and offers
 **microservice-level assistance** to the operator and to humans/agents. The
