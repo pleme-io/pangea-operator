@@ -164,8 +164,7 @@ async fn main() -> Result<()> {
     // Initialize tracing
     init_tracing()?;
 
-    // One-shot schema-migration mode (theory/MAGMA-POSTGRES-LIFECYCLE.md
-    // §1, M1). Checked right after tracing so failures log normally
+    // One-shot schema-migration mode (M1). Checked right after tracing so failures log normally
     // rather than needing clean-stdout redirection like the two
     // generator flags above.
     if env::args().any(|arg| arg == "--migrate") {
@@ -307,7 +306,6 @@ async fn main() -> Result<()> {
     //                                                  compiled in)
     //   PANGEA_COMPILER_BACKEND=http                 → sidecar (LEGACY/sunset,
     //                                                  explicit opt-in only)
-    // See theory/PANGEA-WORKSPACE-RECONCILIATION.md § M8.2.
     let compiler_endpoint = op_cfg.compiler.endpoint.clone();
     // Sidecar sunset (2026-06-02): default to in-process magnus. The HTTP
     // sidecar is legacy; embedded is the strategy. An explicit
@@ -575,8 +573,7 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Shared shutdown-in-progress flag (theory/MAGMA-POSTGRES-LIFECYCLE.md
-    // §4, M2, Gap D) — flipped true the moment a drain signal is
+    // Shared shutdown-in-progress flag (M2, Gap D) — flipped true the moment a drain signal is
     // received, before any controller is aborted, so /readyz on every
     // health server this process runs reflects "draining" immediately
     // rather than waiting on a DB probe (or a DB-less deploy's
@@ -785,7 +782,6 @@ async fn main() -> Result<()> {
     // M1 — ArchitectureGem reconciler. Reuses the shared compiler
     // backend already in state — same dispatch as every other
     // controller (template, packer, synthesizer-format).
-    // See theory/PANGEA-WORKSPACE-RECONCILIATION.md § M8.2.
     let arch_gem_client = state.client.clone();
     let arch_gem_backend = state.compiler_backend.clone();
     let arch_gem_policy = state.operator_policy.clone();
@@ -822,7 +818,7 @@ async fn main() -> Result<()> {
     });
 
     // ReconciliationLoop (roda) reconciler — the loop-granularity axis
-    // (theory/RECONCILIATION-TOPOLOGY.md §II). Watches ReconciliationLoop CRs;
+    // of reconciliation topology. Watches ReconciliationLoop CRs;
     // resolves each loop's label selector against the fleet's
     // InfrastructureTemplates and reports membership + ticks at the loop's
     // cadence. First increment: membership + observation + cadence; cadence-
@@ -900,7 +896,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Gap D (theory/MAGMA-POSTGRES-LIFECYCLE.md §4, M2): flip /readyz to
+    // Gap D (M2): flip /readyz to
     // failing on every health server FIRST, before touching a single
     // controller — the Service should pull this pod's endpoint before
     // any in-flight or new work routes to it, not after.
@@ -987,7 +983,7 @@ async fn main() -> Result<()> {
 /// [`pangea_operator::backend::StateLock::ensure_lock_table`] calls, then
 /// exits.
 ///
-/// theory/MAGMA-POSTGRES-LIFECYCLE.md §1 (M1) — meant to be invoked as a
+/// Milestone M1 — meant to be invoked as a
 /// shinka `DatabaseMigration`'s migrator command, so the schema-ready
 /// signal becomes an explicit, observable step a `shinka-wait` init
 /// container can poll, rather than the best-effort ensure buried inside

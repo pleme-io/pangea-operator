@@ -23,8 +23,7 @@ use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-/// Shared shutdown-in-progress flag (theory/MAGMA-POSTGRES-LIFECYCLE.md
-/// §4, M2, Gap D). `main.rs` flips this to `true` the moment a drain
+/// Shared shutdown-in-progress flag (M2, Gap D). `main.rs` flips this to `true` the moment a drain
 /// signal is received, before aborting any controller — `/readyz`
 /// checks it first, so the Service pulls this pod's endpoint
 /// immediately rather than waiting on a DB probe (or a DB-less deploy's
@@ -74,7 +73,7 @@ fn progress_verdict(metrics: &Metrics, window_seconds: i64) -> (StatusCode, Stri
 /// the DB is genuinely usable again. With no pool wired (the DB-less
 /// deploy), readiness is liveness-equivalent.
 ///
-/// Gap C fix (theory/MAGMA-POSTGRES-LIFECYCLE.md §4, M2): a bare
+/// Gap C fix (M2): a bare
 /// `SELECT 1` only proves the socket connects — it stays green even when
 /// the schema was never migrated (a fresh CNPG cluster before `--migrate`
 /// / the main path's best-effort ensure ran, or a permissions issue

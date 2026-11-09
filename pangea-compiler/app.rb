@@ -30,8 +30,8 @@ require "terraform-synthesizer"
 end
 
 # pangea-architectures is now bundled into the compiler image (see
-# Gemfile comment) for M1 of
-# theory/PANGEA-WORKSPACE-RECONCILIATION.md. Workspace .rb files that
+# Gemfile comment) for milestone M1 (ArchitectureGem verification).
+# Workspace .rb files that
 # `require 'pangea/architectures/cloudflare_tunnel'` will resolve via
 # the bundled gem's lib/. Operator-side smoke testing happens via the
 # new /v1/architectures RPCs introduced below — see ArchitectureGem
@@ -239,7 +239,7 @@ class PangeaCompiler < Sinatra::Base
   end
 
   # ────────────────────────────────────────────────────────────────
-  # M1: ArchitectureGem RPCs — pleme-io/theory/PANGEA-WORKSPACE-RECONCILIATION.md
+  # M1: ArchitectureGem RPCs
   #
   # The operator's ArchitectureGem reconciler calls these to verify
   # at startup (and at refreshInterval) that:

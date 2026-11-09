@@ -2235,9 +2235,7 @@ pub enum Phase {
     Pending,
     /// M2 — checking that every ArchitectureGem this template
     /// references has phase `Loaded` (every expected class loaded +
-    /// every fixture passed). Cannot advance until verified. See
-    /// theory/PANGEA-WORKSPACE-RECONCILIATION.md "Reconciliation
-    /// state machine".
+    /// every fixture passed). Cannot advance until verified.
     Verifying,
     /// M2 — typed gate: every required gem is loaded + smoke-tested.
     /// Past this point gem-loading-failure modes are eliminated.
@@ -3329,7 +3327,7 @@ providerCredentials:
         assert!(json.contains("cycleCount"));
     }
 
-    // M0 coverage floor (theory/PANGEA-OPERATOR.md §XVII row 6): pin the
+    // M0 coverage floor: pin the
     // Default variant before swapping the hand-written `impl Default` for
     // std `#[derive(Default)]` + `#[default]`. `Phase::ALL` is untouched —
     // that's the separate size-mismatch row (missing `CompileBlocked`),

@@ -349,8 +349,8 @@ async fn embedded_backend_smoke() {
         .expect("prepare_gem idempotent");
 
     // Step 10 — terreno reservation: prepare_gem with kind=Lisp must
-    // return a typed NotImplemented error pointing at TERRENO.md M2.
-    // This is the parallel-track invariant from theory/TERRENO.md:
+    // return a typed NotImplemented error naming terreno M2.
+    // This is the parallel-track invariant:
     // the schema + dispatch surface exist NOW; terreno-eval (M2)
     // wires the actual implementation later. Until then the
     // controller surfaces this as `GemPrepareFailed` on the CR.

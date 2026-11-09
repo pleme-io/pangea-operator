@@ -8,7 +8,7 @@
 //!      in magma for pangea-operator"; tofu is now an explicit opt-in via
 //!      CR/env, never the implicit default)
 //!
-//! Per `theory/MAGMA-OPERATOR-BACKEND.md` §VI. Both `tofu` and `magma` ship
+//! Both `tofu` and `magma` ship
 //! indefinitely; magma is the default + tofu is the per-CR escape hatch /
 //! last-resort fallback.
 

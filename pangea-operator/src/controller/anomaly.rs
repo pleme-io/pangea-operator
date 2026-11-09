@@ -1,5 +1,5 @@
 //! The typed apply-anomaly taxonomy + classifier — the reacting FSM's
-//! **detection border** (theory/ANOMALY-REACTIVE-RECONCILE.md §IV, §VII.2).
+//! **detection border**.
 //!
 //! # Why this module exists
 //!
@@ -41,7 +41,7 @@
 //! at the executor border; this module classifies those records.
 
 /// The convergence **mode** of a remediation — the Lyapunov settle-bound
-/// made explicit (theory/ANOMALY-REACTIVE-RECONCILE.md §IV, §VI).
+/// made explicit.
 ///
 /// Total open-anomaly weight is a Lyapunov function: non-increasing always,
 /// strictly decreasing while any non-`Hold` anomaly is open. Each anomaly's
@@ -77,8 +77,7 @@ impl RemediationMode {
 }
 
 /// The typed apply-anomaly sum — one exhaustive taxonomy over every failure
-/// class the apply stage can detect (theory/ANOMALY-REACTIVE-RECONCILE.md
-/// §IV). **Closed enum on purpose** (NOT `#[non_exhaustive]`): a new provider
+/// class the apply stage can detect. **Closed enum on purpose** (NOT `#[non_exhaustive]`): a new provider
 /// failure mode that isn't classified is an [`ApplyAnomaly::Unclassified`]
 /// value — a runtime forcing function — and adding an arm here is a
 /// compile-time prompt to wire its remediation in the exhaustive `match`.

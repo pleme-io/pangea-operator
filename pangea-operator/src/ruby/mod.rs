@@ -5,8 +5,6 @@
 //! compiler sidecar directly. This is the M8.2 seam that lets us flip
 //! between sidecar and embedded paths via config/helm flag without
 //! touching reconciler code.
-//!
-//! See `theory/PANGEA-WORKSPACE-RECONCILIATION.md` § M8.
 
 pub mod backend;
 pub mod escape;

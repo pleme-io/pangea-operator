@@ -3,9 +3,7 @@
 > **Destination-first** (Operating Principle #0). This doc names the absolute-best
 > long-term shape of "pangea-operator as a full SaaS," then the phased path. It is
 > the **first dogfood** of the two pleme-io product doctrines:
-> [`theory/URDUME.md`](https://github.com/pleme-io/theory/blob/main/URDUME.md)
-> (the backend service) + [`theory/TELA.md`](https://github.com/pleme-io/theory/blob/main/TELA.md)
-> (the full-Rust frontend). `tela + tecido = one full SaaS product`.
+> urdume (the backend service) + tela (the full-Rust frontend). `tela + tecido = one full SaaS product`.
 
 ## The destination
 
@@ -48,7 +46,7 @@ gates which tenant sees which namespace. A SaaS tenant ⇒ one `PangeaNamespace`
 ## Current pangea-web → Tela
 
 `pangea-web` is a **Yew/wasm32** UI (built separately, not in the workspace) —
-per [`TELA.md`](https://github.com/pleme-io/theory/blob/main/TELA.md) §F3, **Yew
+under tela, **Yew
 is the named migration backlog to Leptos 0.7**. The console is a **greenfield
 Leptos rewrite** consuming the operator's GraphQL SDL (the Tela F5 seam), styled
 from **ishou** tokens, gated by **saguao** (Tela F7, identity off the JS heap).
@@ -102,7 +100,5 @@ auth shape). `pangea.quero.cloud` is a **reserved 2-part control-plane hostname*
   saguao-gated (F7, fixing the localStorage regression in a fresh build), and
   deploys via cargo-leptos+Nix (F9) at `pangea.quero.cloud`.
 
-**Canonical specs:** [`URDUME.md`](https://github.com/pleme-io/theory/blob/main/URDUME.md)
-+ [`TELA.md`](https://github.com/pleme-io/theory/blob/main/TELA.md). **Deploy
-precedent:** `k8s/clusters/rio/RUNBOOK-observability-portal.md` (grafana.quero.cloud).
+**Deploy precedent:** `k8s/clusters/rio/RUNBOOK-observability-portal.md` (grafana.quero.cloud).
 **Operator rule:** declare + observe only (org ★★ PLATFORM-MEDIATED).

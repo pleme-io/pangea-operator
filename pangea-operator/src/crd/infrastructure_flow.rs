@@ -338,7 +338,7 @@ impl InfrastructureFlow {
 mod tests {
     use super::*;
 
-    // M0 coverage floor (theory/PANGEA-OPERATOR.md §XVII row 6): pin the
+    // M0 coverage floor: pin the
     // Default variant before swapping the hand-written `impl Default` for
     // std `#[derive(Default)]` + `#[default]`.
     #[test]

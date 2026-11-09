@@ -16,7 +16,7 @@
 //! `StateStore`) addresses a *different* table (`{ns_schema}.{template}_states`,
 //! bytea `data`, with `created_at`) that is unused in production. Routing
 //! magma through it would read an empty/absent table → a fleet-wide
-//! create-storm (theory/EXECUTOR-MIGRATION.md §VI). This adapter is the
+//! create-storm. This adapter is the
 //! bridge: magma reads tofu's real rows, so a magma `plan` matches tofu's
 //! plan (the parity gate) and a cut-over does not re-create anything.
 //!

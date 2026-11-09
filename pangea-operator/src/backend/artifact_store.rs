@@ -3,8 +3,7 @@
 //!
 //! # Why this exists — the magma-native destination
 //!
-//! Per the org ★★ MAGMA-NATIVE EXECUTION directive (and
-//! `theory/MAGMA-OPERATOR-BACKEND.md` §II-bis): the operator pod is
+//! Per the org ★★ MAGMA-NATIVE EXECUTION directive: the operator pod is
 //! pure compute. Transient values live on the heap; **durable values
 //! live in Postgres; NOTHING durable lives on local disk** on the
 //! magma path. The one sanctioned filesystem reach is loading provider

@@ -1,8 +1,7 @@
 # Authoring infrastructure with pangea-operator
 
-Practical recipes for using the operator. For the theoretical frame,
-read [`theory/PANGEA-WORKSPACE-RECONCILIATION.md`](https://github.com/pleme-io/theory/blob/main/PANGEA-WORKSPACE-RECONCILIATION.md);
-for the full operator reference, read [`../CLAUDE.md`](../CLAUDE.md).
+Practical recipes for using the operator. For the full operator
+reference, read [`../CLAUDE.md`](../CLAUDE.md).
 
 ## Mental model
 
@@ -445,5 +444,3 @@ auto-applying during a known-disrupted window.
 - [`../CLAUDE.md`](../CLAUDE.md) — full operator reference
 - [`docs/design/`](./design/) — ADR-style design records (CRD shape,
   FluxCD integration, helmworks chart, breathability)
-- [`pleme-io/theory/PANGEA-WORKSPACE-RECONCILIATION.md`](https://github.com/pleme-io/theory/blob/main/PANGEA-WORKSPACE-RECONCILIATION.md)
-  — design intent + milestone history

@@ -1,5 +1,4 @@
-//! ArchitectureGem reconciler — M1 of
-//! `theory/PANGEA-WORKSPACE-RECONCILIATION.md`.
+//! ArchitectureGem reconciler — milestone M1 of workspace reconciliation.
 //!
 //! For each ArchitectureGem CR:
 //!   1. Phase=Loading: query compiler sidecar
@@ -33,8 +32,8 @@ use futures::StreamExt;
 /// alongside the existing controllers in `main.rs`.
 ///
 /// `backend` is dyn so callers can choose HTTP-to-sidecar or embedded
-/// magnus depending on `PANGEA_COMPILER_BACKEND` / helm flag (see M8.2
-/// design in `theory/PANGEA-WORKSPACE-RECONCILIATION.md`).
+/// magnus depending on `PANGEA_COMPILER_BACKEND` / helm flag (milestone
+/// M8.2).
 pub fn run(
     client: Client,
     backend: Arc<dyn CompilerBackend>,

@@ -4,7 +4,6 @@
 **Author:** drzzln (with Claude Opus 4.7)
 **Date:** 2026-04-26
 **Refines:** [0003 — helmworks chart + breathable workers](0003-helmworks-chart-and-breathable-workers.md)
-**Frame:** [theory/BREATHABILITY.md](../../../theory/BREATHABILITY.md) §III
 
 ## Why this refinement
 
@@ -342,5 +341,3 @@ pushed change reduces from ~45 s (cold + provider download) to ~10 s
 ## See also
 
 - [0003 — helmworks chart + breathable workers](0003-helmworks-chart-and-breathable-workers.md)
-- [theory/BREATHABILITY.md](../../../theory/BREATHABILITY.md) — fleet-wide pattern this fits inside.
-- [theory/THEORY.md §VII.3 — Pillar 11](../../../theory/THEORY.md) — the foundational invariant.

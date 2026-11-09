@@ -305,8 +305,8 @@ pub struct ControllerState {
     /// over `Arc<dyn IacExecutor>`. This field holds the always-built
     /// `TofuExecutor` (subprocess) — it is the explicit fallback when
     /// magma is the resolved backend but unavailable (feature off or
-    /// no state backend). Per `theory/MAGMA-OPERATOR-BACKEND.md` §VI
-    /// and `docs/design/0005-autonomic-convergence-on-magma.md`. Use
+    /// no state backend). Per
+    /// `docs/design/0005-autonomic-convergence-on-magma.md`. Use
     /// `executor_for(template)` to pick the per-CR backend (magma by
     /// default, tofu on explicit opt-out).
     pub executor: Arc<dyn IacExecutor>,
@@ -369,7 +369,6 @@ pub struct ControllerState {
 
     /// Compiler backend — HTTP sidecar today, embedded magnus when
     /// `embedded_ruby` is feature-on + `PANGEA_COMPILER_BACKEND=embedded`.
-    /// See `theory/PANGEA-WORKSPACE-RECONCILIATION.md` § M8.2.
     pub compiler_backend: Arc<dyn crate::ruby::CompilerBackend>,
 
     /// Routing-delivery client — pings ntfy / Slack / GitHub when a
@@ -542,8 +541,7 @@ impl ControllerState {
     ///     backend) → the always-built shared `TofuExecutor`. Never
     ///     panics: a missing backend silently falls back to tofu.
     ///
-    /// Per `theory/MAGMA-OPERATOR-BACKEND.md` §VI and
-    /// `docs/design/0005-autonomic-convergence-on-magma.md`.
+    /// Per `docs/design/0005-autonomic-convergence-on-magma.md`.
     /// ── ★★ RETURNS `ExecutorInfo`, NOT `IacExecutor`, AND THAT IS THE POINT ──
     ///
     /// This resolves WHICH executor backs a CR. It does **not** resolve

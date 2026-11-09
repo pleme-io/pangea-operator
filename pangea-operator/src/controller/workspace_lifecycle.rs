@@ -24,7 +24,7 @@
 //! forcing-functions (enumeration, no-trap, reachability, always-restable
 //! comfort) that make a wedged or non-convergent workspace a build failure.
 //!
-//! # Tier honesty (`theory/UNREPRESENTABILITY.md` §II)
+//! # Tier honesty
 //!
 //! Like the template FSM this is a controller reading phase off a CR, so
 //! transition legality is **parse-time-rejected** (a `Result::Err`), not a

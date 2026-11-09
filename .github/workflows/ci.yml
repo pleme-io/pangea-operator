@@ -30,7 +30,7 @@ jobs:
       # `flake-check` run -- including a bare `.trivyignore`-only change --
       # paid a full cold rebuild of the native amd64 embedded operator
       # image. camelot-builder-pleme-eks pods sit inside camelot-eks's own
-      # network where sui's in-cluster super-cache (theory/ATATAME.md's L1
+      # network where sui's in-cluster super-cache (the L1
       # origin) is reachable, the same wiring release.yml's image-fallback
       # job already proved live (vars.CAMELOT_SUI_SUBSTITUTER, set
       # 2026-07-19). `determinate: false` matches image-push.yml's own
@@ -244,7 +244,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # Coverage baseline (theory/PANGEA-OPERATOR.md §XVII row 6): informational
+      # Coverage baseline: informational
       # only — this is the reference floor for future work, not a merge gate.
       # `continue-on-error` because coverage-upload's own run.tlisp exits 1 on
       # a tarpaulin/upload failure; that must never fail this job. Kept on a

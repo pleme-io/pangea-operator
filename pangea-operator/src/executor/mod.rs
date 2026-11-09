@@ -18,8 +18,8 @@ pub mod recording;
 mod tofu;
 pub mod variable_resolver;
 mod workspace;
-// Magma-backed alternative IacExecutor (feature-gated). Per
-// theory/MAGMA-OPERATOR-BACKEND.md. Both `TofuExecutor` and
+// Magma-backed alternative IacExecutor (feature-gated). Both
+// `TofuExecutor` and
 // `MagmaExecutor` ship side-by-side; the controller selects at
 // startup or per-CR.
 #[cfg(feature = "executor_magma")]

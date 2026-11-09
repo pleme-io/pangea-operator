@@ -4,8 +4,7 @@
 //! startup before any InfrastructureTemplate that references one of
 //! its classes can advance past `Verified`.
 //!
-//! See `pleme-io/theory/PANGEA-WORKSPACE-RECONCILIATION.md` for the
-//! full design. This is the M1 deliverable: typed registry + smoke
+//! This is the M1 deliverable: typed registry + smoke
 //! gate that turns a `LoadError: cannot load such file --
 //! pangea/architectures/cloudflare_tunnel` from a silent retry-loop
 //! into a fail-fast typed condition on the ArchitectureGem CR.
@@ -123,7 +122,7 @@ pub struct GemSource {
     /// backward compatibility — every existing ArchitectureGem CR
     /// continues to validate + reconcile unchanged.
     ///
-    /// `Lisp` selects the terreno evaluator (theory/TERRENO.md M2);
+    /// `Lisp` selects the terreno evaluator (terreno milestone M2);
     /// `Wasm` selects a typed wasmtime component. Both are
     /// reserved at the schema layer today; the operator's
     /// prepare_gem returns a typed `NotImplemented` condition until
@@ -142,7 +141,7 @@ pub struct GemSource {
 
 /// Which evaluator interprets the gem's source files.
 ///
-/// See `theory/TERRENO.md` for the design intent: both Pangea Ruby
+/// Both Pangea Ruby
 /// (Track A) and terreno (Track B) register `ArchitectureGem` CRs;
 /// the operator dispatches to the correct backend via this field.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -183,7 +182,7 @@ pub struct SmokeFixture {
 
 /// Policy fields — the typed shape used at all four cascade levels
 /// (gem, workspace, template, resource). Innermost wins with safety
-/// precedence; see `theory/PANGEA-WORKSPACE-RECONCILIATION.md`.
+/// precedence.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GemPolicy {
@@ -298,8 +297,8 @@ pub struct ReactivePolicy {
 /// Innermost-wins per-field merge — the canonical convergence cascade.
 ///
 /// Replaces the hand-rolled merge loop that previously lived inline in
-/// `controller::reactive::EffectiveReactivePolicy::resolve`. Per
-/// `theory/CONVERGENCE-ADOPTION.md` §II.2, the gem → workspace →
+/// `controller::reactive::EffectiveReactivePolicy::resolve`. The gem →
+/// workspace →
 /// template cascade IS the `CascadePolicy` primitive; the trait's
 /// `resolve(layers, default)` default method folds the layers
 /// innermost-wins so the operator-side resolve becomes a one-line

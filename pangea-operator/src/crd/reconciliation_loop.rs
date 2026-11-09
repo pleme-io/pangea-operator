@@ -2,7 +2,7 @@
 //! typed reconcile loop that drives a CRD-selected set of workspaces at its
 //! own cadence + concurrency.
 //!
-//! See `pleme-io/theory/RECONCILIATION-TOPOLOGY.md` §II. The load-bearing
+//! The load-bearing
 //! move is decoupling the two granularities a reconciler conflates:
 //!   - **state granularity** — what unit of state converges (the workspace);
 //!   - **loop granularity** — what unit drives the cadence (this CRD).

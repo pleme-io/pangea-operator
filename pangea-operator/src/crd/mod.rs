@@ -314,7 +314,7 @@ pub fn generate_crds() -> String {
     );
 
     // ReconciliationLoop (roda): the loop-granularity axis
-    // (theory/RECONCILIATION-TOPOLOGY.md §II). Cluster-scoped; one wheel
+    // of reconciliation topology. Cluster-scoped; one wheel
     // drives a label-selected set of workspaces at its own cadence.
     crds.push_str("---\n");
     crds.push_str(

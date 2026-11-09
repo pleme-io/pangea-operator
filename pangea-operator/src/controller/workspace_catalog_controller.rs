@@ -17,9 +17,7 @@
 //! observable content actually changed. Conditions preserve their
 //! transition timestamps when their content didn't transition.
 //!
-//! See `pleme-io/theory/PANGEA-WORKSPACE-RECONCILIATION.md` §
-//! "Hierarchical policy cascade" for the four-level policy story; this
-//! controller owns the workspace level (cascade level 2).
+//! The policy cascade has four levels; this controller owns the workspace level (cascade level 2).
 
 use chrono::Utc;
 use kube::ResourceExt;

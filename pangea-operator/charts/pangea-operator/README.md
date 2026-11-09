@@ -130,5 +130,4 @@ kubectl delete crd \
 
 - Source: <https://github.com/pleme-io/pangea-operator>
 - ArtifactHub: <https://artifacthub.io/packages/helm/pangea-operator/pangea-operator>
-- Theory: <https://github.com/pleme-io/theory/blob/main/PANGEA-WORKSPACE-RECONCILIATION.md>
 - License: Apache-2.0

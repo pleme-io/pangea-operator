@@ -52,8 +52,7 @@ impl TofuCommand {
 }
 
 /// One typed per-resource apply failure, surfaced OUT of the executor so
-/// the controller's reacting FSM can classify it
-/// (theory/ANOMALY-REACTIVE-RECONCILE.md §VII.2). This is the executor-
+/// the controller's reacting FSM can classify it. This is the executor-
 /// border mirror of magma's `magma_apply::FailedChange { address, action,
 /// reason }` — a plain struct (no magma dep) so the controller side and the
 /// tests don't link magma. The magma executor populates this from

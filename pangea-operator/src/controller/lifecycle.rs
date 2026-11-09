@@ -12,7 +12,7 @@
 //! were unrepresentable only by *hope*.
 //!
 //! This module makes the lifecycle a **typed, data-first state machine** with
-//! the eclusa/galho discipline (see `theory/ECLUSA.md`):
+//! the eclusa/galho discipline:
 //!
 //! 1. **One [`TRANSITIONS`] table** is the single source of truth. A
 //!    transition exists iff a row exists. [`Phase::advance`] is a pure lookup
@@ -34,7 +34,7 @@
 //!    - `every_phase_is_a_comfortable_berth` — the always-restable matrix:
 //!      every phase offers a surgery-free exit.
 //!
-//! # Tier honesty (per `theory/UNREPRESENTABILITY.md` §II)
+//! # Tier honesty
 //!
 //! This is a **controller** FSM: the live `Phase` is read off a CR as a
 //! serialized tag, so transition legality is **parse-time-rejected** (a
@@ -214,7 +214,7 @@ pub enum Trigger {
     /// on this cluster.
     SourceInvalid,
     /// `Verifying`/`Verified` synthetic pass-through (gem-readiness gate is a
-    /// no-op today; see `theory/PANGEA-WORKSPACE-RECONCILIATION.md`).
+    /// no-op today).
     GemsAssumedReady,
     /// `CompilerBackend::compile` succeeded (Compiling → Initializing).
     CompileOk,

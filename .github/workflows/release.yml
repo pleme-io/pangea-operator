@@ -328,7 +328,7 @@ jobs:
       runner: ${{ needs.resolve-runner.outputs.runner }}
       buildCores: "1"
       maxJobs: "1"
-      # Camelot's in-cluster sui binary-cache (theory/ATATAME.md's "sui cache
+      # Camelot's in-cluster sui binary-cache (the "sui cache
       # serve" L1 origin, deployed camelot-eks/infrastructure/sui) -- the same
       # two-field wiring breathe/image.yml already ships. Only reachable from
       # an ARC pod genuinely inside camelot-eks's own network (its NetworkPolicy

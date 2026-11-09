@@ -57,10 +57,10 @@ them for the *core loop*.
 
 | Layer | Primitive | Owns | Maturity |
 |---|---|---|---|
-| **Lifecycle FSM** | eclusa/galho *pattern* (`theory/ECLUSA.md`) | one typed `transition_table()`, `PhaseClass` partition, two good terminals, `validate()` no-trap + `is_reachable()` BFS + always-restable comfort matrix | principles shipped in `galho-types`; copy the test shapes |
+| **Lifecycle FSM** | eclusa/galho *pattern* | one typed `transition_table()`, `PhaseClass` partition, two good terminals, `validate()` no-trap + `is_reachable()` BFS + always-restable comfort matrix | principles shipped in `galho-types`; copy the test shapes |
 | **Authoring** | TYPED-SPEC triplet + `(deftyped-fsm)` | typed Rust border + Lisp spec (destination) + mockable interpreter behind an `OperatorEnv` trait | triplet ★★ shipped; `(deftyped-fsm)` codegen unshipped — hand-write legs 1+3 now |
-| **Intra-cycle work graph** | shigoto (`theory/SHIGOTO.md`) | each lifecycle step = a `RecordingJob` in a `Dag`; `Gate`s, `RetryPolicy`, `BudgetTree`, `TickReceipt` → `status.lastCycle` | shipped; operator already pins `shigoto-types`; this makes it the 2nd prod consumer |
-| **Convergence semantics** | Viggy Seven-Beat (`theory/CONTINUOUS-SOLUTION-MACHINE.md`) | the loop *is* Observe→Diff→Classify→Decide→Act→Attest→Tick; converge existing reactive/escalation/anomaly machinery onto canonical `RemediationPolicy`/`EscalationLadder` | directive ★★; promessa crate draft — adopt the shape |
+| **Intra-cycle work graph** | shigoto | each lifecycle step = a `RecordingJob` in a `Dag`; `Gate`s, `RetryPolicy`, `BudgetTree`, `TickReceipt` → `status.lastCycle` | shipped; operator already pins `shigoto-types`; this makes it the 2nd prod consumer |
+| **Convergence semantics** | Viggy Seven-Beat | the loop *is* Observe→Diff→Classify→Decide→Act→Attest→Tick; converge existing reactive/escalation/anomaly machinery onto canonical `RemediationPolicy`/`EscalationLadder` | directive ★★; promessa crate draft — adopt the shape |
 
 ## 3. The set of state machines
 
@@ -154,7 +154,7 @@ Converge the settling counters + `EscalationLadder` + `ReactivePolicy` +
 
 ## 4. Unrepresentability ledger (tier-honest)
 
-Per `theory/UNREPRESENTABILITY.md` §II — a `Result::Err` is *mitigation*, a
+A `Result::Err` is *mitigation*, a
 compile error / absent path is *unrepresentability*. We state the tier; we
 never round up.
 

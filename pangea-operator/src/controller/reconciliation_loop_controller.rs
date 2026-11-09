@@ -1,5 +1,5 @@
 //! ReconciliationLoop (`roda`) reconciler — the loop-granularity axis of
-//! `theory/RECONCILIATION-TOPOLOGY.md` §II.
+//! reconciliation topology.
 //!
 //! For each `ReconciliationLoop` CR this controller:
 //!   1. Resolves `spec.selector.matchLabels` against every

@@ -35,8 +35,7 @@ pub enum Error {
     TofuExecution(String),
 
     /// Magma in-process execution error. Parallel to `TofuExecution`
-    /// for the `MagmaExecutor` IacExecutor impl. Per
-    /// theory/MAGMA-OPERATOR-BACKEND.md — both executors ship side
+    /// for the `MagmaExecutor` IacExecutor impl. Both executors ship side
     /// by side with symmetric error variants.
     #[error("Magma execution failed: {0}")]
     MagmaExecution(String),
@@ -165,8 +164,7 @@ impl Error {
     /// (`shigoto_types::failure`). `Transient` failures are worth
     /// retrying; `Declarative` failures (a genuinely wrong source /
     /// config) are not. This is the TYPED classification surface;
-    /// `is_retryable` is its boolean projection. Per
-    /// theory/FAILURE-CLASSIFICATION.md §V, pangea-operator joins the
+    /// `is_retryable` is its boolean projection. pangea-operator joins the
     /// fleet `FailureKind` vocabulary so downstream consumers (drift,
     /// attestation, controller backoff) pattern-match the typed kind
     /// instead of a bare bool.

@@ -114,8 +114,8 @@ impl std::fmt::Debug for CompileRequest {
 /// consumption) AND the in-memory typed value (for direct magma
 /// + future in-process consumers).
 ///
-/// The dual surface is the core of the in-memory exploit
-/// (theory/IN-MEMORY-PIPELINE.md): pangea-ruby-eval produces the
+/// The dual surface is the core of the in-memory exploit:
+/// pangea-ruby-eval produces the
 /// synthesis as `serde_json::Value` natively; serializing to a
 /// string is for disk/tofu, not magma. Callers that stay in-process
 /// (preview, magma-plan, equivalence tests) read `synthesis_value`

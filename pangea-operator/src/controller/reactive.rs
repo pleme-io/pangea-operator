@@ -78,8 +78,8 @@ impl EffectiveReactivePolicy {
     /// Resolve the cascade, innermost wins per field.
     ///
     /// The per-field merge is the canonical `CascadePolicy` primitive
-    /// (`impl` on [`ReactivePolicy`] in `crd::architecture_gem`; see
-    /// `theory/CONVERGENCE-ADOPTION.md` §II.2). This method:
+    /// (`impl` on [`ReactivePolicy`] in `crd::architecture_gem`). This
+    /// method:
     ///   1. folds the layers innermost-wins via `CascadePolicy::resolve`
     ///      (workspace, then template on top — rightmost wins per field),
     ///   2. projects the merged `Option`-field policy onto the

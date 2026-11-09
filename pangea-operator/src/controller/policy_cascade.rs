@@ -1,5 +1,5 @@
-//! Hierarchical policy cascade resolver — M3 of
-//! `theory/PANGEA-WORKSPACE-RECONCILIATION.md`.
+//! Hierarchical policy cascade resolver — milestone M3 of workspace
+//! reconciliation.
 //!
 //! Walks the four-level cascade
 //!   ArchitectureGem → WorkspaceCatalog → InfrastructureTemplate → Resource

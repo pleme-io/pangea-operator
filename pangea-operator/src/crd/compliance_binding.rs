@@ -140,7 +140,7 @@ pub enum TargetKind {
 // Fleet-wide dispatcher-catalog registration. NINTH consumer
 // class adopting gen-platform's typed-dispatcher catamorphism
 // (after gen / caixa / wasm-platform / cofre / shigoto / engenho /
-// magma / kura). See theory/UNIFIED-COMPUTING-MODEL.md §VI.
+// magma / kura).
 gen_platform::register_dispatcher!("pangea.target-kind", TargetKind);
 
 /// Enforcement level applied to targets when compliance fails.

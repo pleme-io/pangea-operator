@@ -55,8 +55,7 @@ pub const NON_RETRYABLE_BACKOFF: Duration = Duration::from_secs(300);
 /// `image_pipeline`, `packer_build`, `ami_test`, and `template`
 /// before R1.
 ///
-/// Routed through [`next_requeue`] (theory/MAGMA-POSTGRES-LIFECYCLE.md
-/// §3, M0(b) — the pangea-operator port of breathe's
+/// Routed through [`next_requeue`] (the pangea-operator port of breathe's
 /// `next_requeue`/`ClassCooldowns` outcome-classification shape) rather
 /// than the two branches this function used to compute directly. A
 /// provable no-op refactor: `RequeueCooldowns::default().steady`

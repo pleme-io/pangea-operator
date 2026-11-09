@@ -20,6 +20,15 @@ spec:
     - jsonPath: .status.phase
       name: Phase
       type: string
+    - jsonPath: .metadata.generation
+      name: Generation
+      type: integer
+    - jsonPath: .status.observedGeneration
+      name: Observed
+      type: integer
+    - jsonPath: .status.phaseEnteredAt
+      name: Age-In-Phase
+      type: date
     - jsonPath: .spec.pangeaNamespace
       name: Namespace
       type: string
@@ -526,6 +535,26 @@ spec:
                     required:
                     - secretRef
                     type: object
+                  google:
+                    description: 'Google Cloud credentials. Operator-side authority: the referenced Secret holds a service-account key JSON under `credentials` (or `GOOGLE_CREDENTIALS`) and optionally `project` / `region` / `zone`, resolved into the `google` provider''s configure object.'
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the service-account key JSON and optional defaults.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
                   onePassword:
                     description: '1Password credentials. Ruby-side: the Secret''s data keys are installed verbatim as env vars; the `opadmin` provider reads `OP_SERVICE_ACCOUNT_TOKEN`.'
                     nullable: true
@@ -552,6 +581,26 @@ spec:
                     properties:
                       secretRef:
                         description: Secret containing the Porkbun `api_key` + `secret_api_key` pair.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
+                  purelymail:
+                    description: 'Purelymail credentials. Operator-side authority: the referenced Secret holds the account API token under `api_token` (or `PURELYMAIL_API_TOKEN`), resolved into the `purelymail` provider''s configure object.'
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the Purelymail account API token.
                         properties:
                           name:
                             description: Name of the Secret.
@@ -905,6 +954,10 @@ spec:
             description: Status of an InfrastructureTemplate.
             nullable: true
             properties:
+              acknowledgedGeneration:
+                default: 0
+                format: int64
+                type: integer
               applyCursorAdvancedAt:
                 description: |-
                   When `applyCursorCount` was last observed to CHANGE — the liveness witness for the Applying phase.
@@ -1023,6 +1076,10 @@ spec:
                     message:
                       description: Human-readable message.
                       type: string
+                    observedGeneration:
+                      format: int64
+                      nullable: true
+                      type: integer
                     reason:
                       description: Machine-readable reason for the condition.
                       type: string
@@ -1410,9 +1467,95 @@ spec:
                 format: date-time
                 nullable: true
                 type: string
+              lastReconcileRequestHandled:
+                nullable: true
+                type: string
+              leaf:
+                description: 'Leaf-by-default receipt: the leaf key-set count, whether the template is fat, the planning-phase p95, and the ratchet floor those two numbers may only fall from. `regressions` names every number that rose past it.'
+                nullable: true
+                properties:
+                  cycleP95Ms:
+                    format: uint64
+                    minimum: 0.0
+                    nullable: true
+                    type: integer
+                  fat:
+                    type: boolean
+                  floor:
+                    nullable: true
+                    properties:
+                      cycleP95Ms:
+                        format: uint64
+                        minimum: 0.0
+                        nullable: true
+                        type: integer
+                      leafKeys:
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                    required:
+                    - leafKeys
+                    type: object
+                  inputsDigest:
+                    nullable: true
+                    type: string
+                  leafKeys:
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  peakRssBytes:
+                    format: uint64
+                    minimum: 0.0
+                    nullable: true
+                    type: integer
+                  refusal:
+                    nullable: true
+                    properties:
+                      inputs:
+                        type: string
+                      reason:
+                        type: string
+                    required:
+                    - inputs
+                    - reason
+                    type: object
+                  regressions:
+                    items:
+                      properties:
+                        floor:
+                          format: uint64
+                          minimum: 0.0
+                          type: integer
+                        metric:
+                          enum:
+                          - leafKeys
+                          - cycleP95Ms
+                          type: string
+                        now:
+                          format: uint64
+                          minimum: 0.0
+                          type: integer
+                        tolerancePercent:
+                          format: uint32
+                          minimum: 0.0
+                          nullable: true
+                          type: integer
+                      required:
+                      - floor
+                      - metric
+                      - now
+                      type: object
+                    type: array
+                  skipReason:
+                    nullable: true
+                    type: string
+                required:
+                - fat
+                - leafKeys
+                type: object
               observedGeneration:
                 default: 0
-                description: Last observed generation of the spec.
+                description: Last generation for which a pass completed or failed with a recorded reason.
                 format: int64
                 type: integer
               observedHeadRevision:
@@ -1432,6 +1575,57 @@ spec:
                 additionalProperties: true
                 description: Outputs from the last successful apply.
                 nullable: true
+                type: object
+              pass:
+                nullable: true
+                properties:
+                  generation:
+                    format: int64
+                    type: integer
+                  heartbeatAt:
+                    format: date-time
+                    nullable: true
+                    type: string
+                  incarnation:
+                    nullable: true
+                    type: string
+                  kind:
+                    enum:
+                    - settled
+                    - pending
+                    - planning
+                    - applying
+                    - failed
+                    - stalled
+                    type: string
+                  queuedGeneration:
+                    format: int64
+                    nullable: true
+                    type: integer
+                  queuedSince:
+                    format: date-time
+                    nullable: true
+                    type: string
+                  reason:
+                    nullable: true
+                    type: string
+                  since:
+                    format: date-time
+                    nullable: true
+                    type: string
+                  stall:
+                    enum:
+                    - queuedBehind
+                    - pendingNotStarted
+                    - heartbeatLost
+                    - orphanedPhase
+                    - noProgress
+                    - unnamed
+                    nullable: true
+                    type: string
+                required:
+                - generation
+                - kind
                 type: object
               pendingCreates:
                 nullable: true
@@ -1679,6 +1873,10 @@ spec:
                 - phase
                 - phaseStartedAt
                 type: object
+              rateLimitedUntil:
+                format: date-time
+                nullable: true
+                type: string
               reactions:
                 nullable: true
                 properties:
@@ -2326,6 +2524,10 @@ spec:
                     message:
                       description: Human-readable message.
                       type: string
+                    observedGeneration:
+                      format: int64
+                      nullable: true
+                      type: integer
                     reason:
                       description: Machine-readable reason for the condition.
                       type: string
@@ -2637,6 +2839,26 @@ spec:
                     required:
                     - secretRef
                     type: object
+                  google:
+                    description: 'Google Cloud credentials. Operator-side authority: the referenced Secret holds a service-account key JSON under `credentials` (or `GOOGLE_CREDENTIALS`) and optionally `project` / `region` / `zone`, resolved into the `google` provider''s configure object.'
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the service-account key JSON and optional defaults.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
                   onePassword:
                     description: '1Password credentials. Ruby-side: the Secret''s data keys are installed verbatim as env vars; the `opadmin` provider reads `OP_SERVICE_ACCOUNT_TOKEN`.'
                     nullable: true
@@ -2663,6 +2885,26 @@ spec:
                     properties:
                       secretRef:
                         description: Secret containing the Porkbun `api_key` + `secret_api_key` pair.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
+                  purelymail:
+                    description: 'Purelymail credentials. Operator-side authority: the referenced Secret holds the account API token under `api_token` (or `PURELYMAIL_API_TOKEN`), resolved into the `purelymail` provider''s configure object.'
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the Purelymail account API token.
                         properties:
                           name:
                             description: Name of the Secret.
@@ -2831,6 +3073,10 @@ spec:
                     message:
                       description: Human-readable message.
                       type: string
+                    observedGeneration:
+                      format: int64
+                      nullable: true
+                      type: integer
                     reason:
                       description: Machine-readable reason for the condition.
                       type: string
@@ -3148,6 +3394,26 @@ spec:
                     required:
                     - secretRef
                     type: object
+                  google:
+                    description: 'Google Cloud credentials. Operator-side authority: the referenced Secret holds a service-account key JSON under `credentials` (or `GOOGLE_CREDENTIALS`) and optionally `project` / `region` / `zone`, resolved into the `google` provider''s configure object.'
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the service-account key JSON and optional defaults.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
                   onePassword:
                     description: '1Password credentials. Ruby-side: the Secret''s data keys are installed verbatim as env vars; the `opadmin` provider reads `OP_SERVICE_ACCOUNT_TOKEN`.'
                     nullable: true
@@ -3174,6 +3440,26 @@ spec:
                     properties:
                       secretRef:
                         description: Secret containing the Porkbun `api_key` + `secret_api_key` pair.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
+                  purelymail:
+                    description: 'Purelymail credentials. Operator-side authority: the referenced Secret holds the account API token under `api_token` (or `PURELYMAIL_API_TOKEN`), resolved into the `purelymail` provider''s configure object.'
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the Purelymail account API token.
                         properties:
                           name:
                             description: Name of the Secret.
@@ -3264,6 +3550,10 @@ spec:
                     message:
                       description: Human-readable message.
                       type: string
+                    observedGeneration:
+                      format: int64
+                      nullable: true
+                      type: integer
                     reason:
                       description: Machine-readable reason for the condition.
                       type: string
@@ -3572,6 +3862,26 @@ spec:
                         required:
                         - secretRef
                         type: object
+                      google:
+                        description: 'Google Cloud credentials. Operator-side authority: the referenced Secret holds a service-account key JSON under `credentials` (or `GOOGLE_CREDENTIALS`) and optionally `project` / `region` / `zone`, resolved into the `google` provider''s configure object.'
+                        nullable: true
+                        properties:
+                          secretRef:
+                            description: Secret containing the service-account key JSON and optional defaults.
+                            properties:
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                              namespace:
+                                description: Namespace of the Secret (defaults to same namespace as the resource).
+                                nullable: true
+                                type: string
+                            required:
+                            - name
+                            type: object
+                        required:
+                        - secretRef
+                        type: object
                       onePassword:
                         description: '1Password credentials. Ruby-side: the Secret''s data keys are installed verbatim as env vars; the `opadmin` provider reads `OP_SERVICE_ACCOUNT_TOKEN`.'
                         nullable: true
@@ -3598,6 +3908,26 @@ spec:
                         properties:
                           secretRef:
                             description: Secret containing the Porkbun `api_key` + `secret_api_key` pair.
+                            properties:
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                              namespace:
+                                description: Namespace of the Secret (defaults to same namespace as the resource).
+                                nullable: true
+                                type: string
+                            required:
+                            - name
+                            type: object
+                        required:
+                        - secretRef
+                        type: object
+                      purelymail:
+                        description: 'Purelymail credentials. Operator-side authority: the referenced Secret holds the account API token under `api_token` (or `PURELYMAIL_API_TOKEN`), resolved into the `purelymail` provider''s configure object.'
+                        nullable: true
+                        properties:
+                          secretRef:
+                            description: Secret containing the Purelymail account API token.
                             properties:
                               name:
                                 description: Name of the Secret.
@@ -4058,6 +4388,26 @@ spec:
                         required:
                         - secretRef
                         type: object
+                      google:
+                        description: 'Google Cloud credentials. Operator-side authority: the referenced Secret holds a service-account key JSON under `credentials` (or `GOOGLE_CREDENTIALS`) and optionally `project` / `region` / `zone`, resolved into the `google` provider''s configure object.'
+                        nullable: true
+                        properties:
+                          secretRef:
+                            description: Secret containing the service-account key JSON and optional defaults.
+                            properties:
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                              namespace:
+                                description: Namespace of the Secret (defaults to same namespace as the resource).
+                                nullable: true
+                                type: string
+                            required:
+                            - name
+                            type: object
+                        required:
+                        - secretRef
+                        type: object
                       onePassword:
                         description: '1Password credentials. Ruby-side: the Secret''s data keys are installed verbatim as env vars; the `opadmin` provider reads `OP_SERVICE_ACCOUNT_TOKEN`.'
                         nullable: true
@@ -4084,6 +4434,26 @@ spec:
                         properties:
                           secretRef:
                             description: Secret containing the Porkbun `api_key` + `secret_api_key` pair.
+                            properties:
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                              namespace:
+                                description: Namespace of the Secret (defaults to same namespace as the resource).
+                                nullable: true
+                                type: string
+                            required:
+                            - name
+                            type: object
+                        required:
+                        - secretRef
+                        type: object
+                      purelymail:
+                        description: 'Purelymail credentials. Operator-side authority: the referenced Secret holds the account API token under `api_token` (or `PURELYMAIL_API_TOKEN`), resolved into the `purelymail` provider''s configure object.'
+                        nullable: true
+                        properties:
+                          secretRef:
+                            description: Secret containing the Purelymail account API token.
                             properties:
                               name:
                                 description: Name of the Secret.
@@ -4179,6 +4549,10 @@ spec:
                     message:
                       description: Human-readable message.
                       type: string
+                    observedGeneration:
+                      format: int64
+                      nullable: true
+                      type: integer
                     reason:
                       description: Machine-readable reason for the condition.
                       type: string
@@ -4469,6 +4843,10 @@ spec:
                     message:
                       description: Human-readable message.
                       type: string
+                    observedGeneration:
+                      format: int64
+                      nullable: true
+                      type: integer
                     reason:
                       description: Machine-readable reason for the condition.
                       type: string
@@ -4781,6 +5159,26 @@ spec:
                     required:
                     - secretRef
                     type: object
+                  google:
+                    description: 'Google Cloud credentials. Operator-side authority: the referenced Secret holds a service-account key JSON under `credentials` (or `GOOGLE_CREDENTIALS`) and optionally `project` / `region` / `zone`, resolved into the `google` provider''s configure object.'
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the service-account key JSON and optional defaults.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
                   onePassword:
                     description: '1Password credentials. Ruby-side: the Secret''s data keys are installed verbatim as env vars; the `opadmin` provider reads `OP_SERVICE_ACCOUNT_TOKEN`.'
                     nullable: true
@@ -4807,6 +5205,26 @@ spec:
                     properties:
                       secretRef:
                         description: Secret containing the Porkbun `api_key` + `secret_api_key` pair.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                          namespace:
+                            description: Namespace of the Secret (defaults to same namespace as the resource).
+                            nullable: true
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - secretRef
+                    type: object
+                  purelymail:
+                    description: 'Purelymail credentials. Operator-side authority: the referenced Secret holds the account API token under `api_token` (or `PURELYMAIL_API_TOKEN`), resolved into the `purelymail` provider''s configure object.'
+                    nullable: true
+                    properties:
+                      secretRef:
+                        description: Secret containing the Purelymail account API token.
                         properties:
                           name:
                             description: Name of the Secret.
@@ -4974,6 +5392,10 @@ spec:
                     message:
                       description: Human-readable message.
                       type: string
+                    observedGeneration:
+                      format: int64
+                      nullable: true
+                      type: integer
                     reason:
                       description: Machine-readable reason for the condition.
                       type: string
@@ -5302,6 +5724,10 @@ spec:
                     message:
                       description: Human-readable message.
                       type: string
+                    observedGeneration:
+                      format: int64
+                      nullable: true
+                      type: integer
                     reason:
                       description: Machine-readable reason for the condition.
                       type: string
@@ -5511,6 +5937,10 @@ spec:
                     message:
                       description: Human-readable message.
                       type: string
+                    observedGeneration:
+                      format: int64
+                      nullable: true
+                      type: integer
                     reason:
                       description: Machine-readable reason for the condition.
                       type: string
@@ -5909,7 +6339,7 @@ spec:
                     description: |-
                       Which evaluator runs this gem. `Ruby` is the default for backward compatibility — every existing ArchitectureGem CR continues to validate + reconcile unchanged.
 
-                      `Lisp` selects the terreno evaluator (theory/TERRENO.md M2); `Wasm` selects a typed wasmtime component. Both are reserved at the schema layer today; the operator's prepare_gem returns a typed `NotImplemented` condition until terreno-eval lands.
+                      `Lisp` selects the terreno evaluator (terreno milestone M2); `Wasm` selects a typed wasmtime component. Both are reserved at the schema layer today; the operator's prepare_gem returns a typed `NotImplemented` condition until terreno-eval lands.
                     enum:
                     - Ruby
                     - Lisp
@@ -6086,6 +6516,12 @@ spec:
         properties:
           spec:
             properties:
+              maxConcurrentLeaves:
+                description: How many of this workspace's templates (its leaves) may compile, plan or apply at once. Unset keeps the operator-wide per-workspace budget (`reconcile.budget_per_workspace`); a value replaces it for this workspace (a floor of 1), still bounded by the global pool. Size it by the slowest provider's rate budget, not by the leaf count.
+                format: uint32
+                minimum: 0.0
+                nullable: true
+                type: integer
               policy:
                 default: {}
                 description: Workspace-level policy — applied to every template in the workspace unless overridden at template or resource level (cascade with safety precedence).
@@ -6353,6 +6789,152 @@ spec:
                 format: date-time
                 nullable: true
                 type: string
+              leaves:
+                description: 'Rollup of the declared leaves this catalog owns: verdict `Converged | Progressing | Partial`, counts per state, and the failed, stalled, rate-limited and blocked leaves by name.'
+                nullable: true
+                properties:
+                  blocked:
+                    items:
+                      properties:
+                        by:
+                          items:
+                            type: string
+                          type: array
+                        leaf:
+                          type: string
+                      required:
+                      - by
+                      - leaf
+                      type: object
+                    type: array
+                  counts:
+                    properties:
+                      applying:
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      blocked:
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      failed:
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      planning:
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      rateLimited:
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      ready:
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      stalled:
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                    required:
+                    - applying
+                    - blocked
+                    - failed
+                    - planning
+                    - rateLimited
+                    - ready
+                    - stalled
+                    type: object
+                  failed:
+                    items:
+                      properties:
+                        leaf:
+                          type: string
+                        reason:
+                          type: string
+                        since:
+                          nullable: true
+                          type: string
+                      required:
+                      - leaf
+                      - reason
+                      type: object
+                    type: array
+                  rateLimited:
+                    items:
+                      properties:
+                        leaf:
+                          type: string
+                        until:
+                          type: string
+                      required:
+                      - leaf
+                      - until
+                      type: object
+                    type: array
+                  stalled:
+                    items:
+                      properties:
+                        leaf:
+                          type: string
+                        since:
+                          nullable: true
+                          type: string
+                        state:
+                          type: string
+                      required:
+                      - leaf
+                      - state
+                      type: object
+                    type: array
+                  total:
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  truncated:
+                    default: 0
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  verdict:
+                    enum:
+                    - Converged
+                    - Progressing
+                    - Partial
+                    type: string
+                required:
+                - counts
+                - total
+                - verdict
+                type: object
+              recentEvents:
+                items:
+                  properties:
+                    at:
+                      format: date-time
+                      type: string
+                    count:
+                      default: 1
+                      format: uint32
+                      minimum: 0.0
+                      type: integer
+                    message:
+                      type: string
+                    reason:
+                      type: string
+                    type:
+                      enum:
+                      - Normal
+                      - Warning
+                      type: string
+                  required:
+                  - at
+                  - message
+                  - reason
+                  - type
+                  type: object
+                type: array
               templateCount:
                 default: 0
                 description: Number of templates the operator has reconciled under this catalog.
@@ -6865,6 +7447,10 @@ spec:
                     message:
                       description: Human-readable message.
                       type: string
+                    observedGeneration:
+                      format: int64
+                      nullable: true
+                      type: integer
                     reason:
                       description: Machine-readable reason for the condition.
                       type: string
@@ -6971,6 +7557,50 @@ spec:
                 format: date-time
                 nullable: true
                 type: string
+              leafWork:
+                nullable: true
+                properties:
+                  credentials:
+                    items:
+                      properties:
+                        cap:
+                          format: uint64
+                          minimum: 0.0
+                          type: integer
+                        counted:
+                          format: uint64
+                          minimum: 0.0
+                          type: integer
+                        credential:
+                          type: string
+                        pending:
+                          format: uint64
+                          minimum: 0.0
+                          type: integer
+                      required:
+                      - cap
+                      - counted
+                      - credential
+                      - pending
+                      type: object
+                    type: array
+                  desired:
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  metric:
+                    format: uint64
+                    minimum: 0.0
+                    type: integer
+                  unpaced:
+                    format: uint64
+                    minimum: 0.0
+                    type: integer
+                required:
+                - desired
+                - metric
+                - unpaced
+                type: object
               packerBuilds:
                 default:
                   total: 0
@@ -7052,6 +7682,32 @@ spec:
                     format: uint32
                     minimum: 0.0
                     type: integer
+                type: object
+              workerMemory:
+                nullable: true
+                properties:
+                  calibrated:
+                    type: boolean
+                  limitBytes:
+                    format: uint64
+                    minimum: 0.0
+                    type: integer
+                  maxLeafPeakBytes:
+                    format: uint64
+                    minimum: 0.0
+                    nullable: true
+                    type: integer
+                  requestBytes:
+                    format: uint64
+                    minimum: 0.0
+                    type: integer
+                  source:
+                    type: string
+                required:
+                - calibrated
+                - limitBytes
+                - requestBytes
+                - source
                 type: object
               workspaceCatalogs:
                 default:
@@ -7311,6 +7967,10 @@ spec:
                     message:
                       description: Human-readable message.
                       type: string
+                    observedGeneration:
+                      format: int64
+                      nullable: true
+                      type: integer
                     reason:
                       description: Machine-readable reason for the condition.
                       type: string

@@ -116,14 +116,6 @@ nix build .#dockerImage-operator-noruby-amd64      # build the operator image (l
 
 See [`CLAUDE.md`](CLAUDE.md) for the full operator reference (CRDs, cascade, reactive policies, build/test/rollout commands).
 
-## Theory
-
-For the methodological frame:
-
-- [`PANGEA-WORKSPACE-RECONCILIATION.md`](https://github.com/pleme-io/theory/blob/main/PANGEA-WORKSPACE-RECONCILIATION.md) — design intent + milestone history.
-- [`MAGMA-OPERATOR-BACKEND.md`](https://github.com/pleme-io/theory/blob/main/MAGMA-OPERATOR-BACKEND.md) — the in-process Rust executor alternative to tofu.
-- [`CONSTRUCTIVE-SUBSTRATE-ENGINEERING.md`](https://github.com/pleme-io/theory/blob/main/CONSTRUCTIVE-SUBSTRATE-ENGINEERING.md) — the broader engineering methodology.
-
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md). All contributors agree to the [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md). Vulnerability disclosure: [`SECURITY.md`](SECURITY.md).

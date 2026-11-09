@@ -1,8 +1,8 @@
 # Leaves — how the operator runs them
 
-This doc holds the mechanics and the work items for `theory/BACIA.md` §9.1.
-§9.1 is the rule; this doc does not restate it. §9 holds the migration method
-and its ledger. This doc adds what §9 left open: the controller-layer
+This doc holds the mechanics and the work items for running leaves. It does
+not restate the leaf rule, the migration method or its ledger. It adds what
+those left open: the controller-layer
 scheduler, the per-leaf observability, the failure isolation, the embedded
 engine, the blue decisions, the derivation for each language, and the cutover
 of every grandfathered fat template.
@@ -646,7 +646,7 @@ url is absent, that one entry is refused and the queue stays in process.
 lease table). It rebuilds what JetStream already gives: redelivery, dedupe by
 message id, in-progress acks and a lag figure. It also polls the state
 database at the queue's rate. NATS JetStream is the fleet's queue for
-rate-limited consumers (samba, `theory/RATE-LIMITED-CONSUMERS.md`).
+rate-limited consumers (samba).
 
 **Rejected: consistent-hash shards of the leaf key.** A scale event moves
 leaves while they plan. Hashing ignores load, so one shard can get every

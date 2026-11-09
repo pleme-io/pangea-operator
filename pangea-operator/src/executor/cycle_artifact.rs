@@ -344,7 +344,7 @@ impl CycleArtifact {
 
     /// Build a `CycleArtifact` directly from a `magma_types::Plan`
     /// in process. The third constructor — closes the in-memory
-    /// pipeline loop (theory/IN-MEMORY-PIPELINE.md):
+    /// pipeline loop:
     ///
     ///   * Ruby compile → `serde_json::Value` (via
     ///     `CompileResult.synthesis_value`).

@@ -15,8 +15,8 @@ pub const ERROR_REQUEUE_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Requeue-cadence outcome classification — the pangea-operator port of
 /// breathe's `next_requeue`/`ClassCooldowns` shape
-/// (`breathe_runtime::next_requeue`, `breathe_provider::ClassCooldowns`;
-/// theory/MAGMA-POSTGRES-LIFECYCLE.md §3, M0(b)). A reconcile's outcome is
+/// (`breathe_runtime::next_requeue`, `breathe_provider::ClassCooldowns`).
+/// A reconcile's outcome is
 /// classified into one of three well-ordered cadence tiers instead of each
 /// call site hard-coding its own literal `Duration`. `tiered_backoff`'s
 /// existing retryable/non-retryable split (`error_policy.rs`) is the

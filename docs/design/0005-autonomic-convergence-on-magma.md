@@ -1,8 +1,7 @@
 # 0005 — Autonomic Convergence on Magma (the in-memory executive core)
 
 > **★★★ CSE / Knowable Construction.** Operates under Constructive Substrate
-> Engineering ([`theory/CONSTRUCTIVE-SUBSTRATE-ENGINEERING.md`](https://github.com/pleme-io/theory/blob/main/CONSTRUCTIVE-SUBSTRATE-ENGINEERING.md)).
-> Companion canon: [`theory/MAGMA.md`](https://github.com/pleme-io/theory/blob/main/MAGMA.md) (§II.9 in-memory pipelines).
+> Engineering.
 
 **Status:** Draft RFC. Supersedes the implicit reconcile model of
 [0002](./0002-pangea-architecture-with-fluxcd-and-kenshi.md); does not change the
@@ -299,7 +298,7 @@ human asks.
   source-controller — *the exact rio failure, made a permanent test case*),
   expire tokens, inject 429/5xx, partial applies → assert safe degradation +
   auto-recovery + honest reporting. Magma's own 5-level compat corpus
-  (theory/MAGMA.md §II.6) gates the executor swap.
+  gates the executor swap.
 
 ## Packaging & delivery — helm + rio (develop-as-one, ship-as-one)
 
@@ -330,7 +329,7 @@ human asks.
 4. **Immune system** — failure taxonomy, circuit breakers, **substrate
    health-gating** (the rio outage made a first-class concern).
 
-**As magma clears M0–M5 (theory/MAGMA.md §VI):**
+**As magma clears its milestones M0–M5:**
 5. **Magma in-memory core** behind `iac_executor` (`MagmaBackend` beside
    `TofuExecutor`), per-workspace, `backend: magma` flag-gated (§II.11).
 6. **Stand up pangea-api** — resident in-memory state fabric + SeaORM durable

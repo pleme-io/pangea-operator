@@ -1,7 +1,7 @@
 # pangea-operator: tatara-lisp Authoring Vocabulary + Unrepresentability Hardening
 
 > **Destination-first** (Operating Principle #0), per the org's own
-> `theory/UNREPRESENTABILITY.md` bright line: a `Result::Err` is
+> unrepresentability bright line: a `Result::Err` is
 > *mitigation*, a compile error (or an absent code path) is
 > *unrepresentability* — never conflate them. This document states the
 > pinnacle unhedged, then names — plainly, without rounding up — how much

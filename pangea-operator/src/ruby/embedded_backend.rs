@@ -120,7 +120,7 @@ impl CompilerBackend for EmbeddedCompilerBackend {
             SourceKind::Ruby => {}
             SourceKind::Lisp => {
                 return Err(BackendError::Ruby(
-                    "source.kind=Lisp not yet implemented (terreno M2; theory/TERRENO.md)".into(),
+                    "source.kind=Lisp not yet implemented (terreno M2)".into(),
                 ));
             }
             SourceKind::Wasm => {

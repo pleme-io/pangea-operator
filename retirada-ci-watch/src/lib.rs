@@ -40,7 +40,7 @@
 //! forces `--dry-run=true` unconditionally (report-only) — there is no
 //! live redispatch destination to point at.
 //!
-//! `theory/BREATHABILITY.md`'s `retirada` names the drain-ahead signal
+//! Breathability's `retirada` names the drain-ahead signal
 //! for REPLICA-shaped workloads: `breathe-control::replica` scales a
 //! replica set OUT ahead of a pending spot reclaim, covering the
 //! doomed replicas before they're lost (§ `spot_reclaim_pending` in
@@ -180,7 +180,7 @@ pub enum NoActionReason {
     RunnerAlreadyAssigned,
     /// The job hasn't been queued long enough yet to call it
     /// starvation rather than a normal cold-start Wake — never fire
-    /// early; `theory/BREATHABILITY.md`'s lifecycle-breath names
+    /// early; breathability's lifecycle-breath names
     /// cold-start latency as expected, not an anomaly.
     StillWithinNormalWake,
 }
@@ -188,7 +188,7 @@ pub enum NoActionReason {
 /// The configured escalation target + retry ceiling — typed config,
 /// never a hardcoded string. This is exactly the "auction ether" →
 /// "which on-demand label" mapping the org's tag/query/control
-/// discipline (`theory/CAMELOT-RUNNER-CONTROL.md`) requires be a
+/// discipline requires be a
 /// single typed source, not a scattered literal.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetiradaCiPolicy {

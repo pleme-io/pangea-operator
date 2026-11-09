@@ -23,9 +23,6 @@
 //!   fresh thread per `#[test]` even with `--test-threads=1`, so we
 //!   bundle all assertions under a single `#[test]` entry point.
 //!   See `smoke_all` below.
-//!
-//! See `theory/PANGEA-WORKSPACE-RECONCILIATION.md` § M8 and
-//! `theory/PANGEA-COMPILER-CDEP-AUDIT.md` for the design.
 
 #![allow(clippy::missing_errors_doc)]
 

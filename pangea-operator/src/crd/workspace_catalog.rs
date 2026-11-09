@@ -2,9 +2,6 @@
 //! its workspace-level policy in the four-level cascade
 //! (gem → workspace → template → resource).
 //!
-//! See `pleme-io/theory/PANGEA-WORKSPACE-RECONCILIATION.md` §
-//! "Hierarchical policy cascade" for the design.
-//!
 //! Cluster-scoped because workspaces are typically a fleet-wide
 //! concern (one workspace tree, many templates spread across
 //! namespaces).

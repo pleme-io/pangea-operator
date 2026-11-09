@@ -5,8 +5,6 @@
 //! Adding a new architecture gem becomes one `ArchitectureGem` CR + a
 //! git push; the operator picks it up at the next reconcile.
 //!
-//! See `theory/PANGEA-WORKSPACE-RECONCILIATION.md` § M8.4.
-//!
 //! Cache layout:
 //!
 //! ```text
@@ -85,7 +83,7 @@ impl GemCache {
     /// empty value lands the whole gem tree in the operator process's
     /// cwd: `entry_dir()` joins onto it, and `create_dir_all("")`
     /// early-returns `Ok(())` rather than erroring, so nothing
-    /// downstream notices. See `theory/MASKED-BRANCH.md`.
+    /// downstream notices.
     pub fn from_env() -> Self {
         Self {
             base_dir: resolve_base_dir(std::env::var_os(GEM_CACHE_DIR_VAR)),

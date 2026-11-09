@@ -29,8 +29,6 @@
 //! zero-divergence budget (a single parity divergence rolls straight back
 //! to `Pinned`). "We can't lose SSH to rio" is encoded here as a typed
 //! guard, not a hope.
-//!
-//! Normative spec: `theory/EXECUTOR-MIGRATION.md`.
 
 use std::fmt;
 

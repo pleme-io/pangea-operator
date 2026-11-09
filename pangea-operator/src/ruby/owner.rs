@@ -779,8 +779,7 @@ fn compile_template(
     // pretty_generate on the Ruby side disappears with this — third
     // Pangea-Ruby require deleted. Carry the typed value alongside
     // so in-process consumers (magma plan, preview, equivalence
-    // tests) skip the re-parse round-trip; see
-    // theory/IN-MEMORY-PIPELINE.md.
+    // tests) skip the re-parse round-trip.
     let terraform_json = serde_json::to_string_pretty(&synthesis_json)
         .map_err(|e| BackendError::Compiler(format!("serialize synthesis to JSON: {e}")))?;
 
@@ -861,8 +860,7 @@ fn run_capture_and_synthesize(
           # magma's preflight laws A2/A3 (every used provider declared). tofu's
           # resolution is unchanged — the providers it inferred from the
           # resource prefixes, now stated explicitly. Guarded for older
-          # pangea-core that predates the registry. See Pangea::ProviderRegistry
-          # + theory/EXECUTOR-MIGRATION.md.
+          # pangea-core that predates the registry. See Pangea::ProviderRegistry.
           Pangea::ProviderRegistry.inject_into_synthesis(out) if defined?(Pangea::ProviderRegistry)
           out
         ensure

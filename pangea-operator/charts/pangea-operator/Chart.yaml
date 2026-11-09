@@ -14,7 +14,6 @@ kubeVersion: ">=1.27.0-0"
 home: https://github.com/pleme-io/pangea-operator
 sources:
   - https://github.com/pleme-io/pangea-operator
-  - https://github.com/pleme-io/theory/blob/main/PANGEA-WORKSPACE-RECONCILIATION.md
 keywords:
   - infrastructure
   - infrastructure-as-code
@@ -39,8 +38,6 @@ annotations:
   artifacthub.io/links: |
     - name: Source
       url: https://github.com/pleme-io/pangea-operator
-    - name: Theory
-      url: https://github.com/pleme-io/theory/blob/main/PANGEA-WORKSPACE-RECONCILIATION.md
   artifacthub.io/crds: |
     - kind: ArchitectureGem
       version: v1

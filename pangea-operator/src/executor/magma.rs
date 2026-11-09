@@ -2,7 +2,7 @@
 //!
 //! Implements the operator's `IacExecutor` trait by calling magma
 //! library APIs in-process. No fork+exec. No subprocess. No
-//! Terraform-shell parsing. Per `theory/MAGMA-OPERATOR-BACKEND.md`.
+//! Terraform-shell parsing.
 //!
 //! # Coexistence with TofuExecutor
 //!
@@ -426,8 +426,7 @@ pub struct MagmaExecutorConfig<S: StateBackend + ?Sized> {
     /// the disk behavior (`main.tf.json` / `magma-plan.json` /
     /// `magma-bundle.json` in `work_dir`) — this keeps DB-less unit
     /// tests (InMemoryStateBackend, no `PgPool`) compiling + green.
-    /// Per the org ★★ MAGMA-NATIVE EXECUTION directive +
-    /// `theory/MAGMA-OPERATOR-BACKEND.md` §II-bis.
+    /// Per the org ★★ MAGMA-NATIVE EXECUTION directive.
     pub artifact_store: Option<Arc<crate::backend::ArtifactStore>>,
     /// Provider config-objects resolved from
     /// `spec.providerCredentials`, keyed by terraform provider local
@@ -943,8 +942,8 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
     /// share the same parse error surface so callers see consistent
     /// `Error::MagmaExecution` regardless of source.
     ///
-    /// This is the first primitive of the in-memory exploit
-    /// (theory/IN-MEMORY-PIPELINE.md): both Ruby + magma live in
+    /// This is the first primitive of the in-memory exploit:
+    /// both Ruby + magma live in
     /// process, so workspace preview, equivalence tests, and future
     /// customer-facing previews can run the full compile→plan
     /// pipeline without touching disk or k8s state.
@@ -1697,7 +1696,7 @@ pub(crate) fn provider_reported_absent(
 
 /// Like [`err_tofu_result`] but carries the structured per-resource
 /// failures OUT of the apply engine so the controller's reacting FSM can
-/// classify each one (theory/ANOMALY-REACTIVE-RECONCILE.md §VII.2). The
+/// classify each one. The
 /// `stdout` still carries the count-only JSON summary for log/debug parity;
 /// the structured `failed_changes` is the load-bearing border.
 fn err_tofu_result_with_failures(
@@ -1762,7 +1761,7 @@ where
         // even reading state. Catches malformed workspaces
         // (dangling refs, missing providers, duplicate addresses,
         // null outputs) at the controller layer — they never reach
-        // the live backend. See theory/TESTING-SUBSTRATE.md §IV.
+        // the live backend.
         if self.cfg.preflight_laws {
             let violations = magma_test_laws::preflight::check_workspace_full(&cfg);
             if !violations.is_empty() {

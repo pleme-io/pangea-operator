@@ -993,7 +993,7 @@ async fn run_post_reconcile_on_fresh(template: &InfrastructureTemplate, state: &
 ///
 /// `Verifying` and `Verified` currently no-op forward to `Compiling` —
 /// the M1 ArchitectureGem registry lookup that makes them load-bearing
-/// is in `theory/PANGEA-WORKSPACE-RECONCILIATION.md` M2.
+/// is milestone M2.
 ///
 /// Every individual handler bumps `reconciliation_duration_seconds{phase}`
 /// via `state.metrics.record_phase_duration(...)` (wired in C3) so
@@ -1004,8 +1004,7 @@ async fn dispatch_template_phase(
     state: &ControllerState,
 ) -> Result<ReconcileAction> {
     // Verifying / Verified are synthetic forward-stub phases — handled
-    // inline rather than via the trait dispatch. See M2 in
-    // theory/PANGEA-WORKSPACE-RECONCILIATION.md for the planned
+    // inline rather than via the trait dispatch. Milestone M2 plans the
     // ArchitectureGem readiness check that makes them load-bearing.
     if matches!(current_phase, Phase::Verifying | Phase::Verified) {
         update_phase(template, Phase::Compiling, state).await?;
@@ -4459,7 +4458,7 @@ async fn handle_applying(
 
         // ── The reacting FSM: classify every apply failure into the typed
         // ApplyAnomaly taxonomy, then dispatch ONE typed remediation
-        // (theory/ANOMALY-REACTIVE-RECONCILE.md §IV-§VI). This FOLDS the
+        // This FOLDS the
         // former four scattered substring checks (stale-plan, empty-
         // workspace, already-exists, self-healable) into one classifier so
         // there is a single typed detection border. Each anomaly carries a
@@ -4622,7 +4621,7 @@ async fn handle_applying(
 /// Pick the single [`ApplyAnomaly`] that drives this reconcile tick's
 /// remediation action from the per-resource set.
 ///
-/// Precedence (theory/ANOMALY-REACTIVE-RECONCILE.md §V): Absolute
+/// Precedence: Absolute
 /// self-healing recovery classes first (they converge within one reconcile
 /// and shouldn't be masked), then provider/conflict classes, then Decaying
 /// retries, then Hold classes last (a Hold doesn't recover on its own, so it
@@ -4655,7 +4654,7 @@ fn select_driving_anomaly(
 }
 
 /// Dispatch the typed remediation for the driving [`ApplyAnomaly`]
-/// (theory/ANOMALY-REACTIVE-RECONCILE.md §IV, §VII.2). Returns
+/// Returns
 /// `Some(action)` when the remediation produced a terminal reconcile action
 /// for this tick (and recorded its own status/event/cycle); `None` when the
 /// caller should fall through to the typed SurfaceAndHold record-failure

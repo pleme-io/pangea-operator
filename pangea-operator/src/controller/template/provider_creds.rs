@@ -442,8 +442,8 @@ fn provider_config_object(
         // bearing path this module's own doc comment already warns is
         // required (a null config here fails every real RPC). Per this
         // org's documented cty-typed encoding rule (a `max_items=1` nested
-        // block serializes as a 1-element list of objects, theory/MAGMA.md
-        // § ApplyRpcContract), `api_key_login` is wrapped in an array.
+        // block serializes as a 1-element list of objects),
+        // `api_key_login` is wrapped in an array.
         // Datadog. The provider's config surface is FLAT -- api_key, app_key
         // and api_url are all top-level optional strings (verified against
         // DataDog/datadog 4.10.0's own schema), so none of the cty

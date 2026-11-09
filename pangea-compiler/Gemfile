@@ -26,7 +26,7 @@ gem 'pangea-spot',          path: 'vendor/pangea-spot'
 
 # pangea-architectures bundling intentionally deferred — adding it
 # requires regenerating Gemfile.lock + gemset.nix together (bundix
-# pipeline). M1 of theory/PANGEA-WORKSPACE-RECONCILIATION.md still
+# pipeline). Milestone M1 (ArchitectureGem verification) still
 # demonstrates the load-and-verify contract correctly: the operator's
 # ArchitectureGem reconciler RPCs the compiler, observes that
 # Pangea::Architectures.constants is empty (gem not loaded), and

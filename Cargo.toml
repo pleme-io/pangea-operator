@@ -29,14 +29,12 @@ repository = "https://github.com/pleme-io/pangea-operator"
 pangea-types = { path = "pangea-types" }
 roles-anywhere = { path = "roles-anywhere" }
 
-# Typed-dispatcher catalog integration
-# (theory/UNIFIED-COMPUTING-MODEL.md §VI).
+# Typed-dispatcher catalog integration.
 gen-platform = "0.1.34"
 gen-types = "0.1.34"
 
 # Convergence primitives — the reactive-policy cascade consumes the
-# canonical innermost-wins-per-field merge (theory/CONVERGENCE-ADOPTION.md
-# §II.2). Git, not crates.io: the operator is a binary (not a published
+# canonical innermost-wins-per-field merge. Git, not crates.io: the operator is a binary (not a published
 # library) and the re-homed `policy::CascadePolicy` is not on crates.io
 # 0.1.0 yet. Rev-pinned for determinism (matches how tend pins
 # shigoto-emit) — bump deliberately on a shigoto upgrade.

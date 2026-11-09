@@ -5,11 +5,9 @@ pending-state-erosion-guard: a refresh that drops resources the last converged c
 pending-happa-embed: every leaf decision goes through `leaf_engine::LeafEngine` (`RustEngine`); `leaf.engine: blue` is refused until the `happa` bidama is on blue main, then embedded like kensa (`include_str!`, blue-lang-host `Embedded`, `posture(&[])`) as a second impl (docs/LEAVES.md O1).
 
 > **★★★ CSE / Knowable Construction.** This repo operates under **Constructive
-> Substrate Engineering** — canonical specification at
-> [`pleme-io/theory/CONSTRUCTIVE-SUBSTRATE-ENGINEERING.md`](https://github.com/pleme-io/theory/blob/main/CONSTRUCTIVE-SUBSTRATE-ENGINEERING.md).
-> The Compounding Directive (operational rules: solve once, load-bearing
+> Substrate Engineering**. The Compounding Directive (operational rules: solve once, load-bearing
 > fixes only, idiom-first, models stay current, direction beats velocity)
-> is in the org-level pleme-io/CLAUDE.md ★★★ section. Read both before
+> is in the org-level pleme-io/CLAUDE.md ★★★ section. Read it before
 > non-trivial changes.
 
 **Authoring for the operator: one path, blue bidamas → magma in memory.** Reusable capabilities are blue bidamas of `kousei` entries (decisions and resources), a workspace declaration composes them, `happa` renders `dialect: json` leaves, and this process plans and applies them with zero disk. Destination: `dialect: blue`. The embedded Ruby and lava paths serve templates that already use them. An account's access root is a leaf too, first applied with a short-lived session Secret. Rule: pleme-io `docs/platform-mediated.md` (default path).
@@ -48,8 +46,6 @@ Pangea Kubernetes operator, CLI, and web UI (Rust). Workspace members:
   for deletion once embedded magnus has been live for ~2 weeks).
 
 For practical authoring recipes, read [`docs/AUTHORING.md`](./docs/AUTHORING.md).
-For the theoretical frame, read
-[`pleme-io/theory/PANGEA-WORKSPACE-RECONCILIATION.md`](https://github.com/pleme-io/theory/blob/main/PANGEA-WORKSPACE-RECONCILIATION.md).
 
 ## What it does
 
@@ -294,8 +290,7 @@ On the magma path **all durable reconcile data lives in Postgres,
 never pod disk** — the only sanctioned filesystem reach is loading the
 provider gRPC plugin binaries (the OS must `exec` them from a path).
 This is the ★★ MAGMA-NATIVE EXECUTION posture made concrete in the
-operator. Source: `backend/artifact_store.rs`; theory:
-[`pleme-io/theory/MAGMA-OPERATOR-BACKEND.md`](https://github.com/pleme-io/theory/blob/main/MAGMA-OPERATOR-BACKEND.md) §II-bis.
+operator. Source: `backend/artifact_store.rs`.
 
 - **`pangea_meta.artifacts`** — one row per
   `(schema_name, template_name, kind)` (that triple is the PRIMARY

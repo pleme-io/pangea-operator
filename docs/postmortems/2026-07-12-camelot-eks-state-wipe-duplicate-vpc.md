@@ -142,7 +142,7 @@ edit into an unattended duplicate-VPC apply.
 
 This is a live, concrete instance of the **★★ MAGMA-NATIVE EXECUTION**
 "interim, not the destination" gap already named in
-`pleme-io/CLAUDE.md` and `theory/CAMELOT.md` — pod-local disk state
+`pleme-io/CLAUDE.md` — pod-local disk state
 under the `tofu` executor instead of the DB-backed `magma` path. The
 existing writeup framed the risk as "a pod restart wipes the
 workspace"; this incident shows the REAL blast radius is wider — the
