@@ -524,7 +524,7 @@ pub struct MagmaExecutor<S: StateBackend + ?Sized> {
 /// every newly-cached data-source read**. Writing on each call would be
 /// O(N) writes — and because a checkpoint carries the whole `State`, each
 /// write is O(N) bytes, so the total is **O(N²)**. For the 2,478-resource
-/// workspace that motivated §II-ter that is on the order of a hundred
+/// workspace that motivated this change, that is on the order of a hundred
 /// gigabytes of Postgres traffic to protect a four-hour apply: a "safety"
 /// mechanism that would itself be the bottleneck.
 ///
@@ -3043,7 +3043,7 @@ mod tests {
     /// This is the property that keeps checkpointing from being O(N²): the
     /// sink is invoked after *every* applied node, and each write carries the
     /// whole state, so an undebounced sink on the 2,478-resource workspace
-    /// that motivated §II-ter would issue thousands of whole-state writes.
+    /// that motivated this change would issue thousands of whole-state writes.
     #[test]
     fn debounce_permits_one_event_per_interval() {
         let d = Debounce::new(std::time::Duration::from_secs(60));

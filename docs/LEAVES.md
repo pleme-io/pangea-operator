@@ -37,7 +37,7 @@ stage.
 | Calls in one full plan | about 4,500, about 2.2 per resource | 24 min × 3.125 req/s |
 | Admission defaults | reconcile workers 4, per scope 4, global 16 | `config.rs` defaults; the config file tier is absent on ryn |
 | Router templates | `roteador-buzios` 91 resources, `repetidor-buzios` 76; both `dialect: json`, no `status.leaf`, no `skip-leaf` | status read 13:05 |
-| §9 dry run of `pleme-io-github-repos` | 1,023 leaves (1,018 of 2 resources, 5 of 3), bijection holds, 0/0/0 projected | migration ledger, 2026-10-23 |
+| Migration dry run of `pleme-io-github-repos` | 1,023 leaves (1,018 of 2 resources, 5 of 3), bijection holds, 0/0/0 projected | migration ledger, 2026-10-23 |
 
 **Where the time goes.** Compile is 61 to 78 s, about 5% of a cycle. The
 plan is about 95%: the embedded engine's `refresh_then_plan` reads every one
@@ -83,21 +83,21 @@ resources.
 | Plan for a 1-repo change, from the leaf's generation bump to plan done | 22 to 39 min | **≤ 10 s p95** |
 | Apply for that change | 44 min 34 s (gen 27) | ≤ 20 s p95 |
 | API calls for the 1,022 unchanged leaves | about 4,500 | **0** |
-| Compile for a 1-repo change | 61 to 78 s, whole org | < 1 s, one leaf (§9 inputs derivation) |
+| Compile for a 1-repo change | 61 to 78 s, whole org | < 1 s, one leaf (inputs derivation) |
 | Drift coverage | whole org, one pass, no fixed cadence | every leaf once per `refreshInterval`, spread evenly |
-| Drift spend | about 4,500 calls in one burst | about 4,500 calls per hour, ≤ the drift share (§8) |
+| Drift spend | about 4,500 calls in one burst | about 4,500 calls per hour, ≤ the drift share ([§8](#8-change-scoped-planning-and-drift)) |
 | Blast radius of one stall | 2,053 resources, the whole org | one leaf and its dependents |
 
 The 10 s budget: one leaf compile < 1 s; state read from Postgres < 0.1 s; a
 2-resource refresh is about 4.5 calls, about 1.5 s at 3.125 req/s; the
 in-memory diff < 0.1 s; a pooled provider adds 0 s (a cold start is the one
-cost not yet measured, §18 item M1).
+cost not yet measured, [§18](#18-build-plan) item M1).
 
 ---
 
 ## 4. The unit: one leaf per repository
 
-**Answer.** A leaf is the §9 key with `--group-references`: one repository
+**Answer.** A leaf is the per-repository key with `--group-references`: one repository
 and the resources that name it. For `pleme-io-github-repos` that is 1,023
 leaves of 2 or 3 resources.
 
@@ -117,11 +117,11 @@ Every protection needs a cross-unit edge to its repository.
 ## 5. The leaf is a child CR; its work runs in process
 
 **Answer.** Each leaf is its own `InfrastructureTemplate`. pangea-architectures
-declares the leaf set and renders it (§10). The operator never invents a leaf.
+declares the leaf set and renders it ([§10](#10-every-language-derives-leaves)). The operator never invents a leaf.
 The parent is the leaf set's `WorkspaceCatalog`. Each leaf carries the label
 `pangea.pleme.io/workspace: <catalog>` and an `ownerReference` to the catalog.
 The catalog holds the shared variables and `maxConcurrentLeaves`, and it
-aggregates the leaves (§12). Every leaf's compile, plan and apply runs as an
+aggregates the leaves ([§12](#12-failure-isolation-and-the-parents-partial-state)). Every leaf's compile, plan and apply runs as an
 async task in the operator, in the embedded magma engine. Nothing spawns tofu.
 The operator reconciles, schedules, queues and reports.
 
@@ -141,7 +141,7 @@ and `FairBudget`, which is the parallel mechanism the operator forbade.
 600 bytes of inputs (597 KB / 1,005 repos), so the store holds less than
 today's one object. Writes fall: a status patch rewrites a few KB, not 1.1 MB.
 Heartbeat writes are bounded by the global cap, because only admitted leaves
-beat. engenho's behaviour at 1,000 objects is unmeasured; §18 item E1 measures
+beat. engenho's behaviour at 1,000 objects is unmeasured; [§18](#18-build-plan) item E1 measures
 it before cutover.
 
 ## 6. State boundary and key
@@ -152,7 +152,7 @@ every template: `"{schema}_{leaf}_states".states`, row `default`
 one folded schema per template, not one `states` table per namespace). The lock is
 `pangea_meta.state_locks (schema, leaf)`. The leaf name is
 `<parent>-<leaf key slug>`, made by `pangea-leaf/src/names.rs` (to move to
-blue, §11).
+blue, [§11](#11-decisions-are-blue-the-happa-bidama)).
 
 **Rejected: one `PangeaNamespace` per leaf.** 1,023 Postgres schemas, 1,023
 DDL passes, and a namespace object per leaf, for no isolation that a row does
@@ -166,7 +166,7 @@ One failure still owns everything.
 
 **Answer.** Edges are `variableRefs` (`templateRef` + `outputKey`, with
 `mockOutput` for a plan before the upstream applies). This is Terragrunt's
-`dependency` block. The graph is `gurafu` values built by `happa::graph` (§11).
+`dependency` block. The graph is `gurafu` values built by `happa::graph` ([§11](#11-decisions-are-blue-the-happa-bidama)).
 A leaf plans when its upstreams have the output or a mock; it applies only
 when they have the output (`schedule::blocked_by`, today). Destroy runs in
 reverse order.
@@ -221,7 +221,7 @@ blocks a change today.
 
 Parallelism belongs to the controller. Each leaf is one task. No
 engine-internal parallelism flag carries throughput. Every knob below has a
-default and an off value, and each is one kousei entry in `happa::caps` (§11),
+default and an off value, and each is one kousei entry in `happa::caps` ([§11](#11-decisions-are-blue-the-happa-bidama)),
 so a bad value is refused alone.
 
 | Knob | Where | Default | Off |
@@ -246,7 +246,7 @@ keep the pacer fed while a leaf waits on compile or Postgres. More slots only
 hold permits idle.
 
 **The queue.** With `leaf.queue: jetstream`, admitted work leaves through a
-JetStream consumer per credential (§17). The caps above stay the leader's.
+JetStream consumer per credential ([§17](#17-scaling-by-leaf-work)). The caps above stay the leader's.
 
 ## 10. Every language derives leaves
 
@@ -258,7 +258,7 @@ runs in the operator:
 
 - **render then slice (universal).** The render compiles the source once with
   the language's own front end. `happa::split` partitions the rendered Terraform
-  JSON by the §9 key with reference closure. `happa::slice` cuts each leaf's
+  JSON by that per-repository key with reference closure. `happa::slice` cuts each leaf's
   JSON. The leaf runs `dialect: json` with that body. Cost: one full compile
   per input change (61 to 78 s for this org today).
 - **slice then render (keyed).** The source declares which input is the
@@ -341,7 +341,7 @@ The operator never derives leaves at runtime.
 **Opt out.** Per template: `pangea.pleme.io/skip-leaf: provider-singleton |
 atomic-bootstrap | external-contract | shared-lifecycle`. For the operator:
 `leaf.admission: off`. A template with either runs monolithic, under the same
-controller. Both modes stay in the test suite (§18 item O2).
+controller. Both modes stay in the test suite ([§18](#18-build-plan) item O2).
 
 **Rejected: hand-written leaf CRs** (what `pangea leaf plan --emit-dir`
 produces for a human to apply). Keeping 1,023 files in step with org.yaml by
@@ -378,13 +378,13 @@ addresses, the digests and the leaf states in as values.
 | `happa::changed(leaves, recorded)` | the leaves whose digest moved | `schedule.rs` (`stale_leaves`) |
 | `happa::graph(leaves, refs)` | the leaf graph; a cycle is a refusal | `dag.rs` |
 | `happa::blocked(leaf, graph, states, applying)` | which upstreams hold a leaf | `schedule.rs` (`blocked_by`) |
-| `happa::caps(declaration)` | the knobs of §9, each an entry | `config.rs` (`LeafConfig`, budget) |
+| `happa::caps(declaration)` | the knobs of [§9](#9-concurrency-and-the-rate-budget), each an entry | `config.rs` (`LeafConfig`, budget) |
 | `happa::admit(candidates, caps, in_flight)` | who runs next, in what class | new |
 | `happa::drift_due(leaves, now, interval)` | which leaves are due, spread by hash | new |
 | `happa::admission(classification, skip, mode, reconciled)` | admit or refuse | `admission.rs` |
 | `happa::ratchet(prev, measured)` | the `status.leaf` floor | `ratchet.rs` |
-| `happa::health(leaf, now)` | one leaf's verdict and alert verdict (§13) | new |
-| `happa::judge(leaves)` | the parent's partial-state verdict (§12) | new |
+| `happa::health(leaf, now)` | one leaf's verdict and alert verdict ([§13](#13-per-leaf-observability)) | new |
+| `happa::judge(leaves)` | the parent's partial-state verdict ([§12](#12-failure-isolation-and-the-parents-partial-state)) | new |
 
 **Reuses.** `kousei` (each cap and setting an entry, off or refused alone),
 `kyohi` (refusals as data), `junjo` (priority order), `gurafu` (topo,
@@ -435,7 +435,7 @@ leaves:
 
 The catalog's verdict is `Converged`, `Progressing` or `Partial`. It is never one
 `Failed` for the whole org. A whole-template failure is a bad state, not a
-mode (§9.1 row 6). `happa::judge` computes the verdict.
+mode. `happa::judge` computes the verdict.
 
 ## 13. Per-leaf observability
 
@@ -491,7 +491,7 @@ Plans and applies run in the magma engine inside the operator. A leaf's state
 is a magma state, read from and written to its `states` row. A leaf's plan is
 `refresh_then_plan` in memory: no state file, no subprocess of tofu. Provider
 plugins stay processes, because Terraform providers ship as plugin binaries (a
-world fact). A pool in the operator reuses them across leaves (§18 item M1).
+world fact). A pool in the operator reuses them across leaves ([§18](#18-build-plan) item M1).
 
 **Configured-off legacy, not designed on:**
 
@@ -522,7 +522,7 @@ piece is its executor. In Postgres, in one transaction:
 4. abort if the bijection fails. Nothing is written.
 
 No provider call, no import, no create. Then every leaf plans against the
-live world (§9 step 5) and must show 0 add, 0 change, 0 destroy. Every leaf
+live world and must show 0 add, 0 change, 0 destroy. Every leaf
 carries `destroyProtection: true`. That first full plan costs one refresh of
 the org (about 24 min, once).
 
@@ -549,17 +549,17 @@ mode is one field away, never a rebuild.
 
 | Item | Next step |
 |---|---|
-| `pleme-io-github-repos`: fat, grandfathered, 2,053 resources | cutover by §15, item O10 |
+| `pleme-io-github-repos`: fat, grandfathered, 2,053 resources | cutover by [§15](#15-state-migration-in-the-engines-terms), item O10 |
 | `roteador-buzios`, `repetidor-buzios`: no `status.leaf`, no `skip-leaf` | classify, then leaves or a typed `skip-leaf` |
 | `pangea-architectures/workspaces/pleme-io-opensource`: one Ruby state plus 4 hash shards | the Ruby keyed form (item R1); hash shards retire into leaf keys |
 | `helmworks` `github-org-repos.yaml`: static 15m/45m phase timeouts sized for a fat template | per-leaf budgets from `status.leaf.cycleP95Ms`; the static values stay as the monolithic mode's |
 | `pangea-operator/CLAUDE.md` "prefer sharding the workspace" | read "leaves", point here |
 | `docs/TERRAGRUNT-PARITY.md` Gap 3 and P3 | point here; the run-all DAG is `happa::graph` |
 | `TemplateDag::apply_order`, `destroy_order`: no live caller | `happa::admit` and the reverse-destroy order use them |
-| `pangea-leaf` decisions in Rust | `happa` (§11), Rust kept as oracle |
-| §9 step 6 "suspend the fat template" | the fat template stays declared and suspended; its catalog becomes the parent |
+| `pangea-leaf` decisions in Rust | `happa` ([§11](#11-decisions-are-blue-the-happa-bidama)), Rust kept as oracle |
+| Cutover step 6, "suspend the fat template" | the fat template stays declared and suspended; its catalog becomes the parent |
 | `reconcile.workers` 4 below `budget_global` 16 | raise the default to 16 |
-| tofu rows in §14 | `PANGEA_FORBID_TOFU=true` by default in the chart |
+| tofu rows in [§14](#14-the-engine-embedded-magma-only) | `PANGEA_FORBID_TOFU=true` by default in the chart |
 | one CR holding 597 KB of variables | each leaf holds its own slice |
 
 ---
@@ -579,13 +579,13 @@ mode is one field away, never a rebuild.
 The peak is 11% of the limit, so this window gives no sign of an OOM. The two
 restarts have no recorded cause. a1e6e3b names a lease-renewal failure for the
 12:19 one. The per-leaf footprint after cutover is not measured: on
-2026-10-27 the cutover stopped at §9 step 4. It lacks the
+2026-10-27 the cutover stopped at its step 4. It lacks the
 `StateMove` executor (item O10) and a per-leaf input slice (items O2, L1).
 
 ### The metric: pending weighted actions, capped by budget
 
 Answer: weight by action kind. The weight is the provider calls the action
-costs, because calls are the bottleneck (§1).
+costs, because calls are the bottleneck ([§1](#1-baseline-measured-2026-10-27-ryns-engenho-read-only)).
 
 ```
 work(leaf)  = Σ_k  w_k · n_k(leaf)          over k ∈ {refresh, create, update, delete, import, replace}
@@ -620,11 +620,11 @@ inside the stream's duplicate window (default 10 min). The `Pangea-Cost`
 header carries `work(leaf)`.
 
 Workers pull from one durable consumer per credential. `MaxAckPending` is
-the per-credential cap (§9). A worker sends an in-progress ack (`+WIP`) with
+the per-credential cap ([§9](#9-concurrency-and-the-rate-budget)). A worker sends an in-progress ack (`+WIP`) with
 every leaf heartbeat, at most every `AckWait / 2` (`AckWait` 60 s). When a
 worker crashes, the message is redelivered after `AckWait`. After
 `MaxDeliver` (default 5) the advisory marks the leaf `Failed`, and the catalog
-names it (§12). The state lock in `pangea_meta.state_locks` still guards each
+names it ([§12](#12-failure-isolation-and-the-parents-partial-state)). The state lock in `pangea_meta.state_locks` still guards each
 leaf's state row, so a late duplicate cannot write twice.
 
 The rate budget stays one budget. For each credential, the leader gives each
@@ -638,7 +638,7 @@ acked. The leader keeps this sum from its publishes and the acks. JetStream's
 own `num_pending` and `num_ack_pending` are its check.
 
 **Off.** `leaf.queue: in_process` (default until NATS runs on the node) is
-today's scheduler. The leader runs every leaf in process under the §9 caps,
+today's scheduler. The leader runs every leaf in process under the [§9](#9-concurrency-and-the-rate-budget) caps,
 and no worker exists. `leaf.queue: jetstream` needs `leaf.nats.url`. When the
 url is absent, that one entry is refused and the queue stays in process.
 
@@ -723,10 +723,10 @@ switch. Items in one row group are independent.
 
 | # | Item | Test | Off |
 |---|---|---|---|
-| H1 | `blue/happa/happa.b` with the §11 words | `blue test`; differential: each word equals its `pangea-leaf` source on the 2026-10-23 address set (1,023 leaves) | `leaf.engine: rust` |
+| H1 | `blue/happa/happa.b` with the [§11](#11-decisions-are-blue-the-happa-bidama) words | `blue test`; differential: each word equals its `pangea-leaf` source on the 2026-10-23 address set (1,023 leaves) | `leaf.engine: rust` |
 | O1 | Embed `happa` (`include_str!`, `Loader`, `posture(&[])`) in `src/leaf_engine.rs`. **PENDING happa** (2026-10-28: no `happa` on blue main at af40686). Built: `leaf_engine::LeafEngine` carries every leaf decision the operator makes (`admit`, `drift_due`, `drift_wait`, `judge`, `transitions`, `series`, `work`, `memory`), and every call site goes through `leaf_engine::engine()`; `RustEngine` delegates to `pangea-leaf`. `leaf.engine: rust \| blue` (`PANGEA_LEAF_ENGINE`; default `rust`); `blue` is refused alone at boot with a reason and the rust engine judges. The swap is one `BlueEngine` impl over blue-lang-host's `Embedded` loader; `pending-happa-embed` at the top of `CLAUDE.md` | one refused host call per capability (kensa `event_tests.rs` form): waits on the bidama. Now: `leaf_engine::tests::blue_is_refused_alone_until_happa_is_embedded_and_rust_judges`, `every_decision_reaches_the_engine_through_the_trait`, a config file-tier test | `leaf.engine: rust` |
 | O2 | Leaf-set contract: a leaf names its catalog by label and owner; a leaf whose catalog is missing is refused alone; no runtime generation path exists **BUILT + TESTED, not live** (2026-10-27, dfde4d1): `pangea_leaf::slice::isolate` after the cascade, `LeafSliceInvalid` and `LeafCatalogMissing` per leaf; tests `a_declared_leaf_receives_only_its_own_slice_of_the_catalog`, `a_leaf_with_no_catalog_is_an_orphan_by_name_and_its_sibling_is_a_leaf`, `a_skip_leaf_monolith_is_standalone_in_both_modes`. | a leaf with no catalog is `Failed` by name and its siblings reach `Ready`; both modes (a leaf set and a `skip-leaf` monolith) in the suite | `skip-leaf` per template |
-| O3 | Catalog rollup `WorkspaceCatalog.status.leaves` and its verdict `Partial`, aggregated over the declared leaves **BUILT + TESTED, not live** (2026-10-27, 8cf2ea7, 71b0463): `pangea_leaf::rollup::judge`, written by the catalog controller every 30 s while not converged (no watch on the leaves yet); test `one_failed_leaf_makes_its_catalog_partial_and_names_it_while_siblings_are_ready`. The CRD field waits on helmworks (C1; `workspacecatalogs` is in the crd-drift baseline). | one leaf `Failed`: the catalog reads `Partial` and names it, its siblings reach `Ready`, its dependent is `blocked` | none (§9.1 row 6) |
+| O3 | Catalog rollup `WorkspaceCatalog.status.leaves` and its verdict `Partial`, aggregated over the declared leaves **BUILT + TESTED, not live** (2026-10-27, 8cf2ea7, 71b0463): `pangea_leaf::rollup::judge`, written by the catalog controller every 30 s while not converged (no watch on the leaves yet); test `one_failed_leaf_makes_its_catalog_partial_and_names_it_while_siblings_are_ready`. The CRD field waits on helmworks (C1; `workspacecatalogs` is in the crd-drift baseline). | one leaf `Failed`: the catalog reads `Partial` and names it, its siblings reach `Ready`, its dependent is `blocked` | none |
 | O4 | The admission refusal names `workspaces/<ws>/leaves.b`. **BUILT + TESTED, not live** (2026-10-28): `leaf.admission: generate \| enforce \| off` (`PANGEA_LEAF_ADMISSION`; default `enforce`). `enforce` refuses a never-reconciled fat template and names `workspaces/<ws>/leaves.b` (the workspace label, else the template name) as the fix; `generate` refuses the same template and appends a draft `leaves(...)` entry built from the template (its largest list variable as the collection, `slug`/`name`/`key`/`id` as the key, dialect and template name as the architecture, the `pangeaNamespace`, each provider credential's secret, `destroyProtection`) for a human to commit; it creates nothing. `pangea_leaf::admission::{decide_with, Fix, leaves_path}` | the refusal message carries the path. `admission::tests::the_refusal_names_the_workspaces_leaves_declaration` (red with the old message), `leaf::tests::generate_refuses_with_a_leaves_entry_drafted_from_the_template`, a config file-tier test | `leaf.admission: off` |
 | O5 | Priority and caps in the dispatch gate: `happa::admit`, `leaf.per_credential_cap`, drift reserve; workers default 16. **After** the stalled-pass work in `pass_driver` and the budget code lands. **BUILT + TESTED, not live** (2026-10-28): `pangea_leaf::admit` (classes apply, change, unblocked, retry, drift; ties by depth then name, drift oldest first; drift reserve `drift_slots`; per-credential cap), called through `leaf_engine::LeafEngine` (the `RustEngine` until O1). The live gate is `controller/template/leaf_gate.rs`: each expensive phase registers a candidate, the engine ranks every candidate seen in the last 30 s, and a leaf takes its scope, credential and drift permits only when ranked in. The credential key is a BLAKE3 of the namespace and `spec.providerCredentials`. Depth is 0 for a root and 1 for a leaf with `variableRefs` until `happa::graph` gives the true depth. `reconcile.workers` default 4 → 16. Settings `leaf.priority` (`PANGEA_LEAF_PRIORITY`), `leaf.per_credential_cap` (`PANGEA_LEAF_PER_CREDENTIAL_CAP`), `leaf.drift_share` (`PANGEA_LEAF_DRIFT_SHARE`; a value outside [0, 1] refuses the file tier) | 20 drift-due leaves and 1 changed leaf with 4 slots: the changed leaf is admitted first. `admit::tests::twenty_drift_due_leaves_and_one_changed_leaf_with_four_slots_admit_the_changed_leaf_first` (red against arrival order, then green), 10 in `admit`, 7 in `leaf_gate` (`a_drift_leaf_that_polls_while_a_change_waits_defers_to_it`, `the_per_credential_cap_holds_across_scopes_at_the_live_gate`, …), 2 config file-tier tests | `leaf.priority: off`, caps at monolithic values (`per_credential_cap: 0`, `drift_share: 0` lifts the reserve) |
 | O6 | Drift lane: `happa::drift_due`, the `:drift` shared pacer, `leaf.drift_share`. **BUILT + TESTED, not live** (2026-10-28): `pangea_leaf::drift` (rank placement, `is_due`, `next_due_in`, `drift_due`) through `LeafEngine::{drift_due, drift_wait}`; a declared leaf's Ready drift check waits for its slot (siblings listed by the workspace label, cached 60 s) and plans inside the drift lane, and its admitted phases run inside the change lane (`executor::pacer_lane`, a task-local read by `shared_pacer_for`). `pangea_leaf::pace::lane_pacer` keys the lanes `<credential>:drift` at quota × share and `<credential>:change` at quota × (1 − share). A template that is not a declared leaf keeps the one pacer and the `refreshInterval` throttle, so a monolith on the same credential still draws its own full quota. A share of 1 is refused (no change lane), 0 keeps the one pacer | over a fake hour, 1,023 leaves are each due once, no minute holds more than ⌈1,023/60⌉ + 1. `drift::tests::over_a_fake_hour_each_of_1023_leaves_is_due_once_and_no_minute_holds_more_than_its_share` (red with `BLAKE3 mod interval`: worst minute 28 > 19; green by rank), `pace::tests::the_change_and_drift_lanes_sum_to_the_credentials_quota`, `pacer_lane::tests::a_drift_plan_draws_from_the_drift_pacer_and_a_monolith_from_the_one_pacer` | `leaf.drift_share: 0` |
@@ -735,7 +735,7 @@ switch. Items in one row group are independent.
 | O9 | Parent `LeafFailed` and `LeafStalled` events. **BUILT + TESTED, not live** (2026-10-28): `pangea_leaf::rollup::{held, transitions, seed}`; the catalog controller keeps each leaf's held state (failed or stalled) per catalog in memory, seeded after a restart from `status.leaves` (names past the 50-name cap are not seeded and may repeat once), and records a Warning event on the `WorkspaceCatalog` naming the leaf and its reason or stall state when a leaf enters a held state. Where no Event API is served (engenho) the event lands in the new `status.recentEvents` ring (20). The CRD field waits on helmworks (C1): `workspacecatalogs` is in the crd-drift baseline | one event per leaf per transition, none on a repeat. `rollup::tests::one_event_per_leaf_per_transition_and_none_on_a_repeat` (red when every held leaf is emitted), `a_restart_seeded_from_the_status_emits_nothing_for_what_it_already_named`, `workspace_catalog_controller::tests::the_catalog_records_one_leaf_failed_event_per_transition_into_its_status_ring` (three reconciles, one event) | none |
 | O10 | `StateMove` executor (`pangea leaf migrate`) in one Postgres transaction, with archive and `leaf-migration` artifact. **BUILT + TESTED, not run live** (2026-10-27): pure split and merge in `pangea-leaf/src/migrate.rs` (1996d30), the one-transaction executor `backend::leaf_migration::{forward, reverse}` (c1a3e2f), the offline file form `pangea leaf migrate` (1ed2e40). In-operator trigger (3c05145): `pangea.pleme.io/migrate-from` on the catalog, `forward_by_key` when the fat parent is suspended, `LeafMigration` condition, off by `leaf.migrate: false`. CI runs the Postgres tests against a `postgres:17` service since 48af3ee (red probe run 40584530016, green 40592434942) | a forged bijection writes nothing; a good one writes N rows that read back to the same multiset; reverse merge restores the fat row byte-equal. `pangea-leaf/tests/migrate.rs` (9), `pangea-operator/tests/leaf_migration_pg.rs` (3, Postgres 17.10; now 4, required in CI by `PANGEA_REQUIRE_TEST_DATABASE=1`), `pangea-cli/tests/leaf_migrate.rs` (2) | run nothing; the fat row is untouched |
 | O11 | Leaf queue on JetStream: one message per leaf action, `Nats-Msg-Id` = leaf, action and input digest, a durable consumer per credential with `MaxAckPending` = cap, `+WIP` per heartbeat, `MaxDeliver` advisory to `Failed`, `happa::shares` splits each credential's rate. **BUILT + TESTED, not wired** (2026-10-28): `pangea_leaf::queue` (`LeafWork`, `msg_id` = `<leaf>:<action>:<digest>`, subject `pangea.leaf.<credential>.<action>`, consumer `leaf-<credential>`, `shares`); `leaf_queue::LeafQueue` with `InProcessQueue` (the default, also the unit-test queue: dedupe window, ack deadline, redelivery, `MaxDeliver` to `exhausted`, `max_ack_pending`) and `JetStreamQueue` (async-nats 0.50: a WorkQueue stream with the 10 min duplicate window, `Pangea-Cost` header, durable pull consumer per credential, `AckKind::Progress` as the heartbeat, the `MAX_DELIVERIES` advisory read back as exhausted work); `work_on` sends `+WIP` every `AckWait / 2` while a leaf runs and acks or naks after. `leaf.queue: jetstream` with no `leaf.nats.url` is refused alone and the queue stays in process; a failed connect does the same. The controller does not yet route admitted work through the queue: that needs the worker Deployment (C3, C4) | against a test `nats-server`: a republished action is dropped; a killed worker's message reaches the other worker after `AckWait`; the summed pacer quota stays at `r_c`. `tests/leaf_queue_jetstream.rs` (3, CI job `leaf-queue-jetstream` with `nats:2.10.22 -js`, required by `PANGEA_REQUIRE_TEST_NATS=1`; red with no `Nats-Msg-Id` and no `+WIP`: 2 fail), `leaf_queue::tests` (6, the in-process queue), `queue::tests::the_summed_shares_stay_at_the_credentials_rate` | `leaf.queue: in_process` |
-| O12 | `pangea_leaf_pending_work` gauge and `PangeaFleetStatus.status.leafWork`, by the §17 formula; weights calibrated from `pangea_provider_rpc_seconds_count`. **BUILT + TESTED, not live** (2026-10-28): `pangea_leaf::work` (`work`, `metric`, `desired`, `status`); `leaf_work.rs` counts every unsuspended template that is behind its generation or not settled, with `n_k` from `status.lastCycle.actionDistribution` (refresh = max(resource count, existing actions); no plan yet: the resource count), capped per GitHub-paced credential at `r_c · H` with `r_c` from `PANGEA_GITHUB_BUDGET_RPH` × `PANGEA_PACER_QUOTA_PCT` / 3600 (`executor::pacer_lane`, now the one reader of both). Published by the projection loop as `pangea_leaf_pending_work` and by the fleet-status controller as `status.leafWork` (`metric`, `desired`, `unpaced`, per-credential `pending`/`cap`/`counted`). Settings `workers.autoscaling.{enabled, min, max, target, horizonSecs}` (`horizon_secs` in the file) and `workers.weights` (defaults refresh 1, create 3, update 2, delete 2, import 2, replace 5). The weights are not yet calibrated from `pangea_provider_rpc_seconds_count`: that needs live series. The CRD field waits on helmworks (C1): `pangeafleetstatuses` is in the crd-drift baseline | a fixed queue gives the hand-computed value; a starved credential caps at `r_c · H`. `work::tests::a_starved_credential_caps_at_its_rate_times_the_horizon` (red with no cap: 5115 for 937), `work::tests::a_fixed_queue_gives_the_hand_computed_value`, `leaf_work::tests` (3, from template status), a config file-tier test | `workers.autoscaling.enabled: false` (`PANGEA_WORKERS_AUTOSCALING`) |
+| O12 | `pangea_leaf_pending_work` gauge and `PangeaFleetStatus.status.leafWork`, by the [§17](#17-scaling-by-leaf-work) formula; weights calibrated from `pangea_provider_rpc_seconds_count`. **BUILT + TESTED, not live** (2026-10-28): `pangea_leaf::work` (`work`, `metric`, `desired`, `status`); `leaf_work.rs` counts every unsuspended template that is behind its generation or not settled, with `n_k` from `status.lastCycle.actionDistribution` (refresh = max(resource count, existing actions); no plan yet: the resource count), capped per GitHub-paced credential at `r_c · H` with `r_c` from `PANGEA_GITHUB_BUDGET_RPH` × `PANGEA_PACER_QUOTA_PCT` / 3600 (`executor::pacer_lane`, now the one reader of both). Published by the projection loop as `pangea_leaf_pending_work` and by the fleet-status controller as `status.leafWork` (`metric`, `desired`, `unpaced`, per-credential `pending`/`cap`/`counted`). Settings `workers.autoscaling.{enabled, min, max, target, horizonSecs}` (`horizon_secs` in the file) and `workers.weights` (defaults refresh 1, create 3, update 2, delete 2, import 2, replace 5). The weights are not yet calibrated from `pangea_provider_rpc_seconds_count`: that needs live series. The CRD field waits on helmworks (C1): `pangeafleetstatuses` is in the crd-drift baseline | a fixed queue gives the hand-computed value; a starved credential caps at `r_c · H`. `work::tests::a_starved_credential_caps_at_its_rate_times_the_horizon` (red with no cap: 5115 for 937), `work::tests::a_fixed_queue_gives_the_hand_computed_value`, `leaf_work::tests` (3, from template status), a config file-tier test | `workers.autoscaling.enabled: false` (`PANGEA_WORKERS_AUTOSCALING`) |
 | O13 | `status.leaf.peakRssBytes` from a calibration pass, and `workers.memory: derived`. **BUILT + TESTED, not live** (2026-10-28): `leaf.calibrate: true` (`PANGEA_LEAF_CALIBRATE`, default false) caps the dispatch gate at one expensive phase operator-wide; around each declared leaf's plan the operator resets the peak (`/proc/self/clear_refs` 5) and records `VmHWM − VmRSS` as `status.leaf.peakRssBytes` (Linux only; elsewhere the field stays absent). `pangea_leaf::memory::derive`: request = base RSS (23.6 MiB, the lowest 2026-10-27 sample) + per-worker concurrency (`leaf.per_credential_cap`, 16 when 0) × the largest leaf peak + 1 provider × 33 MiB, limit = request × 1.5; with no peak recorded the fat-plan peak (55.6 MiB) bounds one leaf. Published as `PangeaFleetStatus.status.workerMemory` (`requestBytes`, `limitBytes`, `source`, `maxLeafPeakBytes`, `calibrated`) for C3 to render. Setting `workers.memory: derived \| <quantity>` (`PANGEA_WORKERS_MEMORY`; a bad quantity refuses the file tier) | the derived request equals the formula on fixture leaves. `memory::tests::the_derived_request_equals_the_formula_on_fixture_leaves` (red without the concurrency term), `leaf_work::tests::the_derived_worker_memory_equals_the_formula_on_fixture_leaves` (from template status), `leaf_gate::tests::a_calibration_pass_admits_one_expensive_phase_at_a_time`, `leaf::tests::the_peak_rss_is_read_from_proc_status_in_bytes` | `workers.memory: <quantity>` |
 
 ### magma
@@ -755,7 +755,7 @@ switch. Items in one row group are independent.
 | # | Item | Test | Off |
 |---|---|---|---|
 | R1 | `leaf_key:` for architectures that iterate a collection; `GitHubOrgWorkspace`'s `shard:` reads it | rspec: the union of keyed renders equals the whole render | no key: render then slice |
-| R2 | `workspaces/<ws>/leaves.b` with `happa` entries, `nix run .#render-leaves` to `workspaces/<ws>/leaves/`, and the `nix flake check` gate; `pleme-io-opensource` first (org.yaml, `repos`, `slug`) **BUILT + TESTED, not delivered** (2026-10-27, pangea-architectures f11ccb2, 2601c62): `leaves.b` holds one entry as a plain blue map (no `happa` words exist yet; the map is the shape `leaves(...)` returns), lowered to `leaves/declaration.json`; `lava-leaves render` (lava-architectures) writes 1,024 `InfrastructureTemplate`s and the `WorkspaceCatalog` (with `migrate-from: pleme-io-github-repos`) carrying the slice contract except `ownerReferences`: a rendered file cannot know the catalog's `uid`, so O2's membership test needs a label-only form or the delivery path must stamp the owner (kube refuses an `ownerReference` with no `uid`). Each leaf also names its own addresses (`pangea.pleme.io/leaf-addresses`, pangea-architectures b7734a3): 1,019 leaves of 2 and 5 of 3 (`cse-lint`, `shigoto`, `shiken`, `tatara-rust-ast`, `tear`: repository, actions, branch protection), 2,053 in all, the dry run's partition. The fat state's addresses carry no `for_each` key (`github_repository.<slug>`, `…<slug>_actions`, `…<slug>_protection`), so `migrate::moves_by_key` places none of them: the O10 trigger must place by `leaf-addresses` (exact, and the union gate proves it disjoint and covering), not by `leaf_key(address)`. Inputs: `leaves-records.json`, the resolver's variables read from ryn's fat CR (generation 29), refreshed by hand; the gate refuses it when its rows differ from org.yaml. Live facts (`exists_on_github`, `live_visibility`) are in the rendered spec, not yet under the resolver's own field manager (§8) | `checks.leaves-pleme-io-opensource` (CI `leaves.yml`): declaration fresh, 1,024 leaves, union equals the whole render, tree fresh; red with one leaf file removed; `tests/leaves.rs` covers a stale record set, a disagreeing key, a doubled and a dropped row, a malformed entry alone, a hand edit | no `leaves.b`, or `enabled: false` in the entry: the workspace stays monolithic |
+| R2 | `workspaces/<ws>/leaves.b` with `happa` entries, `nix run .#render-leaves` to `workspaces/<ws>/leaves/`, and the `nix flake check` gate; `pleme-io-opensource` first (org.yaml, `repos`, `slug`) **BUILT + TESTED, not delivered** (2026-10-27, pangea-architectures f11ccb2, 2601c62): `leaves.b` holds one entry as a plain blue map (no `happa` words exist yet; the map is the shape `leaves(...)` returns), lowered to `leaves/declaration.json`; `lava-leaves render` (lava-architectures) writes 1,024 `InfrastructureTemplate`s and the `WorkspaceCatalog` (with `migrate-from: pleme-io-github-repos`) carrying the slice contract except `ownerReferences`: a rendered file cannot know the catalog's `uid`, so O2's membership test needs a label-only form or the delivery path must stamp the owner (kube refuses an `ownerReference` with no `uid`). Each leaf also names its own addresses (`pangea.pleme.io/leaf-addresses`, pangea-architectures b7734a3): 1,019 leaves of 2 and 5 of 3 (`cse-lint`, `shigoto`, `shiken`, `tatara-rust-ast`, `tear`: repository, actions, branch protection), 2,053 in all, the dry run's partition. The fat state's addresses carry no `for_each` key (`github_repository.<slug>`, `…<slug>_actions`, `…<slug>_protection`), so `migrate::moves_by_key` places none of them: the O10 trigger must place by `leaf-addresses` (exact, and the union gate proves it disjoint and covering), not by `leaf_key(address)`. Inputs: `leaves-records.json`, the resolver's variables read from ryn's fat CR (generation 29), refreshed by hand; the gate refuses it when its rows differ from org.yaml. Live facts (`exists_on_github`, `live_visibility`) are in the rendered spec, not yet under the resolver's own field manager ([§8](#8-change-scoped-planning-and-drift)) | `checks.leaves-pleme-io-opensource` (CI `leaves.yml`): declaration fresh, 1,024 leaves, union equals the whole render, tree fresh; red with one leaf file removed; `tests/leaves.rs` covers a stale record set, a disagreeing key, a doubled and a dropped row, a malformed entry alone, a hand edit | no `leaves.b`, or `enabled: false` in the entry: the workspace stays monolithic |
 
 ### helmworks
 
@@ -777,4 +777,4 @@ switch. Items in one row group are independent.
 | # | Item | Check |
 |---|---|---|
 | E1 | Load test engenho at 1,100 `InfrastructureTemplate` objects on a scratch cluster | list and watch latency, store size |
-| E2 | Cut over `pleme-io-github-repos` with O10, then settle. Another session owns it. On 2026-10-27 it stopped at §9 step 4: there is no O10, and there is no per-leaf slice (O2, L1) (1,024 leaves on serial 181) | 0/0/0 across all leaves; then a 1-repo change plans in ≤ 10 s; then the per-leaf RSS for O13 |
+| E2 | Cut over `pleme-io-github-repos` with O10, then settle. Another session owns it. On 2026-10-27 it stopped at cutover step 4: there is no O10, and there is no per-leaf slice (O2, L1) (1,024 leaves on serial 181) | 0/0/0 across all leaves; then a 1-repo change plans in ≤ 10 s; then the per-leaf RSS for O13 |

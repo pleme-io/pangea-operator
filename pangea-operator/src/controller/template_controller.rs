@@ -1356,7 +1356,7 @@ async fn handle_compiling(
     let workspace = state.workspace_manager.get_workspace(template).await?;
     let source = &template.spec.source;
 
-    // Freshness model (§ staleness honesty): the commit this compile
+    // Freshness model: the commit this compile
     // consumes. Captured in the gitRepository arm right after the
     // clone/fetch lands; written to `status.compiledRevision` in the
     // compile-success block so handle_ready's freshness gate can
@@ -4581,10 +4581,10 @@ async fn handle_applying(
         // lastCycle.outcomes) and in the operator log.
         //
         // The event reason now carries the typed anomaly discriminant
-        // (SurfaceAndHold per §IV) so `kubectl get events` names the class —
+        // (SurfaceAndHold) so `kubectl get events` names the class —
         // `AnomalyUnclassified` / `AnomalyPermissionDenied` /
         // `AnomalyProviderUnavailable` — not just a generic `ApplyFailed`.
-        // An Unclassified here is the backlog signal (§X): it forces a new
+        // An Unclassified here is the backlog signal: it forces a new
         // taxonomy arm.
         let event_reason = driver.event_reason();
         let event_body = format!(
@@ -4864,7 +4864,7 @@ async fn react_to_apply_anomaly(
         // path (Phase::Failed + Healthy=False + ReactivePolicy escalation),
         // which is non-silent by construction. The terminal-event reason
         // (set by the caller from `driver.event_reason()`) names the class;
-        // an Unclassified here is the §X backlog signal that forces a new
+        // an Unclassified here is the backlog signal that forces a new
         // taxonomy arm. We assert the Hold mode explicitly for clarity.
         ApplyAnomaly::PermissionDenied | ApplyAnomaly::Unclassified { .. } => {
             debug_assert_eq!(mode, RemediationMode::Hold);

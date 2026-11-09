@@ -45,7 +45,7 @@ from live incidents:
 - **Disk/state round-trips & clone races:** shared git clones and S3 state are
   serialization points and failure surfaces.
 
-Magma's §II.9 in-memory model removes the *category* of these costs: Pangea Ruby
+Magma's in-memory model removes the *category* of these costs: Pangea Ruby
 evaluates in-process, **rendered architecture never touches disk**, every
 operation is a typed `shigoto::Job`, the resource DAG is a `shigoto::Dag`, and
 cross-workspace values pass through Rust — **not** state files through S3.
@@ -117,9 +117,9 @@ primitives, each a typed layer — not separate services bolted together:
 | Declaration | Pangea Ruby (in-process via magnus) | desired state as expressive, typed DSL |
 | Config | shikumi (shikumi-go for Go) | strongly-typed inputs, discovery, hot-reload — no ad-hoc parsing |
 | Work-graph | shigoto (`Job`/`Dag`/`Scheduler`/`RetryPolicy`) | every op a typed, suspendable, budgeted, retried Job |
-| Execution | **magma** (in-memory, §II.9) | the molten executive force — disk-free typed work-graph over provider gRPC |
+| Execution | **magma** (in-memory) | the molten executive force — disk-free typed work-graph over provider gRPC |
 | Attestation | tameshi / tabeliao (BLAKE3) | tamper-evident provenance: what changed, why, by whom |
-| **Product/API** | **pangea-api** (§II.10) — *the pangea-service* | full in-memory fleet state + microservice assist + user-facing drift/cadence/alerting |
+| **Product/API** | **pangea-api** — *the pangea-service* | full in-memory fleet state + microservice assist + user-facing drift/cadence/alerting |
 | Durable state | cnpg PostgreSQL + SeaORM | the queryable system-of-record (history, audit, drift, receipts) |
 | Control loop | pangea-operator | the MAPE-K regulator wielding all of the above, forever |
 | Telemetry | Vector + Grafana | the afferent nerves |
@@ -134,8 +134,8 @@ cargo workspace + one release.
 ## pangea-api — the in-memory product layer (the pangea-service)
 
 §II.10 anchors **pangea-api** as the product layer on magma: it consumes magma's
-Rust library (§II.8 interface 4), holds the **full fleet state in memory** (the
-in-memory chain of §II.9 is *non-negotiable* for its responsiveness), and offers
+Rust library (interface 4), holds the **full fleet state in memory** (the
+in-memory chain is *non-negotiable* for its responsiveness), and offers
 **microservice-level assistance** to the operator and to humans/agents. The
 operator already exposes a GraphQL/gRPC surface at `pangea-api.quero.local` —
 pangea-api is that surface **grown into a stateful, resident brain**:
@@ -146,22 +146,22 @@ pangea-api is that surface **grown into a stateful, resident brain**:
   drift-query / flow-orchestration (`magma_flow_run` over a `shigoto::Dag`). The
   operator offloads heavy compute to one shared, cached, in-memory brain instead
   of re-cloning + re-planning per reconcile (the cost we just watched).
-- **The §II.10 dimensions** — instantiation, the user-facing state model (drift
+- **The dimensions** — instantiation, the user-facing state model (drift
   detection + reconcile cadence + alerting), exposure (DNS/ingress derivable),
   troubleshooting (TickReceipts + tameshi + Vector → queryable "what changed,
   why, when, by whom").
-- **Three symmetric faces** (§II.8) — library (operator links it), MCP (agents
+- **Three symmetric faces** — library (operator links it), MCP (agents
   drive flows), API/CLI (humans). One typed core, three surfaces.
 
 magma's native `daemon` / `watch` subcommands + the NixOS `services.magma`
-per-workspace watcher (§II.7) are the resident-process substrate; pangea-api is
+per-workspace watcher are the resident-process substrate; pangea-api is
 the fleet-level brain over them. **Magma frees the execution hot-path from disk;
 pangea-api is what that freedom unlocks — a living, queryable model of the whole
 estate.**
 
 ## Durable state — SeaORM + cnpg PostgreSQL (service standards)
 
-In-memory ≠ amnesiac. The hot path is disk-free (magma §II.9), but the *service*
+In-memory ≠ amnesiac. The hot path is disk-free (magma), but the *service*
 keeps a durable, queryable **system-of-record** so it survives restarts and
 answers "what happened last quarter":
 
@@ -189,7 +189,7 @@ condition + SLO:
   OK but lied." (Extends today's `ReconcileCycle`.)
 - **Verify** — continuously re-check that converged state *stays* converged.
   SLO: *drift-detection latency*.
-- **Report** — typed, queryable evidence of all three (§ Observability).
+- **Report** — typed, queryable evidence of all three.
 
 ## Responsiveness — edge + level, per-provider, rate-aware
 
@@ -306,7 +306,7 @@ human asks.
   pangea-api in one cargo workspace), `mkGoTool` for Go consumers (borealis +
   shikumi-go, already published) — hermetic, reproducible.
 - **Package:** extend `helmworks/charts/pangea-operator` into the unified
-  release — operator + **pangea-api** (Deployment/Service/HPA + the §II.10 API
+  release — operator + **pangea-api** (Deployment/Service/HPA + the API
   ingress), magma linked into both, the four CRDs, RBAC, the cnpg
   `pangea-database` + a **SeaORM migration** Job (pre-upgrade hook), a Vector
   sidecar. Full helm exposure via `values.yaml`: backend selection
@@ -331,9 +331,9 @@ human asks.
 
 **As magma clears its milestones M0–M5:**
 5. **Magma in-memory core** behind `iac_executor` (`MagmaBackend` beside
-   `TofuExecutor`), per-workspace, `backend: magma` flag-gated (§II.11).
+   `TofuExecutor`), per-workspace, `backend: magma` flag-gated.
 6. **Stand up pangea-api** — resident in-memory state fabric + SeaORM durable
-   model + the three §II.8 faces; operator offloads assist to it.
+   model + the three faces; operator offloads assist to it.
 7. **Helm-unify + deliver to rio** (above), then **adaptation + formal/chaos
    tests** (incl. the rio failure as a permanent case) — continuous.
 

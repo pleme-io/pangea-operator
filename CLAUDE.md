@@ -447,7 +447,7 @@ A template is one state, plan and apply. `pangea leaf plan --template cr.yaml --
 - **Ratchet:** `status.leaf`; tuning `leaf.ratchet_tolerance_percent`, `leaf.cycle_budget_secs`.
 - **Concurrency:** `WorkspaceCatalog.spec.maxConcurrentLeaves`; a leaf without its upstream output waits. Trigger by diff: `reactive.honor_reconcile_requests`.
 - **CRD sync:** both leaf fields stay in `scripts/crd-drift-baseline.txt` until helmworks regenerates.
-- **§9.1 mechanics and build plan:** `docs/LEAVES.md`.
+- **Leaf mechanics and build plan:** `docs/LEAVES.md`.
 
 ## Reconciler state machine
 

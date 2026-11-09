@@ -18,7 +18,7 @@
 //!     suppressing their own `refreshInterval` (template_controller consults
 //!     its loop assignment). Today members keep their own interval; the loop
 //!     observes + reports membership.
-//!   - the **`malha`** one-resource-per-workspace axis (§III).
+//!   - the **`malha`** one-resource-per-workspace axis.
 //!
 //! Status-write discipline per pangea-operator/CLAUDE.md: a diff-gate skips
 //! the patch when nothing observable changed, and `last_tick_at` (a

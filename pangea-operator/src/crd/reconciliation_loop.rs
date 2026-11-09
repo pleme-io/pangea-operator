@@ -22,7 +22,7 @@
 //! its cadence, and triggers a coordinated reconcile of its members on that
 //! cadence. Full cadence-ownership (members reconcile ONLY on the loop's
 //! schedule, suppressing their own interval) + the `malha` one-resource-per-
-//! workspace axis (§III) are the next increment.
+//! workspace axis are the next increment.
 
 use std::collections::BTreeMap;
 

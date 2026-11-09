@@ -59,7 +59,7 @@ spec:
     mountPath: /home/pangea/.terraform/plugin-cache
 ```
 
-**Provider-aware classes per the §III.1 catalog:**
+**Provider-aware classes per the catalog:**
 
 ```
 aws-tiny         (DNS, IAM updates)            ~80 MiB plugin     30s timeout

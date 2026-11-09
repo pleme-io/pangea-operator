@@ -18,7 +18,7 @@
 //! ([`ApplyAnomaly`]) via [`classify`]. A failure no arm matches is itself a
 //! typed [`ApplyAnomaly::Unclassified`] — surfaced, never retried-forever —
 //! and every `Unclassified` occurrence is a forcing function to add the
-//! missing arm (§II, §X).
+//! missing arm.
 //!
 //! # The single classifier (folds the scattered substring checks)
 //!
@@ -61,7 +61,7 @@ pub enum RemediationMode {
     /// Never a silent infinite retry. The `Unclassified` / `PermissionDenied`
     /// terminal — it does not converge on its own; it waits for an operator
     /// or a new taxonomy arm. This is the C1 ceiling (liveness, not a
-    /// compile-proof) — §IX.
+    /// compile-proof).
     Hold,
 }
 
@@ -125,14 +125,14 @@ pub enum ApplyAnomaly {
     /// (or alçada lockdown intent) must act.
     PermissionDenied,
     /// No arm matched. **Typed, surfaced, never silent** — the backlog
-    /// signal that forces a new arm (§II, §X). Carries the raw reason so the
+    /// signal that forces a new arm. Carries the raw reason so the
     /// operator sees exactly what to classify next.
     Unclassified { reason: String },
 }
 
 impl ApplyAnomaly {
     /// The convergence mode of THIS anomaly's remediation — the Lyapunov
-    /// tier (§IV). Recorded into events/status so the settle-bound is
+    /// tier. Recorded into events/status so the settle-bound is
     /// explicit per anomaly (Part 4 of the build contract).
     pub fn mode(&self) -> RemediationMode {
         match self {
@@ -155,7 +155,7 @@ impl ApplyAnomaly {
             // reaction surfaces a typed event naming the resource + the exact
             // importHint the operator must supply, and does not claim
             // self-convergence. Becomes `Absolute` once the magma pre-flight
-            // ImportResourceState probe lands (residual; §VII.1).
+            // ImportResourceState probe lands (residual).
             ApplyAnomaly::ObjectExistsUntracked { .. } => RemediationMode::Hold,
             ApplyAnomaly::StalePlan => RemediationMode::Absolute,
             ApplyAnomaly::EmptyWorkspace => RemediationMode::Absolute,
