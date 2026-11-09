@@ -28,3 +28,6 @@
 # admission refusal. Additive. Baselined until helmworks regenerates the chart CRD; until
 # then the apiserver prunes the field and a refused leaf retries from Pending as before.
 infrastructuretemplates.pangea.pleme.io
+# 2026-11-09: architecturegems spec.source.kind description reworded by f0aaa95 (a doc-comment
+# edit; no field, type or enum changed). Baselined until helmworks regenerates the chart CRD.
+architecturegems.pangea.pleme.io
