@@ -71,7 +71,7 @@ pub mod kind {
     /// The typed magma compliance bundle (was `magma-bundle.json`).
     pub const BUNDLE: &str = "bundle";
     /// The resumable apply position (`magma_apply::cursor::ApplyCursor`),
-    /// per MAGMA-OPERATOR-BACKEND.md §II-ter / M0.16.
+    /// (M0.16).
     ///
     /// This row is what makes apply progress **monotonic across reconciles**:
     /// a cycle that runs out of quantum (or a pod that dies mid-apply) leaves
@@ -685,7 +685,7 @@ impl ArtifactStore {
     /// the wire form is validated on the way back in: a duplicate entry is a
     /// `CursorError` at parse time rather than a cursor that silently
     /// double-counts. That is the *parse-time-rejected* half of the tier
-    /// stated in MAGMA-OPERATOR-BACKEND.md §II-ter — worth naming, because the
+    /// this cursor carries — worth naming, because the
     /// in-crate half (additive-only mutators) does not survive a DB roundtrip
     /// on its own.
     pub async fn put_apply_cursor(

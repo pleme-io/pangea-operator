@@ -905,8 +905,7 @@ async fn main() -> Result<()> {
 
     // Give in-flight magma applies a bounded window to reach their next
     // checkpoint boundary (state + bundle committed atomically to
-    // Postgres — see MAGMA-OPERATOR-BACKEND.md's own atomicity
-    // invariant) before their task is cancelled. Postgres itself rolls
+    // Postgres, an atomicity invariant) before their task is cancelled. Postgres itself rolls
     // back an uncommitted transaction on connection loss either way (no
     // half-applied state can persist), but a hard `.abort()` mid-cycle
     // still discards otherwise-complete work that a grace window lets

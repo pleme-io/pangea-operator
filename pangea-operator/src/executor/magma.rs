@@ -372,8 +372,7 @@ pub struct MagmaExecutorConfig<S: StateBackend + ?Sized> {
     /// Whether to write a typed plan checkpoint to the workspace
     /// dir between plan + apply for restart safety. Default true.
     pub plan_checkpoint: bool,
-    /// Bounded work per apply cycle — MAGMA-OPERATOR-BACKEND.md §II-ter /
-    /// M0.16. `Some(secs)` runs apply through the resumable engine, yielding
+    /// Bounded work per apply cycle (M0.16). `Some(secs)` runs apply through the resumable engine, yielding
     /// an `ApplyCursor` when the quantum is spent; `None` runs to completion
     /// exactly as before.
     ///
@@ -517,7 +516,7 @@ pub struct MagmaExecutor<S: StateBackend + ?Sized> {
 }
 
 /// Durable sink for apply progress, backed by the operator's Postgres
-/// artifact store. MAGMA-OPERATOR-BACKEND.md §II-ter / M0.16.
+/// artifact store (M0.16).
 ///
 /// # Why this is debounced, and why that is safe
 ///
@@ -761,7 +760,7 @@ impl<S: StateBackend + ?Sized> MagmaExecutor<S> {
 
     /// Run the plan through magma's **resumable** apply engine, resuming from
     /// any durably-recorded frontier and persisting a new one each time a
-    /// cycle yields. MAGMA-OPERATOR-BACKEND.md §II-ter / M0.16.
+    /// cycle yields (M0.16).
     ///
     /// # Why this exists
     ///
@@ -3037,7 +3036,7 @@ mod tests {
     use crate::backend::state_backend::InMemoryStateBackend;
     use serde_json::json;
 
-    // ── M0.16: bounded, resumable apply (MAGMA-OPERATOR-BACKEND.md §II-ter) ──
+    // ── M0.16: bounded, resumable apply ──
 
     /// The debounce must not permit two writes inside one interval.
     ///

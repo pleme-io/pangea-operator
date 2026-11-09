@@ -112,7 +112,7 @@ impl EmbeddedCompilerBackend {
 impl CompilerBackend for EmbeddedCompilerBackend {
     async fn prepare_gem(&self, source: &GemSource) -> Result<(), BackendError> {
         // Dispatch on source.kind. Ruby is the existing M8.4.2 path;
-        // Lisp + Wasm are reserved for terreno (M2 of TERRENO.md) +
+        // Lisp + Wasm are reserved for terreno (its M2) +
         // the wasmtime backend respectively. Both return a typed
         // NotImplemented condition until their evaluators land —
         // the controller surfaces this as `GemPrepareFailed`.

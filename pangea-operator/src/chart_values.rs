@@ -77,7 +77,7 @@ pub struct ChartValues {
 
     #[serde(default)]
     #[schemars(
-        description = "The legacy KEDA tofu worker pools (one Deployment, ScaledObject and PangeaWorkClass per class). Off by default: tofu is configured-off legacy (BACIA §9.1)."
+        description = "The legacy KEDA tofu worker pools (one Deployment, ScaledObject and PangeaWorkClass per class). Off by default: tofu is configured-off legacy."
     )]
     pub tofu_workers: TofuWorkers,
 

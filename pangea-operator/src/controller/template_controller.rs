@@ -4717,7 +4717,7 @@ async fn react_to_apply_anomaly(
         // FIX 3 (Decaying livelock): the requeue interval MUST strictly
         // decrease retry pressure per consecutive failure — a CONSTANT
         // 30s requeue is constant-weight retry, which the model
-        // (ANOMALY-REACTIVE-RECONCILE.md §IV/§VI) names a forbidden
+        // names a forbidden
         // *livelock* for a "Decaying" remediation. We compute a per-
         // failure_count exponential backoff (the same `exponential_backoff`
         // helper the Failed-phase retry path uses), so consecutive

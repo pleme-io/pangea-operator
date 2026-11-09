@@ -37,7 +37,7 @@ stage.
 | Calls in one full plan | about 4,500, about 2.2 per resource | 24 min × 3.125 req/s |
 | Admission defaults | reconcile workers 4, per scope 4, global 16 | `config.rs` defaults; the config file tier is absent on ryn |
 | Router templates | `roteador-buzios` 91 resources, `repetidor-buzios` 76; both `dialect: json`, no `status.leaf`, no `skip-leaf` | status read 13:05 |
-| §9 dry run of `pleme-io-github-repos` | 1,023 leaves (1,018 of 2 resources, 5 of 3), bijection holds, 0/0/0 projected | BACIA §9 ledger, 2026-10-23 |
+| §9 dry run of `pleme-io-github-repos` | 1,023 leaves (1,018 of 2 resources, 5 of 3), bijection holds, 0/0/0 projected | migration ledger, 2026-10-23 |
 
 **Where the time goes.** Compile is 61 to 78 s, about 5% of a cycle. The
 plan is about 95%: the embedded engine's `refresh_then_plan` reads every one
@@ -57,7 +57,7 @@ resources.
 
 | Piece | Where | State |
 |---|---|---|
-| Leaf = `InfrastructureTemplate` with `variableRefs` edges | BACIA §2, §9 | doctrine |
+| Leaf = `InfrastructureTemplate` with `variableRefs` edges | leaf rule | doctrine |
 | `pangea leaf plan` (classify, partition, lift, bijection, prove) | `pangea-leaf`, `pangea-cli` | built, offline |
 | Admission refusal, `skip-leaf`, `leaf.admission` | `controller/template/leaf.rs`, `pangea-leaf/src/admission.rs` | built |
 | Ratchet `status.leaf` | `pangea-leaf/src/ratchet.rs` | live on ryn (`leafKeys` 2,053) |
@@ -357,7 +357,7 @@ reaches a cluster.
 
 `happa` (葉っぱ, leaf): a template's leaves — split, graph, change, schedule
 and verdicts. Collision check 2026-10-27: 0 hits across the corpus
-(control `shikumi` 1,793 files, `caixa` 138 repo dirs), no repo, theory file
+(control `shikumi` 1,793 files, `caixa` 138 repo dirs), no repo, doc
 or tatara keyword. Registration in `blue/bidamas/NAMES.md` lands with the
 bidama.
 
@@ -579,7 +579,7 @@ mode is one field away, never a rebuild.
 The peak is 11% of the limit, so this window gives no sign of an OOM. The two
 restarts have no recorded cause. a1e6e3b names a lease-renewal failure for the
 12:19 one. The per-leaf footprint after cutover is not measured: on
-2026-10-27 the cutover stopped at §9 step 4 (theory e4851bf). It lacks the
+2026-10-27 the cutover stopped at §9 step 4. It lacks the
 `StateMove` executor (item O10) and a per-leaf input slice (items O2, L1).
 
 ### The metric: pending weighted actions, capped by budget
@@ -777,4 +777,4 @@ switch. Items in one row group are independent.
 | # | Item | Check |
 |---|---|---|
 | E1 | Load test engenho at 1,100 `InfrastructureTemplate` objects on a scratch cluster | list and watch latency, store size |
-| E2 | Cut over `pleme-io-github-repos` with O10, then settle. Another session owns it. On 2026-10-27 it stopped at §9 step 4: there is no O10, and there is no per-leaf slice (O2, L1) (theory e4851bf, 1,024 leaves on serial 181) | 0/0/0 across all leaves; then a 1-repo change plans in ≤ 10 s; then the per-leaf RSS for O13 |
+| E2 | Cut over `pleme-io-github-repos` with O10, then settle. Another session owns it. On 2026-10-27 it stopped at §9 step 4: there is no O10, and there is no per-leaf slice (O2, L1) (1,024 leaves on serial 181) | 0/0/0 across all leaves; then a 1-repo change plans in ≤ 10 s; then the per-leaf RSS for O13 |

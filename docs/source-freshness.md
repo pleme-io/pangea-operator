@@ -68,9 +68,9 @@ wedge. Dependency-ordered plan:
 - **D4** demote the `emptyDir` to provider-plugin-exec scratch; delete the
   `main.tf.json` restart guards (their precondition — a wiped clone — is gone);
   shrink the chart `workspaces` volume to `Memory` (`helmworks/charts/pangea-operator/values.yaml`).
-- **D5** theory: `MAGMA-OPERATOR-BACKEND.md` (source = `kind=source`, last disk
-  dependence removed), `PANGEA-WORKSPACE-RECONCILIATION.md` (the per-tick HEAD
-  Observe beat + `Ready⟺at-HEAD`), `MAGMA.md` (git-HEAD drift cause).
+- **D5** record the design consequences: source = `kind=source` (the last disk
+  dependence removed), the per-tick HEAD Observe beat + `Ready⟺at-HEAD`, and
+  git-HEAD drift as a cause.
 
 D3's single-transaction atomicity is **truly-unrepresentable** (a half-applied
 reconcile cannot commit); A+B+C are parse-time-rejected (above).

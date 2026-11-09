@@ -439,7 +439,7 @@ and prepends `lib/` to `$LOAD_PATH`. Bundler-resolved gems (dry-struct,
 terraform-synthesizer, …) come from the operator image's runtime
 closure via `RUBYLIB`.
 
-## Leaf-by-default (BACIA §9)
+## Leaf-by-default
 
 A template is one state, plan and apply. `pangea leaf plan --template cr.yaml --state tfstate.json [--plan plan.json] [--group-references] [--emit-dir DIR]` (`pangea-leaf`) partitions by `leaf_key`, checks the bijection, emits leaf manifests; local files only.
 

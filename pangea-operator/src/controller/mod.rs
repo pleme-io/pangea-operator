@@ -708,8 +708,7 @@ impl ControllerState {
             // tofu-format bytes so magma + tofu read the same state.
             backend_shape: BackendShape::Tofu,
             plan_checkpoint: true,
-            // Bounded work per apply cycle (MAGMA-OPERATOR-BACKEND.md
-            // §II-ter / M0.16). A cycle that spends its quantum yields and
+            // Bounded work per apply cycle (M0.16). A cycle that spends its quantum yields and
             // durably records its frontier, so the next one resumes instead
             // of re-running the plan from the beginning and re-spending the
             // provider's rate-limit budget on work already applied.
