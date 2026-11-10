@@ -916,12 +916,18 @@ pub fn refusal_inputs(template: &InfrastructureTemplate, cfg: &LeafConfig) -> St
     };
     let generation = template.metadata.generation.unwrap_or(0).to_string();
     let settings = serde_json::to_string(cfg).unwrap_or_default();
+    let membership = match membership(template, true) {
+        Membership::Standalone => "standalone".to_string(),
+        Membership::Leaf { catalog } => format!("leaf:{catalog}"),
+        Membership::Orphan { catalog } => format!("orphan:{catalog}"),
+    };
     let parts = [
         generation.as_str(),
         annotation(SKIP_LEAF_ANNOTATION),
         annotation(LEAF_ADDRESSES_ANNOTATION),
         settings.as_str(),
         crate::build_identity::current(),
+        membership.as_str(),
     ];
     blake3::hash(parts.join("\u{1f}").as_bytes()).to_hex()[..32].to_string()
 }
@@ -1072,6 +1078,105 @@ mod tests {
         )
         .unwrap();
         assert_eq!(a.admission, Admission::Admit);
+    }
+
+    fn held_after_refusal(
+        t: &InfrastructureTemplate,
+        cfg: &LeafConfig,
+        msg: &str,
+    ) -> InfrastructureTemplate {
+        let classification = classify(["a.b", "c.d"], None, None).unwrap();
+        let mut held = t.clone();
+        held.status = Some(InfrastructureTemplateStatus {
+            leaf: Some(refused_status(t, cfg, None, &classification, msg)),
+            ..Default::default()
+        });
+        held
+    }
+
+    #[test]
+    fn a_refusal_made_before_the_catalog_owner_arrived_is_released_and_rejudged_as_a_leaf() {
+        let cfg = LeafConfig {
+            hold_refusals: true,
+            ..LeafConfig::default()
+        };
+        let declared =
+            "github_actions_repository_permissions.bm_guard_actions,github_repository.bm_guard";
+        let plan = plan_of(&[
+            "github_repository.bm_guard",
+            "github_actions_repository_permissions.bm_guard_actions",
+        ]);
+        let mut unowned = catalog_leaf_with(declared);
+        unowned.metadata.owner_references = None;
+        let first = assess(&unowned, AdmissionMode::Enforce, &plan, None, None).unwrap();
+        assert!(first.admission.refused(), "{:?}", first.admission);
+        let held = held_after_refusal(&unowned, &cfg, "fat");
+        assert!(matches!(
+            after_failure(&held, &cfg),
+            pangea_leaf::ratchet::AfterFailure::Held(_)
+        ));
+        let mut owned = catalog_leaf_with(declared);
+        owned.status = held.status.clone();
+        assert_eq!(
+            after_failure(&owned, &cfg),
+            pangea_leaf::ratchet::AfterFailure::Retry
+        );
+        let again = assess(&owned, AdmissionMode::Enforce, &plan, None, None).unwrap();
+        assert_eq!(again.admission, Admission::Admit);
+    }
+
+    #[test]
+    fn a_leaf_still_fat_after_its_owner_arrives_is_rejudged_and_refused_again() {
+        let cfg = LeafConfig {
+            hold_refusals: true,
+            ..LeafConfig::default()
+        };
+        let plan = plan_of(&["github_repository.bm_guard", "github_team.intruder"]);
+        let mut unowned = catalog_leaf_with("github_repository.bm_guard");
+        unowned.metadata.owner_references = None;
+        let held = held_after_refusal(&unowned, &cfg, "fat");
+        let mut owned = catalog_leaf_with("github_repository.bm_guard");
+        owned.status = held.status.clone();
+        assert_eq!(
+            after_failure(&owned, &cfg),
+            pangea_leaf::ratchet::AfterFailure::Retry
+        );
+        let again = assess(&owned, AdmissionMode::Enforce, &plan, None, None).unwrap();
+        assert!(again.admission.refused(), "{:?}", again.admission);
+        let rehold = held_after_refusal(&owned, &cfg, "undeclared");
+        assert!(matches!(
+            after_failure(&rehold, &cfg),
+            pangea_leaf::ratchet::AfterFailure::Held(_)
+        ));
+    }
+
+    #[test]
+    fn membership_alone_moves_the_refusal_inputs() {
+        let cfg = LeafConfig::default();
+        let leaf = catalog_leaf_with("github_repository.bm_guard");
+        let mut standalone = leaf.clone();
+        standalone.metadata.owner_references = None;
+        let mut other = leaf.clone();
+        other.metadata.owner_references.as_mut().unwrap()[0].name = "other".into();
+        other
+            .metadata
+            .labels
+            .get_or_insert_with(BTreeMap::new)
+            .insert("pangea.pleme.io/workspace".into(), "other".into());
+        let all = [
+            refusal_inputs(&leaf, &cfg),
+            refusal_inputs(&standalone, &cfg),
+            refusal_inputs(&other, &cfg),
+        ];
+        for (i, a) in all.iter().enumerate() {
+            for b in &all[i + 1..] {
+                assert_ne!(a, b);
+            }
+        }
+        assert_eq!(
+            refusal_inputs(&leaf, &cfg),
+            refusal_inputs(&leaf.clone(), &cfg)
+        );
     }
 
     #[test]
