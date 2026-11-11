@@ -606,13 +606,14 @@ async fn update_full_status(
 }
 
 fn error_policy(
-    _binding: Arc<ComplianceBinding>,
+    binding: Arc<ComplianceBinding>,
     error: &Error,
     ctx: Arc<ControllerState>,
 ) -> Action {
     crate::controller::error_policy::run_error_policy(
         &ctx.metrics,
         crate::crd::ControllerKind::ComplianceBinding,
+        &*binding,
         error,
         ERROR_REQUEUE_INTERVAL,
     )

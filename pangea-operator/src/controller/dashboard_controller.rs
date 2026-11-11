@@ -104,10 +104,11 @@ impl DashboardController {
     }
 }
 
-fn error_policy(_pd: Arc<PangeaDashboard>, error: &Error, ctx: Arc<ControllerState>) -> Action {
+fn error_policy(pd: Arc<PangeaDashboard>, error: &Error, ctx: Arc<ControllerState>) -> Action {
     crate::controller::error_policy::run_error_policy(
         &ctx.metrics,
         crate::crd::ControllerKind::Dashboard,
+        &*pd,
         error,
         Duration::from_secs(30),
     )

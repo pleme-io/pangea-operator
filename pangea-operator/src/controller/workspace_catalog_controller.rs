@@ -84,6 +84,15 @@ enum Error {
     MissingName,
 }
 
+impl crate::controller::error_policy::ErrorReason for Error {
+    fn reason(&self) -> &'static str {
+        match self {
+            Error::Kube(_) => "kube",
+            Error::MissingName => "missing_name",
+        }
+    }
+}
+
 async fn reconcile(wsc: Arc<WorkspaceCatalog>, ctx: Arc<Context>) -> Result<Action, Error> {
     let name = wsc.metadata.name.clone().ok_or(Error::MissingName)?;
 
@@ -520,10 +529,11 @@ fn status_content_equal(a: &WorkspaceCatalogStatus, b: &WorkspaceCatalogStatus) 
     true
 }
 
-fn error_policy(_obj: Arc<WorkspaceCatalog>, err: &Error, ctx: Arc<Context>) -> Action {
+fn error_policy(obj: Arc<WorkspaceCatalog>, err: &Error, ctx: Arc<Context>) -> Action {
     crate::controller::error_policy::run_error_policy(
         &ctx.metrics,
         crate::crd::ControllerKind::WorkspaceCatalog,
+        &*obj,
         err,
         Duration::from_secs(60),
     )

@@ -649,11 +649,12 @@ async fn remove_finalizer(
 // Error policy
 // ---------------------------------------------------------------------------
 
-fn error_policy(_build: Arc<PackerBuild>, error: &Error, ctx: Arc<ControllerState>) -> Action {
+fn error_policy(build: Arc<PackerBuild>, error: &Error, ctx: Arc<ControllerState>) -> Action {
     use crate::controller::error_policy::{run_error_policy, tiered_backoff};
     run_error_policy(
         &ctx.metrics,
         crate::crd::ControllerKind::PackerBuild,
+        &*build,
         error,
         tiered_backoff(error.is_retryable()),
     )

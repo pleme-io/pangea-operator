@@ -208,6 +208,60 @@ impl Error {
     }
 }
 
+impl Error {
+    pub fn reason(&self) -> &'static str {
+        match self {
+            Error::Kube(kube::Error::Api(ae)) => match ae.code {
+                404 => "kube_not_found",
+                409 => "kube_conflict",
+                422 => "kube_invalid",
+                429 => "kube_throttled",
+                401 | 403 => "kube_forbidden",
+                500..=599 => "kube_server",
+                _ => "kube_api",
+            },
+            Error::Kube(_) => "kube",
+            Error::Serialization(_) => "serialization",
+            Error::Yaml(_) => "yaml",
+            Error::Database(_) => "database",
+            Error::Io(_) => "io",
+            Error::Compilation(_) => "compilation",
+            Error::TofuExecution(_) => "tofu_execution",
+            Error::MagmaExecution(_) => "magma_execution",
+            Error::PackerExecution(_) => "packer_execution",
+            Error::PackerManifest(_) => "packer_manifest",
+            Error::AmiTestFailed(_) => "ami_test_failed",
+            Error::ImagePipeline(_) => "image_pipeline",
+            Error::HealthCheckFailed(_) => "health_check_failed",
+            Error::AssertionFailed(_) => "assertion_failed",
+            Error::StateBackend(_) => "state_backend",
+            Error::TofuForbidden { .. } => "tofu_forbidden",
+            Error::Config(_) => "config",
+            Error::IncompatibleBuild(_) => "incompatible_build",
+            Error::GitHubAppToken(_) => "github_app_token",
+            #[cfg(feature = "executor_magma")]
+            Error::ProviderStalled(_) => "provider_stalled",
+            Error::InvalidCronSchedule { .. } => "invalid_cron_schedule",
+            Error::SecretNotFound { .. } => "secret_not_found",
+            Error::InvalidSource(_) => "invalid_source",
+            Error::Timeout(_) => "timeout",
+            Error::LockFailed(_) => "lock_failed",
+            Error::NamespaceNotFound(_) => "namespace_not_found",
+            #[cfg(feature = "graphql")]
+            Error::GraphQL(_) => "graphql",
+            #[cfg(feature = "grpc")]
+            Error::Grpc(_) => "grpc",
+            Error::WithContext { source, .. } => source.reason(),
+        }
+    }
+}
+
+impl crate::controller::error_policy::ErrorReason for Error {
+    fn reason(&self) -> &'static str {
+        Error::reason(self)
+    }
+}
+
 /// Result type alias for Pangea operations.
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -226,6 +280,45 @@ impl<T> ResultExt<T> for Result<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn api_error(code: u16) -> Error {
+        Error::Kube(kube::Error::Api(kube::core::ErrorResponse {
+            status: "Failure".into(),
+            message: "m".into(),
+            reason: "r".into(),
+            code,
+        }))
+    }
+
+    #[test]
+    fn reason_names_the_variant() {
+        assert_eq!(Error::Compilation("x".into()).reason(), "compilation");
+        assert_eq!(
+            Error::MagmaExecution("x".into()).reason(),
+            "magma_execution"
+        );
+        assert_eq!(Error::Timeout(1).reason(), "timeout");
+        assert_eq!(Error::Config("x".into()).reason(), "config");
+    }
+
+    #[test]
+    fn reason_classifies_kube_api_errors_by_status_code() {
+        assert_eq!(api_error(404).reason(), "kube_not_found");
+        assert_eq!(api_error(409).reason(), "kube_conflict");
+        assert_eq!(api_error(422).reason(), "kube_invalid");
+        assert_eq!(api_error(429).reason(), "kube_throttled");
+        assert_eq!(api_error(403).reason(), "kube_forbidden");
+        assert_eq!(api_error(503).reason(), "kube_server");
+        assert_eq!(api_error(418).reason(), "kube_api");
+    }
+
+    #[test]
+    fn reason_sees_through_context() {
+        let e = Error::LockFailed("held".into())
+            .context("plan")
+            .context("reconcile");
+        assert_eq!(e.reason(), "lock_failed");
+    }
 
     #[test]
     fn test_error_display_string_variants() {

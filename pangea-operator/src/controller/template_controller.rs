@@ -9509,7 +9509,7 @@ mod state_continuity_breach_tests {
 
 /// Error policy for the controller.
 fn error_policy(
-    _obj: Arc<InfrastructureTemplate>,
+    obj: Arc<InfrastructureTemplate>,
     error: &Error,
     ctx: Arc<ControllerState>,
 ) -> Action {
@@ -9517,6 +9517,7 @@ fn error_policy(
     run_error_policy(
         &ctx.metrics,
         crate::crd::ControllerKind::Template,
+        &*obj,
         error,
         tiered_backoff(error.is_retryable()),
     )

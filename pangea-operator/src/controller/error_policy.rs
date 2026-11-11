@@ -72,32 +72,38 @@ pub fn tiered_backoff(retryable: bool) -> Duration {
     )
 }
 
-/// Run the standard error-policy effects: emit the per-controller
-/// error counter, log a structured warning with the controller kind,
-/// and return an `Action::requeue(backoff)`.
-///
-/// The single call site for every controller's `error_policy` callback —
-/// guarantees that the `pangea_controller_reconciliations_total{result="error"}`
-/// counter is incremented for every error path on every controller,
-/// which the hand-rolled versions used to drift on.
-pub fn run_error_policy<E: Display + ?Sized>(
+pub trait ErrorReason {
+    fn reason(&self) -> &'static str;
+}
+
+pub fn run_error_policy<K, E>(
     metrics: &Metrics,
     kind: ControllerKind,
+    object: &K,
     error: &E,
     backoff: Duration,
-) -> Action {
+) -> Action
+where
+    K: kube::Resource,
+    E: Display + ErrorReason + ?Sized,
+{
     metrics.record_reconcile(kind, "error");
-    // pangea_reconciliation_errors_total is queried by the shipped
-    // PangeaReconciliationErrors alert but, before this, was never
-    // recorded — the alert could never fire. The central error path is
-    // the one place every controller funnels through, so incrementing
-    // here covers the whole fleet with the controller-kind name as the
-    // bounded `error_type` label value.
+    let reason = error.reason();
+    let meta = object.meta();
+    let name = meta.name.as_deref().unwrap_or("");
+    let namespace = meta.namespace.as_deref().unwrap_or("");
     metrics
         .reconciliation_errors_total
-        .with_label_values(&[kind.name()])
+        .with_label_values(&[kind.name(), reason, name, namespace])
         .inc();
-    warn!(error = %error, controller = ?kind, "error policy triggered");
+    warn!(
+        error = %error,
+        controller = ?kind,
+        reason,
+        name,
+        namespace,
+        "error policy triggered"
+    );
     Action::requeue(backoff)
 }
 
@@ -121,43 +127,123 @@ mod tests {
         assert_ne!(tiered_backoff(true), tiered_backoff(false));
     }
 
+    struct E;
+
+    impl Display for E {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "test error")
+        }
+    }
+
+    impl ErrorReason for E {
+        fn reason(&self) -> &'static str {
+            "test_reason"
+        }
+    }
+
+    fn object(name: &str, namespace: &str) -> k8s_openapi::api::core::v1::ConfigMap {
+        let mut cm = k8s_openapi::api::core::v1::ConfigMap::default();
+        cm.metadata.name = Some(name.to_string());
+        cm.metadata.namespace = Some(namespace.to_string());
+        cm
+    }
+
+    fn error_line(text: &str) -> String {
+        text.lines()
+            .find(|l| l.starts_with("pangea_reconciliation_errors_total{"))
+            .unwrap_or_else(|| panic!("no pangea_reconciliation_errors_total series:\n{text}"))
+            .to_string()
+    }
+
     #[test]
     fn run_error_policy_increments_error_counter_and_returns_requeue() {
-        // Spin up a fresh Metrics + check the counter goes from 0 → 1
-        // after a single error_policy call. Validates that the helper
-        // can never be called without recording (which was the drift
-        // it was lifted to fix).
         let metrics = Metrics::default();
-        struct E;
-        impl Display for E {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(f, "test error")
-            }
-        }
         let _action = run_error_policy(
             &metrics,
             ControllerKind::Template,
+            &object("t1", "ns1"),
             &E,
             Duration::from_secs(7),
         );
-        // Action requeue duration is internal to kube — we only assert
-        // the counter side-effect happened. Looking up by the metric
-        // labels we recorded.
         let text = metrics.gather();
         assert!(
             text.contains("controller=\"template\"") && text.contains("result=\"error\""),
             "counter did not record template/error label set:\n{text}"
         );
-        // The central error path also feeds the shipped
-        // PangeaReconciliationErrors alert's counter, keyed by the
-        // controller-kind name as `error_type`.
+        let line = error_line(&text);
+        assert!(line.contains("error_type=\"template\""), "{line}");
+        assert!(line.ends_with(" 1"), "{line}");
+    }
+
+    #[test]
+    fn run_error_policy_labels_the_error_reason_and_the_failing_object() {
+        let metrics = Metrics::default();
+        run_error_policy(
+            &metrics,
+            ControllerKind::Template,
+            &object("leaf-0001", "pleme"),
+            &E,
+            Duration::from_secs(7),
+        );
+        let line = error_line(&metrics.gather());
+        assert!(line.contains("reason=\"test_reason\""), "{line}");
+        assert!(line.contains("name=\"leaf-0001\""), "{line}");
+        assert!(line.contains("target_namespace=\"pleme\""), "{line}");
+    }
+
+    #[test]
+    fn errors_of_different_reasons_count_on_separate_series() {
+        struct Other;
+        impl Display for Other {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "other")
+            }
+        }
+        impl ErrorReason for Other {
+            fn reason(&self) -> &'static str {
+                "other_reason"
+            }
+        }
+        let metrics = Metrics::default();
+        let t = object("t", "ns");
+        run_error_policy(
+            &metrics,
+            ControllerKind::Template,
+            &t,
+            &E,
+            Duration::from_secs(1),
+        );
+        run_error_policy(
+            &metrics,
+            ControllerKind::Template,
+            &t,
+            &E,
+            Duration::from_secs(1),
+        );
+        run_error_policy(
+            &metrics,
+            ControllerKind::Template,
+            &t,
+            &Other,
+            Duration::from_secs(1),
+        );
+        let text = metrics.gather();
+        let series: Vec<&str> = text
+            .lines()
+            .filter(|l| l.starts_with("pangea_reconciliation_errors_total{"))
+            .collect();
+        assert_eq!(series.len(), 2, "{text}");
         assert!(
-            text.contains("pangea_reconciliation_errors_total"),
-            "reconciliation_errors_total not recorded on the error path:\n{text}"
+            series
+                .iter()
+                .any(|l| l.contains("reason=\"test_reason\"") && l.ends_with(" 2")),
+            "{text}"
         );
         assert!(
-            text.contains("error_type=\"template\""),
-            "error_type label not set to the controller kind name:\n{text}"
+            series
+                .iter()
+                .any(|l| l.contains("reason=\"other_reason\"") && l.ends_with(" 1")),
+            "{text}"
         );
     }
 }

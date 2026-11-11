@@ -803,10 +803,11 @@ async fn update_status(
 }
 
 /// Error policy for the namespace controller.
-fn error_policy(_obj: Arc<PangeaNamespace>, error: &Error, ctx: Arc<ControllerState>) -> Action {
+fn error_policy(obj: Arc<PangeaNamespace>, error: &Error, ctx: Arc<ControllerState>) -> Action {
     crate::controller::error_policy::run_error_policy(
         &ctx.metrics,
         crate::crd::ControllerKind::Namespace,
+        &*obj,
         error,
         ERROR_REQUEUE_INTERVAL,
     )

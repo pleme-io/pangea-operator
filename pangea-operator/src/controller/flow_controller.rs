@@ -568,10 +568,11 @@ async fn record_flow_event(
         .record_event_delivery(delivery.outcome_label());
 }
 
-fn error_policy(_obj: Arc<InfrastructureFlow>, error: &Error, ctx: Arc<ControllerState>) -> Action {
+fn error_policy(obj: Arc<InfrastructureFlow>, error: &Error, ctx: Arc<ControllerState>) -> Action {
     crate::controller::error_policy::run_error_policy(
         &ctx.metrics,
         crate::crd::ControllerKind::Flow,
+        &*obj,
         error,
         Duration::from_secs(60),
     )

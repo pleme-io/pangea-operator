@@ -1090,11 +1090,12 @@ async fn remove_finalizer(
         .map_err(Error::Kube)
 }
 
-fn error_policy(_pipeline: Arc<ImagePipeline>, error: &Error, ctx: Arc<ControllerState>) -> Action {
+fn error_policy(pipeline: Arc<ImagePipeline>, error: &Error, ctx: Arc<ControllerState>) -> Action {
     use crate::controller::error_policy::{run_error_policy, tiered_backoff};
     run_error_policy(
         &ctx.metrics,
         crate::crd::ControllerKind::ImagePipeline,
+        &*pipeline,
         error,
         tiered_backoff(error.is_retryable()),
     )

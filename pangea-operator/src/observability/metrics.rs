@@ -400,9 +400,9 @@ impl Metrics {
         let reconciliation_errors_total = IntCounterVec::new(
             Opts::new(
                 "pangea_reconciliation_errors_total",
-                "Total reconciliation errors by type",
+                "Reconcile errors by controller kind, error reason, and the failing object",
             ),
-            &["error_type"],
+            &["error_type", "reason", "name", "target_namespace"],
         )
         .expect("metric can be created");
 
@@ -1354,15 +1354,15 @@ mod tests {
         let metrics = Metrics::new();
         metrics
             .reconciliation_errors_total
-            .with_label_values(&["kube_error"])
+            .with_label_values(&["template", "kube", "t", "ns"])
             .inc();
         metrics
             .reconciliation_errors_total
-            .with_label_values(&["timeout"])
+            .with_label_values(&["template", "timeout", "t", "ns"])
             .inc();
         metrics
             .reconciliation_errors_total
-            .with_label_values(&["timeout"])
+            .with_label_values(&["template", "timeout", "t", "ns"])
             .inc();
 
         let output = metrics.gather();
@@ -1841,7 +1841,7 @@ mod tests {
         // Simulate the central error arm bumping the counter.
         metrics
             .reconciliation_errors_total
-            .with_label_values(&["template"])
+            .with_label_values(&["template", "compilation", "t", "ns"])
             .inc();
         let text = metrics.gather();
         assert!(

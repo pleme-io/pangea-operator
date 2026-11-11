@@ -84,6 +84,16 @@ enum Error {
     MissingName,
 }
 
+impl crate::controller::error_policy::ErrorReason for Error {
+    fn reason(&self) -> &'static str {
+        match self {
+            Error::Kube(_) => "kube",
+            Error::Backend(_) => "compiler_backend",
+            Error::MissingName => "missing_name",
+        }
+    }
+}
+
 async fn reconcile(gem: Arc<ArchitectureGem>, ctx: Arc<Context>) -> Result<Action, Error> {
     let name = gem.metadata.name.clone().ok_or(Error::MissingName)?;
 
@@ -469,10 +479,11 @@ async fn patch_status_failed(
     patch_status_if_changed(client, name, prev.as_ref(), status).await
 }
 
-fn error_policy(_obj: Arc<ArchitectureGem>, err: &Error, ctx: Arc<Context>) -> Action {
+fn error_policy(obj: Arc<ArchitectureGem>, err: &Error, ctx: Arc<Context>) -> Action {
     crate::controller::error_policy::run_error_policy(
         &ctx.metrics,
         crate::crd::ControllerKind::ArchitectureGem,
+        &*obj,
         err,
         Duration::from_secs(60),
     )

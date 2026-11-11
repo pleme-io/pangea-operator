@@ -737,13 +737,14 @@ async fn remove_finalizer(
 }
 
 fn error_policy(
-    _schedule: Arc<ComplianceSchedule>,
+    schedule: Arc<ComplianceSchedule>,
     error: &Error,
     ctx: Arc<ControllerState>,
 ) -> Action {
     crate::controller::error_policy::run_error_policy(
         &ctx.metrics,
         crate::crd::ControllerKind::ComplianceSchedule,
+        &*schedule,
         error,
         ERROR_REQUEUE_INTERVAL,
     )
