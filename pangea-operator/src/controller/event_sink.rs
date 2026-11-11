@@ -100,6 +100,16 @@ fn discovery_answer(
     }
 }
 
+const EVENT_NAME_MAX: usize = 253;
+
+#[must_use]
+pub fn event_name(base: &str, at: DateTime<Utc>) -> String {
+    let stamp = format!("{:x}", at.timestamp_nanos_opt().unwrap_or_default());
+    let room = EVENT_NAME_MAX - stamp.len() - 1;
+    let head: String = base.chars().take(room).collect();
+    [head.as_str(), stamp.as_str()].join(".")
+}
+
 pub struct KubeEventTransport {
     client: Client,
     reporter: Reporter,
@@ -121,11 +131,12 @@ impl KubeEventTransport {
     }
 
     fn core_event(&self, reference: &ObjectReference, event: &Event) -> CoreEvent {
-        let now = Time(Utc::now());
+        let at = Utc::now();
+        let now = Time(at);
         let base = reference.name.clone().unwrap_or_default();
         CoreEvent {
             metadata: ObjectMeta {
-                generate_name: Some([base.as_str(), "."].concat()),
+                name: Some(event_name(&base, at)),
                 namespace: reference.namespace.clone(),
                 ..Default::default()
             },
@@ -368,6 +379,7 @@ impl EventSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct FakeTransport {
@@ -593,5 +605,64 @@ mod tests {
         assert_eq!(s(Some(false), Some(true)).select(), EventApi::CoreV1);
         assert_eq!(s(Some(false), None).select(), EventApi::CoreV1);
         assert_eq!(s(Some(false), Some(false)).select(), EventApi::Unavailable);
+    }
+
+    fn refusing_generate_name(req: &wiremock::Request) -> wiremock::ResponseTemplate {
+        let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
+        match body["metadata"]["name"].as_str() {
+            Some(name) if !name.is_empty() => {
+                wiremock::ResponseTemplate::new(201).set_body_json(body.clone())
+            }
+            _ => wiremock::ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "kind": "Status",
+                "apiVersion": "v1",
+                "status": "Failure",
+                "message": "invalid request: missing metadata.name in request body",
+                "reason": "BadRequest",
+                "code": 400,
+            })),
+        }
+    }
+
+    #[tokio::test]
+    async fn receipt_2026_11_11_a_core_event_reaches_an_apiserver_that_does_not_honor_generate_name(
+    ) {
+        use wiremock::matchers::{method, path};
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(method("POST"))
+            .and(path("/api/v1/namespaces/default/events"))
+            .respond_with(refusing_generate_name)
+            .mount(&server)
+            .await;
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let config = kube::Config::new(server.uri().parse().expect("a mock uri"));
+        let client = Client::try_from(config).expect("a client for the mock");
+        let transport = KubeEventTransport::new(client);
+        let delivered = transport
+            .publish(EventApi::CoreV1, &reference(), &event("Stalled"))
+            .await;
+        assert!(delivered.is_ok(), "{delivered:?}");
+        let sent = server.received_requests().await.unwrap_or_default();
+        assert_eq!(sent.len(), 1);
+        let body: serde_json::Value = serde_json::from_slice(&sent[0].body).unwrap();
+        assert!(body["metadata"]["generateName"].is_null());
+        assert!(body["metadata"]["name"]
+            .as_str()
+            .is_some_and(|n| n.starts_with("pleme-io-github-repos.")));
+    }
+
+    #[test]
+    fn event_names_are_unique_per_instant_and_bounded() {
+        let a = Utc.timestamp_opt(1_794_384_000, 1).unwrap();
+        let b = Utc.timestamp_opt(1_794_384_000, 2).unwrap();
+        assert_ne!(event_name("t", a), event_name("t", b));
+        assert_eq!(
+            event_name("t", a),
+            ["t", &format!("{:x}", a.timestamp_nanos_opt().unwrap())].join(".")
+        );
+        let long = "x".repeat(400);
+        let name = event_name(&long, a);
+        assert_eq!(name.len(), EVENT_NAME_MAX);
+        assert!(name.ends_with(&format!(".{:x}", a.timestamp_nanos_opt().unwrap())));
     }
 }
