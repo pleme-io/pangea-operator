@@ -396,6 +396,64 @@ pub async fn drift_wait(
 }
 
 #[must_use]
+pub fn settled_requeue(
+    next_slot_in: Option<Duration>,
+    interval: Duration,
+    to_slot: bool,
+) -> Duration {
+    match next_slot_in {
+        Some(wait) if to_slot && !wait.is_zero() => wait.min(interval),
+        _ => interval,
+    }
+}
+
+pub async fn drift_requeue_after_check(
+    state: &ControllerState,
+    template: &InfrastructureTemplate,
+    interval: Duration,
+) -> Duration {
+    let now = u64::try_from(chrono::Utc::now().timestamp()).unwrap_or(0);
+    drift_requeue_with(
+        template,
+        interval,
+        settings().drift_to_slot,
+        now,
+        |catalog| async move { sibling_names(state, &catalog).await },
+    )
+    .await
+}
+
+pub async fn drift_requeue_with<F, Fut>(
+    template: &InfrastructureTemplate,
+    interval: Duration,
+    to_slot: bool,
+    now: u64,
+    siblings: F,
+) -> Duration
+where
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = Vec<String>>,
+{
+    if !to_slot || drift_lane(template).is_none() {
+        return interval;
+    }
+    let Membership::Leaf { catalog } = membership(template, true) else {
+        return interval;
+    };
+    let names = siblings(catalog).await;
+    let next = crate::leaf_engine::engine().drift_wait(
+        &pangea_leaf::drift::DriftLeaf {
+            name: template.name_any(),
+            last_check: Some(now),
+        },
+        &names,
+        now,
+        interval.as_secs().max(1),
+    );
+    settled_requeue(Some(Duration::from_secs(next)), interval, to_slot)
+}
+
+#[must_use]
 pub fn digest_of(
     template: &InfrastructureTemplate,
     catalog_variables: Option<&serde_json::Value>,
@@ -1727,5 +1785,124 @@ mod tests {
         let mut uidless = catalog(Some("org"), false);
         uidless.metadata.uid = None;
         assert!(adoption_patches(&uidless, &[rendered_leaf("org-a", "a", "x")]).is_empty());
+    }
+
+    fn drift_sweep(to_slot: bool) -> Vec<u32> {
+        use crate::leaf_engine::{LeafEngine, RustEngine};
+        const HOUR: u64 = 3600;
+        let names: Vec<String> = (0..1042)
+            .map(|i| format!("pleme-io-github-repos-repo-{i:04}"))
+            .collect();
+        let start = 1_794_384_000_u64;
+        let mut last: Vec<u64> = vec![start; names.len()];
+        let mut wake: Vec<u64> = vec![start + HOUR; names.len()];
+        let mut per_minute = vec![0u32; 60];
+        let horizon = start + 3 * HOUR;
+        loop {
+            let Some((i, t)) = wake
+                .iter()
+                .copied()
+                .enumerate()
+                .filter(|(_, t)| *t < horizon)
+                .min_by_key(|(_, t)| *t)
+            else {
+                break;
+            };
+            let leaf = pangea_leaf::drift::DriftLeaf {
+                name: names[i].clone(),
+                last_check: Some(last[i]),
+            };
+            let wait = RustEngine.drift_wait(&leaf, &names, t, HOUR);
+            if wait > 0 {
+                wake[i] = t + wait.min(HOUR);
+                continue;
+            }
+            last[i] = t;
+            if t >= start + 2 * HOUR {
+                per_minute[usize::try_from((t - start - 2 * HOUR) / 60).unwrap()] += 1;
+            }
+            let next = RustEngine.drift_wait(
+                &pangea_leaf::drift::DriftLeaf {
+                    name: names[i].clone(),
+                    last_check: Some(t),
+                },
+                &names,
+                t,
+                HOUR,
+            );
+            wake[i] = t + settled_requeue(
+                Some(Duration::from_secs(next)),
+                Duration::from_secs(HOUR),
+                to_slot,
+            )
+            .as_secs();
+        }
+        per_minute
+    }
+
+    #[test]
+    fn receipt_2026_11_11_a_sweep_bunched_by_a_restart_spreads_over_the_hour_once_requeued_to_its_slot(
+    ) {
+        let spread = drift_sweep(true);
+        assert_eq!(spread.iter().sum::<u32>(), 1042);
+        let bound = 1042_u32.div_ceil(60) + 1;
+        assert!(
+            spread.iter().all(|m| *m <= bound),
+            "a minute holds more than its share: {spread:?}"
+        );
+    }
+
+    #[test]
+    fn requeued_by_the_interval_the_bunched_sweep_stays_bunched() {
+        let locked = drift_sweep(false);
+        assert_eq!(locked.iter().sum::<u32>(), 1042);
+        assert_eq!(locked.iter().max().copied(), Some(1042));
+    }
+
+    #[test]
+    fn settled_requeue_is_the_slot_when_on_and_the_interval_otherwise() {
+        let hour = Duration::from_secs(3600);
+        let ten = Duration::from_secs(600);
+        assert_eq!(settled_requeue(Some(ten), hour, true), ten);
+        assert_eq!(settled_requeue(Some(ten), hour, false), hour);
+        assert_eq!(settled_requeue(None, hour, true), hour);
+        assert_eq!(settled_requeue(Some(Duration::ZERO), hour, true), hour);
+        assert_eq!(settled_requeue(Some(hour * 2), hour, true), hour);
+    }
+
+    #[tokio::test]
+    async fn drift_requeue_with_is_the_leafs_slot_and_the_interval_otherwise() {
+        use crate::leaf_engine::{LeafEngine, RustEngine};
+        let hour = Duration::from_secs(3600);
+        let names: Vec<String> = (0..60).map(|i| format!("org-r{i:02}")).collect();
+        let leaf = declared_leaf("org-r07", "org", "r07");
+        let now = 1_794_384_017_u64;
+        let expected = RustEngine.drift_wait(
+            &pangea_leaf::drift::DriftLeaf {
+                name: "org-r07".into(),
+                last_check: Some(now),
+            },
+            &names,
+            now,
+            3600,
+        );
+        let listed = names.clone();
+        let got = drift_requeue_with(&leaf, hour, true, now, |catalog| async move {
+            assert_eq!(catalog, "org");
+            listed
+        })
+        .await;
+        assert_eq!(got, Duration::from_secs(expected));
+        assert!(got < hour);
+        let off = drift_requeue_with(&leaf, hour, false, now, |_| async {
+            panic!("no sibling read when the switch is off")
+        })
+        .await;
+        assert_eq!(off, hour);
+        let standalone = drift_requeue_with(&template(None, false), hour, true, now, |_| async {
+            panic!("no sibling read for a standalone template")
+        })
+        .await;
+        assert_eq!(standalone, hour);
     }
 }

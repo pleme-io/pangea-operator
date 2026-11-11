@@ -481,6 +481,8 @@ pub struct LeafConfig {
     pub catalog_addresses: bool,
     #[serde(default = "default_on")]
     pub drift_admitted: bool,
+    #[serde(default = "default_on")]
+    pub drift_to_slot: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -574,6 +576,7 @@ impl Default for LeafConfig {
             park_queued: true,
             catalog_addresses: true,
             drift_admitted: true,
+            drift_to_slot: true,
         }
     }
 }
@@ -910,6 +913,8 @@ struct LeafOverlay {
     catalog_addresses: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     drift_admitted: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    drift_to_slot: Option<bool>,
 }
 
 #[derive(Serialize, Default)]
@@ -1052,6 +1057,7 @@ impl EnvOverlay {
                 park_queued: env_parse::<bool>("PANGEA_LEAF_PARK_QUEUED"),
                 catalog_addresses: env_parse::<bool>("PANGEA_LEAF_CATALOG_ADDRESSES"),
                 drift_admitted: env_parse::<bool>("PANGEA_LEAF_DRIFT_ADMITTED"),
+                drift_to_slot: env_parse::<bool>("PANGEA_LEAF_DRIFT_TO_SLOT"),
             },
             inputs: InputsOverlay {
                 stale_after_secs: env_present(crate::controller::template::inputs::STALE_AFTER_ENV)
@@ -1943,6 +1949,21 @@ mod tests {
         std::env::remove_var("PANGEA_LEAF_PARK_QUEUED");
         std::env::remove_var("PANGEA_LEAF_CATALOG_ADDRESSES");
         assert!(!v.leaf.park_queued && !v.leaf.catalog_addresses);
+    }
+
+    #[test]
+    fn leaf_drift_to_slot_defaults_on_and_turns_off_by_file_and_env() {
+        let _g = ENV_GUARD.lock().unwrap();
+        assert!(OperatorConfig::prescribed_default().leaf.drift_to_slot);
+        let path = scratch_file("leaf-drift-to-slot", "leaf:\n  drift_to_slot: false\n");
+        let r = OperatorConfig::resolve_from(&path, Dict::new());
+        assert_eq!(r.file, FileTier::Loaded { path: path.clone() });
+        assert!(!r.resolution.into_value().leaf.drift_to_slot);
+        std::fs::remove_file(path).unwrap();
+        std::env::set_var("PANGEA_LEAF_DRIFT_TO_SLOT", "false");
+        let v = OperatorConfig::resolve().into_value();
+        std::env::remove_var("PANGEA_LEAF_DRIFT_TO_SLOT");
+        assert!(!v.leaf.drift_to_slot);
     }
 
     #[test]

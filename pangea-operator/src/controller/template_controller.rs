@@ -5977,7 +5977,12 @@ async fn handle_ready(
     match action {
         SettlingAction::AcceptSettled => {
             debug!("No drift detected — system has settled");
-            Ok(ReconcileAction::Requeue(interval))
+            Ok(ReconcileAction::Requeue(
+                crate::controller::template::leaf::drift_requeue_after_check(
+                    state, template, interval,
+                )
+                .await,
+            ))
         }
         SettlingAction::KeepTrying => {
             warn!("Drift detected, transitioning to Drifted");
