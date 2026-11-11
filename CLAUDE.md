@@ -365,21 +365,7 @@ pre-pass has adopted the addresses.
 So a template that adopted everything and then applied **nothing** displays
 the create-count it no longer intends to perform.
 
-**Receipt, 2026-09-18 (`repetidor-buzios`, the house router).** Status read:
-`planSummary: "+76 ~0 -0"`, `autoApprove: false`, `lastPlannedAt 17:40:32`,
-`lastAppliedAt 17:42:26`. The obvious reading — "76 creates are pending
-against a live router" — is the exact opposite of what happened. Ground truth
-on the device: **no file under `/etc/config` modified today** (newest is
-`Sep 17 11:36`), `uci changes` empty, uptime 1 day 8:50, hostname and
-`network.lan.ipaddr` unchanged. The router was never written to.
-
-What actually ran: plan at 17:40 against empty state → `+76`; the pre-apply
-`run_import_prepass` (`:3699`) adopted all 76 via `importHints`; because
-`imported_addresses` was non-empty the stale plan file was **discarded**
-(`:3705` sets `plan_file = None`) and re-planned against the now-populated
-state; the re-plan was empty, so the apply wrote nothing. `driftTotal: 0`
-on every drift check since. **Import-first worked exactly as designed — only
-the reporting lied.**
+Receipt (2026-09-18, the house router), read when a `planSummary` disagrees with the device: [docs/DESIGN-NOTES.md](docs/DESIGN-NOTES.md#statusplansummary-receipt).
 
 ### ★ What actually gates an apply — and it is not `spec.autoApprove`
 
@@ -613,46 +599,7 @@ changed. Compare:
   — compares `(type, status, reason, message)` tuples, ignoring
   `lastTransitionTime`. Don't reimplement.
 
-Example shape:
-
-```rust
-async fn update_full_status(...) -> Result<()> {
-    let new_conditions = build_conditions();
-    let needs_patch = my_status_needs_patch(
-        cr.status.as_ref(),
-        new_phase, new_observed_gen, &new_conditions, ...
-    );
-    if !needs_patch {
-        debug!("status unchanged; skipping patch (avoids self-trigger watch loop)");
-        return Ok(());
-    }
-    let patch = serde_json::json!({ "status": ... });
-    crate::controller::status_patch::patch_status(cr, &state.client, patch).await?;
-    Ok(())
-}
-
-fn my_status_needs_patch(
-    prev: Option<&MyStatus>,
-    new_phase: MyPhase,
-    new_observed_gen: i64,
-    new_conditions: &[crate::crd::Condition],
-) -> bool {
-    let prev_phase = prev.and_then(|s| s.phase);
-    let prev_observed_gen = prev.map(|s| s.observed_generation).unwrap_or(0);
-    let prev_conditions: &[_] = prev.map(|s| s.conditions.as_slice()).unwrap_or(&[]);
-    let conditions_match = crate::controller::status::conditions_observably_equal(
-        prev_conditions, new_conditions,
-    );
-    !conditions_match
-        || prev_phase != Some(new_phase)
-        || prev_observed_gen != new_observed_gen
-        || prev.is_none()  // first reconcile must always patch
-}
-```
-
-The helper is pure (no I/O), trivially testable. Each one comes
-with 4-5 unit tests pinning: first-reconcile-must-patch, observable-
-field-change-must-patch, timestamp-only-churn-must-skip.
+Example shape and its pinned tests, read when adding a controller: [docs/DESIGN-NOTES.md](docs/DESIGN-NOTES.md#status-write-diff-gate-example).
 
 **`obj.status` vs in-Context snapshot:** for controllers that write
 their own *watched* resource (e.g., `operator_policy_controller`
