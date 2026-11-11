@@ -5,12 +5,13 @@ use std::time::Duration as StdDuration;
 use chrono::Utc;
 use kube::api::{Api, ListParams, Patch, PatchParams};
 use kube::runtime::events::EventType;
+use kube::runtime::reflector::Store;
 use kube::ResourceExt;
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 use super::events::record_event;
-use super::pass::{project_status, projection_patch, stored_pass, Deadlines, PassPhase};
+use super::pass::{project_status_parked, projection_patch, stored_pass, Deadlines, PassPhase};
 use super::pass_registry::{pass_key, PassRegistry};
 use crate::controller::ControllerState;
 use crate::crd::{InfrastructureTemplate, PassKind, PassStatus, Phase, StallState};
@@ -282,6 +283,60 @@ pub async fn beat_once(
 }
 
 static ADOPT_ORPHANED_PASS: AtomicBool = AtomicBool::new(true);
+static PARKED_PASS_ALIVE: AtomicBool = AtomicBool::new(true);
+static WATCHDOG_FROM_STORE: AtomicBool = AtomicBool::new(true);
+
+pub fn set_parked_pass_alive(on: bool) {
+    PARKED_PASS_ALIVE.store(on, Ordering::Relaxed);
+}
+
+#[must_use]
+pub fn parked_pass_alive() -> bool {
+    PARKED_PASS_ALIVE.load(Ordering::Relaxed)
+}
+
+pub fn set_watchdog_from_store(on: bool) {
+    WATCHDOG_FROM_STORE.store(on, Ordering::Relaxed);
+}
+
+#[must_use]
+pub fn watchdog_from_store() -> bool {
+    WATCHDOG_FROM_STORE.load(Ordering::Relaxed)
+}
+
+#[must_use]
+pub fn parked_at_admission(state: &ControllerState, template: &InfrastructureTemplate) -> bool {
+    parked_at(
+        &state.leaf_gate,
+        template,
+        parked_pass_alive(),
+        std::time::Instant::now(),
+    )
+}
+
+#[must_use]
+pub fn parked_at(
+    gate: &super::leaf_gate::LeafGate,
+    template: &InfrastructureTemplate,
+    on: bool,
+    now: std::time::Instant,
+) -> bool {
+    on && gate.is_queued(&super::leaf_gate::key_of(template), now)
+}
+
+pub async fn ready_store(
+    store: Option<Store<InfrastructureTemplate>>,
+    on: bool,
+) -> Option<Store<InfrastructureTemplate>> {
+    let store = store.filter(|_| on)?;
+    match store.wait_until_ready().await {
+        Ok(()) => Some(store),
+        Err(e) => {
+            warn!(error = %e, "pass watchdog store closed before it was ready; listing instead");
+            None
+        }
+    }
+}
 
 pub fn set_adopt_orphaned_pass(on: bool) {
     ADOPT_ORPHANED_PASS.store(on, Ordering::Relaxed);
@@ -390,11 +445,32 @@ pub fn nudge_due(
 #[derive(Default)]
 pub struct Nudges(std::collections::HashMap<String, (u32, chrono::DateTime<Utc>)>);
 
-pub async fn run_watchdog(state: Arc<ControllerState>) {
+pub async fn watched_templates(
+    api: &Api<InfrastructureTemplate>,
+    store: Option<&Store<InfrastructureTemplate>>,
+) -> Option<Vec<Arc<InfrastructureTemplate>>> {
+    if let Some(store) = store.filter(|_| watchdog_from_store()) {
+        return Some(store.state());
+    }
+    match api.list(&ListParams::default()).await {
+        Ok(list) => Some(list.items.into_iter().map(Arc::new).collect()),
+        Err(e) => {
+            warn!(error = %e, "pass watchdog could not list templates");
+            None
+        }
+    }
+}
+
+pub async fn run_watchdog(
+    state: Arc<ControllerState>,
+    store: Option<Store<InfrastructureTemplate>>,
+) {
     let deadlines = Deadlines::from_env();
+    let store = ready_store(store, watchdog_from_store()).await;
     info!(
         heartbeat_secs = deadlines.heartbeat.num_seconds(),
         pending_start_secs = deadlines.pending_start.num_seconds(),
+        from_store = store.is_some(),
         "template pass watchdog running"
     );
     let api: Api<InfrastructureTemplate> = Api::all(state.client.clone());
@@ -402,12 +478,8 @@ pub async fn run_watchdog(state: Arc<ControllerState>) {
     let mut nudges = Nudges::default();
     loop {
         tick.tick().await;
-        let templates = match api.list(&ListParams::default()).await {
-            Ok(list) => list.items,
-            Err(e) => {
-                warn!(error = %e, "pass watchdog could not list templates");
-                continue;
-            }
+        let Some(templates) = watched_templates(&api, store.as_ref()).await else {
+            continue;
         };
         for template in templates {
             watch_one(&template, &state, &deadlines, &mut nudges).await;
@@ -429,7 +501,8 @@ async fn watch_one(
     };
     let now = Utc::now();
     let live = template.metadata.generation.unwrap_or(0);
-    let projection = project_status(status, live, now, d);
+    let projection =
+        project_status_parked(status, live, now, d, parked_at_admission(state, template));
     let name = template.name_any();
     let namespace = template.namespace().unwrap_or_default();
     let labels = [name.as_str(), namespace.as_str()];
@@ -1020,5 +1093,133 @@ mod tests {
         let l = ledger_with(&status, crate::crd::StallState::OrphanedPhase, Utc::now());
         assert_eq!(l["counts"]["Stalled:orphanedPhase"], 1);
         assert_eq!(l["last"]["trigger"], "Stalled:orphanedPhase");
+    }
+
+    static STORE_SWITCH: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    fn cached(name: &str) -> InfrastructureTemplate {
+        let mut t: InfrastructureTemplate =
+            serde_json::from_value(fake_api::body(serde_json::json!(null))).expect("a template");
+        t.metadata.name = Some(name.to_string());
+        t
+    }
+
+    #[tokio::test]
+    async fn receipt_2026_11_11_the_watchdog_reads_the_reflector_store_and_lists_nothing() {
+        let _g = STORE_SWITCH.lock().await;
+        let server = wiremock::MockServer::start().await;
+        let api = fake_api::api(&server);
+        let (reader, mut writer) = kube::runtime::reflector::store::<InfrastructureTemplate>();
+        writer.apply_watcher_event(&kube::runtime::watcher::Event::Apply(cached("a")));
+        writer.apply_watcher_event(&kube::runtime::watcher::Event::Apply(cached("b")));
+        set_watchdog_from_store(true);
+        let seen = watched_templates(&api, Some(&reader))
+            .await
+            .expect("templates");
+        let mut names: Vec<String> = seen.iter().map(|t| t.name_any()).collect();
+        names.sort();
+        assert_eq!(names, ["a", "b"]);
+        assert!(server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn watchdog_from_store_off_lists_the_api_as_before() {
+        let _g = STORE_SWITCH.lock().await;
+        use wiremock::matchers::{method, path};
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(method("GET"))
+            .and(path(
+                "/apis/pangea.pleme.io/v1alpha1/namespaces/default/infrastructuretemplates",
+            ))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "apiVersion": "pangea.pleme.io/v1alpha1",
+                    "kind": "InfrastructureTemplateList",
+                    "metadata": { "resourceVersion": "9" },
+                    "items": [fake_api::body(serde_json::json!(null))],
+                })),
+            )
+            .mount(&server)
+            .await;
+        let api = fake_api::api(&server);
+        let (reader, mut writer) = kube::runtime::reflector::store::<InfrastructureTemplate>();
+        writer.apply_watcher_event(&kube::runtime::watcher::Event::Apply(cached("a")));
+        let listed = watched_templates(&api, None).await.expect("listed");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name_any(), "t");
+        set_watchdog_from_store(false);
+        let off = watched_templates(&api, Some(&reader)).await;
+        set_watchdog_from_store(true);
+        let off = off.expect("listed");
+        assert_eq!(off.len(), 1);
+        assert_eq!(off[0].name_any(), "t");
+        assert_eq!(
+            server.received_requests().await.unwrap_or_default().len(),
+            2
+        );
+    }
+
+    #[test]
+    fn parked_pass_alive_defaults_on_and_its_setter_turns_it_off() {
+        assert!(parked_pass_alive());
+        set_parked_pass_alive(false);
+        let off = parked_pass_alive();
+        set_parked_pass_alive(true);
+        assert!(!off);
+        assert!(parked_pass_alive());
+    }
+
+    #[test]
+    fn a_template_the_gate_holds_is_parked_only_when_the_switch_is_on() {
+        use crate::controller::scheduling::{BudgetConfig, FairBudget};
+        use pangea_leaf::admit::{Candidate, WorkClass};
+        let gate = super::super::leaf_gate::LeafGate::default();
+        let budgets = FairBudget::new(BudgetConfig {
+            per_scope: 1,
+            global: 16,
+        });
+        let cfg = crate::config::LeafConfig::default();
+        let now = std::time::Instant::now();
+        let cand = |name: &str| Candidate {
+            name: ["default", name].join("/"),
+            scope: "org".into(),
+            credential: None,
+            class: WorkClass::Change,
+            depth: 0,
+            since: 0,
+        };
+        let _held = gate
+            .try_admit(&budgets, cand("first"), None, &cfg, now)
+            .expect("the only slot");
+        assert!(gate
+            .try_admit(&budgets, cand("t"), None, &cfg, now)
+            .is_none());
+        let waiting = cached("t");
+        let running = cached("first");
+        assert!(parked_at(&gate, &waiting, true, now));
+        assert!(!parked_at(&gate, &waiting, false, now));
+        assert!(!parked_at(&gate, &running, true, now));
+    }
+
+    #[tokio::test]
+    async fn the_store_is_used_once_ready_and_only_when_the_switch_is_on() {
+        use kube::runtime::watcher::Event;
+        let (reader, mut writer) = kube::runtime::reflector::store::<InfrastructureTemplate>();
+        writer.apply_watcher_event(&Event::Init);
+        writer.apply_watcher_event(&Event::InitApply(cached("a")));
+        writer.apply_watcher_event(&Event::InitDone);
+        assert!(ready_store(Some(reader.clone()), false).await.is_none());
+        assert!(ready_store(None, true).await.is_none());
+        let ready = ready_store(Some(reader), true)
+            .await
+            .expect("a ready store");
+        assert_eq!(ready.state().len(), 1);
+        let (unready, dropped) = kube::runtime::reflector::store::<InfrastructureTemplate>();
+        drop(dropped);
+        assert!(ready_store(Some(unready), true).await.is_none());
     }
 }

@@ -414,6 +414,10 @@ pub struct ReactiveConfig {
     /// `orphanedPhase` after the orphan grace and re-dispatches.
     #[serde(default = "default_on")]
     pub adopt_orphaned_pass: bool,
+    #[serde(default = "default_on")]
+    pub parked_pass_alive: bool,
+    #[serde(default = "default_on")]
+    pub watchdog_from_store: bool,
 }
 
 fn default_on() -> bool {
@@ -427,6 +431,8 @@ impl Default for ReactiveConfig {
             resume_stalled_on_heartbeat: true,
             preempt_stalled_pass: true,
             adopt_orphaned_pass: true,
+            parked_pass_alive: true,
+            watchdog_from_store: true,
         }
     }
 }
@@ -875,6 +881,10 @@ struct ReactiveOverlay {
     preempt_stalled_pass: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     adopt_orphaned_pass: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parked_pass_alive: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    watchdog_from_store: Option<bool>,
 }
 
 #[derive(Serialize, Default)]
@@ -1019,6 +1029,8 @@ impl EnvOverlay {
                     .map(|v| v == "true" || v == "1"),
                 adopt_orphaned_pass: env_present("PANGEA_ADOPT_ORPHANED_PASS")
                     .map(|v| v == "true" || v == "1"),
+                parked_pass_alive: env_parse::<bool>("PANGEA_PARKED_PASS_ALIVE"),
+                watchdog_from_store: env_parse::<bool>("PANGEA_WATCHDOG_FROM_STORE"),
             },
             gem: GemOverlay {
                 cache_dir: env_present("PANGEA_GEM_CACHE_DIR"),
@@ -1179,6 +1191,8 @@ impl TieredConfig for OperatorConfig {
                 resume_stalled_on_heartbeat: false,
                 preempt_stalled_pass: false,
                 adopt_orphaned_pass: false,
+                parked_pass_alive: false,
+                watchdog_from_store: false,
             },
             leaf: LeafConfig::default(),
             workers: WorkersConfig::default(),
@@ -1964,6 +1978,30 @@ mod tests {
         let v = OperatorConfig::resolve().into_value();
         std::env::remove_var("PANGEA_LEAF_DRIFT_TO_SLOT");
         assert!(!v.leaf.drift_to_slot);
+    }
+
+    #[test]
+    fn parked_pass_alive_and_watchdog_from_store_default_on_and_turn_off_by_file_and_env() {
+        let _g = ENV_GUARD.lock().unwrap();
+        let p = OperatorConfig::prescribed_default();
+        assert!(p.reactive.parked_pass_alive && p.reactive.watchdog_from_store);
+        let bare = OperatorConfig::bare();
+        assert!(!bare.reactive.parked_pass_alive && !bare.reactive.watchdog_from_store);
+        let path = scratch_file(
+            "parked-store",
+            "reactive:\n  parked_pass_alive: false\n  watchdog_from_store: false\n",
+        );
+        let r = OperatorConfig::resolve_from(&path, Dict::new());
+        assert_eq!(r.file, FileTier::Loaded { path: path.clone() });
+        let v = r.resolution.into_value();
+        assert!(!v.reactive.parked_pass_alive && !v.reactive.watchdog_from_store);
+        std::fs::remove_file(path).unwrap();
+        std::env::set_var("PANGEA_PARKED_PASS_ALIVE", "false");
+        std::env::set_var("PANGEA_WATCHDOG_FROM_STORE", "false");
+        let v = OperatorConfig::resolve().into_value();
+        std::env::remove_var("PANGEA_PARKED_PASS_ALIVE");
+        std::env::remove_var("PANGEA_WATCHDOG_FROM_STORE");
+        assert!(!v.reactive.parked_pass_alive && !v.reactive.watchdog_from_store);
     }
 
     #[test]

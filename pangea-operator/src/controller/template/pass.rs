@@ -685,7 +685,27 @@ pub fn project_status(
     now: DateTime<Utc>,
     deadlines: &Deadlines,
 ) -> StatusProjection {
-    let pass = named_stall(status, stored_pass(status, now), now, deadlines)
+    project_status_parked(status, live_generation, now, deadlines, false)
+}
+
+#[must_use]
+pub fn parked_is_alive(pass: PassPhase, parked: bool, now: DateTime<Utc>) -> PassPhase {
+    if parked {
+        pass.beat(now)
+    } else {
+        pass
+    }
+}
+
+pub fn project_status_parked(
+    status: &InfrastructureTemplateStatus,
+    live_generation: i64,
+    now: DateTime<Utc>,
+    deadlines: &Deadlines,
+    parked: bool,
+) -> StatusProjection {
+    let stored = parked_is_alive(stored_pass(status, now), parked, now);
+    let pass = named_stall(status, stored, now, deadlines)
         .observe(live_generation, now)
         .watchdog(now, deadlines);
     let observed_generation = pass.observed_generation(status.observed_generation);
@@ -1161,6 +1181,53 @@ mod tests {
         adopted.conditions = first.conditions.clone();
         let second = project_status(&adopted, 20, at(200), &Deadlines::default());
         assert!(projection_patch(&adopted, &second).is_none());
+    }
+
+    #[test]
+    fn receipt_2026_11_11_a_pass_parked_at_admission_is_alive_not_heartbeat_lost() {
+        let mut status = stale_ready_status();
+        status.pass = Some(sample(PassKind::Planning, 20).to_status());
+        let d = Deadlines::default();
+        let lost = project_status_parked(&status, 20, at(400), &d, false);
+        assert!(matches!(
+            lost.pass,
+            PassPhase::Stalled {
+                state: StallState::HeartbeatLost,
+                ..
+            }
+        ));
+        let parked = project_status_parked(&status, 20, at(400), &d, true);
+        assert_eq!(parked.pass.kind(), PassKind::Planning);
+        assert_eq!(status_of(&parked.conditions, "Stalled"), "False");
+        assert!(projection_patch(&status, &parked)
+            .and_then(|p| p.get("pass").cloned())
+            .is_none());
+    }
+
+    #[test]
+    fn a_parked_pass_still_meets_the_backstop() {
+        let mut status = stale_ready_status();
+        status.pass = Some(sample(PassKind::Planning, 20).to_status());
+        let d = Deadlines::default();
+        let late = at(d.backstop.num_seconds() + 1);
+        let p = project_status_parked(&status, 20, late, &d, true);
+        assert!(matches!(
+            p.pass,
+            PassPhase::Stalled {
+                state: StallState::Unnamed,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parked_is_alive_beats_only_when_parked() {
+        let pass = sample(PassKind::Planning, 20);
+        assert_eq!(parked_is_alive(pass.clone(), false, at(90)), pass);
+        assert_eq!(
+            parked_is_alive(pass.clone(), true, at(90)),
+            pass.beat(at(90))
+        );
     }
 
     #[test]

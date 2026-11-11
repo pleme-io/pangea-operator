@@ -200,6 +200,12 @@ async fn main() -> Result<()> {
     pangea_operator::controller::template::pass_driver::set_adopt_orphaned_pass(
         op_cfg.reactive.adopt_orphaned_pass,
     );
+    pangea_operator::controller::template::pass_driver::set_parked_pass_alive(
+        op_cfg.reactive.parked_pass_alive,
+    );
+    pangea_operator::controller::template::pass_driver::set_watchdog_from_store(
+        op_cfg.reactive.watchdog_from_store,
+    );
     pangea_operator::controller::template::leaf::configure(&op_cfg.leaf);
     pangea_operator::leaf_work::configure(&op_cfg.workers);
     pangea_operator::controller::template::inputs::configure(&op_cfg.inputs);

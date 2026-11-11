@@ -64,9 +64,6 @@ impl TemplateController {
     pub async fn run(self) -> Result<()> {
         let client = self.state.client.clone();
         let state = Arc::new(self.state);
-        tokio::spawn(crate::controller::template::pass_driver::run_watchdog(
-            Arc::clone(&state),
-        ));
 
         info!("Starting InfrastructureTemplate controller");
 
@@ -109,6 +106,10 @@ impl TemplateController {
         // rule between a ConfigMap and the template(s) that reference
         // it is provable independent of any kube-rs machinery.
         let template_store = controller.store();
+        tokio::spawn(crate::controller::template::pass_driver::run_watchdog(
+            Arc::clone(&state),
+            Some(template_store.clone()),
+        ));
         let configmap_api: Api<ConfigMap> = Api::all(client);
         let controller = controller.watches(
             configmap_api,
