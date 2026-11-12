@@ -1276,6 +1276,41 @@ mod tests {
         assert!(is_configured(&r, None));
         assert!(is_configured(&r, Some(PolicyDecision::Refuse)));
     }
+
+    #[test]
+    fn only_a_wildcard_require_approval_rule_holds_every_change() {
+        let hold = vec![rule(
+            "hold-plan",
+            PolicyDecision::RequireApproval,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+        )];
+        for action in ["create", "update", "delete", "replace"] {
+            let drifts = [drift(
+                "aws_s3_bucket_lifecycle_configuration.x",
+                action,
+                "modify",
+                vec![],
+            )];
+            assert_eq!(
+                evaluate(&hold, Some(PolicyDecision::RequireApproval), &drifts).aggregate,
+                PolicyDecision::RequireApproval,
+                "{action}"
+            );
+        }
+        assert_eq!(
+            evaluate(&hold, Some(PolicyDecision::RequireApproval), &[]).aggregate,
+            PolicyDecision::RequireApproval
+        );
+        let update = [drift("aws_route_table.x", "update", "modify", vec![])];
+        assert_eq!(
+            evaluate(&[], Some(PolicyDecision::RequireApproval), &update).aggregate,
+            PolicyDecision::AutoApply
+        );
+    }
 }
 
 #[cfg(test)]
