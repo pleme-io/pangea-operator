@@ -699,15 +699,15 @@
         "preBuild": "export CARGO_CRATE_NAME=anyhow;"
       }
     },
-    "arc-swap-1.9.4": {
+    "arc-swap-1.9.5": {
       "name": "arc-swap",
-      "version": "1.9.4",
+      "version": "1.9.5",
       "edition": "2018",
       "source": {
         "kind": "registry",
-        "url": "https://static.crates.io/crates/arc-swap/arc-swap-1.9.4.crate",
-        "sha256": "db4c94f57a570fce5d381be3289b3f79aef6332d72948fe82ab5772e423ccf92",
-        "name_with_ext": "arc-swap-1.9.4.tar.gz"
+        "url": "https://static.crates.io/crates/arc-swap/arc-swap-1.9.5.crate",
+        "sha256": "84a22b5d51209f6de83d37a0b33d320acb8da88823e42a94c075140708f032a5",
+        "name_with_ext": "arc-swap-1.9.5.tar.gz"
       },
       "features": [],
       "proc_macro": false,
@@ -731,7 +731,7 @@
       "crate_renames": {},
       "build_rust_crate_args": {
         "crateName": "arc-swap",
-        "version": "1.9.4",
+        "version": "1.9.5",
         "edition": "2018",
         "release": true,
         "preBuild": "export CARGO_CRATE_NAME=arc_swap;"
@@ -6545,15 +6545,15 @@
         "preBuild": "export CARGO_CRATE_NAME=cmake;"
       }
     },
-    "cofre-fs-0.1.30": {
+    "cofre-fs-0.1.32": {
       "name": "cofre-fs",
-      "version": "0.1.30",
+      "version": "0.1.32",
       "edition": "2024",
       "source": {
         "kind": "registry",
-        "url": "https://static.crates.io/crates/cofre-fs/cofre-fs-0.1.30.crate",
-        "sha256": "55c59b9185344888cd4842f36b4a16f0b4aa18f3223a99a9e0d08ea9e39bf27c",
-        "name_with_ext": "cofre-fs-0.1.30.tar.gz"
+        "url": "https://static.crates.io/crates/cofre-fs/cofre-fs-0.1.32.crate",
+        "sha256": "c83d0cff5408227ffbe7b7426ef01d5792f0f829c7e3128dec570d957b6caf06",
+        "name_with_ext": "cofre-fs-0.1.32.tar.gz"
       },
       "features": [],
       "proc_macro": false,
@@ -6566,21 +6566,21 @@
       "crate_renames": {},
       "build_rust_crate_args": {
         "crateName": "cofre-fs",
-        "version": "0.1.30",
+        "version": "0.1.32",
         "edition": "2024",
         "release": true,
         "preBuild": "export CARGO_CRATE_NAME=cofre_fs;"
       }
     },
-    "cofre-secret-0.1.30": {
+    "cofre-secret-0.1.32": {
       "name": "cofre-secret",
-      "version": "0.1.30",
+      "version": "0.1.32",
       "edition": "2024",
       "source": {
         "kind": "registry",
-        "url": "https://static.crates.io/crates/cofre-secret/cofre-secret-0.1.30.crate",
-        "sha256": "24daadbb64b61e4059ab6812c122f2b67becb5692cc440f1c0f628b276487ab5",
-        "name_with_ext": "cofre-secret-0.1.30.tar.gz"
+        "url": "https://static.crates.io/crates/cofre-secret/cofre-secret-0.1.32.crate",
+        "sha256": "cbd7310701a19248e072b1df70f540dbfc9b78258bbf025e68287cdf6dfe3b21",
+        "name_with_ext": "cofre-secret-0.1.32.tar.gz"
       },
       "features": [],
       "proc_macro": false,
@@ -6593,7 +6593,7 @@
       "crate_renames": {},
       "build_rust_crate_args": {
         "crateName": "cofre-secret",
-        "version": "0.1.30",
+        "version": "0.1.32",
         "edition": "2024",
         "release": true,
         "preBuild": "export CARGO_CRATE_NAME=cofre_secret;"
@@ -13281,15 +13281,15 @@
         "preBuild": "export CARGO_CRATE_NAME=gen_macros;"
       }
     },
-    "gen-platform-0.1.55": {
+    "gen-platform-0.1.57": {
       "name": "gen-platform",
-      "version": "0.1.55",
+      "version": "0.1.57",
       "edition": "2024",
       "source": {
         "kind": "registry",
-        "url": "https://static.crates.io/crates/gen-platform/gen-platform-0.1.55.crate",
-        "sha256": "c2626761d01e0f872bb5ab92aa45fcfd1f820904a4da36f96b1b9a101ffa44fd",
-        "name_with_ext": "gen-platform-0.1.55.tar.gz"
+        "url": "https://static.crates.io/crates/gen-platform/gen-platform-0.1.57.crate",
+        "sha256": "e0c3e51d4cf9a589bb2b1c9ada64b9989e6b1eaf06283c557575dee89925687a",
+        "name_with_ext": "gen-platform-0.1.57.tar.gz"
       },
       "features": [],
       "proc_macro": false,
@@ -13378,7 +13378,7 @@
       },
       "build_rust_crate_args": {
         "crateName": "gen-platform",
-        "version": "0.1.55",
+        "version": "0.1.57",
         "edition": "2024",
         "crateRenames": {
           "gen-macros": [
@@ -18495,7 +18495,7 @@
         },
         {
           "name": "hashbrown",
-          "package_key": "hashbrown-0.17.1",
+          "package_key": "hashbrown-0.15.5",
           "kind": "normal",
           "features": [
             "default-hasher",
@@ -19770,7 +19770,7 @@
       "runtime_dependencies": [
         {
           "name": "arc_swap",
-          "package_key": "arc-swap-1.9.4",
+          "package_key": "arc-swap-1.9.5",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -19907,7 +19907,7 @@
       "crate_renames": {
         "arc-swap": [
           {
-            "version": "1.9.4",
+            "version": "1.9.5",
             "rename": "arc_swap"
           }
         ],
@@ -19970,7 +19970,7 @@
         "crateRenames": {
           "arc-swap": [
             {
-              "version": "1.9.4",
+              "version": "1.9.5",
               "rename": "arc_swap"
             }
           ],
@@ -24975,7 +24975,6 @@
         "name_with_ext": "hashbrown-0.17.1.tar.gz"
       },
       "features": [
-        "default-hasher",
         "inline-more"
       ],
       "proc_macro": false,
@@ -24983,18 +24982,7 @@
       "links": null,
       "binaries": [],
       "lib_target": null,
-      "runtime_dependencies": [
-        {
-          "name": "foldhash",
-          "package_key": "foldhash-0.2.0",
-          "kind": "normal",
-          "features": [],
-          "uses_default_features": false,
-          "optional": true,
-          "target": null,
-          "tree": "target"
-        }
-      ],
+      "runtime_dependencies": [],
       "build_dependencies": [],
       "crate_renames": {},
       "build_rust_crate_args": {
@@ -25002,7 +24990,6 @@
         "version": "0.17.1",
         "edition": "2024",
         "features": [
-          "default-hasher",
           "inline-more"
         ],
         "release": true,
@@ -26940,7 +26927,7 @@
         },
         {
           "name": "socket2",
-          "package_key": "socket2-0.6.4",
+          "package_key": "socket2-0.5.10",
           "kind": "normal",
           "features": [
             "all"
@@ -33056,7 +33043,7 @@
         },
         {
           "name": "gen_platform",
-          "package_key": "gen-platform-0.1.55",
+          "package_key": "gen-platform-0.1.57",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -33158,7 +33145,7 @@
         },
         {
           "name": "shigoto_types",
-          "package_key": "shigoto-types-0.1.16",
+          "package_key": "shigoto-types-0.1.19",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -33218,7 +33205,7 @@
         ],
         "gen-platform": [
           {
-            "version": "0.1.55",
+            "version": "0.1.57",
             "rename": "gen_platform"
           }
         ],
@@ -33260,7 +33247,7 @@
         ],
         "shigoto-types": [
           {
-            "version": "0.1.16",
+            "version": "0.1.19",
             "rename": "shigoto_types"
           }
         ]
@@ -33278,7 +33265,7 @@
           ],
           "gen-platform": [
             {
-              "version": "0.1.55",
+              "version": "0.1.57",
               "rename": "gen_platform"
             }
           ],
@@ -33320,7 +33307,7 @@
           ],
           "shigoto-types": [
             {
-              "version": "0.1.16",
+              "version": "0.1.19",
               "rename": "shigoto_types"
             }
           ]
@@ -33440,7 +33427,7 @@
         },
         {
           "name": "gen_platform",
-          "package_key": "gen-platform-0.1.55",
+          "package_key": "gen-platform-0.1.57",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -33505,7 +33492,7 @@
       "crate_renames": {
         "gen-platform": [
           {
-            "version": "0.1.55",
+            "version": "0.1.57",
             "rename": "gen_platform"
           }
         ],
@@ -33523,7 +33510,7 @@
         "crateRenames": {
           "gen-platform": [
             {
-              "version": "0.1.55",
+              "version": "0.1.57",
               "rename": "gen_platform"
             }
           ],
@@ -35525,7 +35512,7 @@
         },
         {
           "name": "cofre_fs",
-          "package_key": "cofre-fs-0.1.30",
+          "package_key": "cofre-fs-0.1.32",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -35624,7 +35611,7 @@
       "crate_renames": {
         "cofre-fs": [
           {
-            "version": "0.1.30",
+            "version": "0.1.32",
             "rename": "cofre_fs"
           }
         ],
@@ -35642,7 +35629,7 @@
         "crateRenames": {
           "cofre-fs": [
             {
-              "version": "0.1.30",
+              "version": "0.1.32",
               "rename": "cofre_fs"
             }
           ],
@@ -36121,7 +36108,7 @@
         },
         {
           "name": "gen_platform",
-          "package_key": "gen-platform-0.1.55",
+          "package_key": "gen-platform-0.1.57",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -36201,7 +36188,7 @@
       "crate_renames": {
         "gen-platform": [
           {
-            "version": "0.1.55",
+            "version": "0.1.57",
             "rename": "gen_platform"
           }
         ],
@@ -36219,7 +36206,7 @@
         "crateRenames": {
           "gen-platform": [
             {
-              "version": "0.1.55",
+              "version": "0.1.57",
               "rename": "gen_platform"
             }
           ],
@@ -39354,7 +39341,7 @@
         },
         {
           "name": "shigoto_dag",
-          "package_key": "shigoto-dag-0.1.16",
+          "package_key": "shigoto-dag-0.1.19",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -39364,7 +39351,7 @@
         },
         {
           "name": "shigoto_types",
-          "package_key": "shigoto-types-0.1.16",
+          "package_key": "shigoto-types-0.1.19",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -39387,13 +39374,13 @@
       "crate_renames": {
         "shigoto-dag": [
           {
-            "version": "0.1.16",
+            "version": "0.1.19",
             "rename": "shigoto_dag"
           }
         ],
         "shigoto-types": [
           {
-            "version": "0.1.16",
+            "version": "0.1.19",
             "rename": "shigoto_types"
           }
         ]
@@ -39405,13 +39392,13 @@
         "crateRenames": {
           "shigoto-dag": [
             {
-              "version": "0.1.16",
+              "version": "0.1.19",
               "rename": "shigoto_dag"
             }
           ],
           "shigoto-types": [
             {
-              "version": "0.1.16",
+              "version": "0.1.19",
               "rename": "shigoto_types"
             }
           ]
@@ -39465,7 +39452,7 @@
         },
         {
           "name": "arc_swap",
-          "package_key": "arc-swap-1.9.4",
+          "package_key": "arc-swap-1.9.5",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -39569,7 +39556,7 @@
         },
         {
           "name": "cofre_fs",
-          "package_key": "cofre-fs-0.1.30",
+          "package_key": "cofre-fs-0.1.32",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -39579,7 +39566,7 @@
         },
         {
           "name": "cofre_secret",
-          "package_key": "cofre-secret-0.1.30",
+          "package_key": "cofre-secret-0.1.32",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -39629,7 +39616,7 @@
         },
         {
           "name": "gen_platform",
-          "package_key": "gen-platform-0.1.55",
+          "package_key": "gen-platform-0.1.57",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -40128,7 +40115,7 @@
         },
         {
           "name": "shigoto_budget",
-          "package_key": "shigoto-budget-0.1.16",
+          "package_key": "shigoto-budget-0.1.19",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -40138,7 +40125,7 @@
         },
         {
           "name": "shigoto_dag",
-          "package_key": "shigoto-dag-0.1.16",
+          "package_key": "shigoto-dag-0.1.19",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -40148,7 +40135,7 @@
         },
         {
           "name": "shigoto_rank",
-          "package_key": "shigoto-rank-0.1.16",
+          "package_key": "shigoto-rank-0.1.19",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -40158,7 +40145,7 @@
         },
         {
           "name": "shigoto_types",
-          "package_key": "shigoto-types-0.1.16",
+          "package_key": "shigoto-types-0.1.19",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -40168,7 +40155,7 @@
         },
         {
           "name": "shikumi",
-          "package_key": "shikumi-0.1.1084",
+          "package_key": "shikumi-0.1.1086",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -40330,7 +40317,7 @@
         },
         {
           "name": "tsunagu",
-          "package_key": "tsunagu-0.1.11",
+          "package_key": "tsunagu-0.1.13",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -40376,7 +40363,7 @@
       "crate_renames": {
         "arc-swap": [
           {
-            "version": "1.9.4",
+            "version": "1.9.5",
             "rename": "arc_swap"
           }
         ],
@@ -40406,19 +40393,19 @@
         ],
         "cofre-fs": [
           {
-            "version": "0.1.30",
+            "version": "0.1.32",
             "rename": "cofre_fs"
           }
         ],
         "cofre-secret": [
           {
-            "version": "0.1.30",
+            "version": "0.1.32",
             "rename": "cofre_secret"
           }
         ],
         "gen-platform": [
           {
-            "version": "0.1.55",
+            "version": "0.1.57",
             "rename": "gen_platform"
           }
         ],
@@ -40580,25 +40567,25 @@
         ],
         "shigoto-budget": [
           {
-            "version": "0.1.16",
+            "version": "0.1.19",
             "rename": "shigoto_budget"
           }
         ],
         "shigoto-dag": [
           {
-            "version": "0.1.16",
+            "version": "0.1.19",
             "rename": "shigoto_dag"
           }
         ],
         "shigoto-rank": [
           {
-            "version": "0.1.16",
+            "version": "0.1.19",
             "rename": "shigoto_rank"
           }
         ],
         "shigoto-types": [
           {
-            "version": "0.1.16",
+            "version": "0.1.19",
             "rename": "shigoto_types"
           }
         ],
@@ -40643,7 +40630,7 @@
         "crateRenames": {
           "arc-swap": [
             {
-              "version": "1.9.4",
+              "version": "1.9.5",
               "rename": "arc_swap"
             }
           ],
@@ -40673,19 +40660,19 @@
           ],
           "cofre-fs": [
             {
-              "version": "0.1.30",
+              "version": "0.1.32",
               "rename": "cofre_fs"
             }
           ],
           "cofre-secret": [
             {
-              "version": "0.1.30",
+              "version": "0.1.32",
               "rename": "cofre_secret"
             }
           ],
           "gen-platform": [
             {
-              "version": "0.1.55",
+              "version": "0.1.57",
               "rename": "gen_platform"
             }
           ],
@@ -40847,25 +40834,25 @@
           ],
           "shigoto-budget": [
             {
-              "version": "0.1.16",
+              "version": "0.1.19",
               "rename": "shigoto_budget"
             }
           ],
           "shigoto-dag": [
             {
-              "version": "0.1.16",
+              "version": "0.1.19",
               "rename": "shigoto_dag"
             }
           ],
           "shigoto-rank": [
             {
-              "version": "0.1.16",
+              "version": "0.1.19",
               "rename": "shigoto_rank"
             }
           ],
           "shigoto-types": [
             {
-              "version": "0.1.16",
+              "version": "0.1.19",
               "rename": "shigoto_types"
             }
           ],
@@ -45687,7 +45674,7 @@
         },
         {
           "name": "socket2",
-          "package_key": "socket2-0.6.4",
+          "package_key": "socket2-0.5.10",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -46049,7 +46036,7 @@
         },
         {
           "name": "socket2",
-          "package_key": "socket2-0.6.4",
+          "package_key": "socket2-0.5.10",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -53443,7 +53430,7 @@
       "runtime_dependencies": [
         {
           "name": "shigoto_budget",
-          "package_key": "shigoto-budget-0.1.16",
+          "package_key": "shigoto-budget-0.1.19",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -53453,7 +53440,7 @@
         },
         {
           "name": "shigoto_dag",
-          "package_key": "shigoto-dag-0.1.16",
+          "package_key": "shigoto-dag-0.1.19",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -53493,7 +53480,7 @@
         },
         {
           "name": "shigoto_rank",
-          "package_key": "shigoto-rank-0.1.16",
+          "package_key": "shigoto-rank-0.1.19",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -53523,7 +53510,7 @@
         },
         {
           "name": "shigoto_types",
-          "package_key": "shigoto-types-0.1.16",
+          "package_key": "shigoto-types-0.1.19",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -53536,13 +53523,13 @@
       "crate_renames": {
         "shigoto-budget": [
           {
-            "version": "0.1.16",
+            "version": "0.1.19",
             "rename": "shigoto_budget"
           }
         ],
         "shigoto-dag": [
           {
-            "version": "0.1.16",
+            "version": "0.1.19",
             "rename": "shigoto_dag"
           }
         ],
@@ -53566,7 +53553,7 @@
         ],
         "shigoto-rank": [
           {
-            "version": "0.1.16",
+            "version": "0.1.19",
             "rename": "shigoto_rank"
           }
         ],
@@ -53584,7 +53571,7 @@
         ],
         "shigoto-types": [
           {
-            "version": "0.1.16",
+            "version": "0.1.19",
             "rename": "shigoto_types"
           }
         ]
@@ -53596,13 +53583,13 @@
         "crateRenames": {
           "shigoto-budget": [
             {
-              "version": "0.1.16",
+              "version": "0.1.19",
               "rename": "shigoto_budget"
             }
           ],
           "shigoto-dag": [
             {
-              "version": "0.1.16",
+              "version": "0.1.19",
               "rename": "shigoto_dag"
             }
           ],
@@ -53626,7 +53613,7 @@
           ],
           "shigoto-rank": [
             {
-              "version": "0.1.16",
+              "version": "0.1.19",
               "rename": "shigoto_rank"
             }
           ],
@@ -53644,7 +53631,7 @@
           ],
           "shigoto-types": [
             {
-              "version": "0.1.16",
+              "version": "0.1.19",
               "rename": "shigoto_types"
             }
           ]
@@ -53653,15 +53640,15 @@
         "preBuild": "export CARGO_CRATE_NAME=shigoto;"
       }
     },
-    "shigoto-budget-0.1.16": {
+    "shigoto-budget-0.1.19": {
       "name": "shigoto-budget",
-      "version": "0.1.16",
+      "version": "0.1.19",
       "edition": "2024",
       "source": {
         "kind": "registry",
-        "url": "https://static.crates.io/crates/shigoto-budget/shigoto-budget-0.1.16.crate",
-        "sha256": "0879ba236761229b5d86423d1ce4f5aeda919f3ae4d9b0a0edce8e33c01a9a72",
-        "name_with_ext": "shigoto-budget-0.1.16.tar.gz"
+        "url": "https://static.crates.io/crates/shigoto-budget/shigoto-budget-0.1.19.crate",
+        "sha256": "e64d78c1e558a3e79925e71f86bb42dc7fdf9fee62816a555b7ecdadc5b96cb4",
+        "name_with_ext": "shigoto-budget-0.1.19.tar.gz"
       },
       "features": [],
       "proc_macro": false,
@@ -53684,7 +53671,7 @@
         },
         {
           "name": "shigoto_types",
-          "package_key": "shigoto-types-0.1.16",
+          "package_key": "shigoto-types-0.1.19",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -53707,19 +53694,19 @@
       "crate_renames": {
         "shigoto-types": [
           {
-            "version": "0.1.16",
+            "version": "0.1.19",
             "rename": "shigoto_types"
           }
         ]
       },
       "build_rust_crate_args": {
         "crateName": "shigoto-budget",
-        "version": "0.1.16",
+        "version": "0.1.19",
         "edition": "2024",
         "crateRenames": {
           "shigoto-types": [
             {
-              "version": "0.1.16",
+              "version": "0.1.19",
               "rename": "shigoto_types"
             }
           ]
@@ -53728,15 +53715,15 @@
         "preBuild": "export CARGO_CRATE_NAME=shigoto_budget;"
       }
     },
-    "shigoto-dag-0.1.16": {
+    "shigoto-dag-0.1.19": {
       "name": "shigoto-dag",
-      "version": "0.1.16",
+      "version": "0.1.19",
       "edition": "2024",
       "source": {
         "kind": "registry",
-        "url": "https://static.crates.io/crates/shigoto-dag/shigoto-dag-0.1.16.crate",
-        "sha256": "a49a74ced271b211a0cf4e6057d5d8fc237e4bea42c7d7f46bb0d64e7c6944cd",
-        "name_with_ext": "shigoto-dag-0.1.16.tar.gz"
+        "url": "https://static.crates.io/crates/shigoto-dag/shigoto-dag-0.1.19.crate",
+        "sha256": "80ff2b7b0547f3969951eb90ab9698eaacfb91a26156f9c1e4a2baab20990aa2",
+        "name_with_ext": "shigoto-dag-0.1.19.tar.gz"
       },
       "features": [],
       "proc_macro": false,
@@ -53769,7 +53756,7 @@
         },
         {
           "name": "shigoto_types",
-          "package_key": "shigoto-types-0.1.16",
+          "package_key": "shigoto-types-0.1.19",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -53792,19 +53779,19 @@
       "crate_renames": {
         "shigoto-types": [
           {
-            "version": "0.1.16",
+            "version": "0.1.19",
             "rename": "shigoto_types"
           }
         ]
       },
       "build_rust_crate_args": {
         "crateName": "shigoto-dag",
-        "version": "0.1.16",
+        "version": "0.1.19",
         "edition": "2024",
         "crateRenames": {
           "shigoto-types": [
             {
-              "version": "0.1.16",
+              "version": "0.1.19",
               "rename": "shigoto_types"
             }
           ]
@@ -53864,7 +53851,7 @@
         },
         {
           "name": "shigoto_types",
-          "package_key": "shigoto-types-0.1.16",
+          "package_key": "shigoto-types-0.1.19",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -53893,7 +53880,7 @@
         ],
         "shigoto-types": [
           {
-            "version": "0.1.16",
+            "version": "0.1.19",
             "rename": "shigoto_types"
           }
         ]
@@ -53911,7 +53898,7 @@
           ],
           "shigoto-types": [
             {
-              "version": "0.1.16",
+              "version": "0.1.19",
               "rename": "shigoto_types"
             }
           ]
@@ -53966,7 +53953,7 @@
       "runtime_dependencies": [
         {
           "name": "shigoto_dag",
-          "package_key": "shigoto-dag-0.1.16",
+          "package_key": "shigoto-dag-0.1.19",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -53976,7 +53963,7 @@
         },
         {
           "name": "shigoto_types",
-          "package_key": "shigoto-types-0.1.16",
+          "package_key": "shigoto-types-0.1.19",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -53989,13 +53976,13 @@
       "crate_renames": {
         "shigoto-dag": [
           {
-            "version": "0.1.16",
+            "version": "0.1.19",
             "rename": "shigoto_dag"
           }
         ],
         "shigoto-types": [
           {
-            "version": "0.1.16",
+            "version": "0.1.19",
             "rename": "shigoto_types"
           }
         ]
@@ -54007,13 +53994,13 @@
         "crateRenames": {
           "shigoto-dag": [
             {
-              "version": "0.1.16",
+              "version": "0.1.19",
               "rename": "shigoto_dag"
             }
           ],
           "shigoto-types": [
             {
-              "version": "0.1.16",
+              "version": "0.1.19",
               "rename": "shigoto_types"
             }
           ]
@@ -54022,15 +54009,15 @@
         "preBuild": "export CARGO_CRATE_NAME=shigoto_gate;"
       }
     },
-    "shigoto-rank-0.1.16": {
+    "shigoto-rank-0.1.19": {
       "name": "shigoto-rank",
-      "version": "0.1.16",
+      "version": "0.1.19",
       "edition": "2024",
       "source": {
         "kind": "registry",
-        "url": "https://static.crates.io/crates/shigoto-rank/shigoto-rank-0.1.16.crate",
-        "sha256": "5427cad8bb35011a818be83b401457d92bc4b482d385b42677e88b939404dbe6",
-        "name_with_ext": "shigoto-rank-0.1.16.tar.gz"
+        "url": "https://static.crates.io/crates/shigoto-rank/shigoto-rank-0.1.19.crate",
+        "sha256": "f91b0b9bffacd9a1e297c8212fb683d3264e74216f1f2501316b4573a4f8146b",
+        "name_with_ext": "shigoto-rank-0.1.19.tar.gz"
       },
       "features": [],
       "proc_macro": false,
@@ -54056,7 +54043,7 @@
       "crate_renames": {},
       "build_rust_crate_args": {
         "crateName": "shigoto-rank",
-        "version": "0.1.16",
+        "version": "0.1.19",
         "edition": "2024",
         "release": true,
         "preBuild": "export CARGO_CRATE_NAME=shigoto_rank;"
@@ -54093,7 +54080,7 @@
         },
         {
           "name": "shigoto_types",
-          "package_key": "shigoto-types-0.1.16",
+          "package_key": "shigoto-types-0.1.19",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -54106,7 +54093,7 @@
       "crate_renames": {
         "shigoto-types": [
           {
-            "version": "0.1.16",
+            "version": "0.1.19",
             "rename": "shigoto_types"
           }
         ]
@@ -54118,7 +54105,7 @@
         "crateRenames": {
           "shigoto-types": [
             {
-              "version": "0.1.16",
+              "version": "0.1.19",
               "rename": "shigoto_types"
             }
           ]
@@ -54200,7 +54187,7 @@
         },
         {
           "name": "shigoto_budget",
-          "package_key": "shigoto-budget-0.1.16",
+          "package_key": "shigoto-budget-0.1.19",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -54210,7 +54197,7 @@
         },
         {
           "name": "shigoto_dag",
-          "package_key": "shigoto-dag-0.1.16",
+          "package_key": "shigoto-dag-0.1.19",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -54250,7 +54237,7 @@
         },
         {
           "name": "shigoto_types",
-          "package_key": "shigoto-types-0.1.16",
+          "package_key": "shigoto-types-0.1.19",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -54304,13 +54291,13 @@
         ],
         "shigoto-budget": [
           {
-            "version": "0.1.16",
+            "version": "0.1.19",
             "rename": "shigoto_budget"
           }
         ],
         "shigoto-dag": [
           {
-            "version": "0.1.16",
+            "version": "0.1.19",
             "rename": "shigoto_dag"
           }
         ],
@@ -54334,7 +54321,7 @@
         ],
         "shigoto-types": [
           {
-            "version": "0.1.16",
+            "version": "0.1.19",
             "rename": "shigoto_types"
           }
         ]
@@ -54352,13 +54339,13 @@
           ],
           "shigoto-budget": [
             {
-              "version": "0.1.16",
+              "version": "0.1.19",
               "rename": "shigoto_budget"
             }
           ],
           "shigoto-dag": [
             {
-              "version": "0.1.16",
+              "version": "0.1.19",
               "rename": "shigoto_dag"
             }
           ],
@@ -54382,7 +54369,7 @@
           ],
           "shigoto-types": [
             {
-              "version": "0.1.16",
+              "version": "0.1.19",
               "rename": "shigoto_types"
             }
           ]
@@ -54391,15 +54378,15 @@
         "preBuild": "export CARGO_CRATE_NAME=shigoto_scheduler;"
       }
     },
-    "shigoto-types-0.1.16": {
+    "shigoto-types-0.1.19": {
       "name": "shigoto-types",
-      "version": "0.1.16",
+      "version": "0.1.19",
       "edition": "2024",
       "source": {
         "kind": "registry",
-        "url": "https://static.crates.io/crates/shigoto-types/shigoto-types-0.1.16.crate",
-        "sha256": "04983ad27495c98da83935f168d3a3afea926ef8b638660f6795bcd0c348ef1c",
-        "name_with_ext": "shigoto-types-0.1.16.tar.gz"
+        "url": "https://static.crates.io/crates/shigoto-types/shigoto-types-0.1.19.crate",
+        "sha256": "fd878e85478bb74dbcb933af8f599ead2b242f2782c2d4e4fa50649ff1fad776",
+        "name_with_ext": "shigoto-types-0.1.19.tar.gz"
       },
       "features": [],
       "proc_macro": false,
@@ -54442,7 +54429,7 @@
         },
         {
           "name": "gen_platform",
-          "package_key": "gen-platform-0.1.55",
+          "package_key": "gen-platform-0.1.57",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -54525,7 +54512,7 @@
         ],
         "gen-platform": [
           {
-            "version": "0.1.55",
+            "version": "0.1.57",
             "rename": "gen_platform"
           }
         ],
@@ -54538,7 +54525,7 @@
       },
       "build_rust_crate_args": {
         "crateName": "shigoto-types",
-        "version": "0.1.16",
+        "version": "0.1.19",
         "edition": "2024",
         "crateRenames": {
           "async-trait": [
@@ -54549,7 +54536,7 @@
           ],
           "gen-platform": [
             {
-              "version": "0.1.55",
+              "version": "0.1.57",
               "rename": "gen_platform"
             }
           ],
@@ -54564,15 +54551,15 @@
         "preBuild": "export CARGO_CRATE_NAME=shigoto_types;"
       }
     },
-    "shikumi-0.1.1084": {
+    "shikumi-0.1.1086": {
       "name": "shikumi",
-      "version": "0.1.1084",
+      "version": "0.1.1086",
       "edition": "2024",
       "source": {
         "kind": "registry",
-        "url": "https://static.crates.io/crates/shikumi/shikumi-0.1.1084.crate",
-        "sha256": "d340f2caa2bc6c020e7223bc89cd330687a9dd2aacdcfe6686f46ba1339ea1c1",
-        "name_with_ext": "shikumi-0.1.1084.tar.gz"
+        "url": "https://static.crates.io/crates/shikumi/shikumi-0.1.1086.crate",
+        "sha256": "17202d92c18f23da527ddf8733c685f0eb981179f764a67f9d542f6117854f90",
+        "name_with_ext": "shikumi-0.1.1086.tar.gz"
       },
       "features": [
         "default"
@@ -54585,7 +54572,7 @@
       "runtime_dependencies": [
         {
           "name": "arc_swap",
-          "package_key": "arc-swap-1.9.4",
+          "package_key": "arc-swap-1.9.5",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -54618,7 +54605,7 @@
         },
         {
           "name": "gen_platform",
-          "package_key": "gen-platform-0.1.55",
+          "package_key": "gen-platform-0.1.57",
           "kind": "normal",
           "features": [],
           "uses_default_features": true,
@@ -54725,7 +54712,7 @@
       "crate_renames": {
         "arc-swap": [
           {
-            "version": "1.9.4",
+            "version": "1.9.5",
             "rename": "arc_swap"
           }
         ],
@@ -54737,7 +54724,7 @@
         ],
         "gen-platform": [
           {
-            "version": "0.1.55",
+            "version": "0.1.57",
             "rename": "gen_platform"
           }
         ],
@@ -54750,7 +54737,7 @@
       },
       "build_rust_crate_args": {
         "crateName": "shikumi",
-        "version": "0.1.1084",
+        "version": "0.1.1086",
         "edition": "2024",
         "features": [
           "default"
@@ -54758,7 +54745,7 @@
         "crateRenames": {
           "arc-swap": [
             {
-              "version": "1.9.4",
+              "version": "1.9.5",
               "rename": "arc_swap"
             }
           ],
@@ -54770,7 +54757,7 @@
           ],
           "gen-platform": [
             {
-              "version": "0.1.55",
+              "version": "0.1.57",
               "rename": "gen_platform"
             }
           ],
@@ -64139,15 +64126,15 @@
         "preBuild": "export CARGO_CRATE_NAME=tryhard;"
       }
     },
-    "tsunagu-0.1.11": {
+    "tsunagu-0.1.13": {
       "name": "tsunagu",
-      "version": "0.1.11",
+      "version": "0.1.13",
       "edition": "2024",
       "source": {
         "kind": "registry",
-        "url": "https://static.crates.io/crates/tsunagu/tsunagu-0.1.11.crate",
-        "sha256": "fd69e678871d7659ff2027eb99daff11b6f6305f4e55fbce1e7d3c6361c04517",
-        "name_with_ext": "tsunagu-0.1.11.tar.gz"
+        "url": "https://static.crates.io/crates/tsunagu/tsunagu-0.1.13.crate",
+        "sha256": "b8542a7aa683613233a5275d36c0538b03b9b7e7b0707e8494e30b65c9fb9c65",
+        "name_with_ext": "tsunagu-0.1.13.tar.gz"
       },
       "features": [
         "default"
@@ -64255,7 +64242,7 @@
       "crate_renames": {},
       "build_rust_crate_args": {
         "crateName": "tsunagu",
-        "version": "0.1.11",
+        "version": "0.1.13",
         "edition": "2024",
         "features": [
           "default"
@@ -66972,7 +66959,7 @@
           "std"
         ]
       },
-      "arc-swap-1.9.4": {
+      "arc-swap-1.9.5": {
         "runtime_dependencies": [
           {
             "name": "rustversion",
@@ -69870,12 +69857,12 @@
         "build_dependencies": [],
         "features": []
       },
-      "cofre-fs-0.1.30": {
+      "cofre-fs-0.1.32": {
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": []
       },
-      "cofre-secret-0.1.30": {
+      "cofre-secret-0.1.32": {
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": []
@@ -72695,7 +72682,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "gen-platform-0.1.55": {
+      "gen-platform-0.1.57": {
         "runtime_dependencies": [
           {
             "name": "gen_macros",
@@ -75322,7 +75309,7 @@
           },
           {
             "name": "hashbrown",
-            "package_key": "hashbrown-0.17.1",
+            "package_key": "hashbrown-0.15.5",
             "kind": "normal",
             "features": [
               "default-hasher",
@@ -75979,7 +75966,7 @@
         "runtime_dependencies": [
           {
             "name": "arc_swap",
-            "package_key": "arc-swap-1.9.4",
+            "package_key": "arc-swap-1.9.5",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -78571,21 +78558,9 @@
         ]
       },
       "hashbrown-0.17.1": {
-        "runtime_dependencies": [
-          {
-            "name": "foldhash",
-            "package_key": "foldhash-0.2.0",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": false,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          }
-        ],
+        "runtime_dependencies": [],
         "build_dependencies": [],
         "features": [
-          "default-hasher",
           "inline-more"
         ]
       },
@@ -82641,7 +82616,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.55",
+            "package_key": "gen-platform-0.1.57",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -82743,7 +82718,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.16",
+            "package_key": "shigoto-types-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -82870,7 +82845,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.55",
+            "package_key": "gen-platform-0.1.57",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -84115,7 +84090,7 @@
           },
           {
             "name": "cofre_fs",
-            "package_key": "cofre-fs-0.1.30",
+            "package_key": "cofre-fs-0.1.32",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -84485,7 +84460,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.55",
+            "package_key": "gen-platform-0.1.57",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -86032,7 +86007,7 @@
           },
           {
             "name": "shigoto_dag",
-            "package_key": "shigoto-dag-0.1.16",
+            "package_key": "shigoto-dag-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -86042,7 +86017,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.16",
+            "package_key": "shigoto-types-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -86078,7 +86053,7 @@
           },
           {
             "name": "arc_swap",
-            "package_key": "arc-swap-1.9.4",
+            "package_key": "arc-swap-1.9.5",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -86182,7 +86157,7 @@
           },
           {
             "name": "cofre_fs",
-            "package_key": "cofre-fs-0.1.30",
+            "package_key": "cofre-fs-0.1.32",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -86192,7 +86167,7 @@
           },
           {
             "name": "cofre_secret",
-            "package_key": "cofre-secret-0.1.30",
+            "package_key": "cofre-secret-0.1.32",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -86242,7 +86217,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.55",
+            "package_key": "gen-platform-0.1.57",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -86741,7 +86716,7 @@
           },
           {
             "name": "shigoto_budget",
-            "package_key": "shigoto-budget-0.1.16",
+            "package_key": "shigoto-budget-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -86751,7 +86726,7 @@
           },
           {
             "name": "shigoto_dag",
-            "package_key": "shigoto-dag-0.1.16",
+            "package_key": "shigoto-dag-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -86761,7 +86736,7 @@
           },
           {
             "name": "shigoto_rank",
-            "package_key": "shigoto-rank-0.1.16",
+            "package_key": "shigoto-rank-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -86771,7 +86746,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.16",
+            "package_key": "shigoto-types-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -86781,7 +86756,7 @@
           },
           {
             "name": "shikumi",
-            "package_key": "shikumi-0.1.1084",
+            "package_key": "shikumi-0.1.1086",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -86943,7 +86918,7 @@
           },
           {
             "name": "tsunagu",
-            "package_key": "tsunagu-0.1.11",
+            "package_key": "tsunagu-0.1.13",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -89245,7 +89220,7 @@
           },
           {
             "name": "socket2",
-            "package_key": "socket2-0.6.4",
+            "package_key": "socket2-0.5.10",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -89463,7 +89438,7 @@
           },
           {
             "name": "socket2",
-            "package_key": "socket2-0.6.4",
+            "package_key": "socket2-0.5.10",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -92827,7 +92802,7 @@
         "runtime_dependencies": [
           {
             "name": "shigoto_budget",
-            "package_key": "shigoto-budget-0.1.16",
+            "package_key": "shigoto-budget-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -92837,7 +92812,7 @@
           },
           {
             "name": "shigoto_dag",
-            "package_key": "shigoto-dag-0.1.16",
+            "package_key": "shigoto-dag-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -92877,7 +92852,7 @@
           },
           {
             "name": "shigoto_rank",
-            "package_key": "shigoto-rank-0.1.16",
+            "package_key": "shigoto-rank-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -92907,7 +92882,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.16",
+            "package_key": "shigoto-types-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -92919,7 +92894,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-budget-0.1.16": {
+      "shigoto-budget-0.1.19": {
         "runtime_dependencies": [
           {
             "name": "serde",
@@ -92935,7 +92910,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.16",
+            "package_key": "shigoto-types-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -92957,7 +92932,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-dag-0.1.16": {
+      "shigoto-dag-0.1.19": {
         "runtime_dependencies": [
           {
             "name": "petgraph",
@@ -92983,7 +92958,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.16",
+            "package_key": "shigoto-types-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -93041,7 +93016,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.16",
+            "package_key": "shigoto-types-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -93072,7 +93047,7 @@
         "runtime_dependencies": [
           {
             "name": "shigoto_dag",
-            "package_key": "shigoto-dag-0.1.16",
+            "package_key": "shigoto-dag-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -93082,7 +93057,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.16",
+            "package_key": "shigoto-types-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -93094,7 +93069,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-rank-0.1.16": {
+      "shigoto-rank-0.1.19": {
         "runtime_dependencies": [
           {
             "name": "serde",
@@ -93128,7 +93103,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.16",
+            "package_key": "shigoto-types-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -93198,7 +93173,7 @@
           },
           {
             "name": "shigoto_budget",
-            "package_key": "shigoto-budget-0.1.16",
+            "package_key": "shigoto-budget-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -93208,7 +93183,7 @@
           },
           {
             "name": "shigoto_dag",
-            "package_key": "shigoto-dag-0.1.16",
+            "package_key": "shigoto-dag-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -93248,7 +93223,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.16",
+            "package_key": "shigoto-types-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -93295,7 +93270,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-types-0.1.16": {
+      "shigoto-types-0.1.19": {
         "runtime_dependencies": [
           {
             "name": "async_trait",
@@ -93331,7 +93306,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.55",
+            "package_key": "gen-platform-0.1.57",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -93407,11 +93382,11 @@
         "build_dependencies": [],
         "features": []
       },
-      "shikumi-0.1.1084": {
+      "shikumi-0.1.1086": {
         "runtime_dependencies": [
           {
             "name": "arc_swap",
-            "package_key": "arc-swap-1.9.4",
+            "package_key": "arc-swap-1.9.5",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -93444,7 +93419,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.55",
+            "package_key": "gen-platform-0.1.57",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -98614,7 +98589,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "tsunagu-0.1.11": {
+      "tsunagu-0.1.13": {
         "runtime_dependencies": [
           {
             "name": "dirs",
@@ -100087,7 +100062,7 @@
               },
               {
                 "name": "socket2",
-                "package_key": "socket2-0.6.4",
+                "package_key": "socket2-0.5.10",
                 "kind": "normal",
                 "features": [
                   "all"
@@ -101186,7 +101161,7 @@
               },
               {
                 "name": "socket2",
-                "package_key": "socket2-0.6.4",
+                "package_key": "socket2-0.5.10",
                 "kind": "normal",
                 "features": [
                   "all"
@@ -102311,7 +102286,7 @@
               },
               {
                 "name": "socket2",
-                "package_key": "socket2-0.6.4",
+                "package_key": "socket2-0.5.10",
                 "kind": "normal",
                 "features": [
                   "all"
@@ -103456,7 +103431,7 @@
               },
               {
                 "name": "socket2",
-                "package_key": "socket2-0.6.4",
+                "package_key": "socket2-0.5.10",
                 "kind": "normal",
                 "features": [
                   "all"
@@ -104473,7 +104448,7 @@
               },
               {
                 "name": "socket2",
-                "package_key": "socket2-0.6.4",
+                "package_key": "socket2-0.5.10",
                 "kind": "normal",
                 "features": [
                   "all"
@@ -105516,7 +105491,7 @@
               },
               {
                 "name": "socket2",
-                "package_key": "socket2-0.6.4",
+                "package_key": "socket2-0.5.10",
                 "kind": "normal",
                 "features": [
                   "all"
@@ -106337,7 +106312,7 @@
       }
     }
   },
-  "cargo_lock_sha256": "a93c5cb8186996acc9d910100d850649455bca591b174fd3a36ce9df3e805348",
+  "cargo_lock_sha256": "134951b27ea5708203bc05d5fb00f4f08f60b7e6d1cb74ea66ca69aeeb2de49b",
   "manifest_sha256": {
     "Cargo.toml": "b4313e9ef92720b4a54a86b762bc6114e7831631a8b90b7952b68c680787e6d4",
     "lava-ruby/Cargo.toml": "a2d172e3cffd2088bd2c849c579de254aec964cbe53b992a5b381a42c1f80933",

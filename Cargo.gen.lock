@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "a93c5cb8186996acc9d910100d850649455bca591b174fd3a36ce9df3e805348",
+  "cargo_lock_sha256": "134951b27ea5708203bc05d5fb00f4f08f60b7e6d1cb74ea66ca69aeeb2de49b",
   "manifest_sha256": {
     "Cargo.toml": "b4313e9ef92720b4a54a86b762bc6114e7831631a8b90b7952b68c680787e6d4",
     "lava-ruby/Cargo.toml": "a2d172e3cffd2088bd2c849c579de254aec964cbe53b992a5b381a42c1f80933",
@@ -260,7 +260,7 @@
           "std"
         ]
       },
-      "arc-swap-1.9.4": {
+      "arc-swap-1.9.5": {
         "runtime_dependencies": [
           {
             "name": "rustversion",
@@ -3158,12 +3158,12 @@
         "build_dependencies": [],
         "features": []
       },
-      "cofre-fs-0.1.30": {
+      "cofre-fs-0.1.32": {
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": []
       },
-      "cofre-secret-0.1.30": {
+      "cofre-secret-0.1.32": {
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": []
@@ -5983,7 +5983,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "gen-platform-0.1.55": {
+      "gen-platform-0.1.57": {
         "runtime_dependencies": [
           {
             "name": "gen_macros",
@@ -8610,7 +8610,7 @@
           },
           {
             "name": "hashbrown",
-            "package_key": "hashbrown-0.17.1",
+            "package_key": "hashbrown-0.15.5",
             "kind": "normal",
             "features": [
               "default-hasher",
@@ -9267,7 +9267,7 @@
         "runtime_dependencies": [
           {
             "name": "arc_swap",
-            "package_key": "arc-swap-1.9.4",
+            "package_key": "arc-swap-1.9.5",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -11859,21 +11859,9 @@
         ]
       },
       "hashbrown-0.17.1": {
-        "runtime_dependencies": [
-          {
-            "name": "foldhash",
-            "package_key": "foldhash-0.2.0",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": false,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          }
-        ],
+        "runtime_dependencies": [],
         "build_dependencies": [],
         "features": [
-          "default-hasher",
           "inline-more"
         ]
       },
@@ -15929,7 +15917,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.55",
+            "package_key": "gen-platform-0.1.57",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -16031,7 +16019,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.16",
+            "package_key": "shigoto-types-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -16158,7 +16146,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.55",
+            "package_key": "gen-platform-0.1.57",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -17403,7 +17391,7 @@
           },
           {
             "name": "cofre_fs",
-            "package_key": "cofre-fs-0.1.30",
+            "package_key": "cofre-fs-0.1.32",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -17773,7 +17761,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.55",
+            "package_key": "gen-platform-0.1.57",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19320,7 +19308,7 @@
           },
           {
             "name": "shigoto_dag",
-            "package_key": "shigoto-dag-0.1.16",
+            "package_key": "shigoto-dag-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19330,7 +19318,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.16",
+            "package_key": "shigoto-types-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19366,7 +19354,7 @@
           },
           {
             "name": "arc_swap",
-            "package_key": "arc-swap-1.9.4",
+            "package_key": "arc-swap-1.9.5",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19470,7 +19458,7 @@
           },
           {
             "name": "cofre_fs",
-            "package_key": "cofre-fs-0.1.30",
+            "package_key": "cofre-fs-0.1.32",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19480,7 +19468,7 @@
           },
           {
             "name": "cofre_secret",
-            "package_key": "cofre-secret-0.1.30",
+            "package_key": "cofre-secret-0.1.32",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19530,7 +19518,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.55",
+            "package_key": "gen-platform-0.1.57",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -20029,7 +20017,7 @@
           },
           {
             "name": "shigoto_budget",
-            "package_key": "shigoto-budget-0.1.16",
+            "package_key": "shigoto-budget-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -20039,7 +20027,7 @@
           },
           {
             "name": "shigoto_dag",
-            "package_key": "shigoto-dag-0.1.16",
+            "package_key": "shigoto-dag-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -20049,7 +20037,7 @@
           },
           {
             "name": "shigoto_rank",
-            "package_key": "shigoto-rank-0.1.16",
+            "package_key": "shigoto-rank-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -20059,7 +20047,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.16",
+            "package_key": "shigoto-types-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -20069,7 +20057,7 @@
           },
           {
             "name": "shikumi",
-            "package_key": "shikumi-0.1.1084",
+            "package_key": "shikumi-0.1.1086",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -20231,7 +20219,7 @@
           },
           {
             "name": "tsunagu",
-            "package_key": "tsunagu-0.1.11",
+            "package_key": "tsunagu-0.1.13",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -22534,7 +22522,7 @@
           },
           {
             "name": "socket2",
-            "package_key": "socket2-0.6.4",
+            "package_key": "socket2-0.5.10",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -22752,7 +22740,7 @@
           },
           {
             "name": "socket2",
-            "package_key": "socket2-0.6.4",
+            "package_key": "socket2-0.5.10",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26116,7 +26104,7 @@
         "runtime_dependencies": [
           {
             "name": "shigoto_budget",
-            "package_key": "shigoto-budget-0.1.16",
+            "package_key": "shigoto-budget-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26126,7 +26114,7 @@
           },
           {
             "name": "shigoto_dag",
-            "package_key": "shigoto-dag-0.1.16",
+            "package_key": "shigoto-dag-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26166,7 +26154,7 @@
           },
           {
             "name": "shigoto_rank",
-            "package_key": "shigoto-rank-0.1.16",
+            "package_key": "shigoto-rank-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26196,7 +26184,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.16",
+            "package_key": "shigoto-types-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26208,7 +26196,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-budget-0.1.16": {
+      "shigoto-budget-0.1.19": {
         "runtime_dependencies": [
           {
             "name": "serde",
@@ -26224,7 +26212,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.16",
+            "package_key": "shigoto-types-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26246,7 +26234,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-dag-0.1.16": {
+      "shigoto-dag-0.1.19": {
         "runtime_dependencies": [
           {
             "name": "petgraph",
@@ -26272,7 +26260,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.16",
+            "package_key": "shigoto-types-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26330,7 +26318,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.16",
+            "package_key": "shigoto-types-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26361,7 +26349,7 @@
         "runtime_dependencies": [
           {
             "name": "shigoto_dag",
-            "package_key": "shigoto-dag-0.1.16",
+            "package_key": "shigoto-dag-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26371,7 +26359,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.16",
+            "package_key": "shigoto-types-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26383,7 +26371,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-rank-0.1.16": {
+      "shigoto-rank-0.1.19": {
         "runtime_dependencies": [
           {
             "name": "serde",
@@ -26417,7 +26405,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.16",
+            "package_key": "shigoto-types-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26487,7 +26475,7 @@
           },
           {
             "name": "shigoto_budget",
-            "package_key": "shigoto-budget-0.1.16",
+            "package_key": "shigoto-budget-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26497,7 +26485,7 @@
           },
           {
             "name": "shigoto_dag",
-            "package_key": "shigoto-dag-0.1.16",
+            "package_key": "shigoto-dag-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26537,7 +26525,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.16",
+            "package_key": "shigoto-types-0.1.19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26584,7 +26572,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-types-0.1.16": {
+      "shigoto-types-0.1.19": {
         "runtime_dependencies": [
           {
             "name": "async_trait",
@@ -26620,7 +26608,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.55",
+            "package_key": "gen-platform-0.1.57",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26696,11 +26684,11 @@
         "build_dependencies": [],
         "features": []
       },
-      "shikumi-0.1.1084": {
+      "shikumi-0.1.1086": {
         "runtime_dependencies": [
           {
             "name": "arc_swap",
-            "package_key": "arc-swap-1.9.4",
+            "package_key": "arc-swap-1.9.5",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26733,7 +26721,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.55",
+            "package_key": "gen-platform-0.1.57",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -31903,7 +31891,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "tsunagu-0.1.11": {
+      "tsunagu-0.1.13": {
         "runtime_dependencies": [
           {
             "name": "dirs",
@@ -33376,7 +33364,7 @@
               },
               {
                 "name": "socket2",
-                "package_key": "socket2-0.6.4",
+                "package_key": "socket2-0.5.10",
                 "kind": "normal",
                 "features": [
                   "all"
@@ -34475,7 +34463,7 @@
               },
               {
                 "name": "socket2",
-                "package_key": "socket2-0.6.4",
+                "package_key": "socket2-0.5.10",
                 "kind": "normal",
                 "features": [
                   "all"
@@ -35600,7 +35588,7 @@
               },
               {
                 "name": "socket2",
-                "package_key": "socket2-0.6.4",
+                "package_key": "socket2-0.5.10",
                 "kind": "normal",
                 "features": [
                   "all"
@@ -36745,7 +36733,7 @@
               },
               {
                 "name": "socket2",
-                "package_key": "socket2-0.6.4",
+                "package_key": "socket2-0.5.10",
                 "kind": "normal",
                 "features": [
                   "all"
@@ -37762,7 +37750,7 @@
               },
               {
                 "name": "socket2",
-                "package_key": "socket2-0.6.4",
+                "package_key": "socket2-0.5.10",
                 "kind": "normal",
                 "features": [
                   "all"
@@ -38805,7 +38793,7 @@
               },
               {
                 "name": "socket2",
-                "package_key": "socket2-0.6.4",
+                "package_key": "socket2-0.5.10",
                 "kind": "normal",
                 "features": [
                   "all"
@@ -39687,7 +39675,7 @@
       "edition": "2021",
       "build_script": "build.rs"
     },
-    "arc-swap-1.9.4": {
+    "arc-swap-1.9.5": {
       "edition": "2018"
     },
     "arraydeque-0.5.1": {
@@ -39937,10 +39925,10 @@
     "cmake-0.1.58": {
       "edition": "2021"
     },
-    "cofre-fs-0.1.30": {
+    "cofre-fs-0.1.32": {
       "edition": "2024"
     },
-    "cofre-secret-0.1.30": {
+    "cofre-secret-0.1.32": {
       "edition": "2024"
     },
     "colorchoice-1.0.5": {
@@ -40282,7 +40270,7 @@
       "edition": "2024",
       "proc_macro": true
     },
-    "gen-platform-0.1.55": {
+    "gen-platform-0.1.57": {
       "edition": "2024"
     },
     "gen-types-0.1.57": {
@@ -41567,10 +41555,10 @@
     "shigoto-0.1.15": {
       "edition": "2024"
     },
-    "shigoto-budget-0.1.16": {
+    "shigoto-budget-0.1.19": {
       "edition": "2024"
     },
-    "shigoto-dag-0.1.16": {
+    "shigoto-dag-0.1.19": {
       "edition": "2024"
     },
     "shigoto-emit-0.1.15": {
@@ -41582,7 +41570,7 @@
     "shigoto-gate-0.1.15": {
       "edition": "2024"
     },
-    "shigoto-rank-0.1.16": {
+    "shigoto-rank-0.1.19": {
       "edition": "2024"
     },
     "shigoto-retry-0.1.15": {
@@ -41591,10 +41579,10 @@
     "shigoto-scheduler-0.1.15": {
       "edition": "2024"
     },
-    "shigoto-types-0.1.16": {
+    "shigoto-types-0.1.19": {
       "edition": "2024"
     },
-    "shikumi-0.1.1084": {
+    "shikumi-0.1.1086": {
       "edition": "2024"
     },
     "shlex-1.3.0": {
@@ -41874,7 +41862,7 @@
     "tryhard-0.5.2": {
       "edition": "2018"
     },
-    "tsunagu-0.1.11": {
+    "tsunagu-0.1.13": {
       "edition": "2024"
     },
     "tungstenite-0.29.0": {
