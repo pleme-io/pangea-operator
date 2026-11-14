@@ -1,8 +1,8 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "2284af3611480d5d361634333d5ad05049a99e0199064282bbc4ade81c82a8ef",
+  "cargo_lock_sha256": "a93c5cb8186996acc9d910100d850649455bca591b174fd3a36ce9df3e805348",
   "manifest_sha256": {
-    "Cargo.toml": "5298b257e32b62698dd1e37975ca1f451eb9c9e52ff47240907c99fe6c201ff2",
+    "Cargo.toml": "b4313e9ef92720b4a54a86b762bc6114e7831631a8b90b7952b68c680787e6d4",
     "lava-ruby/Cargo.toml": "a2d172e3cffd2088bd2c849c579de254aec964cbe53b992a5b381a42c1f80933",
     "pangea-cli/Cargo.toml": "e70a319c53857fbf9dcce678bffd0247ed194eebde2db08c7770cec532d3f148",
     "pangea-leaf/Cargo.toml": "ea757a48b988c931487eb827da36ff07099274916aa4f81341dcd3420de76019",
@@ -260,7 +260,7 @@
           "std"
         ]
       },
-      "arc-swap-1.9.2": {
+      "arc-swap-1.9.4": {
         "runtime_dependencies": [
           {
             "name": "rustversion",
@@ -308,7 +308,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -468,7 +468,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -649,7 +649,7 @@
           },
           {
             "name": "indexmap",
-            "package_key": "indexmap-2.14.0",
+            "package_key": "indexmap-2.14.2",
             "kind": "normal",
             "features": [
               "serde"
@@ -733,7 +733,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -773,7 +773,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -783,7 +783,7 @@
           },
           {
             "name": "uuid",
-            "package_key": "uuid-1.25.0",
+            "package_key": "uuid-1.29.2",
             "kind": "normal",
             "features": [
               "serde",
@@ -870,7 +870,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -880,7 +880,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "time"
@@ -1017,7 +1017,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -1065,7 +1065,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -1093,7 +1093,7 @@
           },
           {
             "name": "indexmap",
-            "package_key": "indexmap-2.14.0",
+            "package_key": "indexmap-2.14.2",
             "kind": "normal",
             "features": [
               "serde"
@@ -1117,7 +1117,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -1373,7 +1373,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -1403,7 +1403,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -1428,7 +1428,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "fs",
@@ -1870,7 +1870,7 @@
           },
           {
             "name": "hyper",
-            "package_key": "hyper-1.11.0",
+            "package_key": "hyper-1.12.0",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -1964,7 +1964,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [
               "raw_value"
@@ -2016,7 +2016,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "time"
@@ -2269,7 +2269,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2534,6 +2534,22 @@
         "build_dependencies": [],
         "features": []
       },
+      "block-buffer-0.12.1": {
+        "runtime_dependencies": [
+          {
+            "name": "hybrid_array",
+            "package_key": "hybrid-array-0.4.15",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
       "borsh-1.8.1": {
         "runtime_dependencies": [
           {
@@ -2786,7 +2802,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -2904,7 +2920,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -2953,11 +2969,11 @@
           "runtime"
         ]
       },
-      "clap-4.6.6": {
+      "clap-4.6.7": {
         "runtime_dependencies": [
           {
             "name": "clap_builder",
-            "package_key": "clap_builder-4.6.6",
+            "package_key": "clap_builder-4.6.7",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -2967,7 +2983,7 @@
           },
           {
             "name": "clap_derive",
-            "package_key": "clap_derive-4.6.4",
+            "package_key": "clap_derive-4.6.7",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2990,7 +3006,7 @@
           "wrap_help"
         ]
       },
-      "clap_builder-4.6.6": {
+      "clap_builder-4.6.7": {
         "runtime_dependencies": [
           {
             "name": "anstream",
@@ -3055,7 +3071,7 @@
           "wrap_help"
         ]
       },
-      "clap_derive-4.6.4": {
+      "clap_derive-4.6.7": {
         "runtime_dependencies": [
           {
             "name": "heck",
@@ -3142,12 +3158,12 @@
         "build_dependencies": [],
         "features": []
       },
-      "cofre-fs-0.1.14": {
+      "cofre-fs-0.1.30": {
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": []
       },
-      "cofre-secret-0.1.14": {
+      "cofre-secret-0.1.30": {
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": []
@@ -3252,7 +3268,7 @@
         "runtime_dependencies": [
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -3278,6 +3294,11 @@
           "std",
           "unicode-width"
         ]
+      },
+      "const-oid-0.10.3": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
       },
       "const-oid-0.9.6": {
         "runtime_dependencies": [],
@@ -3372,7 +3393,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.34",
+            "package_key": "log-0.4.35",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -3412,7 +3433,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -3496,7 +3517,7 @@
           "std"
         ]
       },
-      "cron-0.15.0": {
+      "cron-0.17.0": {
         "runtime_dependencies": [
           {
             "name": "chrono",
@@ -3521,8 +3542,20 @@
             "tree": "target"
           },
           {
+            "name": "phf",
+            "package_key": "phf-0.11.3",
+            "kind": "normal",
+            "features": [
+              "macros"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
             "name": "winnow",
-            "package_key": "winnow-0.6.26",
+            "package_key": "winnow-0.7.15",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -3592,6 +3625,22 @@
           "std"
         ]
       },
+      "crypto-common-0.2.2": {
+        "runtime_dependencies": [
+          {
+            "name": "hybrid_array",
+            "package_key": "hybrid-array-0.4.15",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
       "cynic-3.14.0": {
         "runtime_dependencies": [
           {
@@ -3640,7 +3689,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -3782,7 +3831,7 @@
         "runtime_dependencies": [
           {
             "name": "indexmap",
-            "package_key": "indexmap-2.14.0",
+            "package_key": "indexmap-2.14.2",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -4366,7 +4415,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "sync"
@@ -4470,7 +4519,7 @@
         "runtime_dependencies": [
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -4723,6 +4772,47 @@
           "subtle"
         ]
       },
+      "digest-0.11.3": {
+        "runtime_dependencies": [
+          {
+            "name": "block_buffer",
+            "package_key": "block-buffer-0.12.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "const_oid",
+            "package_key": "const-oid-0.10.3",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "common",
+            "package_key": "crypto-common-0.2.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "alloc",
+          "block-api",
+          "default",
+          "oid"
+        ]
+      },
       "directories-6.0.0": {
         "runtime_dependencies": [
           {
@@ -4759,7 +4849,7 @@
         "runtime_dependencies": [
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -5009,7 +5099,7 @@
         "runtime_dependencies": [
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -5019,7 +5109,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -5029,7 +5119,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -5218,16 +5308,6 @@
             "tree": "target"
           },
           {
-            "name": "serde_yaml",
-            "package_key": "serde_yaml-0.9.34+deprecated",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": true,
-            "target": null,
-            "tree": "target"
-          },
-          {
             "name": "toml",
             "package_key": "toml-0.8.23",
             "kind": "normal",
@@ -5264,9 +5344,7 @@
           "env",
           "parse-value",
           "pear",
-          "serde_yaml",
-          "toml",
-          "yaml"
+          "toml"
         ]
       },
       "filetime-0.2.29": {
@@ -5283,7 +5361,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -5905,7 +5983,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "gen-platform-0.1.52": {
+      "gen-platform-0.1.55": {
         "runtime_dependencies": [
           {
             "name": "gen_macros",
@@ -5919,7 +5997,7 @@
           },
           {
             "name": "gen_types",
-            "package_key": "gen-types-0.1.52",
+            "package_key": "gen-types-0.1.57",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -5951,7 +6029,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -5961,7 +6039,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -5973,7 +6051,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "gen-types-0.1.52": {
+      "gen-types-0.1.57": {
         "runtime_dependencies": [
           {
             "name": "blake3",
@@ -5999,7 +6077,7 @@
           },
           {
             "name": "indexmap",
-            "package_key": "indexmap-2.14.0",
+            "package_key": "indexmap-2.14.2",
             "kind": "normal",
             "features": [
               "serde"
@@ -6033,7 +6111,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -6043,7 +6121,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -6098,7 +6176,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -6129,7 +6207,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -6139,7 +6217,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -6149,7 +6227,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -6159,7 +6237,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -6169,7 +6247,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -6179,7 +6257,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -6189,7 +6267,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -6199,7 +6277,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -6228,7 +6306,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -6238,7 +6316,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -6248,7 +6326,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -6258,7 +6336,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -6268,7 +6346,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -6278,7 +6356,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -6288,7 +6366,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -6298,7 +6376,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -6782,7 +6860,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -6981,7 +7059,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -7137,7 +7215,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -7382,7 +7460,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -7442,7 +7520,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -7452,7 +7530,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -7560,7 +7638,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -7746,7 +7824,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -7877,7 +7955,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -7948,7 +8026,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -8034,7 +8112,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -8064,7 +8142,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -8234,7 +8312,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -8306,7 +8384,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -8404,7 +8482,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -8532,7 +8610,7 @@
           },
           {
             "name": "hashbrown",
-            "package_key": "hashbrown-0.16.1",
+            "package_key": "hashbrown-0.17.1",
             "kind": "normal",
             "features": [
               "default-hasher",
@@ -8705,7 +8783,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -8748,7 +8826,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -8786,7 +8864,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -8978,7 +9056,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -9171,7 +9249,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -9189,7 +9267,7 @@
         "runtime_dependencies": [
           {
             "name": "arc_swap",
-            "package_key": "arc-swap-1.9.2",
+            "package_key": "arc-swap-1.9.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -9313,7 +9391,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -9455,7 +9533,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -9509,7 +9587,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -9560,7 +9638,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -9638,7 +9716,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -9696,7 +9774,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -9887,7 +9965,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -10058,7 +10136,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -10148,7 +10226,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -10358,7 +10436,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -10386,7 +10464,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -10442,7 +10520,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -10596,7 +10674,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -10675,7 +10753,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -10713,7 +10791,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -10866,7 +10944,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -10971,7 +11049,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -11021,7 +11099,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -11306,7 +11384,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -11500,7 +11578,7 @@
           },
           {
             "name": "indexmap",
-            "package_key": "indexmap-2.14.0",
+            "package_key": "indexmap-2.14.2",
             "kind": "normal",
             "features": [
               "std"
@@ -11522,7 +11600,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "io-util"
@@ -11580,7 +11658,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.34",
+            "package_key": "log-0.4.35",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -11630,7 +11708,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -11640,7 +11718,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -11781,9 +11859,21 @@
         ]
       },
       "hashbrown-0.17.1": {
-        "runtime_dependencies": [],
+        "runtime_dependencies": [
+          {
+            "name": "foldhash",
+            "package_key": "foldhash-0.2.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          }
+        ],
         "build_dependencies": [],
         "features": [
+          "default-hasher",
           "inline-more"
         ]
       },
@@ -11955,7 +12045,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "helm-forge-0.1.2": {
+      "helm-forge-0.1.4": {
         "runtime_dependencies": [
           {
             "name": "schemars",
@@ -11981,7 +12071,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -12059,7 +12149,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -12199,7 +12289,25 @@
         "build_dependencies": [],
         "features": []
       },
-      "hyper-1.11.0": {
+      "hybrid-array-0.4.15": {
+        "runtime_dependencies": [
+          {
+            "name": "typenum",
+            "package_key": "typenum-1.20.0",
+            "kind": "normal",
+            "features": [
+              "const-generics"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "hyper-1.12.0": {
         "runtime_dependencies": [
           {
             "name": "atomic_waker",
@@ -12326,7 +12434,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "sync"
@@ -12338,7 +12446,7 @@
           },
           {
             "name": "want",
-            "package_key": "want-0.3.1",
+            "package_key": "want-0.3.2",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -12401,7 +12509,7 @@
           },
           {
             "name": "hyper",
-            "package_key": "hyper-1.11.0",
+            "package_key": "hyper-1.12.0",
             "kind": "normal",
             "features": [
               "client"
@@ -12457,7 +12565,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "io-std",
@@ -12510,7 +12618,7 @@
           },
           {
             "name": "hyper",
-            "package_key": "hyper-1.11.0",
+            "package_key": "hyper-1.12.0",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -12533,7 +12641,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.34",
+            "package_key": "log-0.4.35",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -12563,7 +12671,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -12621,7 +12729,7 @@
         "runtime_dependencies": [
           {
             "name": "hyper",
-            "package_key": "hyper-1.11.0",
+            "package_key": "hyper-1.12.0",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -12654,7 +12762,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -13113,7 +13221,7 @@
           "compiled_data"
         ]
       },
-      "indexmap-2.14.0": {
+      "indexmap-2.14.2": {
         "runtime_dependencies": [
           {
             "name": "equivalent",
@@ -13220,7 +13328,7 @@
         "runtime_dependencies": [
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -13371,7 +13479,7 @@
         "runtime_dependencies": [
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -13409,7 +13517,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -13419,7 +13527,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -13468,7 +13576,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -13478,7 +13586,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -13506,7 +13614,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [
               "alloc"
@@ -13577,7 +13685,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [
               "alloc"
@@ -13593,7 +13701,7 @@
           "v1_31"
         ]
       },
-      "kotae-0.1.1": {
+      "kotae-0.1.2": {
         "runtime_dependencies": [
           {
             "name": "serde",
@@ -13609,7 +13717,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -13805,7 +13913,7 @@
           },
           {
             "name": "hyper",
-            "package_key": "hyper-1.11.0",
+            "package_key": "hyper-1.12.0",
             "kind": "normal",
             "features": [
               "client",
@@ -13930,7 +14038,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -13950,7 +14058,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -13960,7 +14068,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "signal",
@@ -14145,7 +14253,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14155,7 +14263,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14218,7 +14326,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14406,7 +14514,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14416,7 +14524,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14426,7 +14534,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "time"
@@ -14487,7 +14595,7 @@
         "runtime_dependencies": [
           {
             "name": "indexmap",
-            "package_key": "indexmap-2.14.0",
+            "package_key": "indexmap-2.14.2",
             "kind": "normal",
             "features": [
               "serde"
@@ -14499,7 +14607,7 @@
           },
           {
             "name": "lava_core",
-            "package_key": "lava-core-0.2.4",
+            "package_key": "lava-core-0.2.5",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14521,7 +14629,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14531,7 +14639,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14543,11 +14651,11 @@
         "build_dependencies": [],
         "features": []
       },
-      "lava-core-0.2.4": {
+      "lava-core-0.2.5": {
         "runtime_dependencies": [
           {
             "name": "indexmap",
-            "package_key": "indexmap-2.14.0",
+            "package_key": "indexmap-2.14.2",
             "kind": "normal",
             "features": [
               "serde"
@@ -14571,7 +14679,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [
               "preserve_order"
@@ -14582,8 +14690,8 @@
             "tree": "target"
           },
           {
-            "name": "serde_yaml",
-            "package_key": "serde_yaml-0.9.34+deprecated",
+            "name": "serde_norway",
+            "package_key": "serde_norway-0.9.42",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14593,7 +14701,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14605,11 +14713,11 @@
         "build_dependencies": [],
         "features": []
       },
-      "lava-eval-0.2.8": {
+      "lava-eval-0.2.11": {
         "runtime_dependencies": [
           {
             "name": "indexmap",
-            "package_key": "indexmap-2.14.0",
+            "package_key": "indexmap-2.14.2",
             "kind": "normal",
             "features": [
               "serde"
@@ -14631,7 +14739,7 @@
           },
           {
             "name": "lava_core",
-            "package_key": "lava-core-0.2.4",
+            "package_key": "lava-core-0.2.5",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14673,7 +14781,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14683,7 +14791,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14709,7 +14817,7 @@
           },
           {
             "name": "indexmap",
-            "package_key": "indexmap-2.14.0",
+            "package_key": "indexmap-2.14.2",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14739,7 +14847,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [
               "preserve_order"
@@ -14761,7 +14869,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14787,7 +14895,7 @@
         "runtime_dependencies": [
           {
             "name": "indexmap",
-            "package_key": "indexmap-2.14.0",
+            "package_key": "indexmap-2.14.2",
             "kind": "normal",
             "features": [
               "serde"
@@ -14821,7 +14929,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14849,7 +14957,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14917,7 +15025,7 @@
           "default"
         ]
       },
-      "libc-0.2.189": {
+      "libc-0.2.191": {
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": [
@@ -15024,7 +15132,7 @@
           "default"
         ]
       },
-      "log-0.4.34": {
+      "log-0.4.35": {
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": [
@@ -15339,7 +15447,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -15359,7 +15467,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -15369,7 +15477,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "fs",
@@ -15400,7 +15508,7 @@
           },
           {
             "name": "uuid",
-            "package_key": "uuid-1.25.0",
+            "package_key": "uuid-1.29.2",
             "kind": "normal",
             "features": [
               "serde",
@@ -15473,7 +15581,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -15483,7 +15591,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -15541,7 +15649,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -15551,7 +15659,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -15561,7 +15669,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "fs",
@@ -15592,7 +15700,7 @@
           },
           {
             "name": "uuid",
-            "package_key": "uuid-1.25.0",
+            "package_key": "uuid-1.29.2",
             "kind": "normal",
             "features": [
               "serde",
@@ -15705,7 +15813,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -15715,7 +15823,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -15753,7 +15861,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -15763,7 +15871,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -15821,7 +15929,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.52",
+            "package_key": "gen-platform-0.1.55",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -15913,7 +16021,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -15923,7 +16031,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.15",
+            "package_key": "shigoto-types-0.1.16",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -15933,7 +16041,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -15943,7 +16051,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "fs",
@@ -16002,7 +16110,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -16012,7 +16120,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -16050,7 +16158,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.52",
+            "package_key": "gen-platform-0.1.55",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -16092,7 +16200,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -16102,7 +16210,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -16190,7 +16298,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -16200,7 +16308,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -16210,7 +16318,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "fs",
@@ -16281,7 +16389,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -16291,7 +16399,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -16339,7 +16447,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -16407,7 +16515,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -16417,7 +16525,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -16427,7 +16535,7 @@
           },
           {
             "name": "uuid",
-            "package_key": "uuid-1.25.0",
+            "package_key": "uuid-1.29.2",
             "kind": "normal",
             "features": [
               "serde",
@@ -16518,7 +16626,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -16528,7 +16636,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -16538,7 +16646,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "fs",
@@ -16671,7 +16779,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -16681,7 +16789,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -16701,7 +16809,7 @@
           },
           {
             "name": "uuid",
-            "package_key": "uuid-1.25.0",
+            "package_key": "uuid-1.29.2",
             "kind": "normal",
             "features": [
               "serde",
@@ -16780,7 +16888,7 @@
           },
           {
             "name": "hyper",
-            "package_key": "hyper-1.11.0",
+            "package_key": "hyper-1.12.0",
             "kind": "normal",
             "features": [
               "client",
@@ -16867,7 +16975,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -16877,7 +16985,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -16887,7 +16995,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "fs",
@@ -16990,7 +17098,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -17000,7 +17108,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "fs",
@@ -17092,7 +17200,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -17168,7 +17276,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -17216,7 +17324,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -17226,7 +17334,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -17236,7 +17344,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "fs",
@@ -17295,7 +17403,7 @@
           },
           {
             "name": "cofre_fs",
-            "package_key": "cofre-fs-0.1.14",
+            "package_key": "cofre-fs-0.1.30",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -17327,7 +17435,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -17337,7 +17445,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -17347,7 +17455,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "fs",
@@ -17378,7 +17486,7 @@
           },
           {
             "name": "uuid",
-            "package_key": "uuid-1.25.0",
+            "package_key": "uuid-1.29.2",
             "kind": "normal",
             "features": [
               "serde",
@@ -17471,7 +17579,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -17481,7 +17589,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -17491,7 +17599,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "fs",
@@ -17610,7 +17718,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -17620,7 +17728,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "fs",
@@ -17665,7 +17773,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.52",
+            "package_key": "gen-platform-0.1.55",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -17675,7 +17783,7 @@
           },
           {
             "name": "gen_types",
-            "package_key": "gen-types-0.1.52",
+            "package_key": "gen-types-0.1.57",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -17709,7 +17817,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -17719,7 +17827,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -17729,7 +17837,7 @@
           },
           {
             "name": "uuid",
-            "package_key": "uuid-1.25.0",
+            "package_key": "uuid-1.29.2",
             "kind": "normal",
             "features": [
               "serde",
@@ -17948,7 +18056,7 @@
         "runtime_dependencies": [
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -18007,7 +18115,7 @@
         "runtime_dependencies": [
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -18017,7 +18125,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.34",
+            "package_key": "log-0.4.35",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -18430,7 +18538,7 @@
         "runtime_dependencies": [
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -18491,7 +18599,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -18581,7 +18689,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -18591,7 +18699,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "rt",
@@ -18773,7 +18881,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -18783,7 +18891,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -18966,7 +19074,7 @@
           },
           {
             "name": "clap",
-            "package_key": "clap-4.6.6",
+            "package_key": "clap-4.6.7",
             "kind": "normal",
             "features": [
               "derive",
@@ -19079,7 +19187,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19109,7 +19217,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19119,7 +19227,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "full"
@@ -19202,7 +19310,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19212,7 +19320,7 @@
           },
           {
             "name": "shigoto_dag",
-            "package_key": "shigoto-dag-0.1.15",
+            "package_key": "shigoto-dag-0.1.16",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19222,7 +19330,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.15",
+            "package_key": "shigoto-types-0.1.16",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19232,7 +19340,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19258,7 +19366,7 @@
           },
           {
             "name": "arc_swap",
-            "package_key": "arc-swap-1.9.2",
+            "package_key": "arc-swap-1.9.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19362,7 +19470,7 @@
           },
           {
             "name": "cofre_fs",
-            "package_key": "cofre-fs-0.1.14",
+            "package_key": "cofre-fs-0.1.30",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19372,7 +19480,7 @@
           },
           {
             "name": "cofre_secret",
-            "package_key": "cofre-secret-0.1.14",
+            "package_key": "cofre-secret-0.1.30",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19382,7 +19490,7 @@
           },
           {
             "name": "cron",
-            "package_key": "cron-0.15.0",
+            "package_key": "cron-0.17.0",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19422,7 +19530,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.52",
+            "package_key": "gen-platform-0.1.55",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19432,7 +19540,7 @@
           },
           {
             "name": "gen_types",
-            "package_key": "gen-types-0.1.52",
+            "package_key": "gen-types-0.1.57",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19469,7 +19577,7 @@
           },
           {
             "name": "helm_forge",
-            "package_key": "helm-forge-0.1.2",
+            "package_key": "helm-forge-0.1.4",
             "kind": "normal",
             "features": [
               "values-schema"
@@ -19519,7 +19627,7 @@
           },
           {
             "name": "lava_core",
-            "package_key": "lava-core-0.2.4",
+            "package_key": "lava-core-0.2.5",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19529,7 +19637,7 @@
           },
           {
             "name": "lava_eval",
-            "package_key": "lava-eval-0.2.8",
+            "package_key": "lava-eval-0.2.11",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19549,7 +19657,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19901,7 +20009,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19921,7 +20029,7 @@
           },
           {
             "name": "shigoto_budget",
-            "package_key": "shigoto-budget-0.1.15",
+            "package_key": "shigoto-budget-0.1.16",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19931,7 +20039,7 @@
           },
           {
             "name": "shigoto_dag",
-            "package_key": "shigoto-dag-0.1.15",
+            "package_key": "shigoto-dag-0.1.16",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19941,7 +20049,7 @@
           },
           {
             "name": "shigoto_rank",
-            "package_key": "shigoto-rank-0.1.15",
+            "package_key": "shigoto-rank-0.1.16",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19951,7 +20059,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.15",
+            "package_key": "shigoto-types-0.1.16",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -19961,7 +20069,7 @@
           },
           {
             "name": "shikumi",
-            "package_key": "shikumi-0.1.1083",
+            "package_key": "shikumi-0.1.1084",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -20012,7 +20120,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -20022,7 +20130,7 @@
           },
           {
             "name": "todoku",
-            "package_key": "todoku-0.1.9",
+            "package_key": "todoku-0.1.11",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -20032,7 +20140,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "full",
@@ -20123,7 +20231,7 @@
           },
           {
             "name": "tsunagu",
-            "package_key": "tsunagu-0.1.9",
+            "package_key": "tsunagu-0.1.11",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -20153,7 +20261,7 @@
           },
           {
             "name": "uuid",
-            "package_key": "uuid-1.25.0",
+            "package_key": "uuid-1.29.2",
             "kind": "normal",
             "features": [
               "serde",
@@ -20225,7 +20333,7 @@
           },
           {
             "name": "kotae",
-            "package_key": "kotae-0.1.1",
+            "package_key": "kotae-0.1.2",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -20249,7 +20357,7 @@
           },
           {
             "name": "rmcp",
-            "package_key": "rmcp-3.1.4",
+            "package_key": "rmcp-3.9.0",
             "kind": "normal",
             "features": [
               "server",
@@ -20274,7 +20382,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -20284,7 +20392,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -20294,7 +20402,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "full"
@@ -20373,7 +20481,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -20403,7 +20511,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -20507,7 +20615,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -20610,7 +20718,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -20935,7 +21043,7 @@
           },
           {
             "name": "indexmap",
-            "package_key": "indexmap-2.14.0",
+            "package_key": "indexmap-2.14.2",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -20966,7 +21074,7 @@
           },
           {
             "name": "indexmap",
-            "package_key": "indexmap-2.14.0",
+            "package_key": "indexmap-2.14.2",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -20977,6 +21085,141 @@
         ],
         "build_dependencies": [],
         "features": []
+      },
+      "phf-0.11.3": {
+        "runtime_dependencies": [
+          {
+            "name": "phf_macros",
+            "package_key": "phf_macros-0.11.3",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "host"
+          },
+          {
+            "name": "phf_shared",
+            "package_key": "phf_shared-0.11.3",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "default",
+          "macros",
+          "phf_macros",
+          "std"
+        ]
+      },
+      "phf_generator-0.11.3": {
+        "runtime_dependencies": [
+          {
+            "name": "phf_shared",
+            "package_key": "phf_shared-0.11.3",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "rand",
+            "package_key": "rand-0.8.6",
+            "kind": "normal",
+            "features": [
+              "small_rng"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "phf_macros-0.11.3": {
+        "runtime_dependencies": [
+          {
+            "name": "phf_generator",
+            "package_key": "phf_generator-0.11.3",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "phf_shared",
+            "package_key": "phf_shared-0.11.3",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "proc_macro2",
+            "package_key": "proc-macro2-1.0.106",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "quote",
+            "package_key": "quote-1.0.45",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "syn",
+            "package_key": "syn-2.0.117",
+            "kind": "normal",
+            "features": [
+              "full"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "phf_shared-0.11.3": {
+        "runtime_dependencies": [
+          {
+            "name": "siphasher",
+            "package_key": "siphasher-1.0.4",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "std"
+        ]
       },
       "pin-project-1.1.13": {
         "runtime_dependencies": [
@@ -21789,7 +22032,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.34",
+            "package_key": "log-0.4.35",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -22301,7 +22544,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -22311,7 +22554,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "sync"
@@ -22453,7 +22696,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -22499,7 +22742,7 @@
         "runtime_dependencies": [
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -22614,7 +22857,7 @@
         "runtime_dependencies": [
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -22650,6 +22893,7 @@
           "getrandom",
           "libc",
           "rand_chacha",
+          "small_rng",
           "std",
           "std_rng"
         ]
@@ -23298,7 +23542,7 @@
           },
           {
             "name": "hyper",
-            "package_key": "hyper-1.11.0",
+            "package_key": "hyper-1.12.0",
             "kind": "normal",
             "features": [
               "client",
@@ -23340,7 +23584,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.34",
+            "package_key": "log-0.4.35",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -23415,7 +23659,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -23425,7 +23669,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -23457,7 +23701,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "net",
@@ -23660,7 +23904,7 @@
           },
           {
             "name": "hyper",
-            "package_key": "hyper-1.11.0",
+            "package_key": "hyper-1.12.0",
             "kind": "normal",
             "features": [
               "client",
@@ -23702,7 +23946,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.34",
+            "package_key": "log-0.4.35",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -23787,7 +24031,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -23809,7 +24053,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "net",
@@ -23891,7 +24135,7 @@
           "rustls"
         ]
       },
-      "rmcp-3.1.4": {
+      "rmcp-3.9.0": {
         "runtime_dependencies": [
           {
             "name": "base64",
@@ -23943,7 +24187,7 @@
           },
           {
             "name": "indexmap",
-            "package_key": "indexmap-2.14.0",
+            "package_key": "indexmap-2.14.2",
             "kind": "normal",
             "features": [
               "serde"
@@ -23951,6 +24195,16 @@
             "uses_default_features": true,
             "optional": false,
             "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "libc",
+            "package_key": "libc-0.2.191",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": "cfg(unix)",
             "tree": "target"
           },
           {
@@ -23975,7 +24229,7 @@
           },
           {
             "name": "rmcp_macros",
-            "package_key": "rmcp-macros-3.1.4",
+            "package_key": "rmcp-macros-3.10.0",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -24010,7 +24264,17 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "sha2",
+            "package_key": "sha2-0.11.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -24020,7 +24284,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -24030,7 +24294,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "macros",
@@ -24065,7 +24329,7 @@
           },
           {
             "name": "uuid",
-            "package_key": "uuid-1.25.0",
+            "package_key": "uuid-1.29.2",
             "kind": "normal",
             "features": [
               "v4"
@@ -24088,7 +24352,7 @@
           "uuid"
         ]
       },
-      "rmcp-macros-3.1.4": {
+      "rmcp-macros-3.10.0": {
         "runtime_dependencies": [
           {
             "name": "darling",
@@ -24122,7 +24386,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -24231,7 +24495,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -24241,7 +24505,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -24611,7 +24875,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.34",
+            "package_key": "log-0.4.35",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -24865,7 +25129,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -24875,7 +25139,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -24885,7 +25149,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "macros",
@@ -24964,7 +25228,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -25037,7 +25301,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [
               "alloc"
@@ -25348,14 +25612,24 @@
         "build_dependencies": [],
         "features": []
       },
-      "serde_json-1.0.151": {
+      "serde_json-1.0.154": {
         "runtime_dependencies": [
           {
-            "name": "indexmap",
-            "package_key": "indexmap-2.14.0",
+            "name": "foldhash",
+            "package_key": "foldhash-0.2.0",
             "kind": "normal",
             "features": [],
-            "uses_default_features": true,
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "indexmap",
+            "package_key": "indexmap-2.14.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
             "optional": true,
             "target": null,
             "tree": "target"
@@ -25416,6 +25690,62 @@
           {
             "name": "serde",
             "package_key": "serde-1.0.229",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "serde_norway-0.9.42": {
+        "runtime_dependencies": [
+          {
+            "name": "indexmap",
+            "package_key": "indexmap-2.14.2",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "itoa",
+            "package_key": "itoa-1.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "ryu",
+            "package_key": "ryu-1.0.23",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde",
+            "package_key": "serde-1.0.229",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "unsafe_libyaml_norway",
+            "package_key": "unsafe-libyaml-norway-0.2.15",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -25559,7 +25889,7 @@
         "runtime_dependencies": [
           {
             "name": "indexmap",
-            "package_key": "indexmap-2.14.0",
+            "package_key": "indexmap-2.14.2",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -25718,6 +26048,46 @@
           "std"
         ]
       },
+      "sha2-0.11.1": {
+        "runtime_dependencies": [
+          {
+            "name": "cfg_if",
+            "package_key": "cfg-if-1.0.4",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "cpufeatures",
+            "package_key": "cpufeatures-0.3.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": "cfg(any(target_arch = \"aarch64\", target_arch = \"x86_64\", target_arch = \"x86\"))",
+            "tree": "target"
+          },
+          {
+            "name": "digest",
+            "package_key": "digest-0.11.3",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "alloc",
+          "default",
+          "oid"
+        ]
+      },
       "sharded-slab-0.1.7": {
         "runtime_dependencies": [
           {
@@ -25746,7 +26116,7 @@
         "runtime_dependencies": [
           {
             "name": "shigoto_budget",
-            "package_key": "shigoto-budget-0.1.15",
+            "package_key": "shigoto-budget-0.1.16",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -25756,7 +26126,7 @@
           },
           {
             "name": "shigoto_dag",
-            "package_key": "shigoto-dag-0.1.15",
+            "package_key": "shigoto-dag-0.1.16",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -25796,7 +26166,7 @@
           },
           {
             "name": "shigoto_rank",
-            "package_key": "shigoto-rank-0.1.15",
+            "package_key": "shigoto-rank-0.1.16",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -25826,7 +26196,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.15",
+            "package_key": "shigoto-types-0.1.16",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -25838,7 +26208,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-budget-0.1.15": {
+      "shigoto-budget-0.1.16": {
         "runtime_dependencies": [
           {
             "name": "serde",
@@ -25854,7 +26224,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.15",
+            "package_key": "shigoto-types-0.1.16",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -25864,7 +26234,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -25876,7 +26246,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-dag-0.1.15": {
+      "shigoto-dag-0.1.16": {
         "runtime_dependencies": [
           {
             "name": "petgraph",
@@ -25902,7 +26272,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.15",
+            "package_key": "shigoto-types-0.1.16",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -25912,7 +26282,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -25950,7 +26320,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -25960,7 +26330,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.15",
+            "package_key": "shigoto-types-0.1.16",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -25991,7 +26361,7 @@
         "runtime_dependencies": [
           {
             "name": "shigoto_dag",
-            "package_key": "shigoto-dag-0.1.15",
+            "package_key": "shigoto-dag-0.1.16",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26001,7 +26371,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.15",
+            "package_key": "shigoto-types-0.1.16",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26013,7 +26383,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-rank-0.1.15": {
+      "shigoto-rank-0.1.16": {
         "runtime_dependencies": [
           {
             "name": "serde",
@@ -26047,7 +26417,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.15",
+            "package_key": "shigoto-types-0.1.16",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26107,7 +26477,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26117,7 +26487,7 @@
           },
           {
             "name": "shigoto_budget",
-            "package_key": "shigoto-budget-0.1.15",
+            "package_key": "shigoto-budget-0.1.16",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26127,7 +26497,7 @@
           },
           {
             "name": "shigoto_dag",
-            "package_key": "shigoto-dag-0.1.15",
+            "package_key": "shigoto-dag-0.1.16",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26167,7 +26537,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.15",
+            "package_key": "shigoto-types-0.1.16",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26177,7 +26547,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26187,7 +26557,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "macros",
@@ -26214,7 +26584,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-types-0.1.15": {
+      "shigoto-types-0.1.16": {
         "runtime_dependencies": [
           {
             "name": "async_trait",
@@ -26250,7 +26620,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.52",
+            "package_key": "gen-platform-0.1.55",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26260,7 +26630,7 @@
           },
           {
             "name": "gen_types",
-            "package_key": "gen-types-0.1.52",
+            "package_key": "gen-types-0.1.57",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26304,7 +26674,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26314,7 +26684,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26326,11 +26696,11 @@
         "build_dependencies": [],
         "features": []
       },
-      "shikumi-0.1.1083": {
+      "shikumi-0.1.1084": {
         "runtime_dependencies": [
           {
             "name": "arc_swap",
-            "package_key": "arc-swap-1.9.2",
+            "package_key": "arc-swap-1.9.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26354,8 +26724,7 @@
             "kind": "normal",
             "features": [
               "env",
-              "toml",
-              "yaml"
+              "toml"
             ],
             "uses_default_features": true,
             "optional": false,
@@ -26364,7 +26733,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.52",
+            "package_key": "gen-platform-0.1.55",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26374,7 +26743,7 @@
           },
           {
             "name": "gen_types",
-            "package_key": "gen-types-0.1.52",
+            "package_key": "gen-types-0.1.57",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26428,7 +26797,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26437,8 +26806,8 @@
             "tree": "target"
           },
           {
-            "name": "serde_yaml",
-            "package_key": "serde_yaml-0.9.34+deprecated",
+            "name": "serde_norway",
+            "package_key": "serde_norway-0.9.42",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26448,7 +26817,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26494,7 +26863,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26542,6 +26911,14 @@
         "build_dependencies": [],
         "features": []
       },
+      "siphasher-1.0.4": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": [
+          "default",
+          "std"
+        ]
+      },
       "slab-0.4.12": {
         "runtime_dependencies": [],
         "build_dependencies": [],
@@ -26575,7 +26952,7 @@
         "runtime_dependencies": [
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26593,7 +26970,7 @@
         "runtime_dependencies": [
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26851,7 +27228,7 @@
           },
           {
             "name": "indexmap",
-            "package_key": "indexmap-2.14.0",
+            "package_key": "indexmap-2.14.2",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26861,7 +27238,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.34",
+            "package_key": "log-0.4.35",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -26927,7 +27304,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [
               "raw_value"
@@ -26959,7 +27336,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -26969,7 +27346,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "fs",
@@ -27020,7 +27397,7 @@
           },
           {
             "name": "uuid",
-            "package_key": "uuid-1.25.0",
+            "package_key": "uuid-1.29.2",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -27219,7 +27596,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -27280,7 +27657,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "fs",
@@ -27535,7 +27912,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.34",
+            "package_key": "log-0.4.35",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -27668,7 +28045,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -27690,7 +28067,7 @@
           },
           {
             "name": "uuid",
-            "package_key": "uuid-1.25.0",
+            "package_key": "uuid-1.29.2",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -27890,7 +28267,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.34",
+            "package_key": "log-0.4.35",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -27955,7 +28332,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [
               "raw_value"
@@ -28011,7 +28388,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -28033,7 +28410,7 @@
           },
           {
             "name": "uuid",
-            "package_key": "uuid-1.25.0",
+            "package_key": "uuid-1.29.2",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -28171,7 +28548,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.34",
+            "package_key": "log-0.4.35",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -28223,7 +28600,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -28255,7 +28632,7 @@
           },
           {
             "name": "uuid",
-            "package_key": "uuid-1.25.0",
+            "package_key": "uuid-1.29.2",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -28878,11 +29255,11 @@
         "build_dependencies": [],
         "features": []
       },
-      "thiserror-2.0.20": {
+      "thiserror-2.0.21": {
         "runtime_dependencies": [
           {
             "name": "thiserror_impl",
-            "package_key": "thiserror-impl-2.0.20",
+            "package_key": "thiserror-impl-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -28933,7 +29310,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "thiserror-impl-2.0.20": {
+      "thiserror-impl-2.0.21": {
         "runtime_dependencies": [
           {
             "name": "proc_macro2",
@@ -29160,7 +29537,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "todoku-0.1.9": {
+      "todoku-0.1.11": {
         "runtime_dependencies": [
           {
             "name": "async_trait",
@@ -29215,7 +29592,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -29225,7 +29602,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -29235,7 +29612,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "net",
@@ -29273,7 +29650,7 @@
           "default"
         ]
       },
-      "tokio-1.53.1": {
+      "tokio-1.54.1": {
         "runtime_dependencies": [
           {
             "name": "bytes",
@@ -29287,7 +29664,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -29297,7 +29674,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -29307,7 +29684,7 @@
           },
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -29377,7 +29754,7 @@
             ],
             "uses_default_features": true,
             "optional": true,
-            "target": "cfg(any(not(target_family = \"wasm\"), all(target_os = \"wasi\", not(target_env = \"p1\"))))",
+            "target": "cfg(any(not(target_family = \"wasm\"), target_os = \"emscripten\", all(target_os = \"wasi\", not(target_env = \"p1\"))))",
             "tree": "target"
           },
           {
@@ -29471,7 +29848,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -29514,7 +29891,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "sync"
@@ -29545,7 +29922,7 @@
           "tokio-util"
         ]
       },
-      "tokio-test-0.4.5": {
+      "tokio-test-0.4.6": {
         "runtime_dependencies": [
           {
             "name": "futures_core",
@@ -29559,7 +29936,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "rt",
@@ -29603,7 +29980,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.34",
+            "package_key": "log-0.4.35",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -29613,7 +29990,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "io-util"
@@ -29706,7 +30083,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "sync"
@@ -29827,7 +30204,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -29964,7 +30341,7 @@
         "runtime_dependencies": [
           {
             "name": "indexmap",
-            "package_key": "indexmap-2.14.0",
+            "package_key": "indexmap-2.14.2",
             "kind": "normal",
             "features": [
               "std"
@@ -30038,7 +30415,7 @@
         "runtime_dependencies": [
           {
             "name": "indexmap",
-            "package_key": "indexmap-2.14.0",
+            "package_key": "indexmap-2.14.2",
             "kind": "normal",
             "features": [
               "std"
@@ -30197,7 +30574,7 @@
           },
           {
             "name": "hyper",
-            "package_key": "hyper-1.11.0",
+            "package_key": "hyper-1.12.0",
             "kind": "normal",
             "features": [
               "http1",
@@ -30276,7 +30653,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -30436,7 +30813,7 @@
           },
           {
             "name": "hyper",
-            "package_key": "hyper-1.11.0",
+            "package_key": "hyper-1.12.0",
             "kind": "normal",
             "features": [
               "http1",
@@ -30501,7 +30878,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -30735,7 +31112,7 @@
           },
           {
             "name": "indexmap",
-            "package_key": "indexmap-2.14.0",
+            "package_key": "indexmap-2.14.2",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -30775,7 +31152,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -30968,7 +31345,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -31073,7 +31450,7 @@
         "runtime_dependencies": [
           {
             "name": "log",
-            "package_key": "log-0.4.34",
+            "package_key": "log-0.4.35",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -31189,7 +31566,7 @@
         "runtime_dependencies": [
           {
             "name": "log",
-            "package_key": "log-0.4.34",
+            "package_key": "log-0.4.35",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -31384,7 +31761,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -31508,7 +31885,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "macros",
@@ -31526,7 +31903,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "tsunagu-0.1.9": {
+      "tsunagu-0.1.11": {
         "runtime_dependencies": [
           {
             "name": "dirs",
@@ -31574,7 +31951,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -31584,7 +31961,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -31594,7 +31971,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "io-util",
@@ -31670,7 +32047,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.34",
+            "package_key": "log-0.4.35",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -31700,7 +32077,7 @@
           },
           {
             "name": "thiserror",
-            "package_key": "thiserror-2.0.20",
+            "package_key": "thiserror-2.0.21",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -31721,7 +32098,9 @@
       "typenum-1.20.0": {
         "runtime_dependencies": [],
         "build_dependencies": [],
-        "features": []
+        "features": [
+          "const-generics"
+        ]
       },
       "ucd-trie-0.1.7": {
         "runtime_dependencies": [],
@@ -31824,6 +32203,11 @@
         "build_dependencies": [],
         "features": []
       },
+      "unsafe-libyaml-norway-0.2.15": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
+      },
       "untrusted-0.9.0": {
         "runtime_dependencies": [],
         "build_dependencies": [],
@@ -31892,7 +32276,7 @@
           "default"
         ]
       },
-      "uuid-1.25.0": {
+      "uuid-1.29.2": {
         "runtime_dependencies": [
           {
             "name": "getrandom",
@@ -31901,7 +32285,7 @@
             "features": [],
             "uses_default_features": true,
             "optional": true,
-            "target": "cfg(not(all(target_arch = \"wasm32\", any(target_os = \"unknown\", target_os = \"none\"))))",
+            "target": "cfg(not(all(target_family = \"wasm\", any(target_os = \"unknown\", target_os = \"none\"))))",
             "tree": "target"
           },
           {
@@ -31938,7 +32322,7 @@
         "runtime_dependencies": [
           {
             "name": "libc",
-            "package_key": "libc-0.2.189",
+            "package_key": "libc-0.2.191",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -31966,7 +32350,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "want-0.3.1": {
+      "want-0.3.2": {
         "runtime_dependencies": [
           {
             "name": "try_lock",
@@ -32058,15 +32442,6 @@
         "build_dependencies": [],
         "features": []
       },
-      "winnow-0.6.26": {
-        "runtime_dependencies": [],
-        "build_dependencies": [],
-        "features": [
-          "alloc",
-          "default",
-          "std"
-        ]
-      },
       "winnow-0.7.15": {
         "runtime_dependencies": [],
         "build_dependencies": [],
@@ -32152,7 +32527,7 @@
           },
           {
             "name": "hyper",
-            "package_key": "hyper-1.11.0",
+            "package_key": "hyper-1.12.0",
             "kind": "normal",
             "features": [
               "full"
@@ -32179,7 +32554,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.34",
+            "package_key": "log-0.4.35",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -32219,7 +32594,7 @@
           },
           {
             "name": "serde_json",
-            "package_key": "serde_json-1.0.151",
+            "package_key": "serde_json-1.0.154",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -32229,7 +32604,7 @@
           },
           {
             "name": "tokio",
-            "package_key": "tokio-1.53.1",
+            "package_key": "tokio-1.54.1",
             "kind": "normal",
             "features": [
               "macros",
@@ -32727,7 +33102,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -32756,7 +33131,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -32783,7 +33158,7 @@
             "runtime_dependencies": [
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -32793,7 +33168,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -32803,7 +33178,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -32813,7 +33188,53 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": false,
+                "target": "cfg(all(target_arch = \"loongarch64\", target_os = \"linux\"))",
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": []
+          },
+          "cpufeatures-0.3.0": {
+            "runtime_dependencies": [
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.191",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": false,
+                "target": "cfg(all(target_arch = \"aarch64\", target_os = \"android\"))",
+                "tree": "target"
+              },
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.191",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": false,
+                "target": "cfg(all(target_arch = \"aarch64\", target_os = \"linux\"))",
+                "tree": "target"
+              },
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.191",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": false,
+                "target": "cfg(all(target_arch = \"aarch64\", target_vendor = \"apple\"))",
+                "tree": "target"
+              },
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -32829,7 +33250,7 @@
             "runtime_dependencies": [
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -32905,7 +33326,7 @@
               },
               {
                 "name": "hyper",
-                "package_key": "hyper-1.11.0",
+                "package_key": "hyper-1.12.0",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -32925,7 +33346,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -32977,7 +33398,7 @@
               },
               {
                 "name": "tokio",
-                "package_key": "tokio-1.53.1",
+                "package_key": "tokio-1.54.1",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -33065,7 +33486,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -33075,7 +33496,7 @@
               },
               {
                 "name": "log",
-                "package_key": "log-0.4.34",
+                "package_key": "log-0.4.35",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -33144,7 +33565,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -33214,7 +33635,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -33224,7 +33645,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -33306,7 +33727,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -33316,7 +33737,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -33383,7 +33804,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -33393,7 +33814,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -33504,7 +33925,7 @@
               },
               {
                 "name": "log",
-                "package_key": "log-0.4.34",
+                "package_key": "log-0.4.35",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -33582,7 +34003,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -33644,7 +34065,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -33685,7 +34106,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -33754,7 +34175,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -33852,7 +34273,7 @@
             "runtime_dependencies": [
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -33862,7 +34283,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -33872,7 +34293,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -33882,7 +34303,53 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": false,
+                "target": "cfg(all(target_arch = \"loongarch64\", target_os = \"linux\"))",
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": []
+          },
+          "cpufeatures-0.3.0": {
+            "runtime_dependencies": [
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.191",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": false,
+                "target": "cfg(all(target_arch = \"aarch64\", target_os = \"android\"))",
+                "tree": "target"
+              },
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.191",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": false,
+                "target": "cfg(all(target_arch = \"aarch64\", target_os = \"linux\"))",
+                "tree": "target"
+              },
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.191",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": false,
+                "target": "cfg(all(target_arch = \"aarch64\", target_vendor = \"apple\"))",
+                "tree": "target"
+              },
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -33958,7 +34425,7 @@
               },
               {
                 "name": "hyper",
-                "package_key": "hyper-1.11.0",
+                "package_key": "hyper-1.12.0",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -33978,7 +34445,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -34020,7 +34487,7 @@
               },
               {
                 "name": "tokio",
-                "package_key": "tokio-1.53.1",
+                "package_key": "tokio-1.54.1",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -34097,7 +34564,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -34113,7 +34580,7 @@
             "runtime_dependencies": [
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -34169,7 +34636,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -34179,7 +34646,7 @@
               },
               {
                 "name": "log",
-                "package_key": "log-0.4.34",
+                "package_key": "log-0.4.35",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -34370,7 +34837,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -34450,7 +34917,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -34460,7 +34927,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -34542,7 +35009,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -34552,7 +35019,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -34649,7 +35116,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -34659,7 +35126,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -34781,7 +35248,7 @@
             "runtime_dependencies": [
               {
                 "name": "log",
-                "package_key": "log-0.4.34",
+                "package_key": "log-0.4.35",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -34931,7 +35398,7 @@
             "runtime_dependencies": [
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -34941,7 +35408,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -34951,7 +35418,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -34961,7 +35428,53 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": false,
+                "target": "cfg(all(target_arch = \"loongarch64\", target_os = \"linux\"))",
+                "tree": "target"
+              }
+            ],
+            "build_dependencies": [],
+            "features": []
+          },
+          "cpufeatures-0.3.0": {
+            "runtime_dependencies": [
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.191",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": false,
+                "target": "cfg(all(target_arch = \"aarch64\", target_os = \"android\"))",
+                "tree": "target"
+              },
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.191",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": false,
+                "target": "cfg(all(target_arch = \"aarch64\", target_os = \"linux\"))",
+                "tree": "target"
+              },
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.191",
+                "kind": "normal",
+                "features": [],
+                "uses_default_features": false,
+                "optional": false,
+                "target": "cfg(all(target_arch = \"aarch64\", target_vendor = \"apple\"))",
+                "tree": "target"
+              },
+              {
+                "name": "libc",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -35037,7 +35550,7 @@
               },
               {
                 "name": "hyper",
-                "package_key": "hyper-1.11.0",
+                "package_key": "hyper-1.12.0",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -35057,7 +35570,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -35099,7 +35612,7 @@
               },
               {
                 "name": "tokio",
-                "package_key": "tokio-1.53.1",
+                "package_key": "tokio-1.54.1",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -35176,7 +35689,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -35192,7 +35705,7 @@
             "runtime_dependencies": [
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -35248,7 +35761,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -35258,7 +35771,7 @@
               },
               {
                 "name": "log",
-                "package_key": "log-0.4.34",
+                "package_key": "log-0.4.35",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -35449,7 +35962,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -35529,7 +36042,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -35539,7 +36052,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -35621,7 +36134,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -35631,7 +36144,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -35728,7 +36241,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -35738,7 +36251,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -35860,7 +36373,7 @@
             "runtime_dependencies": [
               {
                 "name": "log",
-                "package_key": "log-0.4.34",
+                "package_key": "log-0.4.35",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -36040,7 +36553,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -36069,7 +36582,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -36106,7 +36619,7 @@
             "runtime_dependencies": [
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -36182,7 +36695,7 @@
               },
               {
                 "name": "hyper",
-                "package_key": "hyper-1.11.0",
+                "package_key": "hyper-1.12.0",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -36202,7 +36715,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -36254,7 +36767,7 @@
               },
               {
                 "name": "tokio",
-                "package_key": "tokio-1.53.1",
+                "package_key": "tokio-1.54.1",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -36342,7 +36855,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -36352,7 +36865,7 @@
               },
               {
                 "name": "log",
-                "package_key": "log-0.4.34",
+                "package_key": "log-0.4.35",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -36421,7 +36934,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -36563,7 +37076,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -36573,7 +37086,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -36640,7 +37153,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -36650,7 +37163,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -36761,7 +37274,7 @@
               },
               {
                 "name": "log",
-                "package_key": "log-0.4.34",
+                "package_key": "log-0.4.35",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -36839,7 +37352,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -36901,7 +37414,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -36942,7 +37455,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -37011,7 +37524,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -37199,7 +37712,7 @@
               },
               {
                 "name": "hyper",
-                "package_key": "hyper-1.11.0",
+                "package_key": "hyper-1.12.0",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -37219,7 +37732,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -37261,7 +37774,7 @@
               },
               {
                 "name": "tokio",
-                "package_key": "tokio-1.53.1",
+                "package_key": "tokio-1.54.1",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -37338,7 +37851,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -37354,7 +37867,7 @@
             "runtime_dependencies": [
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -37410,7 +37923,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -37420,7 +37933,7 @@
               },
               {
                 "name": "log",
-                "package_key": "log-0.4.34",
+                "package_key": "log-0.4.35",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -37611,7 +38124,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -37763,7 +38276,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -37773,7 +38286,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -37870,7 +38383,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -37880,7 +38393,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -38002,7 +38515,7 @@
             "runtime_dependencies": [
               {
                 "name": "log",
-                "package_key": "log-0.4.34",
+                "package_key": "log-0.4.35",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -38242,7 +38755,7 @@
               },
               {
                 "name": "hyper",
-                "package_key": "hyper-1.11.0",
+                "package_key": "hyper-1.12.0",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -38262,7 +38775,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -38304,7 +38817,7 @@
               },
               {
                 "name": "tokio",
-                "package_key": "tokio-1.53.1",
+                "package_key": "tokio-1.54.1",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -38381,7 +38894,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -38397,7 +38910,7 @@
             "runtime_dependencies": [
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -38453,7 +38966,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -38463,7 +38976,7 @@
               },
               {
                 "name": "log",
-                "package_key": "log-0.4.34",
+                "package_key": "log-0.4.35",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -38654,7 +39167,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -38806,7 +39319,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -38816,7 +39329,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -38913,7 +39426,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -38923,7 +39436,7 @@
               },
               {
                 "name": "libc",
-                "package_key": "libc-0.2.189",
+                "package_key": "libc-0.2.191",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -39045,7 +39558,7 @@
             "runtime_dependencies": [
               {
                 "name": "log",
-                "package_key": "log-0.4.34",
+                "package_key": "log-0.4.35",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -39174,7 +39687,7 @@
       "edition": "2021",
       "build_script": "build.rs"
     },
-    "arc-swap-1.9.2": {
+    "arc-swap-1.9.4": {
       "edition": "2018"
     },
     "arraydeque-0.5.1": {
@@ -39319,6 +39832,9 @@
     "block-buffer-0.10.4": {
       "edition": "2018"
     },
+    "block-buffer-0.12.1": {
+      "edition": "2024"
+    },
     "borsh-1.8.1": {
       "edition": "2018",
       "build_script": "build.rs",
@@ -39396,7 +39912,7 @@
         }
       ]
     },
-    "clap-4.6.6": {
+    "clap-4.6.7": {
       "edition": "2024",
       "binaries": [
         {
@@ -39405,10 +39921,10 @@
         }
       ]
     },
-    "clap_builder-4.6.6": {
+    "clap_builder-4.6.7": {
       "edition": "2024"
     },
-    "clap_derive-4.6.4": {
+    "clap_derive-4.6.7": {
       "edition": "2024",
       "proc_macro": true
     },
@@ -39421,10 +39937,10 @@
     "cmake-0.1.58": {
       "edition": "2021"
     },
-    "cofre-fs-0.1.14": {
+    "cofre-fs-0.1.30": {
       "edition": "2024"
     },
-    "cofre-secret-0.1.14": {
+    "cofre-secret-0.1.30": {
       "edition": "2024"
     },
     "colorchoice-1.0.5": {
@@ -39444,6 +39960,9 @@
     },
     "console-0.16.4": {
       "edition": "2021"
+    },
+    "const-oid-0.10.3": {
+      "edition": "2024"
     },
     "const-oid-0.9.6": {
       "edition": "2021"
@@ -39486,7 +40005,7 @@
       "edition": "2021",
       "build_script": "build.rs"
     },
-    "cron-0.15.0": {
+    "cron-0.17.0": {
       "edition": "2021"
     },
     "crossbeam-queue-0.3.12": {
@@ -39498,6 +40017,9 @@
     },
     "crypto-common-0.1.7": {
       "edition": "2018"
+    },
+    "crypto-common-0.2.2": {
+      "edition": "2024"
     },
     "cynic-3.14.0": {
       "edition": "2024"
@@ -39591,6 +40113,9 @@
     },
     "digest-0.10.7": {
       "edition": "2018"
+    },
+    "digest-0.11.3": {
+      "edition": "2024"
     },
     "directories-6.0.0": {
       "edition": "2015"
@@ -39757,10 +40282,10 @@
       "edition": "2024",
       "proc_macro": true
     },
-    "gen-platform-0.1.52": {
+    "gen-platform-0.1.55": {
       "edition": "2024"
     },
-    "gen-types-0.1.52": {
+    "gen-types-0.1.57": {
       "edition": "2024"
     },
     "generic-array-0.14.7": {
@@ -39995,7 +40520,7 @@
     "heck-0.5.0": {
       "edition": "2021"
     },
-    "helm-forge-0.1.2": {
+    "helm-forge-0.1.4": {
       "edition": "2024"
     },
     "hex-0.4.3": {
@@ -40029,7 +40554,10 @@
     "httpdate-1.0.3": {
       "edition": "2021"
     },
-    "hyper-1.11.0": {
+    "hybrid-array-0.4.15": {
+      "edition": "2024"
+    },
+    "hyper-1.12.0": {
       "edition": "2021"
     },
     "hyper-http-proxy-1.1.0": {
@@ -40079,7 +40607,7 @@
     "idna_adapter-1.2.2": {
       "edition": "2024"
     },
-    "indexmap-2.14.0": {
+    "indexmap-2.14.2": {
       "edition": "2024"
     },
     "indicatif-0.18.6": {
@@ -40140,7 +40668,7 @@
       "build_script": "build.rs",
       "links": "k8s-openapi-0.24.0"
     },
-    "kotae-0.1.1": {
+    "kotae-0.1.2": {
       "edition": "2024"
     },
     "kstring-2.0.2": {
@@ -40168,10 +40696,10 @@
     "lava-arch-0.2.5": {
       "edition": "2024"
     },
-    "lava-core-0.2.4": {
+    "lava-core-0.2.5": {
       "edition": "2024"
     },
-    "lava-eval-0.2.8": {
+    "lava-eval-0.2.11": {
       "edition": "2024"
     },
     "lava-ruby-0.1.0": {
@@ -40213,7 +40741,7 @@
     "lib-ruby-parser-ast-0.55.0": {
       "edition": "2021"
     },
-    "libc-0.2.189": {
+    "libc-0.2.191": {
       "edition": "2021",
       "build_script": "build.rs"
     },
@@ -40244,7 +40772,7 @@
     "lock_api-0.4.14": {
       "edition": "2021"
     },
-    "log-0.4.34": {
+    "log-0.4.35": {
       "edition": "2021"
     },
     "logos-0.14.4": {
@@ -40581,6 +41109,25 @@
     "petgraph-0.7.1": {
       "edition": "2018"
     },
+    "phf-0.11.3": {
+      "edition": "2021"
+    },
+    "phf_generator-0.11.3": {
+      "edition": "2021",
+      "binaries": [
+        {
+          "name": "gen_hash_test",
+          "path": "src/bin/gen_hash_test.rs"
+        }
+      ]
+    },
+    "phf_macros-0.11.3": {
+      "edition": "2021",
+      "proc_macro": true
+    },
+    "phf_shared-0.11.3": {
+      "edition": "2021"
+    },
     "pin-project-1.1.13": {
       "edition": "2021"
     },
@@ -40825,11 +41372,11 @@
       "build_script": "build.rs",
       "links": "ring_core_0_17_14_"
     },
-    "rmcp-3.1.4": {
+    "rmcp-3.9.0": {
       "edition": "2024",
       "build_script": "build.rs"
     },
-    "rmcp-macros-3.1.4": {
+    "rmcp-macros-3.10.0": {
       "edition": "2024",
       "proc_macro": true
     },
@@ -40973,12 +41520,15 @@
         "path": "lib.rs"
       }
     },
-    "serde_json-1.0.151": {
+    "serde_json-1.0.154": {
       "edition": "2021",
       "build_script": "build.rs"
     },
     "serde_nanos-0.1.4": {
       "edition": "2018"
+    },
+    "serde_norway-0.9.42": {
+      "edition": "2021"
     },
     "serde_path_to_error-0.1.20": {
       "edition": "2021"
@@ -41005,6 +41555,9 @@
     "sha2-0.10.9": {
       "edition": "2018"
     },
+    "sha2-0.11.1": {
+      "edition": "2024"
+    },
     "sharded-slab-0.1.7": {
       "edition": "2018"
     },
@@ -41014,10 +41567,10 @@
     "shigoto-0.1.15": {
       "edition": "2024"
     },
-    "shigoto-budget-0.1.15": {
+    "shigoto-budget-0.1.16": {
       "edition": "2024"
     },
-    "shigoto-dag-0.1.15": {
+    "shigoto-dag-0.1.16": {
       "edition": "2024"
     },
     "shigoto-emit-0.1.15": {
@@ -41029,7 +41582,7 @@
     "shigoto-gate-0.1.15": {
       "edition": "2024"
     },
-    "shigoto-rank-0.1.15": {
+    "shigoto-rank-0.1.16": {
       "edition": "2024"
     },
     "shigoto-retry-0.1.15": {
@@ -41038,10 +41591,10 @@
     "shigoto-scheduler-0.1.15": {
       "edition": "2024"
     },
-    "shigoto-types-0.1.15": {
+    "shigoto-types-0.1.16": {
       "edition": "2024"
     },
-    "shikumi-0.1.1083": {
+    "shikumi-0.1.1084": {
       "edition": "2024"
     },
     "shlex-1.3.0": {
@@ -41054,6 +41607,9 @@
       "edition": "2021"
     },
     "simd-adler32-0.3.10": {
+      "edition": "2018"
+    },
+    "siphasher-1.0.4": {
       "edition": "2018"
     },
     "slab-0.4.12": {
@@ -41174,7 +41730,7 @@
       "edition": "2021",
       "build_script": "build.rs"
     },
-    "thiserror-2.0.20": {
+    "thiserror-2.0.21": {
       "edition": "2021",
       "build_script": "build.rs"
     },
@@ -41182,7 +41738,7 @@
       "edition": "2021",
       "proc_macro": true
     },
-    "thiserror-impl-2.0.20": {
+    "thiserror-impl-2.0.21": {
       "edition": "2021",
       "proc_macro": true
     },
@@ -41208,7 +41764,7 @@
     "tinyvec_macros-0.1.1": {
       "edition": "2018"
     },
-    "todoku-0.1.9": {
+    "todoku-0.1.11": {
       "edition": "2024",
       "binaries": [
         {
@@ -41217,7 +41773,7 @@
         }
       ]
     },
-    "tokio-1.53.1": {
+    "tokio-1.54.1": {
       "edition": "2021"
     },
     "tokio-macros-2.7.0": {
@@ -41230,7 +41786,7 @@
     "tokio-stream-0.1.19": {
       "edition": "2021"
     },
-    "tokio-test-0.4.5": {
+    "tokio-test-0.4.6": {
       "edition": "2021"
     },
     "tokio-tungstenite-0.29.0": {
@@ -41318,7 +41874,7 @@
     "tryhard-0.5.2": {
       "edition": "2018"
     },
-    "tsunagu-0.1.9": {
+    "tsunagu-0.1.11": {
       "edition": "2024"
     },
     "tungstenite-0.29.0": {
@@ -41371,6 +41927,19 @@
         }
       ]
     },
+    "unsafe-libyaml-norway-0.2.15": {
+      "edition": "2021",
+      "binaries": [
+        {
+          "name": "run-emitter-test-suite",
+          "path": "src/bin/run-emitter-test-suite.rs"
+        },
+        {
+          "name": "run-parser-test-suite",
+          "path": "src/bin/run-parser-test-suite.rs"
+        }
+      ]
+    },
     "untrusted-0.9.0": {
       "edition": "2018"
     },
@@ -41386,7 +41955,7 @@
     "utf8parse-0.2.2": {
       "edition": "2018"
     },
-    "uuid-1.25.0": {
+    "uuid-1.29.2": {
       "edition": "2021"
     },
     "vcpkg-0.2.15": {
@@ -41415,7 +41984,7 @@
     "walkdir-2.5.0": {
       "edition": "2018"
     },
-    "want-0.3.1": {
+    "want-0.3.2": {
       "edition": "2018"
     },
     "webpki-roots-0.26.11": {
@@ -41429,9 +41998,6 @@
     },
     "whoami-1.6.1": {
       "edition": "2018"
-    },
-    "winnow-0.6.26": {
-      "edition": "2021"
     },
     "winnow-0.7.15": {
       "edition": "2021"
