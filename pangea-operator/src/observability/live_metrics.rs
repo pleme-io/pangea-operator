@@ -16,6 +16,7 @@ pub struct LiveMetrics {
     pub pending_creates: IntGaugeVec,
     pub generation_lag_seconds: IntGaugeVec,
     pub stalled: IntGaugeVec,
+    pub parked: IntGaugeVec,
     pub stalls_total: IntCounterVec,
     pub reactions_total: IntCounterVec,
     pub reaction_notify_total: IntCounterVec,
@@ -142,6 +143,12 @@ impl LiveMetrics {
                 "1 while the template's pass is Stalled (no heartbeat, or a generation not started within its deadline)",
                 TEMPLATE,
             ),
+            parked: gauge(
+                registry,
+                "pangea_template_pass_parked",
+                "1 while the template's pass waits in the admission queue, which the watchdog counts as alive though status.pass.heartbeatAt does not move",
+                TEMPLATE,
+            ),
             stalls_total: counter(
                 registry,
                 "pangea_template_stalls_total",
@@ -257,6 +264,12 @@ impl LiveMetrics {
             .set(0);
     }
 
+    pub fn publish_parked(&self, template: &str, namespace: &str, parked: bool) {
+        self.parked
+            .with_label_values(&[template, namespace])
+            .set(i64::from(parked));
+    }
+
     pub fn publish_cycle(
         &self,
         template: &str,
@@ -299,6 +312,8 @@ mod tests {
         p.finished_at = Some(at(1_300));
         m.finish_phase("t", "ns", &p);
         m.record_event_delivery("ring");
+        m.publish_parked("t", "ns", true);
+        m.publish_parked("u", "ns", false);
         m.record_template_event("t", "ns", "Warning", "ImportFailed");
         m.record_provider_exit("aws", "signal");
         m.observe_provider_rpc("aws", "ApplyResourceChange", 2.0);
@@ -318,6 +333,8 @@ mod tests {
         );
         assert!(text.contains("pangea_template_phase_duration_seconds_sum{phase=\"Planning\"} 300"));
         assert!(text.contains("pangea_events_total{api=\"ring\"} 1"));
+        assert!(text.contains("pangea_template_pass_parked{namespace=\"ns\",template=\"t\"} 1"));
+        assert!(text.contains("pangea_template_pass_parked{namespace=\"ns\",template=\"u\"} 0"));
         assert!(text.contains(
             "pangea_template_events_total{namespace=\"ns\",reason=\"ImportFailed\",template=\"t\",type=\"Warning\"} 1"
         ));

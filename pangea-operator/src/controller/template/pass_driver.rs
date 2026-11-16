@@ -501,11 +501,15 @@ async fn watch_one(
     };
     let now = Utc::now();
     let live = template.metadata.generation.unwrap_or(0);
-    let projection =
-        project_status_parked(status, live, now, d, parked_at_admission(state, template));
+    let parked = parked_at_admission(state, template);
+    let projection = project_status_parked(status, live, now, d, parked);
     let name = template.name_any();
     let namespace = template.namespace().unwrap_or_default();
     let labels = [name.as_str(), namespace.as_str()];
+    state
+        .metrics
+        .live
+        .publish_parked(&name, &namespace, parked);
     let was_stalled = status
         .pass
         .as_ref()
