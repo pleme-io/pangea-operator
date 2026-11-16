@@ -1671,6 +1671,20 @@ fn err_tofu_result(stderr: String, started: Instant) -> TofuResult {
 /// The one place this result is built, so the typed evidence cannot be
 /// forgotten at a second site. The message is for people; the controller
 /// decides from [`ImportEvidence`], never from these words.
+/// The target resource's own `region` attribute from the rendered config,
+/// when it declares one and the address names a known resource. `None` for
+/// every other shape — the import then uses the provider-level region, the
+/// pre-existing behavior.
+fn resource_region(cfg: &magma_config::Config, address: &str) -> Option<String> {
+    let (r#type, name) = address.split_once('.')?;
+    cfg.resources
+        .get(r#type)?
+        .get(name)?
+        .get("region")?
+        .as_str()
+        .map(str::to_string)
+}
+
 pub(crate) fn provider_reported_absent(
     address: &str,
     id: &str,
@@ -2516,7 +2530,27 @@ where
             let mut ctx = magma_apply::engine::ApplyContext::new(work_dir.to_path_buf())
                 .with_provider_factory(native_provider_router());
             if let Ok(cfg) = self.load_config_routed(work_dir).await {
-                for (name, value) in self.build_provider_configs(&cfg) {
+                let mut providers = self.build_provider_configs(&cfg);
+                // The ImportResourceState RPC carries NO resource config —
+                // only type + id — so a resource whose region comes from a
+                // per-resource attribute (muralha's per-region analyzers) is
+                // looked up in the provider-level region during import and
+                // reported absent, while the apply's create honors the
+                // attribute and conflicts. Import runs ONE address per call,
+                // so dialing that address's own region for the import session
+                // closes the whole per-resource-region class (kensa-pentest
+                // baseline, 2026-11-16).
+                if let Some(region) = resource_region(&cfg, address) {
+                    for (_, value) in providers.iter_mut() {
+                        if let Some(fields) = value.as_object_mut() {
+                            fields.insert(
+                                "region".to_string(),
+                                serde_json::Value::String(region.clone()),
+                            );
+                        }
+                    }
+                }
+                for (name, value) in providers {
                     ctx = ctx.with_provider_config(name, value);
                 }
                 // ONE pacer per credential, shared across every ApplyContext this
@@ -5388,5 +5422,41 @@ mod provider_guard_tests {
         );
         let next = broker.token(&creds("3")).await.unwrap().token;
         assert_ne!(next, first, "an apply's 401 makes the next token a re-mint");
+    }
+}
+
+#[cfg(test)]
+mod import_region_tests {
+    use super::resource_region;
+
+    fn cfg_with(resource: serde_json::Value) -> magma_config::Config {
+        let mut c = magma_config::Config::default();
+        c.resources.insert(
+            "aws_accessanalyzer_analyzer".to_string(),
+            [("us-east-1".to_string(), resource)].into_iter().collect(),
+        );
+        c
+    }
+
+    #[test]
+    fn a_resource_region_attribute_is_returned_for_its_address() {
+        let cfg = cfg_with(serde_json::json!({"analyzer_name": "muralha-us-east-1", "region": "us-east-1"}));
+        assert_eq!(
+            resource_region(&cfg, "aws_accessanalyzer_analyzer.us-east-1").as_deref(),
+            Some("us-east-1")
+        );
+    }
+
+    #[test]
+    fn a_resource_without_a_region_answers_none() {
+        let cfg = cfg_with(serde_json::json!({"analyzer_name": "x"}));
+        assert_eq!(resource_region(&cfg, "aws_accessanalyzer_analyzer.us-east-1"), None);
+    }
+
+    #[test]
+    fn an_unknown_address_answers_none() {
+        let cfg = cfg_with(serde_json::json!({"region": "us-east-1"}));
+        assert_eq!(resource_region(&cfg, "aws_vpc.absent"), None);
+        assert_eq!(resource_region(&cfg, "not-an-address"), None);
     }
 }
