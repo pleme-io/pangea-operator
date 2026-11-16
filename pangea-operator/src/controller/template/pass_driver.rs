@@ -506,10 +506,7 @@ async fn watch_one(
     let name = template.name_any();
     let namespace = template.namespace().unwrap_or_default();
     let labels = [name.as_str(), namespace.as_str()];
-    state
-        .metrics
-        .live
-        .publish_parked(&name, &namespace, parked);
+    state.metrics.live.publish_parked(&name, &namespace, parked);
     let was_stalled = status
         .pass
         .as_ref()
