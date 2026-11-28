@@ -245,6 +245,14 @@ impl magma_apply::ImportEnvironment for StructuralImportEnvironment {
             private: Vec::new(),
         }])
     }
+    async fn read_data_source(
+        &self,
+        _data_source: &str,
+        _config: &serde_json::Value,
+        _provider: &magma_types::ProviderInstance,
+    ) -> std::result::Result<Option<serde_json::Value>, String> {
+        Ok(None)
+    }
 }
 
 /// Typed outcome of reading the persisted plan from the DB-backed
@@ -2361,6 +2369,7 @@ where
             })
             .collect();
         let plan = magma_types::Plan {
+            probe_refusals: Vec::new(),
             id: magma_types::PlanId([0u8; 32]),
             created_at: chrono::Utc::now(),
             config_root: work_dir.to_path_buf(),
@@ -3137,6 +3146,7 @@ mod tests {
         use magma_types::{Plan, PlanId};
 
         let plan_with = |id: u8| Plan {
+            probe_refusals: Vec::new(),
             id: PlanId([id; 32]),
             created_at: chrono::Utc::now(),
             config_root: std::path::PathBuf::new(),
@@ -3954,6 +3964,7 @@ mod tests {
                 key: None,
             };
         let plan = magma_types::Plan {
+            probe_refusals: Vec::new(),
             id: magma_types::PlanId([0u8; 32]),
             created_at: chrono::Utc::now(),
             config_root: std::path::PathBuf::from("/nonexistent"),
@@ -4068,6 +4079,7 @@ mod tests {
 
     fn plan_of(changes: Vec<magma_types::ResourceChange>) -> magma_types::Plan {
         magma_types::Plan {
+            probe_refusals: Vec::new(),
             id: magma_types::PlanId([0u8; 32]),
             created_at: chrono::Utc::now(),
             config_root: std::path::PathBuf::from("/nonexistent"),
@@ -5440,7 +5452,9 @@ mod import_region_tests {
 
     #[test]
     fn a_resource_region_attribute_is_returned_for_its_address() {
-        let cfg = cfg_with(serde_json::json!({"analyzer_name": "muralha-us-east-1", "region": "us-east-1"}));
+        let cfg = cfg_with(
+            serde_json::json!({"analyzer_name": "muralha-us-east-1", "region": "us-east-1"}),
+        );
         assert_eq!(
             resource_region(&cfg, "aws_accessanalyzer_analyzer.us-east-1").as_deref(),
             Some("us-east-1")
@@ -5450,7 +5464,10 @@ mod import_region_tests {
     #[test]
     fn a_resource_without_a_region_answers_none() {
         let cfg = cfg_with(serde_json::json!({"analyzer_name": "x"}));
-        assert_eq!(resource_region(&cfg, "aws_accessanalyzer_analyzer.us-east-1"), None);
+        assert_eq!(
+            resource_region(&cfg, "aws_accessanalyzer_analyzer.us-east-1"),
+            None
+        );
     }
 
     #[test]
